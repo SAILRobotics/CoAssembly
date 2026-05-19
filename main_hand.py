@@ -221,22 +221,52 @@ class _HandDataReceiver:
         self._sub.setsockopt_string(zmq.SUBSCRIBE, "")
         self._sub.connect(f"tcp://{unity_ip}:{port}")
         self.data = None
+        self.message_count = 0
+        self.last_rx_time = None
+        self.last_error = None
         if verbose:
             print(f"[HandDataReceiver] SUB → tcp://{unity_ip}:{port}")
 
-    def poll(self):
+    def poll(self, timeout_ms: int = 0):
+        poller = zmq.Poller()
+        poller.register(self._sub, zmq.POLLIN)
+        if not dict(poller.poll(timeout=timeout_ms)):
+            return False
+
+        latest = None
+        while True:
+            try:
+                latest = self._sub.recv_string(flags=zmq.NOBLOCK)
+            except zmq.Again:
+                break
+            except Exception as e:
+                self.last_error = str(e)
+                print(f"[HandDataReceiver] recv error: {e}")
+                return False
+
+        if latest is None:
+            return False
+
         try:
-            raw = self._sub.recv_string(flags=zmq.NOBLOCK)
-            self.data = json.loads(raw)
-        except zmq.Again:
-            pass
+            self.data = json.loads(latest)
+            self.message_count += 1
+            self.last_rx_time = time.time()
+            self.last_error = None
         except Exception as e:
+            self.last_error = str(e)
             print(f"[HandDataReceiver] parse error: {e}")
+            return False
+
+        return True
+
+    @property
+    def receiving(self) -> bool:
+        return self.last_rx_time is not None and (time.time() - self.last_rx_time) < 2.0
 
     def world_joints(self, T_world_tracking: np.ndarray):
         """Returns (left_pts, right_pts) in world frame, each (N,3) or None.
         Prefers real hand; falls back to synth hand if real is absent."""
-        if self.data is None or T_world_tracking is None:
+        if self.data is None:
             return None, None
         hands = self.data.get("hands") or {}
 
@@ -244,7 +274,11 @@ class _HandDataReceiver:
             j = _extract_joints(hands.get(real_key))
             if j is None:
                 j = _extract_joints(hands.get(synth_key))
-            return _to_world(j, T_world_tracking) if j is not None else None
+            if j is None:
+                return None
+            if T_world_tracking is None:
+                return _unity_to_o3d(j)
+            return _to_world(j, T_world_tracking)
 
         left_pts  = _resolve("LeftHand",  "LeftHandSynth")
         right_pts = _resolve("RightHand", "RightHandSynth")
@@ -776,10 +810,23 @@ def run(quest_ip: str, marker_id: int, marker_size_m: float, hand_port: int):
                        (12, 68), cv.FONT_HERSHEY_SIMPLEX, 0.65,
                        (0, 255, 150) if locked else (100, 100, 100), 2)
             hand_ok = left_pts is not None or right_pts is not None
+            if hand_ok:
+                hand_status = (
+                    "L+R" if (left_pts is not None and right_pts is not None)
+                    else ("L" if left_pts is not None else "R")
+                )
+            elif hands.receiving and not locked:
+                hand_status = f"tracking-frame #{hands.message_count}"
+            elif hands.receiving:
+                hand_status = f"receiving #{hands.message_count}, no valid joints"
+            elif hands.last_error:
+                hand_status = f"parse error: {hands.last_error[:32]}"
+            else:
+                hand_status = f"waiting on port {hand_port}"
             cv.putText(disp,
-                       f"Hands : {'L+R' if (left_pts is not None and right_pts is not None) else ('L' if left_pts is not None else ('R' if right_pts is not None else f'waiting on port {hand_port}'))}",
+                       f"Hands : {hand_status}",
                        (12, 102), cv.FONT_HERSHEY_SIMPLEX, 0.65,
-                       (0, 255, 200) if hand_ok else (100, 100, 100), 2)
+                       (0, 255, 200) if (hand_ok or hands.receiving) else (100, 100, 100), 2)
             cv.putText(disp,
                        "ENTER = re-lock   ESC = quit",
                        (12, disp.shape[0] - 14),
