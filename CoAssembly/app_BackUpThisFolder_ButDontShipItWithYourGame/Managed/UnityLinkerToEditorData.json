@@ -208,12 +208,6 @@
             "scenes": [],
             "dependencyType": 1,
             "icon": null
-          },
-          {
-            "name": "Required by UnityWebRequestAudio Module",
-            "scenes": [],
-            "dependencyType": 2,
-            "icon": "package/com.unity.modules.unitywebrequestaudio"
           }
         ]
       },
@@ -775,12 +769,6 @@
             "icon": "package/com.unity.modules.physics2d"
           },
           {
-            "name": "Required by PhysicsBackendPhysX Module",
-            "scenes": [],
-            "dependencyType": 2,
-            "icon": "package/com.unity.modules.physicsbackendphysx"
-          },
-          {
             "name": "Required by Properties Module",
             "scenes": [],
             "dependencyType": 2,
@@ -869,12 +857,6 @@
             "scenes": [],
             "dependencyType": 2,
             "icon": "package/com.unity.modules.unitywebrequest"
-          },
-          {
-            "name": "Required by UnityWebRequestAudio Module",
-            "scenes": [],
-            "dependencyType": 2,
-            "icon": "package/com.unity.modules.unitywebrequestaudio"
           },
           {
             "name": "Required by VFX Module",
@@ -1216,12 +1198,6 @@
             "icon": null
           },
           {
-            "name": "Required by PhysicsBackendPhysX Module",
-            "scenes": [],
-            "dependencyType": 2,
-            "icon": "package/com.unity.modules.physicsbackendphysx"
-          },
-          {
             "name": "Required by UIElements Module",
             "scenes": [],
             "dependencyType": 2,
@@ -1248,17 +1224,6 @@
             "name": "Physics2DSettings",
             "scenes": [],
             "dependencyType": 1,
-            "icon": null
-          }
-        ]
-      },
-      {
-        "name": "PhysicsBackendPhysX",
-        "dependencies": [
-          {
-            "name": "Force included module",
-            "scenes": [],
-            "dependencyType": 3,
             "icon": null
           }
         ]
@@ -1415,12 +1380,6 @@
             "icon": "package/com.unity.modules.physics2d"
           },
           {
-            "name": "Required by PhysicsBackendPhysX Module",
-            "scenes": [],
-            "dependencyType": 2,
-            "icon": "package/com.unity.modules.physicsbackendphysx"
-          },
-          {
             "name": "Required by Properties Module",
             "scenes": [],
             "dependencyType": 2,
@@ -1509,12 +1468,6 @@
             "scenes": [],
             "dependencyType": 2,
             "icon": "package/com.unity.modules.unitywebrequest"
-          },
-          {
-            "name": "Required by UnityWebRequestAudio Module",
-            "scenes": [],
-            "dependencyType": 2,
-            "icon": "package/com.unity.modules.unitywebrequestaudio"
           },
           {
             "name": "Required by VFX Module",
@@ -1635,12 +1588,6 @@
             "scenes": [
               "Assets/Scenes/Hand_MS.unity"
             ],
-            "dependencyType": 0,
-            "icon": null
-          },
-          {
-            "name": "TextMesh",
-            "scenes": [],
             "dependencyType": 0,
             "icon": null
           },
@@ -1826,18 +1773,8 @@
             "scenes": [],
             "dependencyType": 2,
             "icon": "package/com.unity.modules.unityanalytics"
-          },
-          {
-            "name": "Required by UnityWebRequestAudio Module",
-            "scenes": [],
-            "dependencyType": 2,
-            "icon": "package/com.unity.modules.unitywebrequestaudio"
           }
         ]
-      },
-      {
-        "name": "UnityWebRequestAudio",
-        "dependencies": []
       },
       {
         "name": "VFX",
