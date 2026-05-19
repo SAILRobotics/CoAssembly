@@ -1559,15 +1559,15 @@ struct DoSetCSRTrampoline_00000129U24PostfixBurstDelegate_t4725F3264E5F3B8573451
 };
 struct U3CPrivateImplementationDetailsU3E_t2CADAF0D55AC9D0785A6F7B80D4772CF1220C48F_StaticFields
 {
-	__StaticArrayInitTypeSizeU3D3832_t08B5E299C624F73D59527889BA37A1CA5D7459B2 ___0647054B5F267CF0A9B296425E10ADC010D3E5618C57ACC21C501C49D7C74A27;
 	__StaticArrayInitTypeSizeU3D256_tFFE4CE163BD2DCEAA09662C2BCC33B3C37AB0D22 ___07DB995E8ED2CFB0AB71EBA69F3A3EC07D5C6AC10C0C64F33E94ED2949B348AA;
+	__StaticArrayInitTypeSizeU3D3068_t7A2AD6E7A715E3465C4F71F4D24089CBCDD2D97B ___18DEC2780C55CB9A28CFC322874C570E2EAF1C4618EAB8DFA0FC662098626154;
 	__StaticArrayInitTypeSizeU3D1024_tF7D86A590314DC7B01BB492137ABC5940F263469 ___6AC12597E10FFB084DEE014EEBFD52580EB845FD6B5CCA643AEAC527F7B02F2A;
 	__StaticArrayInitTypeSizeU3D1024_tF7D86A590314DC7B01BB492137ABC5940F263469 ___80E69247CBC7E738ECDB10A5DCF3EF62BB27B3AB61C6ECF146B2C57CEFFB212F;
 	__StaticArrayInitTypeSizeU3D512_t85E24EB18ABD7C2D79C6AF46F140D4EA5FBD1475 ___A199F717FBA4D1378A33D65E9660E45ADC176876A3450BACF2A80DA985FBDF14;
 	__StaticArrayInitTypeSizeU3D32_tF5E240ACF4B30B5A5F8C77E9E49CC2F8559D76D9 ___C69994AC61B52FBCEA582D6CCCD595C12E00BDB18F0C6F593FB6B393CAEDB08C;
 	int64_t ___D0067CAD9A63E0813759A2BB841051CA73570C0DA2E08E840A8EB45DB6A7A010;
 	__StaticArrayInitTypeSizeU3D3_t2857C07F0A23FB025DA0D81FCD2BE07B4ADCC026 ___D5B592C05DC25B5032553F1B27F4139BE95E881F73DB33B02B05AB20C3F9981E;
-	__StaticArrayInitTypeSizeU3D3068_t7A2AD6E7A715E3465C4F71F4D24089CBCDD2D97B ___FB12ADB2A1CCEFA04B565E53B2C1AA80A8EEA3FBCB184D7E2FB307244DF662D5;
+	__StaticArrayInitTypeSizeU3D3832_t08B5E299C624F73D59527889BA37A1CA5D7459B2 ___FDF6BB091E5AE8D762433AED5738A7C7704E3062F1C05DE5F5B16697B949ED44;
 };
 struct BurstCompiler_t2715484E1FF256726FC4D4D8E17C35A4C8DFA2B8_StaticFields
 {
@@ -1690,7 +1690,7 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR int32_t X86_BurstIntrinsicGetCSRFromManaged_m
 #pragma clang diagnostic ignored "-Winvalid-offsetof"
 #pragma clang diagnostic ignored "-Wunused-variable"
 #endif
-// Method Definition Index: 105597
+// Method Definition Index: 104491
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR void StrBoolArray_SetBit_m212C6D1A8A4C422AF979D6B3BC7CD5B9BD0F3F01 (StrBoolArray_tCA66E1F688A4BC6FA749195F867F59E523508DD6* __this, int32_t ___0_aindex, int32_t ___1_bindex, bool ___2_val, const RuntimeMethod* method) 
 {
 	uint16_t* V_0 = NULL;
@@ -1700,10 +1700,10 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR void StrBoolArray_SetBit_m212C6D1A8A4C422AF97
 		U3CBitsU3Ee__FixedBuffer_tFED81968B5AEB075B5560B55A16A31C5F01A83BD* L_0 = (U3CBitsU3Ee__FixedBuffer_tFED81968B5AEB075B5560B55A16A31C5F01A83BD*)(&__this->___Bits);
 		uint16_t* L_1 = (uint16_t*)(&L_0->___FixedElementField);
 		V_1 = L_1;
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Sse4_2.cs:106>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Sse4_2.cs:106>
 		uint16_t* L_2 = V_1;
 		V_0 = (uint16_t*)((uintptr_t)L_2);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Sse4_2.cs:108>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Sse4_2.cs:108>
 		bool L_3 = ___2_val;
 		V_2 = L_3;
 		bool L_4 = V_2;
@@ -1713,7 +1713,7 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR void StrBoolArray_SetBit_m212C6D1A8A4C422AF97
 		}
 	}
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Sse4_2.cs:109>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Sse4_2.cs:109>
 		uint16_t* L_5 = V_0;
 		int32_t L_6 = ___0_aindex;
 		uint16_t* L_7 = ((uint16_t*)il2cpp_codegen_add((intptr_t)L_5, ((intptr_t)il2cpp_codegen_multiply(((intptr_t)L_6), 2))));
@@ -1725,7 +1725,7 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR void StrBoolArray_SetBit_m212C6D1A8A4C422AF97
 
 IL_002a:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Sse4_2.cs:111>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Sse4_2.cs:111>
 		uint16_t* L_10 = V_0;
 		int32_t L_11 = ___0_aindex;
 		uint16_t* L_12 = ((uint16_t*)il2cpp_codegen_add((intptr_t)L_10, ((intptr_t)il2cpp_codegen_multiply(((intptr_t)L_11), 2))));
@@ -1737,7 +1737,7 @@ IL_002a:
 IL_003d:
 	{
 		V_1 = (uint16_t*)((uintptr_t)0);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Sse4_2.cs:113>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Sse4_2.cs:113>
 		return;
 	}
 }
@@ -1748,7 +1748,7 @@ IL2CPP_EXTERN_C  void StrBoolArray_SetBit_m212C6D1A8A4C422AF979D6B3BC7CD5B9BD0F3
 	_thisAdjusted = reinterpret_cast<StrBoolArray_tCA66E1F688A4BC6FA749195F867F59E523508DD6*>(__this + _offset);
 	StrBoolArray_SetBit_m212C6D1A8A4C422AF979D6B3BC7CD5B9BD0F3F01(_thisAdjusted, ___0_aindex, ___1_bindex, ___2_val, method);
 }
-// Method Definition Index: 105598
+// Method Definition Index: 104492
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR bool StrBoolArray_GetBit_mCA50A9F3A3FA5C552305C9B762264A6058F33E78 (StrBoolArray_tCA66E1F688A4BC6FA749195F867F59E523508DD6* __this, int32_t ___0_aindex, int32_t ___1_bindex, const RuntimeMethod* method) 
 {
 	uint16_t* V_0 = NULL;
@@ -1758,10 +1758,10 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR bool StrBoolArray_GetBit_mCA50A9F3A3FA5C55230
 		U3CBitsU3Ee__FixedBuffer_tFED81968B5AEB075B5560B55A16A31C5F01A83BD* L_0 = (U3CBitsU3Ee__FixedBuffer_tFED81968B5AEB075B5560B55A16A31C5F01A83BD*)(&__this->___Bits);
 		uint16_t* L_1 = (uint16_t*)(&L_0->___FixedElementField);
 		V_1 = L_1;
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Sse4_2.cs:117>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Sse4_2.cs:117>
 		uint16_t* L_2 = V_1;
 		V_0 = (uint16_t*)((uintptr_t)L_2);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Sse4_2.cs:119>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Sse4_2.cs:119>
 		uint16_t* L_3 = V_0;
 		int32_t L_4 = ___0_aindex;
 		int32_t L_5 = (*(((uint16_t*)il2cpp_codegen_add((intptr_t)L_3, ((intptr_t)il2cpp_codegen_multiply(((intptr_t)L_4), 2))))));
@@ -1772,7 +1772,7 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR bool StrBoolArray_GetBit_mCA50A9F3A3FA5C55230
 
 IL_0025:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Sse4_2.cs:121>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Sse4_2.cs:121>
 		bool L_7 = V_2;
 		return L_7;
 	}
@@ -1802,24 +1802,24 @@ IL2CPP_EXTERN_C  bool StrBoolArray_GetBit_mCA50A9F3A3FA5C552305C9B762264A6058F33
 #pragma clang diagnostic ignored "-Winvalid-offsetof"
 #pragma clang diagnostic ignored "-Wunused-variable"
 #endif
-// Method Definition Index: 105599
+// Method Definition Index: 104493
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR bool Ssse3_get_IsSsse3Supported_mBB970C83CEDD5135C9BC06BD22FF134C0D83BFD1 (const RuntimeMethod* method) 
 {
 	bool V_0 = false;
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:16>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:16>
 		V_0 = (bool)0;
 		goto IL_0005;
 	}
 
 IL_0005:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:16>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:16>
 		bool L_0 = V_0;
 		return L_0;
 	}
 }
-// Method Definition Index: 105600
+// Method Definition Index: 104494
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 Ssse3_abs_epi8_mDE6DAC5679A3582A1B29CDFE539544A40688ED1E (v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 ___0_a, const RuntimeMethod* method) 
 {
 	static bool s_Il2CppMethodInitialized;
@@ -1837,22 +1837,22 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B6
 	v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 V_5;
 	memset((&V_5), 0, sizeof(V_5));
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:25>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:25>
 		il2cpp_codegen_initobj((&V_0), sizeof(v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61));
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:26>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:26>
 		uint8_t* L_0 = (uint8_t*)(&(&V_0)->___Byte0);
 		V_1 = (uint8_t*)((uintptr_t)L_0);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:27>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:27>
 		int8_t* L_1 = (int8_t*)(&(&___0_a)->___SByte0);
 		V_2 = (int8_t*)((uintptr_t)L_1);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:28>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:28>
 		V_3 = 0;
 		goto IL_0033;
 	}
 
 IL_001f:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:30>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:30>
 		uint8_t* L_2 = V_1;
 		int32_t L_3 = V_3;
 		int8_t* L_4 = V_2;
@@ -1862,14 +1862,14 @@ IL_001f:
 		int32_t L_7;
 		L_7 = il2cpp_codegen_abs(L_6);
 		*((int8_t*)((uint8_t*)il2cpp_codegen_add((intptr_t)L_2, L_3))) = (int8_t)((int32_t)(uint8_t)L_7);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:28>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:28>
 		int32_t L_8 = V_3;
 		V_3 = ((int32_t)il2cpp_codegen_add(L_8, 1));
 	}
 
 IL_0033:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:28>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:28>
 		int32_t L_9 = V_3;
 		V_4 = (bool)((((int32_t)((((int32_t)L_9) > ((int32_t)((int32_t)15)))? 1 : 0)) == ((int32_t)0))? 1 : 0);
 		bool L_10 = V_4;
@@ -1879,7 +1879,7 @@ IL_0033:
 		}
 	}
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:32>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:32>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_11 = V_0;
 		V_5 = L_11;
 		goto IL_0046;
@@ -1887,12 +1887,12 @@ IL_0033:
 
 IL_0046:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:33>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:33>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_12 = V_5;
 		return L_12;
 	}
 }
-// Method Definition Index: 105601
+// Method Definition Index: 104495
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 Ssse3_abs_epi16_m754140B3EDBF3299CE6C701F34E8C308E1FE226B (v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 ___0_a, const RuntimeMethod* method) 
 {
 	static bool s_Il2CppMethodInitialized;
@@ -1910,22 +1910,22 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B6
 	v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 V_5;
 	memset((&V_5), 0, sizeof(V_5));
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:42>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:42>
 		il2cpp_codegen_initobj((&V_0), sizeof(v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61));
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:43>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:43>
 		uint16_t* L_0 = (uint16_t*)(&(&V_0)->___UShort0);
 		V_1 = (uint16_t*)((uintptr_t)L_0);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:44>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:44>
 		int16_t* L_1 = (int16_t*)(&(&___0_a)->___SShort0);
 		V_2 = (int16_t*)((uintptr_t)L_1);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:45>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:45>
 		V_3 = 0;
 		goto IL_0039;
 	}
 
 IL_001f:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:47>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:47>
 		uint16_t* L_2 = V_1;
 		int32_t L_3 = V_3;
 		int16_t* L_4 = V_2;
@@ -1935,14 +1935,14 @@ IL_001f:
 		int32_t L_7;
 		L_7 = il2cpp_codegen_abs(L_6);
 		*((int16_t*)((uint16_t*)il2cpp_codegen_add((intptr_t)L_2, ((intptr_t)il2cpp_codegen_multiply(((intptr_t)L_3), 2))))) = (int16_t)((int32_t)(uint16_t)L_7);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:45>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:45>
 		int32_t L_8 = V_3;
 		V_3 = ((int32_t)il2cpp_codegen_add(L_8, 1));
 	}
 
 IL_0039:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:45>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:45>
 		int32_t L_9 = V_3;
 		V_4 = (bool)((((int32_t)((((int32_t)L_9) > ((int32_t)7))? 1 : 0)) == ((int32_t)0))? 1 : 0);
 		bool L_10 = V_4;
@@ -1952,7 +1952,7 @@ IL_0039:
 		}
 	}
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:49>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:49>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_11 = V_0;
 		V_5 = L_11;
 		goto IL_004b;
@@ -1960,12 +1960,12 @@ IL_0039:
 
 IL_004b:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:50>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:50>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_12 = V_5;
 		return L_12;
 	}
 }
-// Method Definition Index: 105602
+// Method Definition Index: 104496
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 Ssse3_abs_epi32_m313C1735860BC2B24E3EBCA4F502E9ED4D363A0E (v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 ___0_a, const RuntimeMethod* method) 
 {
 	static bool s_Il2CppMethodInitialized;
@@ -1983,22 +1983,22 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B6
 	v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 V_5;
 	memset((&V_5), 0, sizeof(V_5));
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:59>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:59>
 		il2cpp_codegen_initobj((&V_0), sizeof(v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61));
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:60>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:60>
 		uint32_t* L_0 = (uint32_t*)(&(&V_0)->___UInt0);
 		V_1 = (uint32_t*)((uintptr_t)L_0);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:61>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:61>
 		int32_t* L_1 = (int32_t*)(&(&___0_a)->___SInt0);
 		V_2 = (int32_t*)((uintptr_t)L_1);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:62>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:62>
 		V_3 = 0;
 		goto IL_003a;
 	}
 
 IL_001f:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:64>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:64>
 		uint32_t* L_2 = V_1;
 		int32_t L_3 = V_3;
 		int32_t* L_4 = V_2;
@@ -2008,14 +2008,14 @@ IL_001f:
 		int64_t L_7;
 		L_7 = il2cpp_codegen_abs(((int64_t)L_6));
 		*((int32_t*)((uint32_t*)il2cpp_codegen_add((intptr_t)L_2, ((intptr_t)il2cpp_codegen_multiply(((intptr_t)L_3), 4))))) = (int32_t)((int32_t)(uint32_t)L_7);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:62>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:62>
 		int32_t L_8 = V_3;
 		V_3 = ((int32_t)il2cpp_codegen_add(L_8, 1));
 	}
 
 IL_003a:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:62>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:62>
 		int32_t L_9 = V_3;
 		V_4 = (bool)((((int32_t)((((int32_t)L_9) > ((int32_t)3))? 1 : 0)) == ((int32_t)0))? 1 : 0);
 		bool L_10 = V_4;
@@ -2025,7 +2025,7 @@ IL_003a:
 		}
 	}
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:66>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:66>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_11 = V_0;
 		V_5 = L_11;
 		goto IL_004c;
@@ -2033,12 +2033,12 @@ IL_003a:
 
 IL_004c:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:67>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:67>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_12 = V_5;
 		return L_12;
 	}
 }
-// Method Definition Index: 105603
+// Method Definition Index: 104497
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 Ssse3_shuffle_epi8_m4707BE03D7FE37DD564BE67ACFCB21AF4449DC16 (v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 ___0_a, v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 ___1_b, const RuntimeMethod* method) 
 {
 	v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 V_0;
@@ -2052,25 +2052,25 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B6
 	v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 V_7;
 	memset((&V_7), 0, sizeof(V_7));
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:77>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:77>
 		il2cpp_codegen_initobj((&V_0), sizeof(v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61));
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:78>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:78>
 		uint8_t* L_0 = (uint8_t*)(&(&V_0)->___Byte0);
 		V_1 = (uint8_t*)((uintptr_t)L_0);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:79>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:79>
 		uint8_t* L_1 = (uint8_t*)(&(&___0_a)->___Byte0);
 		V_2 = (uint8_t*)((uintptr_t)L_1);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:80>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:80>
 		uint8_t* L_2 = (uint8_t*)(&(&___1_b)->___Byte0);
 		V_3 = (uint8_t*)((uintptr_t)L_2);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:81>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:81>
 		V_4 = 0;
 		goto IL_0061;
 	}
 
 IL_0029:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:83>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:83>
 		uint8_t* L_3 = V_3;
 		int32_t L_4 = V_4;
 		int32_t L_5 = (*(((uint8_t*)il2cpp_codegen_add((intptr_t)L_3, L_4))));
@@ -2082,7 +2082,7 @@ IL_0029:
 		}
 	}
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:85>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:85>
 		uint8_t* L_7 = V_1;
 		int32_t L_8 = V_4;
 		*((int8_t*)((uint8_t*)il2cpp_codegen_add((intptr_t)L_7, L_8))) = (int8_t)0;
@@ -2091,7 +2091,7 @@ IL_0029:
 
 IL_0048:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:89>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:89>
 		uint8_t* L_9 = V_1;
 		int32_t L_10 = V_4;
 		uint8_t* L_11 = V_2;
@@ -2104,14 +2104,14 @@ IL_0048:
 
 IL_005a:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:81>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:81>
 		int32_t L_16 = V_4;
 		V_4 = ((int32_t)il2cpp_codegen_add(L_16, 1));
 	}
 
 IL_0061:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:81>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:81>
 		int32_t L_17 = V_4;
 		V_6 = (bool)((((int32_t)((((int32_t)L_17) > ((int32_t)((int32_t)15)))? 1 : 0)) == ((int32_t)0))? 1 : 0);
 		bool L_18 = V_6;
@@ -2121,7 +2121,7 @@ IL_0061:
 		}
 	}
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:92>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:92>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_19 = V_0;
 		V_7 = L_19;
 		goto IL_0075;
@@ -2129,12 +2129,12 @@ IL_0061:
 
 IL_0075:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:93>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:93>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_20 = V_7;
 		return L_20;
 	}
 }
-// Method Definition Index: 105604
+// Method Definition Index: 104498
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 Ssse3_alignr_epi8_m775B2B7280DA4D228A3C688F6AC8A96D9A955F3C (v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 ___0_a, v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 ___1_b, int32_t ___2_count, const RuntimeMethod* method) 
 {
 	v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 V_0;
@@ -2148,26 +2148,26 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B6
 	v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 V_7;
 	memset((&V_7), 0, sizeof(V_7));
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:105>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:105>
 		il2cpp_codegen_initobj((&V_0), sizeof(v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61));
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:106>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:106>
 		uint8_t* L_0 = (uint8_t*)(&(&V_0)->___Byte0);
 		V_1 = (uint8_t*)((uintptr_t)L_0);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:107>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:107>
 		uint8_t* L_1 = (uint8_t*)(&(&___0_a)->___Byte0);
 		int32_t L_2 = ___2_count;
 		V_2 = (uint8_t*)((intptr_t)il2cpp_codegen_add((intptr_t)((uintptr_t)L_1), L_2));
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:108>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:108>
 		uint8_t* L_3 = (uint8_t*)(&(&___1_b)->___Byte0);
 		V_3 = (uint8_t*)((uintptr_t)L_3);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:111>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:111>
 		V_4 = 0;
 		goto IL_003f;
 	}
 
 IL_002b:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:113>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:113>
 		uint8_t* L_4 = V_1;
 		uint8_t* L_5 = L_4;
 		V_1 = ((uint8_t*)il2cpp_codegen_add((intptr_t)L_5, 1));
@@ -2176,14 +2176,14 @@ IL_002b:
 		V_2 = ((uint8_t*)il2cpp_codegen_add((intptr_t)L_7, 1));
 		int32_t L_8 = (*(L_7));
 		*((int8_t*)L_5) = (int8_t)L_8;
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:111>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:111>
 		int32_t L_9 = V_4;
 		V_4 = ((int32_t)il2cpp_codegen_add(L_9, 1));
 	}
 
 IL_003f:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:111>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:111>
 		int32_t L_10 = V_4;
 		int32_t L_11 = ___2_count;
 		V_5 = (bool)((((int32_t)L_10) < ((int32_t)((int32_t)il2cpp_codegen_subtract(((int32_t)16), L_11))))? 1 : 0);
@@ -2199,7 +2199,7 @@ IL_003f:
 
 IL_004f:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:118>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:118>
 		uint8_t* L_13 = V_1;
 		uint8_t* L_14 = L_13;
 		V_1 = ((uint8_t*)il2cpp_codegen_add((intptr_t)L_14, 1));
@@ -2208,14 +2208,14 @@ IL_004f:
 		V_3 = ((uint8_t*)il2cpp_codegen_add((intptr_t)L_16, 1));
 		int32_t L_17 = (*(L_16));
 		*((int8_t*)L_14) = (int8_t)L_17;
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:116>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:116>
 		int32_t L_18 = V_4;
 		V_4 = ((int32_t)il2cpp_codegen_add(L_18, 1));
 	}
 
 IL_0063:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:116>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:116>
 		int32_t L_19 = V_4;
 		V_6 = (bool)((((int32_t)L_19) < ((int32_t)((int32_t)16)))? 1 : 0);
 		bool L_20 = V_6;
@@ -2225,7 +2225,7 @@ IL_0063:
 		}
 	}
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:121>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:121>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_21 = V_0;
 		V_7 = L_21;
 		goto IL_0074;
@@ -2233,12 +2233,12 @@ IL_0063:
 
 IL_0074:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:122>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:122>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_22 = V_7;
 		return L_22;
 	}
 }
-// Method Definition Index: 105605
+// Method Definition Index: 104499
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 Ssse3_hadd_epi16_mFC04787FE096B38540CA8987C6E184ECDCC162EF (v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 ___0_a, v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 ___1_b, const RuntimeMethod* method) 
 {
 	v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 V_0;
@@ -2251,25 +2251,25 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B6
 	v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 V_6;
 	memset((&V_6), 0, sizeof(V_6));
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:132>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:132>
 		il2cpp_codegen_initobj((&V_0), sizeof(v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61));
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:133>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:133>
 		int16_t* L_0 = (int16_t*)(&(&V_0)->___SShort0);
 		V_1 = (int16_t*)((uintptr_t)L_0);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:134>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:134>
 		int16_t* L_1 = (int16_t*)(&(&___0_a)->___SShort0);
 		V_2 = (int16_t*)((uintptr_t)L_1);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:135>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:135>
 		int16_t* L_2 = (int16_t*)(&(&___1_b)->___SShort0);
 		V_3 = (int16_t*)((uintptr_t)L_2);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:136>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:136>
 		V_4 = 0;
 		goto IL_0073;
 	}
 
 IL_0029:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:138>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:138>
 		int16_t* L_3 = V_1;
 		int32_t L_4 = V_4;
 		int16_t* L_5 = V_2;
@@ -2279,7 +2279,7 @@ IL_0029:
 		int32_t L_9 = V_4;
 		int32_t L_10 = (*(((int16_t*)il2cpp_codegen_add((intptr_t)L_8, ((intptr_t)il2cpp_codegen_multiply(((intptr_t)((int32_t)il2cpp_codegen_multiply(2, L_9))), 2))))));
 		*((int16_t*)((int16_t*)il2cpp_codegen_add((intptr_t)L_3, ((intptr_t)il2cpp_codegen_multiply(((intptr_t)L_4), 2))))) = (int16_t)((int16_t)((int32_t)il2cpp_codegen_add(L_7, L_10)));
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:139>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:139>
 		int16_t* L_11 = V_1;
 		int32_t L_12 = V_4;
 		int16_t* L_13 = V_3;
@@ -2289,14 +2289,14 @@ IL_0029:
 		int32_t L_17 = V_4;
 		int32_t L_18 = (*(((int16_t*)il2cpp_codegen_add((intptr_t)L_16, ((intptr_t)il2cpp_codegen_multiply(((intptr_t)((int32_t)il2cpp_codegen_multiply(2, L_17))), 2))))));
 		*((int16_t*)((int16_t*)il2cpp_codegen_add((intptr_t)L_11, ((intptr_t)il2cpp_codegen_multiply(((intptr_t)((int32_t)il2cpp_codegen_add(L_12, 4))), 2))))) = (int16_t)((int16_t)((int32_t)il2cpp_codegen_add(L_15, L_18)));
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:136>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:136>
 		int32_t L_19 = V_4;
 		V_4 = ((int32_t)il2cpp_codegen_add(L_19, 1));
 	}
 
 IL_0073:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:136>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:136>
 		int32_t L_20 = V_4;
 		V_5 = (bool)((((int32_t)((((int32_t)L_20) > ((int32_t)3))? 1 : 0)) == ((int32_t)0))? 1 : 0);
 		bool L_21 = V_5;
@@ -2306,7 +2306,7 @@ IL_0073:
 		}
 	}
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:141>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:141>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_22 = V_0;
 		V_6 = L_22;
 		goto IL_0086;
@@ -2314,12 +2314,12 @@ IL_0073:
 
 IL_0086:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:142>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:142>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_23 = V_6;
 		return L_23;
 	}
 }
-// Method Definition Index: 105606
+// Method Definition Index: 104500
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 Ssse3_hadds_epi16_m7F00D275CDF6FC61A8639EEAADEC5AA10162518B (v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 ___0_a, v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 ___1_b, const RuntimeMethod* method) 
 {
 	v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 V_0;
@@ -2332,25 +2332,25 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B6
 	v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 V_6;
 	memset((&V_6), 0, sizeof(V_6));
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:152>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:152>
 		il2cpp_codegen_initobj((&V_0), sizeof(v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61));
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:153>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:153>
 		int16_t* L_0 = (int16_t*)(&(&V_0)->___SShort0);
 		V_1 = (int16_t*)((uintptr_t)L_0);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:154>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:154>
 		int16_t* L_1 = (int16_t*)(&(&___0_a)->___SShort0);
 		V_2 = (int16_t*)((uintptr_t)L_1);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:155>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:155>
 		int16_t* L_2 = (int16_t*)(&(&___1_b)->___SShort0);
 		V_3 = (int16_t*)((uintptr_t)L_2);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:156>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:156>
 		V_4 = 0;
 		goto IL_007b;
 	}
 
 IL_0029:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:158>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:158>
 		int16_t* L_3 = V_1;
 		int32_t L_4 = V_4;
 		int16_t* L_5 = V_2;
@@ -2362,7 +2362,7 @@ IL_0029:
 		int16_t L_11;
 		L_11 = X86_Saturate_To_Int16_mC625DF8D2431A9869F488DB9B3DFF4EBC67F5699(((int32_t)il2cpp_codegen_add(L_7, L_10)), NULL);
 		*((int16_t*)((int16_t*)il2cpp_codegen_add((intptr_t)L_3, ((intptr_t)il2cpp_codegen_multiply(((intptr_t)L_4), 2))))) = (int16_t)L_11;
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:159>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:159>
 		int16_t* L_12 = V_1;
 		int32_t L_13 = V_4;
 		int16_t* L_14 = V_3;
@@ -2374,14 +2374,14 @@ IL_0029:
 		int16_t L_20;
 		L_20 = X86_Saturate_To_Int16_mC625DF8D2431A9869F488DB9B3DFF4EBC67F5699(((int32_t)il2cpp_codegen_add(L_16, L_19)), NULL);
 		*((int16_t*)((int16_t*)il2cpp_codegen_add((intptr_t)L_12, ((intptr_t)il2cpp_codegen_multiply(((intptr_t)((int32_t)il2cpp_codegen_add(L_13, 4))), 2))))) = (int16_t)L_20;
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:156>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:156>
 		int32_t L_21 = V_4;
 		V_4 = ((int32_t)il2cpp_codegen_add(L_21, 1));
 	}
 
 IL_007b:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:156>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:156>
 		int32_t L_22 = V_4;
 		V_5 = (bool)((((int32_t)((((int32_t)L_22) > ((int32_t)3))? 1 : 0)) == ((int32_t)0))? 1 : 0);
 		bool L_23 = V_5;
@@ -2391,7 +2391,7 @@ IL_007b:
 		}
 	}
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:161>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:161>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_24 = V_0;
 		V_6 = L_24;
 		goto IL_008e;
@@ -2399,12 +2399,12 @@ IL_007b:
 
 IL_008e:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:162>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:162>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_25 = V_6;
 		return L_25;
 	}
 }
-// Method Definition Index: 105607
+// Method Definition Index: 104501
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 Ssse3_hadd_epi32_m79E5AC61AA3B44887A2794EC7F79725312A3211D (v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 ___0_a, v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 ___1_b, const RuntimeMethod* method) 
 {
 	v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 V_0;
@@ -2412,33 +2412,33 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B6
 	v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 V_1;
 	memset((&V_1), 0, sizeof(V_1));
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:172>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:172>
 		il2cpp_codegen_initobj((&V_0), sizeof(v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61));
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:173>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:173>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_0 = ___0_a;
 		int32_t L_1 = L_0.___SInt1;
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_2 = ___0_a;
 		int32_t L_3 = L_2.___SInt0;
 		(&V_0)->___SInt0 = ((int32_t)il2cpp_codegen_add(L_1, L_3));
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:174>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:174>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_4 = ___0_a;
 		int32_t L_5 = L_4.___SInt3;
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_6 = ___0_a;
 		int32_t L_7 = L_6.___SInt2;
 		(&V_0)->___SInt1 = ((int32_t)il2cpp_codegen_add(L_5, L_7));
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:175>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:175>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_8 = ___1_b;
 		int32_t L_9 = L_8.___SInt1;
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_10 = ___1_b;
 		int32_t L_11 = L_10.___SInt0;
 		(&V_0)->___SInt2 = ((int32_t)il2cpp_codegen_add(L_9, L_11));
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:176>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:176>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_12 = ___1_b;
 		int32_t L_13 = L_12.___SInt3;
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_14 = ___1_b;
 		int32_t L_15 = L_14.___SInt2;
 		(&V_0)->___SInt3 = ((int32_t)il2cpp_codegen_add(L_13, L_15));
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:177>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:177>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_16 = V_0;
 		V_1 = L_16;
 		goto IL_005d;
@@ -2446,12 +2446,12 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B6
 
 IL_005d:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:178>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:178>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_17 = V_1;
 		return L_17;
 	}
 }
-// Method Definition Index: 105608
+// Method Definition Index: 104502
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 Ssse3_hsub_epi16_mEFFDA736229B92520AA008E26D74D3F637153EBC (v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 ___0_a, v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 ___1_b, const RuntimeMethod* method) 
 {
 	v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 V_0;
@@ -2464,25 +2464,25 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B6
 	v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 V_6;
 	memset((&V_6), 0, sizeof(V_6));
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:188>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:188>
 		il2cpp_codegen_initobj((&V_0), sizeof(v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61));
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:189>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:189>
 		int16_t* L_0 = (int16_t*)(&(&V_0)->___SShort0);
 		V_1 = (int16_t*)((uintptr_t)L_0);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:190>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:190>
 		int16_t* L_1 = (int16_t*)(&(&___0_a)->___SShort0);
 		V_2 = (int16_t*)((uintptr_t)L_1);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:191>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:191>
 		int16_t* L_2 = (int16_t*)(&(&___1_b)->___SShort0);
 		V_3 = (int16_t*)((uintptr_t)L_2);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:192>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:192>
 		V_4 = 0;
 		goto IL_0073;
 	}
 
 IL_0029:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:194>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:194>
 		int16_t* L_3 = V_1;
 		int32_t L_4 = V_4;
 		int16_t* L_5 = V_2;
@@ -2492,7 +2492,7 @@ IL_0029:
 		int32_t L_9 = V_4;
 		int32_t L_10 = (*(((int16_t*)il2cpp_codegen_add((intptr_t)L_8, ((intptr_t)il2cpp_codegen_multiply(((intptr_t)((int32_t)il2cpp_codegen_add(((int32_t)il2cpp_codegen_multiply(2, L_9)), 1))), 2))))));
 		*((int16_t*)((int16_t*)il2cpp_codegen_add((intptr_t)L_3, ((intptr_t)il2cpp_codegen_multiply(((intptr_t)L_4), 2))))) = (int16_t)((int16_t)((int32_t)il2cpp_codegen_subtract(L_7, L_10)));
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:195>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:195>
 		int16_t* L_11 = V_1;
 		int32_t L_12 = V_4;
 		int16_t* L_13 = V_3;
@@ -2502,14 +2502,14 @@ IL_0029:
 		int32_t L_17 = V_4;
 		int32_t L_18 = (*(((int16_t*)il2cpp_codegen_add((intptr_t)L_16, ((intptr_t)il2cpp_codegen_multiply(((intptr_t)((int32_t)il2cpp_codegen_add(((int32_t)il2cpp_codegen_multiply(2, L_17)), 1))), 2))))));
 		*((int16_t*)((int16_t*)il2cpp_codegen_add((intptr_t)L_11, ((intptr_t)il2cpp_codegen_multiply(((intptr_t)((int32_t)il2cpp_codegen_add(L_12, 4))), 2))))) = (int16_t)((int16_t)((int32_t)il2cpp_codegen_subtract(L_15, L_18)));
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:192>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:192>
 		int32_t L_19 = V_4;
 		V_4 = ((int32_t)il2cpp_codegen_add(L_19, 1));
 	}
 
 IL_0073:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:192>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:192>
 		int32_t L_20 = V_4;
 		V_5 = (bool)((((int32_t)((((int32_t)L_20) > ((int32_t)3))? 1 : 0)) == ((int32_t)0))? 1 : 0);
 		bool L_21 = V_5;
@@ -2519,7 +2519,7 @@ IL_0073:
 		}
 	}
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:197>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:197>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_22 = V_0;
 		V_6 = L_22;
 		goto IL_0086;
@@ -2527,12 +2527,12 @@ IL_0073:
 
 IL_0086:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:198>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:198>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_23 = V_6;
 		return L_23;
 	}
 }
-// Method Definition Index: 105609
+// Method Definition Index: 104503
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 Ssse3_hsubs_epi16_mA14E898F426AEA27ED7294AAC3A2FF106B4A954C (v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 ___0_a, v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 ___1_b, const RuntimeMethod* method) 
 {
 	v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 V_0;
@@ -2545,25 +2545,25 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B6
 	v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 V_6;
 	memset((&V_6), 0, sizeof(V_6));
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:208>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:208>
 		il2cpp_codegen_initobj((&V_0), sizeof(v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61));
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:209>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:209>
 		int16_t* L_0 = (int16_t*)(&(&V_0)->___SShort0);
 		V_1 = (int16_t*)((uintptr_t)L_0);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:210>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:210>
 		int16_t* L_1 = (int16_t*)(&(&___0_a)->___SShort0);
 		V_2 = (int16_t*)((uintptr_t)L_1);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:211>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:211>
 		int16_t* L_2 = (int16_t*)(&(&___1_b)->___SShort0);
 		V_3 = (int16_t*)((uintptr_t)L_2);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:212>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:212>
 		V_4 = 0;
 		goto IL_007b;
 	}
 
 IL_0029:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:214>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:214>
 		int16_t* L_3 = V_1;
 		int32_t L_4 = V_4;
 		int16_t* L_5 = V_2;
@@ -2575,7 +2575,7 @@ IL_0029:
 		int16_t L_11;
 		L_11 = X86_Saturate_To_Int16_mC625DF8D2431A9869F488DB9B3DFF4EBC67F5699(((int32_t)il2cpp_codegen_subtract(L_7, L_10)), NULL);
 		*((int16_t*)((int16_t*)il2cpp_codegen_add((intptr_t)L_3, ((intptr_t)il2cpp_codegen_multiply(((intptr_t)L_4), 2))))) = (int16_t)L_11;
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:215>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:215>
 		int16_t* L_12 = V_1;
 		int32_t L_13 = V_4;
 		int16_t* L_14 = V_3;
@@ -2587,14 +2587,14 @@ IL_0029:
 		int16_t L_20;
 		L_20 = X86_Saturate_To_Int16_mC625DF8D2431A9869F488DB9B3DFF4EBC67F5699(((int32_t)il2cpp_codegen_subtract(L_16, L_19)), NULL);
 		*((int16_t*)((int16_t*)il2cpp_codegen_add((intptr_t)L_12, ((intptr_t)il2cpp_codegen_multiply(((intptr_t)((int32_t)il2cpp_codegen_add(L_13, 4))), 2))))) = (int16_t)L_20;
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:212>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:212>
 		int32_t L_21 = V_4;
 		V_4 = ((int32_t)il2cpp_codegen_add(L_21, 1));
 	}
 
 IL_007b:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:212>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:212>
 		int32_t L_22 = V_4;
 		V_5 = (bool)((((int32_t)((((int32_t)L_22) > ((int32_t)3))? 1 : 0)) == ((int32_t)0))? 1 : 0);
 		bool L_23 = V_5;
@@ -2604,7 +2604,7 @@ IL_007b:
 		}
 	}
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:217>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:217>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_24 = V_0;
 		V_6 = L_24;
 		goto IL_008e;
@@ -2612,12 +2612,12 @@ IL_007b:
 
 IL_008e:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:218>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:218>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_25 = V_6;
 		return L_25;
 	}
 }
-// Method Definition Index: 105610
+// Method Definition Index: 104504
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 Ssse3_hsub_epi32_mEAF10B910884A664F562B1E75735AD654C62BA82 (v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 ___0_a, v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 ___1_b, const RuntimeMethod* method) 
 {
 	v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 V_0;
@@ -2625,33 +2625,33 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B6
 	v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 V_1;
 	memset((&V_1), 0, sizeof(V_1));
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:228>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:228>
 		il2cpp_codegen_initobj((&V_0), sizeof(v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61));
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:229>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:229>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_0 = ___0_a;
 		int32_t L_1 = L_0.___SInt0;
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_2 = ___0_a;
 		int32_t L_3 = L_2.___SInt1;
 		(&V_0)->___SInt0 = ((int32_t)il2cpp_codegen_subtract(L_1, L_3));
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:230>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:230>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_4 = ___0_a;
 		int32_t L_5 = L_4.___SInt2;
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_6 = ___0_a;
 		int32_t L_7 = L_6.___SInt3;
 		(&V_0)->___SInt1 = ((int32_t)il2cpp_codegen_subtract(L_5, L_7));
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:231>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:231>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_8 = ___1_b;
 		int32_t L_9 = L_8.___SInt0;
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_10 = ___1_b;
 		int32_t L_11 = L_10.___SInt1;
 		(&V_0)->___SInt2 = ((int32_t)il2cpp_codegen_subtract(L_9, L_11));
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:232>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:232>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_12 = ___1_b;
 		int32_t L_13 = L_12.___SInt2;
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_14 = ___1_b;
 		int32_t L_15 = L_14.___SInt3;
 		(&V_0)->___SInt3 = ((int32_t)il2cpp_codegen_subtract(L_13, L_15));
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:233>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:233>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_16 = V_0;
 		V_1 = L_16;
 		goto IL_005d;
@@ -2659,12 +2659,12 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B6
 
 IL_005d:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:234>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:234>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_17 = V_1;
 		return L_17;
 	}
 }
-// Method Definition Index: 105611
+// Method Definition Index: 104505
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 Ssse3_maddubs_epi16_m520EFCF692B1BF21EF2B6F59F75F6BC72A46BDEA (v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 ___0_a, v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 ___1_b, const RuntimeMethod* method) 
 {
 	v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 V_0;
@@ -2678,25 +2678,25 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B6
 	v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 V_7;
 	memset((&V_7), 0, sizeof(V_7));
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:244>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:244>
 		il2cpp_codegen_initobj((&V_0), sizeof(v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61));
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:245>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:245>
 		int16_t* L_0 = (int16_t*)(&(&V_0)->___SShort0);
 		V_1 = (int16_t*)((uintptr_t)L_0);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:246>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:246>
 		uint8_t* L_1 = (uint8_t*)(&(&___0_a)->___Byte0);
 		V_2 = (uint8_t*)((uintptr_t)L_1);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:247>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:247>
 		int8_t* L_2 = (int8_t*)(&(&___1_b)->___SByte0);
 		V_3 = (int8_t*)((uintptr_t)L_2);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:248>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:248>
 		V_4 = 0;
 		goto IL_0065;
 	}
 
 IL_0029:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:250>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:250>
 		uint8_t* L_3 = V_2;
 		int32_t L_4 = V_4;
 		int32_t L_5 = (*(((uint8_t*)il2cpp_codegen_add((intptr_t)L_3, ((int32_t)il2cpp_codegen_add(((int32_t)il2cpp_codegen_multiply(2, L_4)), 1))))));
@@ -2710,21 +2710,21 @@ IL_0029:
 		int32_t L_13 = V_4;
 		int32_t L_14 = (*(((int8_t*)il2cpp_codegen_add((intptr_t)L_12, ((int32_t)il2cpp_codegen_multiply(2, L_13))))));
 		V_5 = ((int32_t)il2cpp_codegen_add(((int32_t)il2cpp_codegen_multiply(L_5, L_8)), ((int32_t)il2cpp_codegen_multiply(L_11, L_14))));
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:251>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:251>
 		int16_t* L_15 = V_1;
 		int32_t L_16 = V_4;
 		int32_t L_17 = V_5;
 		int16_t L_18;
 		L_18 = X86_Saturate_To_Int16_mC625DF8D2431A9869F488DB9B3DFF4EBC67F5699(L_17, NULL);
 		*((int16_t*)((int16_t*)il2cpp_codegen_add((intptr_t)L_15, ((intptr_t)il2cpp_codegen_multiply(((intptr_t)L_16), 2))))) = (int16_t)L_18;
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:248>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:248>
 		int32_t L_19 = V_4;
 		V_4 = ((int32_t)il2cpp_codegen_add(L_19, 1));
 	}
 
 IL_0065:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:248>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:248>
 		int32_t L_20 = V_4;
 		V_6 = (bool)((((int32_t)((((int32_t)L_20) > ((int32_t)7))? 1 : 0)) == ((int32_t)0))? 1 : 0);
 		bool L_21 = V_6;
@@ -2734,7 +2734,7 @@ IL_0065:
 		}
 	}
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:253>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:253>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_22 = V_0;
 		V_7 = L_22;
 		goto IL_0078;
@@ -2742,12 +2742,12 @@ IL_0065:
 
 IL_0078:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:254>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:254>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_23 = V_7;
 		return L_23;
 	}
 }
-// Method Definition Index: 105612
+// Method Definition Index: 104506
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 Ssse3_mulhrs_epi16_m926A9170571AE408D895DB3C511BBD912138F351 (v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 ___0_a, v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 ___1_b, const RuntimeMethod* method) 
 {
 	v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 V_0;
@@ -2761,25 +2761,25 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B6
 	v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 V_7;
 	memset((&V_7), 0, sizeof(V_7));
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:265>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:265>
 		il2cpp_codegen_initobj((&V_0), sizeof(v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61));
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:266>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:266>
 		int16_t* L_0 = (int16_t*)(&(&V_0)->___SShort0);
 		V_1 = (int16_t*)((uintptr_t)L_0);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:267>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:267>
 		int16_t* L_1 = (int16_t*)(&(&___0_a)->___SShort0);
 		V_2 = (int16_t*)((uintptr_t)L_1);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:268>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:268>
 		int16_t* L_2 = (int16_t*)(&(&___1_b)->___SShort0);
 		V_3 = (int16_t*)((uintptr_t)L_2);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:269>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:269>
 		V_4 = 0;
 		goto IL_0062;
 	}
 
 IL_0029:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:271>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:271>
 		int16_t* L_3 = V_2;
 		int32_t L_4 = V_4;
 		int32_t L_5 = (*(((int16_t*)il2cpp_codegen_add((intptr_t)L_3, ((intptr_t)il2cpp_codegen_multiply(((intptr_t)L_4), 2))))));
@@ -2787,28 +2787,28 @@ IL_0029:
 		int32_t L_7 = V_4;
 		int32_t L_8 = (*(((int16_t*)il2cpp_codegen_add((intptr_t)L_6, ((intptr_t)il2cpp_codegen_multiply(((intptr_t)L_7), 2))))));
 		V_5 = ((int32_t)il2cpp_codegen_multiply(L_5, L_8));
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:272>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:272>
 		int32_t L_9 = V_5;
 		V_5 = ((int32_t)(L_9>>((int32_t)14)));
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:273>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:273>
 		int32_t L_10 = V_5;
 		V_5 = ((int32_t)il2cpp_codegen_add(L_10, 1));
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:274>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:274>
 		int32_t L_11 = V_5;
 		V_5 = ((int32_t)(L_11>>1));
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:275>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:275>
 		int16_t* L_12 = V_1;
 		int32_t L_13 = V_4;
 		int32_t L_14 = V_5;
 		*((int16_t*)((int16_t*)il2cpp_codegen_add((intptr_t)L_12, ((intptr_t)il2cpp_codegen_multiply(((intptr_t)L_13), 2))))) = (int16_t)((int16_t)L_14);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:269>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:269>
 		int32_t L_15 = V_4;
 		V_4 = ((int32_t)il2cpp_codegen_add(L_15, 1));
 	}
 
 IL_0062:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:269>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:269>
 		int32_t L_16 = V_4;
 		V_6 = (bool)((((int32_t)((((int32_t)L_16) > ((int32_t)7))? 1 : 0)) == ((int32_t)0))? 1 : 0);
 		bool L_17 = V_6;
@@ -2818,7 +2818,7 @@ IL_0062:
 		}
 	}
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:277>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:277>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_18 = V_0;
 		V_7 = L_18;
 		goto IL_0075;
@@ -2826,12 +2826,12 @@ IL_0062:
 
 IL_0075:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:278>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:278>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_19 = V_7;
 		return L_19;
 	}
 }
-// Method Definition Index: 105613
+// Method Definition Index: 104507
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 Ssse3_sign_epi8_mC91B2F1BAA5CBD84F63BC41E19AA202AB43D501B (v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 ___0_a, v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 ___1_b, const RuntimeMethod* method) 
 {
 	v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 V_0;
@@ -2846,25 +2846,25 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B6
 	v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 V_8;
 	memset((&V_8), 0, sizeof(V_8));
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:288>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:288>
 		il2cpp_codegen_initobj((&V_0), sizeof(v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61));
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:289>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:289>
 		int8_t* L_0 = (int8_t*)(&(&V_0)->___SByte0);
 		V_1 = (int8_t*)((uintptr_t)L_0);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:290>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:290>
 		int8_t* L_1 = (int8_t*)(&(&___0_a)->___SByte0);
 		V_2 = (int8_t*)((uintptr_t)L_1);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:291>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:291>
 		int8_t* L_2 = (int8_t*)(&(&___1_b)->___SByte0);
 		V_3 = (int8_t*)((uintptr_t)L_2);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:292>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:292>
 		V_4 = 0;
 		goto IL_0073;
 	}
 
 IL_0029:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:294>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:294>
 		int8_t* L_3 = V_3;
 		int32_t L_4 = V_4;
 		int32_t L_5 = (*(((int8_t*)il2cpp_codegen_add((intptr_t)L_3, L_4))));
@@ -2876,7 +2876,7 @@ IL_0029:
 		}
 	}
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:296>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:296>
 		int8_t* L_7 = V_1;
 		int32_t L_8 = V_4;
 		int8_t* L_9 = V_2;
@@ -2888,7 +2888,7 @@ IL_0029:
 
 IL_0048:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:298>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:298>
 		int8_t* L_12 = V_3;
 		int32_t L_13 = V_4;
 		int32_t L_14 = (*(((int8_t*)il2cpp_codegen_add((intptr_t)L_12, L_13))));
@@ -2900,7 +2900,7 @@ IL_0048:
 		}
 	}
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:300>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:300>
 		int8_t* L_16 = V_1;
 		int32_t L_17 = V_4;
 		*((int8_t*)((int8_t*)il2cpp_codegen_add((intptr_t)L_16, L_17))) = (int8_t)0;
@@ -2909,7 +2909,7 @@ IL_0048:
 
 IL_0060:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:304>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:304>
 		int8_t* L_18 = V_1;
 		int32_t L_19 = V_4;
 		int8_t* L_20 = V_2;
@@ -2920,14 +2920,14 @@ IL_0060:
 
 IL_006c:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:292>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:292>
 		int32_t L_23 = V_4;
 		V_4 = ((int32_t)il2cpp_codegen_add(L_23, 1));
 	}
 
 IL_0073:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:292>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:292>
 		int32_t L_24 = V_4;
 		V_7 = (bool)((((int32_t)((((int32_t)L_24) > ((int32_t)((int32_t)15)))? 1 : 0)) == ((int32_t)0))? 1 : 0);
 		bool L_25 = V_7;
@@ -2937,7 +2937,7 @@ IL_0073:
 		}
 	}
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:307>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:307>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_26 = V_0;
 		V_8 = L_26;
 		goto IL_0087;
@@ -2945,12 +2945,12 @@ IL_0073:
 
 IL_0087:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:308>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:308>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_27 = V_8;
 		return L_27;
 	}
 }
-// Method Definition Index: 105614
+// Method Definition Index: 104508
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 Ssse3_sign_epi16_m796A88FFD9DB801A3647953CBF3FFF545F803C4D (v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 ___0_a, v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 ___1_b, const RuntimeMethod* method) 
 {
 	v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 V_0;
@@ -2965,25 +2965,25 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B6
 	v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 V_8;
 	memset((&V_8), 0, sizeof(V_8));
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:318>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:318>
 		il2cpp_codegen_initobj((&V_0), sizeof(v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61));
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:319>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:319>
 		int16_t* L_0 = (int16_t*)(&(&V_0)->___SShort0);
 		V_1 = (int16_t*)((uintptr_t)L_0);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:320>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:320>
 		int16_t* L_1 = (int16_t*)(&(&___0_a)->___SShort0);
 		V_2 = (int16_t*)((uintptr_t)L_1);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:321>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:321>
 		int16_t* L_2 = (int16_t*)(&(&___1_b)->___SShort0);
 		V_3 = (int16_t*)((uintptr_t)L_2);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:322>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:322>
 		V_4 = 0;
 		goto IL_0088;
 	}
 
 IL_0029:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:324>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:324>
 		int16_t* L_3 = V_3;
 		int32_t L_4 = V_4;
 		int32_t L_5 = (*(((int16_t*)il2cpp_codegen_add((intptr_t)L_3, ((intptr_t)il2cpp_codegen_multiply(((intptr_t)L_4), 2))))));
@@ -2995,7 +2995,7 @@ IL_0029:
 		}
 	}
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:326>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:326>
 		int16_t* L_7 = V_1;
 		int32_t L_8 = V_4;
 		int16_t* L_9 = V_2;
@@ -3007,7 +3007,7 @@ IL_0029:
 
 IL_0051:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:328>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:328>
 		int16_t* L_12 = V_3;
 		int32_t L_13 = V_4;
 		int32_t L_14 = (*(((int16_t*)il2cpp_codegen_add((intptr_t)L_12, ((intptr_t)il2cpp_codegen_multiply(((intptr_t)L_13), 2))))));
@@ -3019,7 +3019,7 @@ IL_0051:
 		}
 	}
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:330>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:330>
 		int16_t* L_16 = V_1;
 		int32_t L_17 = V_4;
 		*((int16_t*)((int16_t*)il2cpp_codegen_add((intptr_t)L_16, ((intptr_t)il2cpp_codegen_multiply(((intptr_t)L_17), 2))))) = (int16_t)0;
@@ -3028,7 +3028,7 @@ IL_0051:
 
 IL_006f:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:334>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:334>
 		int16_t* L_18 = V_1;
 		int32_t L_19 = V_4;
 		int16_t* L_20 = V_2;
@@ -3039,14 +3039,14 @@ IL_006f:
 
 IL_0081:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:322>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:322>
 		int32_t L_23 = V_4;
 		V_4 = ((int32_t)il2cpp_codegen_add(L_23, 1));
 	}
 
 IL_0088:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:322>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:322>
 		int32_t L_24 = V_4;
 		V_7 = (bool)((((int32_t)((((int32_t)L_24) > ((int32_t)7))? 1 : 0)) == ((int32_t)0))? 1 : 0);
 		bool L_25 = V_7;
@@ -3056,7 +3056,7 @@ IL_0088:
 		}
 	}
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:337>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:337>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_26 = V_0;
 		V_8 = L_26;
 		goto IL_009b;
@@ -3064,12 +3064,12 @@ IL_0088:
 
 IL_009b:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:338>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:338>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_27 = V_8;
 		return L_27;
 	}
 }
-// Method Definition Index: 105615
+// Method Definition Index: 104509
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 Ssse3_sign_epi32_m8C4BAC149C1B7C8800A4F0D88371308B384FC7CA (v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 ___0_a, v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 ___1_b, const RuntimeMethod* method) 
 {
 	v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 V_0;
@@ -3084,25 +3084,25 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B6
 	v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 V_8;
 	memset((&V_8), 0, sizeof(V_8));
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:348>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:348>
 		il2cpp_codegen_initobj((&V_0), sizeof(v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61));
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:349>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:349>
 		int32_t* L_0 = (int32_t*)(&(&V_0)->___SInt0);
 		V_1 = (int32_t*)((uintptr_t)L_0);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:350>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:350>
 		int32_t* L_1 = (int32_t*)(&(&___0_a)->___SInt0);
 		V_2 = (int32_t*)((uintptr_t)L_1);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:351>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:351>
 		int32_t* L_2 = (int32_t*)(&(&___1_b)->___SInt0);
 		V_3 = (int32_t*)((uintptr_t)L_2);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:352>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:352>
 		V_4 = 0;
 		goto IL_0087;
 	}
 
 IL_0029:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:354>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:354>
 		int32_t* L_3 = V_3;
 		int32_t L_4 = V_4;
 		int32_t L_5 = (*(((int32_t*)il2cpp_codegen_add((intptr_t)L_3, ((intptr_t)il2cpp_codegen_multiply(((intptr_t)L_4), 4))))));
@@ -3114,7 +3114,7 @@ IL_0029:
 		}
 	}
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:356>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:356>
 		int32_t* L_7 = V_1;
 		int32_t L_8 = V_4;
 		int32_t* L_9 = V_2;
@@ -3126,7 +3126,7 @@ IL_0029:
 
 IL_0050:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:358>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:358>
 		int32_t* L_12 = V_3;
 		int32_t L_13 = V_4;
 		int32_t L_14 = (*(((int32_t*)il2cpp_codegen_add((intptr_t)L_12, ((intptr_t)il2cpp_codegen_multiply(((intptr_t)L_13), 4))))));
@@ -3138,7 +3138,7 @@ IL_0050:
 		}
 	}
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:360>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:360>
 		int32_t* L_16 = V_1;
 		int32_t L_17 = V_4;
 		*((int32_t*)((int32_t*)il2cpp_codegen_add((intptr_t)L_16, ((intptr_t)il2cpp_codegen_multiply(((intptr_t)L_17), 4))))) = (int32_t)0;
@@ -3147,7 +3147,7 @@ IL_0050:
 
 IL_006e:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:364>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:364>
 		int32_t* L_18 = V_1;
 		int32_t L_19 = V_4;
 		int32_t* L_20 = V_2;
@@ -3158,14 +3158,14 @@ IL_006e:
 
 IL_0080:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:352>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:352>
 		int32_t L_23 = V_4;
 		V_4 = ((int32_t)il2cpp_codegen_add(L_23, 1));
 	}
 
 IL_0087:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:352>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:352>
 		int32_t L_24 = V_4;
 		V_7 = (bool)((((int32_t)((((int32_t)L_24) > ((int32_t)3))? 1 : 0)) == ((int32_t)0))? 1 : 0);
 		bool L_25 = V_7;
@@ -3175,7 +3175,7 @@ IL_0087:
 		}
 	}
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:367>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:367>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_26 = V_0;
 		V_8 = L_26;
 		goto IL_009a;
@@ -3183,7 +3183,7 @@ IL_0087:
 
 IL_009a:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Ssse3.cs:368>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Ssse3.cs:368>
 		v128_t9D2F2BF6DCFF1D82BF38064CF157489E1E680B61 L_27 = V_8;
 		return L_27;
 	}
@@ -3224,7 +3224,7 @@ IL2CPP_EXTERN_C  void DelegatePInvokeWrapper_DoSetCSRTrampoline_00000129U24Postf
 	il2cppPInvokeFunc(___0_bits);
 
 }
-// Method Definition Index: 105616
+// Method Definition Index: 104510
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR void DoSetCSRTrampoline_00000129U24PostfixBurstDelegate__ctor_mB2E362BB9D4BB2A7449381E746C2EB65A2ED22E5 (DoSetCSRTrampoline_00000129U24PostfixBurstDelegate_t4725F3264E5F3B857345196A2CB67B499B5C1B6D* __this, RuntimeObject* ___0_p, intptr_t ___1_p, const RuntimeMethod* method) 
 {
 	__this->___method_ptr = (intptr_t)il2cpp_codegen_get_method_pointer((RuntimeMethod*)___1_p);
@@ -3253,20 +3253,20 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR void DoSetCSRTrampoline_00000129U24PostfixBur
 	}
 	__this->___extra_arg = (intptr_t)&DoSetCSRTrampoline_00000129U24PostfixBurstDelegate_Invoke_mABFC1994145442CF920F9486358D24F59ECBC21A_Multicast;
 }
-// Method Definition Index: 105617
+// Method Definition Index: 104511
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR void DoSetCSRTrampoline_00000129U24PostfixBurstDelegate_Invoke_mABFC1994145442CF920F9486358D24F59ECBC21A (DoSetCSRTrampoline_00000129U24PostfixBurstDelegate_t4725F3264E5F3B857345196A2CB67B499B5C1B6D* __this, int32_t ___0_bits, const RuntimeMethod* method) 
 {
 	typedef void (*FunctionPointerType) (RuntimeObject*, int32_t, const RuntimeMethod*);
 	((FunctionPointerType)__this->___invoke_impl)((Il2CppObject*)__this->___method_code, ___0_bits, reinterpret_cast<RuntimeMethod*>(__this->___method));
 }
-// Method Definition Index: 105618
+// Method Definition Index: 104512
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR RuntimeObject* DoSetCSRTrampoline_00000129U24PostfixBurstDelegate_BeginInvoke_m3B7C153B9650A09385BD3178EC061934F3E71755 (DoSetCSRTrampoline_00000129U24PostfixBurstDelegate_t4725F3264E5F3B857345196A2CB67B499B5C1B6D* __this, int32_t ___0_bits, AsyncCallback_t7FEF460CBDCFB9C5FA2EF776984778B9A4145F4C* ___1_p, RuntimeObject* ___2_p, const RuntimeMethod* method) 
 {
 	void *__d_args[2] = {0};
 	__d_args[0] = Box(il2cpp_defaults.int32_class, &___0_bits);
 	return (RuntimeObject*)il2cpp_codegen_delegate_begin_invoke((RuntimeDelegate*)__this, __d_args, (RuntimeDelegate*)___1_p, (RuntimeObject*)___2_p);
 }
-// Method Definition Index: 105619
+// Method Definition Index: 104513
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR void DoSetCSRTrampoline_00000129U24PostfixBurstDelegate_EndInvoke_mE0DD96672DD7BD241A5CAC6D2B798F2135659A7B (DoSetCSRTrampoline_00000129U24PostfixBurstDelegate_t4725F3264E5F3B857345196A2CB67B499B5C1B6D* __this, RuntimeObject* ___0_p, const RuntimeMethod* method) 
 {
 	il2cpp_codegen_delegate_end_invoke((Il2CppAsyncResult*) ___0_p, 0);
@@ -3279,7 +3279,7 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR void DoSetCSRTrampoline_00000129U24PostfixBur
 #pragma clang diagnostic ignored "-Winvalid-offsetof"
 #pragma clang diagnostic ignored "-Wunused-variable"
 #endif
-// Method Definition Index: 105620
+// Method Definition Index: 104514
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR void DoSetCSRTrampoline_00000129U24BurstDirectCall_GetFunctionPointerDiscard_m1CA723D7A0AF9643877A26B704F1FC62C416CF9D (intptr_t* ___0_p, const RuntimeMethod* method) 
 {
 	static bool s_Il2CppMethodInitialized;
@@ -3322,7 +3322,7 @@ IL_002a:
 		return;
 	}
 }
-// Method Definition Index: 105621
+// Method Definition Index: 104515
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR intptr_t DoSetCSRTrampoline_00000129U24BurstDirectCall_GetFunctionPointer_m35695F08BD1BBFD52C66DF6E550640A6FE8B24D3 (const RuntimeMethod* method) 
 {
 	intptr_t V_0;
@@ -3334,7 +3334,7 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR intptr_t DoSetCSRTrampoline_00000129U24BurstD
 		return L_0;
 	}
 }
-// Method Definition Index: 105622
+// Method Definition Index: 104516
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR void DoSetCSRTrampoline_00000129U24BurstDirectCall_Invoke_mE4A8D66F26591A2B6925781182A3950F2D9929F7 (int32_t ___0_bits, const RuntimeMethod* method) 
 {
 	static bool s_Il2CppMethodInitialized;
@@ -3418,7 +3418,7 @@ IL2CPP_EXTERN_C  int32_t DelegatePInvokeWrapper_DoGetCSRTrampoline_0000012AU24Po
 
 	return returnValue;
 }
-// Method Definition Index: 105623
+// Method Definition Index: 104517
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR void DoGetCSRTrampoline_0000012AU24PostfixBurstDelegate__ctor_mAF4E8E52E9B328353F1FD1C782B7E5F231C1EAB2 (DoGetCSRTrampoline_0000012AU24PostfixBurstDelegate_t65954E7C9A419F4F2E46237ACE3C9C47B60AD497* __this, RuntimeObject* ___0_p, intptr_t ___1_p, const RuntimeMethod* method) 
 {
 	__this->___method_ptr = (intptr_t)il2cpp_codegen_get_method_pointer((RuntimeMethod*)___1_p);
@@ -3447,19 +3447,19 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR void DoGetCSRTrampoline_0000012AU24PostfixBur
 	}
 	__this->___extra_arg = (intptr_t)&DoGetCSRTrampoline_0000012AU24PostfixBurstDelegate_Invoke_m029066847B481A4D4A1506274D08E53673879725_Multicast;
 }
-// Method Definition Index: 105624
+// Method Definition Index: 104518
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR int32_t DoGetCSRTrampoline_0000012AU24PostfixBurstDelegate_Invoke_m029066847B481A4D4A1506274D08E53673879725 (DoGetCSRTrampoline_0000012AU24PostfixBurstDelegate_t65954E7C9A419F4F2E46237ACE3C9C47B60AD497* __this, const RuntimeMethod* method) 
 {
 	typedef int32_t (*FunctionPointerType) (RuntimeObject*, const RuntimeMethod*);
 	return ((FunctionPointerType)__this->___invoke_impl)((Il2CppObject*)__this->___method_code, reinterpret_cast<RuntimeMethod*>(__this->___method));
 }
-// Method Definition Index: 105625
+// Method Definition Index: 104519
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR RuntimeObject* DoGetCSRTrampoline_0000012AU24PostfixBurstDelegate_BeginInvoke_m2A385F39E93A08D0ADA497309E6452CE60A1D7F4 (DoGetCSRTrampoline_0000012AU24PostfixBurstDelegate_t65954E7C9A419F4F2E46237ACE3C9C47B60AD497* __this, AsyncCallback_t7FEF460CBDCFB9C5FA2EF776984778B9A4145F4C* ___0_p, RuntimeObject* ___1_p, const RuntimeMethod* method) 
 {
 	void *__d_args[1] = {0};
 	return (RuntimeObject*)il2cpp_codegen_delegate_begin_invoke((RuntimeDelegate*)__this, __d_args, (RuntimeDelegate*)___0_p, (RuntimeObject*)___1_p);
 }
-// Method Definition Index: 105626
+// Method Definition Index: 104520
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR int32_t DoGetCSRTrampoline_0000012AU24PostfixBurstDelegate_EndInvoke_m3855DB6B985889BD923444AD98F7F4D04579F702 (DoGetCSRTrampoline_0000012AU24PostfixBurstDelegate_t65954E7C9A419F4F2E46237ACE3C9C47B60AD497* __this, RuntimeObject* ___0_p, const RuntimeMethod* method) 
 {
 	RuntimeObject *__result = il2cpp_codegen_delegate_end_invoke((Il2CppAsyncResult*) ___0_p, 0);
@@ -3473,7 +3473,7 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR int32_t DoGetCSRTrampoline_0000012AU24Postfix
 #pragma clang diagnostic ignored "-Winvalid-offsetof"
 #pragma clang diagnostic ignored "-Wunused-variable"
 #endif
-// Method Definition Index: 105627
+// Method Definition Index: 104521
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR void DoGetCSRTrampoline_0000012AU24BurstDirectCall_GetFunctionPointerDiscard_m26984A00D91D0C99D3509DEA73EB163EC2F4CC8A (intptr_t* ___0_p, const RuntimeMethod* method) 
 {
 	static bool s_Il2CppMethodInitialized;
@@ -3516,7 +3516,7 @@ IL_002a:
 		return;
 	}
 }
-// Method Definition Index: 105628
+// Method Definition Index: 104522
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR intptr_t DoGetCSRTrampoline_0000012AU24BurstDirectCall_GetFunctionPointer_m362582712481AA5F41819616FF1C8B3004FF511F (const RuntimeMethod* method) 
 {
 	intptr_t V_0;
@@ -3528,7 +3528,7 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR intptr_t DoGetCSRTrampoline_0000012AU24BurstD
 		return L_0;
 	}
 }
-// Method Definition Index: 105629
+// Method Definition Index: 104523
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR int32_t DoGetCSRTrampoline_0000012AU24BurstDirectCall_Invoke_m48CABAE1329004E775B5B266641B153E213C67FD (const RuntimeMethod* method) 
 {
 	static bool s_Il2CppMethodInitialized;
@@ -3580,19 +3580,19 @@ IL_001d:
 #pragma clang diagnostic ignored "-Winvalid-offsetof"
 #pragma clang diagnostic ignored "-Wunused-variable"
 #endif
-// Method Definition Index: 105630
+// Method Definition Index: 104524
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR void Aliasing_ExpectAliased_m34203CCD734EFC08D4EDF6B084E5C83B9998D9EB (void* ___0_a, void* ___1_b, const RuntimeMethod* method) 
 {
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/CompilerServices/Aliasing.cs:13>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/CompilerServices/Aliasing.cs:13>
 		return;
 	}
 }
-// Method Definition Index: 105634
+// Method Definition Index: 104528
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR void Aliasing_ExpectNotAliased_m58467B3F8F1912DBE096F04D4CA4DFA5CC1F3D7F (void* ___0_a, void* ___1_b, const RuntimeMethod* method) 
 {
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/CompilerServices/Aliasing.cs:45>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/CompilerServices/Aliasing.cs:45>
 		return;
 	}
 }
@@ -3604,23 +3604,23 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR void Aliasing_ExpectNotAliased_m58467B3F8F191
 #pragma clang diagnostic ignored "-Winvalid-offsetof"
 #pragma clang diagnostic ignored "-Wunused-variable"
 #endif
-// Method Definition Index: 105638
+// Method Definition Index: 104532
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR void AssumeRangeAttribute__ctor_m079EDF7E5EEC31A177E1B9825784AB0C8192ECE7 (AssumeRangeAttribute_t06ACC8EEDB5AB2CE78FDE39A4F36B674A1CE06CA* __this, int64_t ___0_min, int64_t ___1_max, const RuntimeMethod* method) 
 {
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/CompilerServices/AssumeRangeAttribute.cs:22>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/CompilerServices/AssumeRangeAttribute.cs:22>
 		Attribute__ctor_m79ED1BF1EE36D1E417BA89A0D9F91F8AAD8D19E2(__this, NULL);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/CompilerServices/AssumeRangeAttribute.cs:22>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/CompilerServices/AssumeRangeAttribute.cs:22>
 		return;
 	}
 }
-// Method Definition Index: 105639
+// Method Definition Index: 104533
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR void AssumeRangeAttribute__ctor_mD238E80790A2C125D92C4FA8D57C59174B8768C1 (AssumeRangeAttribute_t06ACC8EEDB5AB2CE78FDE39A4F36B674A1CE06CA* __this, uint64_t ___0_min, uint64_t ___1_max, const RuntimeMethod* method) 
 {
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/CompilerServices/AssumeRangeAttribute.cs:29>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/CompilerServices/AssumeRangeAttribute.cs:29>
 		Attribute__ctor_m79ED1BF1EE36D1E417BA89A0D9F91F8AAD8D19E2(__this, NULL);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/CompilerServices/AssumeRangeAttribute.cs:29>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/CompilerServices/AssumeRangeAttribute.cs:29>
 		return;
 	}
 }
@@ -3632,11 +3632,11 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR void AssumeRangeAttribute__ctor_mD238E80790A2
 #pragma clang diagnostic ignored "-Winvalid-offsetof"
 #pragma clang diagnostic ignored "-Wunused-variable"
 #endif
-// Method Definition Index: 105641
+// Method Definition Index: 104535
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR bool Constant_IsConstantExpression_m66C2A59803585AA748F5EAA0BCF08763E3992C79 (void* ___0_t, const RuntimeMethod* method) 
 {
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/CompilerServices/Constant.cs:21>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/CompilerServices/Constant.cs:21>
 		return (bool)0;
 	}
 }
@@ -3648,29 +3648,29 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR bool Constant_IsConstantExpression_m66C2A5980
 #pragma clang diagnostic ignored "-Winvalid-offsetof"
 #pragma clang diagnostic ignored "-Wunused-variable"
 #endif
-// Method Definition Index: 105642
+// Method Definition Index: 104536
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR bool Hint_Likely_m55D631F5AB972E280D08882560FBE559147FAF76 (bool ___0_condition, const RuntimeMethod* method) 
 {
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/CompilerServices/Hint.cs:13>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/CompilerServices/Hint.cs:13>
 		bool L_0 = ___0_condition;
 		return L_0;
 	}
 }
-// Method Definition Index: 105643
+// Method Definition Index: 104537
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR bool Hint_Unlikely_m1EF9F222AAE0D7381F834FEB8150C13EBF7F49F2 (bool ___0_condition, const RuntimeMethod* method) 
 {
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/CompilerServices/Hint.cs:20>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/CompilerServices/Hint.cs:20>
 		bool L_0 = ___0_condition;
 		return L_0;
 	}
 }
-// Method Definition Index: 105644
+// Method Definition Index: 104538
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR void Hint_Assume_m40C6FAFA43613AA4C4E0A09BC3804F29B937914A (bool ___0_condition, const RuntimeMethod* method) 
 {
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/CompilerServices/Hint.cs:26>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/CompilerServices/Hint.cs:26>
 		return;
 	}
 }
@@ -3682,13 +3682,13 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR void Hint_Assume_m40C6FAFA43613AA4C4E0A09BC38
 #pragma clang diagnostic ignored "-Winvalid-offsetof"
 #pragma clang diagnostic ignored "-Wunused-variable"
 #endif
-// Method Definition Index: 105645
+// Method Definition Index: 104539
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR void IgnoreWarningAttribute__ctor_m1C6CA1B6C6272E76F5AA1C9955A0D6D26CB03CB3 (IgnoreWarningAttribute_t76B2348F881718AA549586D6B796CBD66DF77C14* __this, int32_t ___0_warning, const RuntimeMethod* method) 
 {
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/CompilerServices/IgnoreWarningAttribute.cs:16>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/CompilerServices/IgnoreWarningAttribute.cs:16>
 		Attribute__ctor_m79ED1BF1EE36D1E417BA89A0D9F91F8AAD8D19E2(__this, NULL);
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/CompilerServices/IgnoreWarningAttribute.cs:16>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/CompilerServices/IgnoreWarningAttribute.cs:16>
 		return;
 	}
 }
@@ -3700,7 +3700,7 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR void IgnoreWarningAttribute__ctor_m1C6CA1B6C6
 #pragma clang diagnostic ignored "-Winvalid-offsetof"
 #pragma clang diagnostic ignored "-Wunused-variable"
 #endif
-// Method Definition Index: 105646
+// Method Definition Index: 104540
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR void SkipLocalsInitAttribute__ctor_m375F500C468A753DCA94330FB8D4FB1E1D13A5B1 (SkipLocalsInitAttribute_t0BFA1401AAC4A4C1394E9A230202C7B9E55FAD45* __this, const RuntimeMethod* method) 
 {
 	{
@@ -3780,7 +3780,7 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR void SkipLocalsInitAttribute__ctor_m375F500C4
 #pragma clang diagnostic ignored "-Winvalid-offsetof"
 #pragma clang diagnostic ignored "-Wunused-variable"
 #endif
-// Method Definition Index: 105647
+// Method Definition Index: 104541
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR void U24BurstDirectCallInitializer_Initialize_mCC68AB6B2B87E7512FA2E3497B3261AF18D4DA67 (const RuntimeMethod* method) 
 {
 	static bool s_Il2CppMethodInitialized;
@@ -3800,12 +3800,12 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR void U24BurstDirectCallInitializer_Initialize
 #ifdef __clang__
 #pragma clang diagnostic pop
 #endif
-// Method Definition Index: 104742
+// Method Definition Index: 103636
 IL2CPP_MANAGED_FORCE_INLINE IL2CPP_METHOD_ATTR void X86_DoSetCSRTrampolineU24BurstManaged_mE815FBA01984E0ED5DD9430A954F5D9E831F6FF6_inline (int32_t ___0_bits, const RuntimeMethod* method) 
 {
 	bool V_0 = false;
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Csr.cs:231>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Csr.cs:231>
 		bool L_0;
 		L_0 = Sse_get_IsSseSupported_mDBF9442802946279B27A747DBE1D9739B8D860EA(NULL);
 		V_0 = L_0;
@@ -3816,24 +3816,24 @@ IL2CPP_MANAGED_FORCE_INLINE IL2CPP_METHOD_ATTR void X86_DoSetCSRTrampolineU24Bur
 		}
 	}
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Csr.cs:232>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Csr.cs:232>
 		int32_t L_2 = ___0_bits;
 		X86_BurstIntrinsicSetCSRFromManaged_mA2AB67AC6C4DF6E0D7B45D020365225F10516134(L_2, NULL);
 	}
 
 IL_0011:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Csr.cs:233>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Csr.cs:233>
 		return;
 	}
 }
-// Method Definition Index: 104743
+// Method Definition Index: 103637
 IL2CPP_MANAGED_FORCE_INLINE IL2CPP_METHOD_ATTR int32_t X86_DoGetCSRTrampolineU24BurstManaged_m22BBFDD66A5A14872A57F99439F422092E6DA9E8_inline (const RuntimeMethod* method) 
 {
 	bool V_0 = false;
 	int32_t V_1 = 0;
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Csr.cs:238>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Csr.cs:238>
 		bool L_0;
 		L_0 = Sse_get_IsSseSupported_mDBF9442802946279B27A747DBE1D9739B8D860EA(NULL);
 		V_0 = L_0;
@@ -3844,7 +3844,7 @@ IL2CPP_MANAGED_FORCE_INLINE IL2CPP_METHOD_ATTR int32_t X86_DoGetCSRTrampolineU24
 		}
 	}
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Csr.cs:239>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Csr.cs:239>
 		int32_t L_2;
 		L_2 = X86_BurstIntrinsicGetCSRFromManaged_m60DD950BFC2FC5E1F640BB75D0F00D82C4DA37FB(NULL);
 		V_1 = L_2;
@@ -3853,23 +3853,23 @@ IL2CPP_MANAGED_FORCE_INLINE IL2CPP_METHOD_ATTR int32_t X86_DoGetCSRTrampolineU24
 
 IL_0012:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Csr.cs:240>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Csr.cs:240>
 		V_1 = 0;
 		goto IL_0016;
 	}
 
 IL_0016:
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/Intrinsics/x86/Csr.cs:241>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/Intrinsics/x86/Csr.cs:241>
 		int32_t L_3 = V_1;
 		return L_3;
 	}
 }
-// Method Definition Index: 102201
+// Method Definition Index: 101095
 IL2CPP_MANAGED_FORCE_INLINE IL2CPP_METHOD_ATTR intptr_t FunctionPointer_1_get_Value_m71D7FF781C694A7C4EE28362DFC78D8DDFE9A105_gshared_inline (FunctionPointer_1_tE1DC1EC606FB2242FB50357BBA39BB4AEDECFCB2* __this, const RuntimeMethod* method) 
 {
 	{
-		//<source_info:./Library/PackageCache/com.unity.burst@07790c2d06d9/Runtime/FunctionPointer.cs:46>
+		//<source_info:./Library/PackageCache/com.unity.burst@1df634d836b8/Runtime/FunctionPointer.cs:46>
 		intptr_t L_0 = __this->____ptr;
 		return L_0;
 	}

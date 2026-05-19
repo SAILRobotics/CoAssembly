@@ -83,7 +83,7 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR void Attribute__ctor_m79ED1BF1EE36D1E417BA89A
 #pragma clang diagnostic ignored "-Winvalid-offsetof"
 #pragma clang diagnostic ignored "-Wunused-variable"
 #endif
-// Method Definition Index: 126784
+// Method Definition Index: 124352
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR void EmbeddedAttribute__ctor_mAD2278DA5FC50CD5C8FD77B2D0BA945EA8E60ADF (EmbeddedAttribute_t0037AB58DA180058B4D2D328E65EADE06944A66E* __this, const RuntimeMethod* method) 
 {
 	{
@@ -99,7 +99,7 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR void EmbeddedAttribute__ctor_mAD2278DA5FC50CD
 #pragma clang diagnostic ignored "-Winvalid-offsetof"
 #pragma clang diagnostic ignored "-Wunused-variable"
 #endif
-// Method Definition Index: 126785
+// Method Definition Index: 124353
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR void RefSafetyRulesAttribute__ctor_mE776E360EFDA92AF3A3BD74B4560C18C94E59F15 (RefSafetyRulesAttribute_tF4B8D6C1C491CEA3368BB2927F17CFB39850D299* __this, int32_t ___0_p, const RuntimeMethod* method) 
 {
 	{
@@ -117,7 +117,7 @@ IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR void RefSafetyRulesAttribute__ctor_mE776E360E
 #pragma clang diagnostic ignored "-Winvalid-offsetof"
 #pragma clang diagnostic ignored "-Wunused-variable"
 #endif
-// Method Definition Index: 126787
+// Method Definition Index: 124355
 IL2CPP_EXTERN_C IL2CPP_METHOD_ATTR BufferManager_t00B658F4B016C8C8EC86E8C83D335030483A622F* BufferManager_CreateBufferManager_m4F2C64A0F3563097E663ECABCE743B2919C0F806 (int64_t ___0_maxBufferPoolSize, int32_t ___1_maxBufferSize, const RuntimeMethod* method) 
 {
 	{
