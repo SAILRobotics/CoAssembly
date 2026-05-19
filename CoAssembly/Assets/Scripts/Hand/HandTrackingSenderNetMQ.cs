@@ -12,6 +12,8 @@ public class HandTrackingSenderNetMQ : MonoBehaviour
     [SerializeField] private bool log = true;
 
     private PublisherSocket pubSocket;
+    private int sentCount = 0;
+    private float logTimer = 0f;
 
     void Start()
     {
@@ -37,7 +39,26 @@ public class HandTrackingSenderNetMQ : MonoBehaviour
         if (pubSocket == null) return;
         if (string.IsNullOrEmpty(json)) return;
 
-        pubSocket.SendFrame(json);
+        try
+        {
+            pubSocket.SendFrame(json);
+            sentCount++;
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning("[HandTrackingSenderNetMQ] Send error: " + e.Message, this);
+        }
+    }
+
+    private void Update()
+    {
+        if (!log) return;
+
+        logTimer += Time.deltaTime;
+        if (logTimer < 1f) return;
+
+        Debug.Log($"[HandTrackingSenderNetMQ] Sent {sentCount} hand frames total on port {port}", this);
+        logTimer = 0f;
     }
 
     private void OnDestroy() => ShutdownNetMQ();

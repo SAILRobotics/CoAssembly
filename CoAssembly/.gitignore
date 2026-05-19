@@ -7,6 +7,13 @@
 [Ll]ogs/
 [Mm]emoryCaptures/
 UserSettings/
+.utmp/
+
+# Unity Android/IL2CPP build artifacts
+app_BackUpThisFolder_ButDontShipItWithYourGame/
+*_BackUpThisFolder_ButDontShipItWithYourGame/
+*BurstDebugInformation_DoNotShip/
+*BurstDebugInformation_DoNotShip*/
 
 # OS files
 .DS_Store
@@ -41,6 +48,8 @@ desktop.ini
 *.temp
 *.bak
 *.swp
+__pycache__/
+*.py[cod]
 
 # IDE settings
 .vs/

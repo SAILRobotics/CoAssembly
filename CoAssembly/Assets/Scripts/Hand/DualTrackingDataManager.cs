@@ -29,6 +29,7 @@ public class DualHandTrackingDataManager : MonoBehaviour
     private float timeSinceLastSend = 0f;
 
     private int frameCount = 0;
+    private int sendCount = 0;
     private float fpsTimer = 0f;
     private string lastJson = "";
 
@@ -45,6 +46,7 @@ public class DualHandTrackingDataManager : MonoBehaviour
         if (timeSinceLastSend >= sendInterval)
         {
             _sender?.SendJson(lastJson);
+            if (_sender != null) sendCount++;
             timeSinceLastSend = 0f;
         }
 
@@ -52,7 +54,14 @@ public class DualHandTrackingDataManager : MonoBehaviour
         fpsTimer += Time.deltaTime;
         if (fpsTimer >= 1.0f)
         {
+            bool leftReal = frame.hands.TryGetValue("LeftHand", out var leftHand) && leftHand != null;
+            bool rightReal = frame.hands.TryGetValue("RightHand", out var rightHand) && rightHand != null;
+            bool leftSynth = frame.hands.TryGetValue("LeftHandSynth", out var leftHandSynth) && leftHandSynth != null;
+            bool rightSynth = frame.hands.TryGetValue("RightHandSynth", out var rightHandSynth) && rightHandSynth != null;
+            Debug.Log($"[DualHandTrackingDataManager] frames={frameCount}/s sends={sendCount}/s senderAssigned={_sender != null} real(L={leftReal}, R={rightReal}) synth(L={leftSynth}, R={rightSynth})", this);
+
             frameCount = 0;
+            sendCount = 0;
             fpsTimer = 0f;
         }
     }

@@ -1,10 +1,19 @@
 # ninja log v5
 51	1115	8008484418356833	GameActivity/CMakeFiles/game.dir/UGAInputKeyEvent.cpp.o	988d6f462131af46
 64	1179	8008484418417886	GameActivity/CMakeFiles/game.dir/UGAEntry.cpp.o	5d6e0962b9af70af
-16	1181	8008484418453147	GameActivity/CMakeFiles/game.dir/UGAConfiguration.cpp.o	695049398685c936
-28	1183	8008484418781910	GameActivity/CMakeFiles/game.dir/UGADebug.cpp.o	53150dad2cedb524
 89	1185	8008484419080905	GameActivity/CMakeFiles/game.dir/UGASoftKeyboard.cpp.o	3381de5f6a8442f6
+16	1181	8008484418453147	GameActivity/CMakeFiles/game.dir/UGAConfiguration.cpp.o	695049398685c936
 76	1188	8008484419080905	GameActivity/CMakeFiles/game.dir/UGAInputMotionEvent.cpp.o	47c4fb5dc0ead371
+28	1183	8008484418781910	GameActivity/CMakeFiles/game.dir/UGADebug.cpp.o	53150dad2cedb524
 40	1239	8008484419595645	GameActivity/CMakeFiles/game.dir/UGAInput.cpp.o	31b4cbdd9541f981
-0	1264	8008484419830739	GameActivity/CMakeFiles/game.dir/UGAApplication.cpp.o	c4e57e0167781d4c
 1265	1419	8008484421416530	C:/Users/skim3674/Desktop/CoAssembly/CoAssembly/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/build/intermediates/cxx/Debug/2184p04f/obj/arm64-v8a/libgame.so	9c871e01bf0a6fe6
+0	1264	8008484419830739	GameActivity/CMakeFiles/game.dir/UGAApplication.cpp.o	c4e57e0167781d4c
+75	870	8008532554175167	GameActivity/CMakeFiles/game.dir/UGAInputKeyEvent.cpp.o	988d6f462131af46
+31	873	8008532554200421	GameActivity/CMakeFiles/game.dir/UGAEntry.cpp.o	5d6e0962b9af70af
+20	889	8008532554357430	GameActivity/CMakeFiles/game.dir/UGAConfiguration.cpp.o	695049398685c936
+54	954	8008532555002661	GameActivity/CMakeFiles/game.dir/UGAInputMotionEvent.cpp.o	47c4fb5dc0ead371
+43	957	8008532555002661	GameActivity/CMakeFiles/game.dir/UGADebug.cpp.o	53150dad2cedb524
+86	986	8008532555340748	GameActivity/CMakeFiles/game.dir/UGASoftKeyboard.cpp.o	3381de5f6a8442f6
+65	1027	8008532555703569	GameActivity/CMakeFiles/game.dir/UGAInput.cpp.o	31b4cbdd9541f981
+6	1059	8008532555985830	GameActivity/CMakeFiles/game.dir/UGAApplication.cpp.o	c4e57e0167781d4c
+1059	1221	8008532557689717	C:/Users/skim3674/Desktop/CoAssembly/CoAssembly/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/build/intermediates/cxx/Debug/2184p04f/obj/arm64-v8a/libgame.so	9c871e01bf0a6fe6
