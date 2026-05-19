@@ -1,0 +1,28 @@
+{
+  "buildFiles": [
+    "C:\\Users\\skim3674\\Desktop\\ProxyGrip\\UnityProjects\\ProxyGrip\\Library\\Bee\\Android\\Prj\\IL2CPP\\Gradle\\unityLibrary\\src\\main\\cpp\\CMakeLists.txt",
+    "C:\\Users\\skim3674\\Desktop\\ProxyGrip\\UnityProjects\\ProxyGrip\\Library\\Bee\\Android\\Prj\\IL2CPP\\Gradle\\unityLibrary\\src\\main\\cpp\\GameActivity\\CMakeLists.txt"
+  ],
+  "cleanCommandsComponents": [
+    [
+      "C:\\Users\\skim3674\\AppData\\Local\\Android\\Sdk\\cmake\\3.22.1\\bin\\ninja.exe",
+      "-C",
+      "C:\\Users\\skim3674\\Desktop\\ProxyGrip\\UnityProjects\\ProxyGrip\\.utmp\\Debug\\2s2c6c6a\\arm64-v8a",
+      "clean"
+    ]
+  ],
+  "buildTargetsCommandComponents": [
+    "C:\\Users\\skim3674\\AppData\\Local\\Android\\Sdk\\cmake\\3.22.1\\bin\\ninja.exe",
+    "-C",
+    "C:\\Users\\skim3674\\Desktop\\ProxyGrip\\UnityProjects\\ProxyGrip\\.utmp\\Debug\\2s2c6c6a\\arm64-v8a",
+    "{LIST_OF_TARGETS_TO_BUILD}"
+  ],
+  "libraries": {
+    "game::@d02bb112ea9f9c2ed29f": {
+      "artifactName": "game",
+      "abi": "arm64-v8a",
+      "output": "C:\\Users\\skim3674\\Desktop\\ProxyGrip\\UnityProjects\\ProxyGrip\\Library\\Bee\\Android\\Prj\\IL2CPP\\Gradle\\unityLibrary\\build\\intermediates\\cxx\\Debug\\2s2c6c6a\\obj\\arm64-v8a\\libgame.so",
+      "runtimeFiles": []
+    }
+  }
+}

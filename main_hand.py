@@ -1,51 +1,97 @@
 """
-main_hand.py — Unity hand tracking receiver + Open3D world-frame visualizer.
+main_hand.py — Quest passthrough ArUco → WorldRoot + Hand Tracking Visualizer
 
-Receives real (and optionally synthetic) hand joint data from Unity via ZMQ,
-applies T_world_tracking broadcast by main.py, and renders both hands as
-point clouds + bone line sets in an Open3D window anchored to the world frame.
+All functionalities of main.py, but visualizes hand joints in the Open3D window
+instead of controller poses. Runs fully standalone — does not require main.py.
 
-Expected Unity JSON format
---------------------------
-{
-  "left":  { "is_valid": true, "joints": [[x,y,z], ...] },
-  "right": { "is_valid": true, "joints": [[x,y,z], ...] }
-}
-Joint coordinates are in Unity tracking space (left-handed, Y-up, Z-forward).
+Transform chain (same as main.py)
+----------------------------------
+  T_cam_marker      = ArUco detection
+  T_tracking_marker = cam.camera_T @ T_cam_marker
+  T_world_tracking  = inv(T_tracking_marker)
+  joints_world      = T_world_tracking @ joints_unity (with Y↔Z swap)
+
+Keys (OpenCV window must be focused)
+--------------------------------------
+  ENTER  = force re-lock anchor from current detection
+  ESC    = quit
 
 Usage
 -----
-  # Run main.py first so the world transform is being broadcast, then:
   python main_hand.py
-  python main_hand.py --unity-ip 192.168.50.201 --hand1-port 5570
+  python main_hand.py --quest-ip 192.168.50.201 --hand-port 5570
 """
 
 import argparse
 import json
+import struct
 import sys
 import time
 from pathlib import Path
 
+import cv2 as cv
 import numpy as np
 import open3d as o3d
 import zmq
+from scipy.spatial.transform import Rotation as ScipyR
 
 _FILE_DIR = Path(__file__).resolve().parent
 if str(_FILE_DIR) not in sys.path:
     sys.path.insert(0, str(_FILE_DIR))
 
+from utils.unity_conversion import (
+    unity_to_open3d_vector,
+    unity_to_open3d_quaternion,
+    open3d_to_unity_vector,
+    open3d_to_unity_quaternion,
+    HAND_BONES,
+)
 import ip_setting as cfg
-from utils.unity_conversion import HAND_BONES
 
-# ── coordinate conversion ──────────────────────────────────────────────────────
+
+# =============================================================================
+# Pose helpers  (same as main.py)
+# =============================================================================
+
+def _unity_pose_to_T(pos_xyz, rot_xyzw) -> np.ndarray:
+    pos_dict = {"x": float(pos_xyz[0]), "y": float(pos_xyz[1]), "z": float(pos_xyz[2])}
+    p = unity_to_open3d_vector(pos_dict)
+    x, y, z, w = rot_xyzw
+    q_o3d = unity_to_open3d_quaternion([float(w), float(x), float(y), float(z)])
+    R_cam = ScipyR.from_quat([q_o3d[1], q_o3d[2], q_o3d[3], q_o3d[0]]).as_matrix()
+    R_fix = ScipyR.from_euler('x', -90.0, degrees=True).as_matrix()
+    T = np.eye(4, dtype=np.float64)
+    T[:3, :3] = R_cam @ R_fix
+    T[:3, 3]  = p
+    return T
+
+
+def _adapt_cx_cy(fx, fy, cx, cy, sensor_w, sensor_h, img_w, img_h):
+    if sensor_w is None or sensor_h is None:
+        return fx, fy, cx, cy
+    crop_x = (float(sensor_w) - float(img_w)) / 2.0
+    crop_y = (float(sensor_h) - float(img_h)) / 2.0
+    return fx, fy, cx - crop_x, cy - crop_y
+
+
+# =============================================================================
+# Hand joint helpers
+# =============================================================================
+
+_BONES_NP  = np.array(HAND_BONES, dtype=np.int32)
+_N_JOINTS  = int(_BONES_NP.max()) + 1
+_HIDDEN_PT = np.array([[0., -100., 0.]])
+
+# Order must match HAND_BONES layout: Wrist Palm Thumb Index Middle Ring Pinky
+_JOINT_GROUP_ORDER = ["Wrist", "Palm", "Thumb", "Index", "Middle", "Ring", "Pinky"]
+
 
 def _unity_to_o3d(pts_unity: np.ndarray) -> np.ndarray:
-    """(N,3) Unity tracking frame → Open3D tracking frame  (swap Y↔Z)."""
+    """(N,3) Unity tracking frame → Open3D frame (swap Y↔Z)."""
     return pts_unity[:, [0, 2, 1]]
 
 
 def _to_world(joints_unity: np.ndarray, T_world_tracking: np.ndarray) -> np.ndarray:
-    """(N,3) Unity tracking-frame joints → Open3D world frame."""
     pts = _unity_to_o3d(joints_unity)
     R, t = T_world_tracking[:3, :3], T_world_tracking[:3, 3]
     return (pts @ R.T) + t
@@ -53,34 +99,221 @@ def _to_world(joints_unity: np.ndarray, T_world_tracking: np.ndarray) -> np.ndar
 
 def _extract_joints(hand_block) -> np.ndarray | None:
     """
-    Pull joint positions out of a Unity hand block.
-    Returns (N,3) float64 ndarray, or None if the hand is absent / not tracked.
+    Parse a hand block from TrackingDataManager (SerializableTrackingData format).
+    Returns (N,3) float64 in HAND_BONES order, or None.
     """
     if hand_block is None:
         return None
-    if not hand_block.get("is_valid", True):
+    groups = hand_block.get("groups")
+    if not groups:
         return None
-    joints = hand_block.get("joints")
-    if not joints:
-        return None
-    return np.array(joints, dtype=np.float64)
+    joints = []
+    for group_name in _JOINT_GROUP_ORDER:
+        for pose in groups.get(group_name) or []:
+            if pose is None:
+                joints.append([0.0, 0.0, 0.0])
+            else:
+                pos = pose.get("position") or {}
+                joints.append([pos.get("x", 0.0), pos.get("y", 0.0), pos.get("z", 0.0)])
+    return np.array(joints, dtype=np.float64) if joints else None
 
 
 # =============================================================================
-# Open3D hand visualizer
+# ZMQ receivers  (same as main.py)
 # =============================================================================
 
-_BONES_NP  = np.array(HAND_BONES, dtype=np.int32)
-_N_JOINTS  = int(_BONES_NP.max()) + 1          # minimum number of joints needed
-_HIDDEN_PT = np.array([[0., -100., 0.]])        # parked far away when not tracked
+class _XRStateReceiver:
+    def __init__(self, ip: str, port: int = 5559, topic: str = "xr"):
+        ctx = zmq.Context()
+        self._sub = ctx.socket(zmq.SUB)
+        self._sub.connect(f"tcp://{ip}:{port}")
+        self._sub.setsockopt_string(zmq.SUBSCRIBE, topic)
+        self.center_T: np.ndarray | None = None
+
+    def poll(self, timeout_ms: int = 0) -> bool:
+        poller = zmq.Poller()
+        poller.register(self._sub, zmq.POLLIN)
+        if not dict(poller.poll(timeout=timeout_ms)):
+            return False
+        latest = None
+        while True:
+            try:
+                _      = self._sub.recv_string(flags=zmq.NOBLOCK)
+                latest = self._sub.recv_string(flags=zmq.NOBLOCK)
+            except zmq.Again:
+                break
+        if latest is None:
+            return False
+        msg  = json.loads(latest)
+        head = msg.get("head")
+        if head and head.get("is_valid"):
+            p, r = head.get("pos"), head.get("rot_xyzw")
+            if p and r:
+                self.center_T = _unity_pose_to_T(p, r)
+        return True
+
+    def close(self):
+        try:
+            self._sub.close(0)
+        except Exception:
+            pass
 
 
-class _HandVis:
-    """Open3D window showing left + right hand joints in world frame."""
+class _CamFeedReceiver:
+    def __init__(self, ip: str, port: int = 5560, topic: str = "cam_left"):
+        ctx = zmq.Context()
+        self._sub = ctx.socket(zmq.SUB)
+        self._sub.connect(f"tcp://{ip}:{port}")
+        self._sub.setsockopt_string(zmq.SUBSCRIBE, topic)
+        self.frame        = None
+        self.camera_T     = None
+        self.fx = self.fy = self.cx = self.cy = None
+        self.sensor_width = self.sensor_height = None
+        self.width        = self.height        = None
 
-    def __init__(self):
+    def poll(self, timeout_ms: int = 0) -> bool:
+        poller = zmq.Poller()
+        poller.register(self._sub, zmq.POLLIN)
+        if not dict(poller.poll(timeout=timeout_ms)):
+            return False
+        latest = None
+        while True:
+            try:
+                parts  = self._sub.recv_multipart(flags=zmq.NOBLOCK)
+                latest = parts
+            except zmq.Again:
+                break
+        if latest is None or len(latest) != 9:
+            return False
+        width,  = struct.unpack("<i",    latest[2])
+        height, = struct.unpack("<i",    latest[3])
+        px, py, pz      = struct.unpack("<fff",  latest[4])
+        qx, qy, qz, qw = struct.unpack("<ffff", latest[5])
+        fx, fy, cx, cy  = struct.unpack("<ffff", latest[6])
+        sw, sh           = struct.unpack("<ii",   latest[7])
+        arr   = np.frombuffer(latest[8], dtype=np.uint8)
+        frame = cv.imdecode(arr, cv.IMREAD_COLOR)
+        if frame is None:
+            return False
+        self.frame = frame
+        self.width, self.height = width, height
+        self.fx, self.fy = float(fx), float(fy)
+        self.cx, self.cy = float(cx), float(cy)
+        self.sensor_width  = int(sw)
+        self.sensor_height = int(sh)
+        self.camera_T = _unity_pose_to_T([px, py, pz], [qx, qy, qz, qw])
+        return True
+
+    def close(self):
+        try:
+            self._sub.close(0)
+        except Exception:
+            pass
+
+
+class _HandDataReceiver:
+    """SUBs to Unity hand tracking stream (TrackingDataManager format)."""
+
+    def __init__(self, unity_ip: str, port: int, verbose: bool = True):
+        ctx = zmq.Context.instance()
+        self._sub = ctx.socket(zmq.SUB)
+        self._sub.setsockopt(zmq.CONFLATE, 1)
+        self._sub.setsockopt_string(zmq.SUBSCRIBE, "")
+        self._sub.connect(f"tcp://{unity_ip}:{port}")
+        self.data = None
+        if verbose:
+            print(f"[HandDataReceiver] SUB → tcp://{unity_ip}:{port}")
+
+    def poll(self):
+        try:
+            raw = self._sub.recv_string(flags=zmq.NOBLOCK)
+            self.data = json.loads(raw)
+        except zmq.Again:
+            pass
+        except Exception as e:
+            print(f"[HandDataReceiver] parse error: {e}")
+
+    def world_joints(self, T_world_tracking: np.ndarray):
+        """Returns (left_pts, right_pts) in world frame, each (N,3) or None.
+        Prefers real hand; falls back to synth hand if real is absent."""
+        if self.data is None or T_world_tracking is None:
+            return None, None
+        hands = self.data.get("hands") or {}
+
+        def _resolve(real_key, synth_key):
+            j = _extract_joints(hands.get(real_key))
+            if j is None:
+                j = _extract_joints(hands.get(synth_key))
+            return _to_world(j, T_world_tracking) if j is not None else None
+
+        left_pts  = _resolve("LeftHand",  "LeftHandSynth")
+        right_pts = _resolve("RightHand", "RightHandSynth")
+        return left_pts, right_pts
+
+    def close(self):
+        try:
+            self._sub.close(0)
+        except Exception:
+            pass
+
+
+# =============================================================================
+# ArUco pose estimator  (same as main.py)
+# =============================================================================
+
+class _ArucoPoseEstimator:
+    def __init__(self, marker_id: int, marker_size_m: float,
+                 dictionary=cv.aruco.DICT_6X6_1000):
+        self.marker_id   = int(marker_id)
+        self.marker_size = float(marker_size_m)
+        self._dict       = cv.aruco.getPredefinedDictionary(dictionary)
+        self._detector   = cv.aruco.ArucoDetector(
+            self._dict, cv.aruco.DetectorParameters())
+        s = self.marker_size / 2.0
+        self._obj_pts = np.array([
+            [-s,  s, 0.], [ s,  s, 0.],
+            [ s, -s, 0.], [-s, -s, 0.],
+        ], dtype=np.float64)
+
+    def detect(self, bgr, fx, fy, cx, cy, dist=None, draw=True) -> dict:
+        K    = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=np.float64)
+        dist = np.zeros((5, 1)) if dist is None else np.array(dist).reshape(-1, 1)
+        gray = cv.cvtColor(bgr, cv.COLOR_BGR2GRAY)
+        corners, ids, _ = self._detector.detectMarkers(gray)
+        vis  = bgr.copy()
+        null = {"found": False, "T_cam_marker": None, "vis": vis}
+        if ids is None:
+            return null
+        if draw:
+            cv.aruco.drawDetectedMarkers(vis, corners, ids)
+        for c, mid in zip(corners, ids.flatten()):
+            if int(mid) != self.marker_id:
+                continue
+            ok, rvec, tvec = cv.solvePnP(
+                self._obj_pts, c.reshape(4, 2).astype(np.float64), K, dist,
+                flags=cv.SOLVEPNP_IPPE_SQUARE)
+            if not ok:
+                continue
+            Rm, _ = cv.Rodrigues(rvec)
+            T_cam_marker = np.eye(4, dtype=np.float64)
+            T_cam_marker[:3, :3] = Rm
+            T_cam_marker[:3, 3]  = tvec.reshape(3)
+            if draw:
+                cv.drawFrameAxes(vis, K, dist, rvec, tvec, self.marker_size * 0.5, 2)
+            return {"found": True, "T_cam_marker": T_cam_marker, "vis": vis}
+        return null
+
+
+# =============================================================================
+# Open3D scene visualizer — camera frustum + hand joints
+# =============================================================================
+
+class _SceneVis:
+    FRUSTUM_SCALE = 0.2
+
+    def __init__(self, title: str, width: int = 1000, height: int = 680):
         self.vis = o3d.visualization.Visualizer()
-        self.vis.create_window("Hand Tracking — World Frame", width=1000, height=680)
+        self.vis.create_window(title, width=width, height=height)
         ro = self.vis.get_render_option()
         ro.background_color = np.array([0.08, 0.08, 0.10])
         ro.point_size = 7.0
@@ -89,6 +322,17 @@ class _HandVis:
         world_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.3)
         self.vis.add_geometry(world_frame)
 
+        # Camera frustum
+        self._cam_frustum      = None
+        self._cam_frustum_T    = self._hidden_T()
+
+        # Head frame
+        self._head_frame   = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.12)
+        self._head_frame.transform(self._hidden_T())
+        self.vis.add_geometry(self._head_frame)
+        self._head_T = self._hidden_T()
+
+        # Hand joints + bones
         self._pcd_l, self._lines_l = self._make_hand([0.3, 0.6, 1.0])   # blue
         self._pcd_r, self._lines_r = self._make_hand([1.0, 0.55, 0.1])  # orange
 
@@ -98,20 +342,23 @@ class _HandVis:
         ctr.set_up([0., 1., 0.])
         ctr.set_zoom(0.5)
 
+    @staticmethod
+    def _hidden_T():
+        T = np.eye(4, dtype=np.float64)
+        T[:3, 3] = [0., -1.5, 0.]
+        return T
+
     def _make_hand(self, color: list):
         dummy = np.tile(_HIDDEN_PT, (_N_JOINTS, 1))
-
         pcd = o3d.geometry.PointCloud()
         pcd.points = o3d.utility.Vector3dVector(dummy)
         pcd.paint_uniform_color(color)
         self.vis.add_geometry(pcd)
-
         lines = o3d.geometry.LineSet()
         lines.points = o3d.utility.Vector3dVector(dummy)
         lines.lines  = o3d.utility.Vector2iVector(_BONES_NP)
         lines.paint_uniform_color(color)
         self.vis.add_geometry(lines)
-
         return pcd, lines
 
     def _set_hand(self, pcd, lines, pts: np.ndarray | None):
@@ -121,15 +368,40 @@ class _HandVis:
             pts_use = np.zeros((_N_JOINTS, 3))
             m = min(len(pts), _N_JOINTS)
             pts_use[:m] = pts[:m]
-
         pcd.points   = o3d.utility.Vector3dVector(pts_use)
         lines.points = o3d.utility.Vector3dVector(pts_use)
         self.vis.update_geometry(pcd)
         self.vis.update_geometry(lines)
 
-    def update(self, left_pts: np.ndarray | None, right_pts: np.ndarray | None):
+    def update_cam_frustum(self, T: np.ndarray | None,
+                           w=640, h=480, fx=400., fy=400., cx=320., cy=240.):
+        T_use = T if T is not None else self._hidden_T()
+        intr  = o3d.camera.PinholeCameraIntrinsic(int(w), int(h), fx, fy, cx, cy)
+        new_fr = o3d.geometry.LineSet.create_camera_visualization(
+            int(w), int(h), intr.intrinsic_matrix,
+            np.linalg.inv(T_use), scale=self.FRUSTUM_SCALE)
+        new_fr.paint_uniform_color([0.2, 1.0, 0.3])
+
+        if self._cam_frustum is None:
+            self._cam_frustum = new_fr
+            self.vis.add_geometry(self._cam_frustum)
+        else:
+            self._cam_frustum.points = new_fr.points
+            self._cam_frustum.lines  = new_fr.lines
+            self._cam_frustum.colors = new_fr.colors
+            self.vis.update_geometry(self._cam_frustum)
+
+    def update_head(self, T: np.ndarray | None):
+        T_new = T if T is not None else self._hidden_T()
+        self._head_frame.transform(T_new @ np.linalg.inv(self._head_T))
+        self._head_T = T_new
+        self.vis.update_geometry(self._head_frame)
+
+    def update_hands(self, left_pts: np.ndarray | None, right_pts: np.ndarray | None):
         self._set_hand(self._pcd_l, self._lines_l, left_pts)
         self._set_hand(self._pcd_r, self._lines_r, right_pts)
+
+    def tick(self):
         self.vis.poll_events()
         self.vis.update_renderer()
 
@@ -141,186 +413,405 @@ class _HandVis:
 
 
 # =============================================================================
-# Hand receiver
+# World anchor  (same as main.py)
 # =============================================================================
 
-class HandReceiver:
-    """
-    SUBs to two ZMQ streams:
-      • hand data       from Unity  (real + optional synthetic)
-      • T_world_tracking from main.py (broadcast on WORLD_TRANSFORM_PORT)
-    """
+class _WorldAnchor:
+    def __init__(self, pub_ip: str, pub_port: int = 5005):
+        self._T_wt: np.ndarray | None = None
+        self._T_offset = np.eye(4, dtype=np.float64)
+        ctx = zmq.Context()
+        self._pub = ctx.socket(zmq.PUB)
+        self._pub.connect(f"tcp://{pub_ip}:{pub_port}")
+        time.sleep(0.2)
 
-    def __init__(
-        self,
-        unity_ip: str        = cfg.UNITY_IP,
-        hand1_port: int      = cfg.HAND1_PORT_FROM_UNITY,
-        hand2_port: int | None = None,
-        world_T_host: str    = cfg.LOCALHOST,
-        world_T_port: int    = cfg.WORLD_TRANSFORM_PORT,
-        rx_rate_hz: float    = 30.0,
-        verbose: bool        = True,
-    ):
-        self.verbose          = verbose
-        self._rx_interval     = 1.0 / rx_rate_hz if rx_rate_hz > 0 else 0.0
-        self._last_rx         = 0.0
+    def set_offset(self, pos_offset, yaw_deg: float):
+        T = np.eye(4, dtype=np.float64)
+        T[:3, 3]  = np.array(pos_offset, dtype=np.float64)
+        T[:3, :3] = ScipyR.from_euler('z', yaw_deg, degrees=True).as_matrix()
+        self._T_offset = T
 
-        self.real_hand_data      = None
-        self.synthetic_hand_data = None
-        self.T_world_tracking    = None   # (4,4) ndarray, updated continuously
-
-        ctx = zmq.Context.instance()
-
-        # SUB — real hand from Unity
-        self._hand1_sub = ctx.socket(zmq.SUB)
-        self._hand1_sub.setsockopt(zmq.CONFLATE, 1)
-        self._hand1_sub.setsockopt_string(zmq.SUBSCRIBE, "")
-        self._hand1_sub.connect(f"tcp://{unity_ip}:{hand1_port}")
-        if verbose:
-            print(f"[HandReceiver] Hand1 SUB → tcp://{unity_ip}:{hand1_port}")
-
-        # SUB — synthetic hand from Unity (optional)
-        self._hand2_sub = None
-        if hand2_port is not None:
-            self._hand2_sub = ctx.socket(zmq.SUB)
-            self._hand2_sub.setsockopt(zmq.CONFLATE, 1)
-            self._hand2_sub.setsockopt_string(zmq.SUBSCRIBE, "")
-            self._hand2_sub.connect(f"tcp://{unity_ip}:{hand2_port}")
-            if verbose:
-                print(f"[HandReceiver] Hand2 SUB → tcp://{unity_ip}:{hand2_port}")
-
-        # SUB — world transform from main.py
-        self._world_T_sub = ctx.socket(zmq.SUB)
-        self._world_T_sub.setsockopt(zmq.CONFLATE, 1)
-        self._world_T_sub.setsockopt_string(zmq.SUBSCRIBE, "")
-        self._world_T_sub.connect(f"tcp://{world_T_host}:{world_T_port}")
-        if verbose:
-            print(f"[HandReceiver] WorldT  SUB → tcp://{world_T_host}:{world_T_port}")
-
-    # ── helpers ───────────────────────────────────────────────────────────────
-
-    def _should_rx(self) -> bool:
-        if self._rx_interval <= 0.0:
-            return True
-        now = time.time()
-        if (now - self._last_rx) < self._rx_interval:
+    def lock(self, T_cam_marker: np.ndarray, cam_T: np.ndarray) -> bool:
+        if T_cam_marker is None or cam_T is None:
             return False
-        self._last_rx = now
+        self._T_wt = np.linalg.inv(cam_T @ T_cam_marker)
+        print("[Anchor] Locked")
         return True
 
-    @staticmethod
-    def _drain(sock: zmq.Socket) -> str | None:
-        latest = None
-        while True:
-            try:
-                latest = sock.recv_string(flags=zmq.NOBLOCK)
-            except zmq.Again:
-                break
-        return latest
+    @property
+    def locked(self) -> bool:
+        return self._T_wt is not None
 
-    # ── public API ────────────────────────────────────────────────────────────
+    @property
+    def T_world_tracking(self) -> np.ndarray | None:
+        if self._T_wt is None:
+            return None
+        return self._T_offset @ self._T_wt
 
-    def poll(self) -> bool:
-        """Drain all sockets. Returns True if new hand data arrived."""
-        # world transform — always drain, no rate limit
-        raw_T = self._drain(self._world_T_sub)
-        if raw_T is not None:
-            try:
-                self.T_world_tracking = np.array(
-                    json.loads(raw_T)["T"], dtype=np.float64).reshape(4, 4)
-            except Exception as e:
-                if self.verbose:
-                    print(f"[HandReceiver] world_T parse error: {e}")
+    def world_T(self, T_tracking_local: np.ndarray) -> np.ndarray | None:
+        if self._T_wt is None:
+            return None
+        return (self._T_offset @ self._T_wt) @ T_tracking_local
 
-        if not self._should_rx():
+    def publish(self) -> bool:
+        if self._T_wt is None:
+            return False
+        T_tracking_world = np.linalg.inv(self._T_offset @ self._T_wt)
+        R_o3d = T_tracking_world[:3, :3]
+        t_o3d = T_tracking_world[:3, 3]
+        q_xyzw   = ScipyR.from_matrix(R_o3d).as_quat()
+        q_wxyz   = [q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]]
+        q_u_wxyz = open3d_to_unity_quaternion(q_wxyz)
+        t_unity  = open3d_to_unity_vector(t_o3d)
+        q_unity_xyzw = [float(q_u_wxyz[1]), float(q_u_wxyz[2]),
+                        float(q_u_wxyz[3]), float(q_u_wxyz[0])]
+        R_unity = ScipyR.from_quat(q_unity_xyzw).as_matrix()
+        T_unity = np.eye(4, dtype=np.float64)
+        T_unity[:3, :3] = R_unity
+        T_unity[:3, 3]  = t_unity
+        msg = {
+            "world_root_position":      [float(v) for v in t_unity],
+            "world_root_rotation_xyzw":  q_unity_xyzw,
+            "world_root_matrix":         T_unity.T.flatten().tolist(),
+        }
+        try:
+            self._pub.send_string(json.dumps(msg))
+            return True
+        except Exception as e:
+            print(f"[WorldRoot] Publish error: {e}")
             return False
 
-        got = False
+    def close(self):
+        try:
+            self._pub.close(0)
+        except Exception:
+            pass
 
-        raw1 = self._drain(self._hand1_sub)
-        if raw1 is not None:
-            try:
-                self.real_hand_data = json.loads(raw1)
-                got = True
-            except Exception as e:
-                if self.verbose:
-                    print(f"[HandReceiver] hand1 parse error: {e}")
 
-        if self._hand2_sub is not None:
-            raw2 = self._drain(self._hand2_sub)
-            if raw2 is not None:
-                try:
-                    self.synthetic_hand_data = json.loads(raw2)
-                    got = True
-                except Exception as e:
-                    if self.verbose:
-                        print(f"[HandReceiver] hand2 parse error: {e}")
+# =============================================================================
+# Haptic publisher  (same as main.py)
+# =============================================================================
 
-        return got
+class _HapticPublisher:
+    def __init__(self, ip: str, port: int = 5007):
+        ctx = zmq.Context()
+        self._pub = ctx.socket(zmq.PUB)
+        self._pub.connect(f"tcp://{ip}:{port}")
+        time.sleep(0.1)
 
-    def world_joints(self) -> tuple[np.ndarray | None, np.ndarray | None]:
-        """
-        Convert the latest real hand data to Open3D world frame.
-        Returns (left_pts, right_pts), each (N,3) ndarray or None.
-        T_world_tracking must be set (i.e. ArUco anchor locked in main.py).
-        """
-        T   = self.T_world_tracking
-        data = self.real_hand_data
-        if data is None or T is None:
-            return None, None
-
-        left_pts = right_pts = None
-        j = _extract_joints(data.get("left"))
-        if j is not None:
-            left_pts = _to_world(j, T)
-        j = _extract_joints(data.get("right"))
-        if j is not None:
-            right_pts = _to_world(j, T)
-
-        return left_pts, right_pts
+    def vibrate(self, controller="both", amplitude=1.0, frequency=0.5, duration_ms=200):
+        msg = {
+            "controller":  controller,
+            "amplitude":   float(np.clip(amplitude,  0., 1.)),
+            "frequency":   float(np.clip(frequency,  0., 1.)),
+            "duration_ms": int(max(0, duration_ms)),
+        }
+        try:
+            self._pub.send_string(json.dumps(msg))
+        except Exception as e:
+            print(f"[Haptic] Error: {e}")
 
     def close(self):
-        for s in (self._hand1_sub, self._hand2_sub, self._world_T_sub):
-            if s is not None:
-                try:
-                    s.close(0)
-                except Exception:
-                    pass
+        try:
+            self._pub.close(0)
+        except Exception:
+            pass
 
 
 # =============================================================================
-# Run loop
+# Synthetic object publisher  (same as main.py)
 # =============================================================================
 
-def run(unity_ip, hand1_port, hand2_port, world_T_host, world_T_port, loop_hz):
-    receiver = HandReceiver(
-        unity_ip      = unity_ip,
-        hand1_port    = hand1_port,
-        hand2_port    = hand2_port,
-        world_T_host  = world_T_host,
-        world_T_port  = world_T_port,
-        verbose       = True,
-    )
-    vis = _HandVis()
+class _SyntheticObject:
+    def __init__(self, obj_id, centroid_o3d, width, depth, height,
+                 yaw_deg=0.0, color=None):
+        self.obj_id   = int(obj_id)
+        self.centroid = np.array(centroid_o3d, dtype=np.float64)
+        self.width    = float(np.clip(width,  0.03, 0.50))
+        self.depth    = float(np.clip(depth,  0.03, 0.50))
+        self.height   = float(np.clip(height, 0.01, 0.50))
+        self.yaw_deg  = float(yaw_deg)
+        self.color    = list(color) if color is not None else [0.2, 0.65, 1.0]
 
-    dt = 1.0 / loop_hz if loop_hz > 0 else 0.0
-    print(f"\n[Running]  unity_ip={unity_ip}  hand1_port={hand1_port}")
-    print("  Waiting for ArUco lock from main.py before joints appear in world frame.")
-    print("  Ctrl-C to quit\n")
+    def to_unity_dict(self) -> dict:
+        p_unity    = open3d_to_unity_vector(self.centroid)
+        size_unity = open3d_to_unity_vector(
+            np.array([self.width, self.depth, self.height], dtype=np.float64))
+        q_xyzw = ScipyR.from_euler('z', self.yaw_deg, degrees=True).as_quat()
+        q_wxyz = [q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]]
+        q_u    = open3d_to_unity_quaternion(q_wxyz)
+        return {
+            "id":            self.obj_id,
+            "position":      [float(v) for v in p_unity],
+            "rotation_xyzw": [float(q_u[1]), float(q_u[2]), float(q_u[3]), float(q_u[0])],
+            "size":          [float(v) for v in size_unity],
+            "color":         [float(v) for v in self.color],
+        }
+
+
+class _SyntheticObjectPublisher:
+    def __init__(self, ip: str, port: int = 5006):
+        ctx = zmq.Context()
+        self._pub = ctx.socket(zmq.PUB)
+        self._pub.connect(f"tcp://{ip}:{port}")
+        time.sleep(0.2)
+        self._objects: list[_SyntheticObject] = []
+        print(f"[SynthObjects] Connected to tcp://{ip}:{port}")
+
+    def add(self, centroid_o3d, width, depth, height,
+            color=None, yaw_deg=0.0) -> "_SyntheticObject":
+        obj = _SyntheticObject(len(self._objects), centroid_o3d,
+                               width, depth, height, yaw_deg=yaw_deg, color=color)
+        self._objects.append(obj)
+        return obj
+
+    def publish(self):
+        payload = {"objects": [o.to_unity_dict() for o in self._objects]}
+        try:
+            self._pub.send_string(json.dumps(payload))
+        except Exception as e:
+            print(f"[SynthObjects] Publish error: {e}")
+
+    def close(self):
+        try:
+            self._pub.close(0)
+        except Exception:
+            pass
+
+
+# =============================================================================
+# Offset tuner  (same as main.py)
+# =============================================================================
+
+class _OffsetTuner:
+    WIN       = "Offset Tuner (ArUco frame)"
+    SAVE_FILE = _FILE_DIR / "offset_config_passthrough.json"
+    _BTN      = (10, 10, 110, 44)
+
+    def __init__(self):
+        cv.namedWindow(self.WIN, cv.WINDOW_NORMAL)
+        cv.resizeWindow(self.WIN, 420, 260)
+        cv.createTrackbar("X  right  (mm×0.1)", self.WIN, 100, 200, lambda _: None)
+        cv.createTrackbar("Y  away   (mm×0.1)", self.WIN, 100, 200, lambda _: None)
+        cv.createTrackbar("Z  up     (mm×0.1)", self.WIN, 100, 200, lambda _: None)
+        cv.createTrackbar("Yaw CCW   (0.5°)",   self.WIN,  90, 180, lambda _: None)
+        self._flash_until = 0.0
+        self._load()
+        cv.setMouseCallback(self.WIN, self._on_mouse)
+
+    def _raw(self):
+        return {
+            "x":   cv.getTrackbarPos("X  right  (mm×0.1)", self.WIN),
+            "y":   cv.getTrackbarPos("Y  away   (mm×0.1)", self.WIN),
+            "z":   cv.getTrackbarPos("Z  up     (mm×0.1)", self.WIN),
+            "yaw": cv.getTrackbarPos("Yaw CCW   (0.5°)",   self.WIN),
+        }
+
+    def get(self):
+        r = self._raw()
+        return ((r["x"] - 100) * 0.001,
+                (r["y"] - 100) * 0.001,
+                (r["z"] - 100) * 0.001), (r["yaw"] - 90) * 0.5
+
+    def _save(self):
+        with open(self.SAVE_FILE, "w") as f:
+            json.dump(self._raw(), f, indent=2)
+        self._flash_until = time.time() + 1.5
+        print(f"[OffsetTuner] Saved to {self.SAVE_FILE}")
+
+    def _load(self):
+        if not self.SAVE_FILE.exists():
+            return
+        try:
+            with open(self.SAVE_FILE) as f:
+                data = json.load(f)
+            cv.setTrackbarPos("X  right  (mm×0.1)", self.WIN, int(data.get("x",   100)))
+            cv.setTrackbarPos("Y  away   (mm×0.1)", self.WIN, int(data.get("y",   100)))
+            cv.setTrackbarPos("Z  up     (mm×0.1)", self.WIN, int(data.get("z",   100)))
+            cv.setTrackbarPos("Yaw CCW   (0.5°)",   self.WIN, int(data.get("yaw",  90)))
+            print(f"[OffsetTuner] Loaded from {self.SAVE_FILE}")
+        except Exception as e:
+            print(f"[OffsetTuner] Load error: {e}")
+
+    def _on_mouse(self, event, x, y, *_):
+        if event == cv.EVENT_LBUTTONDOWN:
+            x0, y0, x1, y1 = self._BTN
+            if x0 <= x <= x1 and y0 <= y <= y1:
+                self._save()
+
+    def draw(self):
+        img = np.zeros((60, 420, 3), dtype=np.uint8)
+        x0, y0, x1, y1 = self._BTN
+        flashing   = time.time() < self._flash_until
+        btn_color  = (0, 200, 80)  if flashing else (50, 130, 50)
+        btn_border = (0, 255, 120) if flashing else (80, 200, 80)
+        label      = "  Saved!"   if flashing else "  SAVE"
+        cv.rectangle(img, (x0, y0), (x1, y1), btn_color, -1)
+        cv.rectangle(img, (x0, y0), (x1, y1), btn_border, 2)
+        cv.putText(img, label, (x0 + 4, y0 + 24),
+                   cv.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2, cv.LINE_AA)
+        (px, py, pz), yaw = self.get()
+        info = f"X={px*100:+.1f}cm  Y={py*100:+.1f}cm  Z={pz*100:+.1f}cm  Yaw={yaw:+.1f}°"
+        cv.putText(img, info, (10, 54),
+                   cv.FONT_HERSHEY_SIMPLEX, 0.42, (180, 180, 180), 1, cv.LINE_AA)
+        cv.imshow(self.WIN, img)
+
+    def close(self):
+        try:
+            cv.destroyWindow(self.WIN)
+        except Exception:
+            pass
+
+
+# =============================================================================
+# Main loop
+# =============================================================================
+
+def run(quest_ip: str, marker_id: int, marker_size_m: float, hand_port: int):
+
+    cam   = _CamFeedReceiver(quest_ip)
+    xr    = _XRStateReceiver(quest_ip)
+    aruco = _ArucoPoseEstimator(marker_id, marker_size_m)
+    hands = _HandDataReceiver(quest_ip, hand_port)
+
+    anchor = _WorldAnchor(quest_ip, pub_port=5005)
+    haptic = _HapticPublisher(quest_ip, port=5007)
+    tuner  = _OffsetTuner()
+
+    synth = _SyntheticObjectPublisher(quest_ip, port=5006)
+    synth.add([0.10,  0.00, 0.05], width=0.06, depth=0.06, height=0.10,
+              color=[1.0, 0.2, 0.2])
+    synth.add([0.00,  0.10, 0.05], width=0.06, depth=0.06, height=0.10,
+              color=[0.2, 1.0, 0.2])
+    synth.add([-0.10, 0.00, 0.05], width=0.06, depth=0.06, height=0.10,
+              color=[0.2, 0.4, 1.0])
+
+    haptic_lock_sent = False
+    _last_synth_pub  = 0.0
+    _SYNTH_INTERVAL  = 1.0 / 30.0
+
+    vis = _SceneVis(f"Hand Tracking — World Frame  (marker #{marker_id})")
+
+    win = f"Quest Left Passthrough  [ENTER=re-lock  ESC=quit]  marker #{marker_id}"
+    cv.namedWindow(win, cv.WINDOW_NORMAL)
+    cv.resizeWindow(win, 960, 540)
+
+    print(f"\n[Running]  quest_ip={quest_ip}  marker={marker_id}  hand_port={hand_port}")
+    print("  ENTER = re-lock anchor    ESC = quit\n")
 
     try:
         while True:
-            receiver.poll()
-            left_pts, right_pts = receiver.world_joints()
-            vis.update(left_pts, right_pts)
-            if dt > 0:
-                time.sleep(dt)
+            # ── Poll streams ──────────────────────────────────────────────────
+            cam.poll(timeout_ms=5)
+            xr.poll(timeout_ms=0)
+            hands.poll()
+
+            # ── ArUco detection ───────────────────────────────────────────────
+            T_cam_marker_fresh = None
+            det_vis = None
+
+            if cam.frame is not None and cam.fx is not None:
+                fx, fy, cx, cy = _adapt_cx_cy(
+                    cam.fx, cam.fy, cam.cx, cam.cy,
+                    cam.sensor_width, cam.sensor_height,
+                    cam.width, cam.height)
+                det = aruco.detect(cam.frame, fx, fy, cx, cy, draw=True)
+                det_vis = det["vis"]
+                if det["found"]:
+                    T_cam_marker_fresh = det["T_cam_marker"]
+
+            # ── Anchor + publishers ───────────────────────────────────────────
+            tuner.draw()
+            pos_off, yaw_off = tuner.get()
+            anchor.set_offset(pos_off, yaw_off)
+
+            if anchor.locked:
+                anchor.publish()
+                _now = time.time()
+                if _now - _last_synth_pub >= _SYNTH_INTERVAL:
+                    synth.publish()
+                    _last_synth_pub = _now
+                if not haptic_lock_sent:
+                    haptic.vibrate("both", amplitude=0.8,
+                                   frequency=0.3, duration_ms=300)
+                    haptic_lock_sent = True
+
+            # ── World-frame poses ─────────────────────────────────────────────
+            T_wt            = anchor.T_world_tracking
+            T_world_camleft = anchor.world_T(cam.camera_T) \
+                              if cam.camera_T is not None else None
+            T_world_center  = anchor.world_T(xr.center_T) \
+                              if xr.center_T is not None else None
+
+            left_pts, right_pts = hands.world_joints(T_wt)
+
+            # ── Update Open3D ─────────────────────────────────────────────────
+            if cam.fx is not None:
+                fx, fy, cx, cy = _adapt_cx_cy(
+                    cam.fx, cam.fy, cam.cx, cam.cy,
+                    cam.sensor_width, cam.sensor_height,
+                    cam.width, cam.height)
+                vis.update_cam_frustum(T_world_camleft,
+                                       cam.width, cam.height, fx, fy, cx, cy)
+            vis.update_head(T_world_center)
+            vis.update_hands(left_pts, right_pts)
+            vis.tick()
+
+            # ── OpenCV display ────────────────────────────────────────────────
+            disp = cv.resize(
+                det_vis if det_vis is not None else
+                (cam.frame.copy() if cam.frame is not None
+                 else np.zeros((480, 640, 3), dtype=np.uint8)),
+                (960, 540))
+
+            locked = anchor.locked
+            det_ok = T_cam_marker_fresh is not None
+
+            cv.putText(disp,
+                       f"Marker #{marker_id}: {'DETECTED' if det_ok else 'searching...'}",
+                       (12, 34), cv.FONT_HERSHEY_SIMPLEX, 0.9,
+                       (0, 255, 80) if det_ok else (0, 80, 255), 2)
+            cv.putText(disp,
+                       f"Anchor: {'LOCKED — WorldRoot :5005 + synth :5006' if locked else 'waiting for first detection'}",
+                       (12, 68), cv.FONT_HERSHEY_SIMPLEX, 0.65,
+                       (0, 255, 150) if locked else (100, 100, 100), 2)
+            hand_ok = left_pts is not None or right_pts is not None
+            cv.putText(disp,
+                       f"Hands : {'L+R' if (left_pts is not None and right_pts is not None) else ('L' if left_pts is not None else ('R' if right_pts is not None else f'waiting on port {hand_port}'))}",
+                       (12, 102), cv.FONT_HERSHEY_SIMPLEX, 0.65,
+                       (0, 255, 200) if hand_ok else (100, 100, 100), 2)
+            cv.putText(disp,
+                       "ENTER = re-lock   ESC = quit",
+                       (12, disp.shape[0] - 14),
+                       cv.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
+
+            cv.imshow(win, disp)
+
+            key = cv.waitKey(1) & 0xFF
+            if key == 27:
+                break
+            elif key == 13:
+                if T_cam_marker_fresh is not None and cam.camera_T is not None:
+                    anchor.lock(T_cam_marker_fresh, cam.camera_T)
+                    haptic_lock_sent = False
+                else:
+                    print("[ENTER] No detection this frame — point camera at marker")
+
+            time.sleep(0.001)
 
     except KeyboardInterrupt:
         pass
+
     finally:
         vis.close()
-        receiver.close()
+        cv.destroyAllWindows()
+        tuner.close()
+        anchor.close()
+        haptic.close()
+        synth.close()
+        hands.close()
+        xr.close()
+        cam.close()
         print("[Done]")
 
 
@@ -330,27 +821,18 @@ def run(unity_ip, hand1_port, hand2_port, world_T_host, world_T_port, loop_hz):
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Unity hand tracking → Open3D world-frame visualizer",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    ap.add_argument("--unity-ip",     default=cfg.UNITY_IP)
-    ap.add_argument("--hand1-port",   type=int, default=cfg.HAND1_PORT_FROM_UNITY)
-    ap.add_argument("--hand2-port",   type=int, default=None,
-                    help="Enable synthetic hand stream (default: disabled)")
-    ap.add_argument("--world-T-host", default=cfg.LOCALHOST,
-                    help="Host running main.py (world transform publisher)")
-    ap.add_argument("--world-T-port", type=int, default=cfg.WORLD_TRANSFORM_PORT)
-    ap.add_argument("--hz",           type=float, default=30.0)
+        description="Quest passthrough ArUco + hand tracking visualizer",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    ap.add_argument("--quest-ip",    default=cfg.UNITY_IP)
+    ap.add_argument("--marker-id",   type=int,   default=113)
+    ap.add_argument("--marker-size", type=float, default=0.100,
+                    help="Marker side length in metres")
+    ap.add_argument("--hand-port",   type=int,   default=cfg.HAND1_PORT_FROM_UNITY)
     args = ap.parse_args()
-
-    run(
-        unity_ip     = args.unity_ip,
-        hand1_port   = args.hand1_port,
-        hand2_port   = args.hand2_port,
-        world_T_host = args.world_T_host,
-        world_T_port = args.world_T_port,
-        loop_hz      = args.hz,
-    )
+    run(quest_ip      = args.quest_ip,
+        marker_id     = args.marker_id,
+        marker_size_m = args.marker_size,
+        hand_port     = args.hand_port)
 
 
 if __name__ == "__main__":

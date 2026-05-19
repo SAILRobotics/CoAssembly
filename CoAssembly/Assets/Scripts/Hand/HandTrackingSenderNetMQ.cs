@@ -5,7 +5,7 @@ using NetMQ.Sockets;
 public class HandTrackingSenderNetMQ : MonoBehaviour
 {
     [Header("NetMQ")]
-    [SerializeField] private int port = 4000;
+    [SerializeField] private int port = 5570;
     [SerializeField] private string bindHost = "*"; // "*" = all interfaces, "localhost" = local only
 
     [Header("Debug")]
@@ -28,7 +28,7 @@ public class HandTrackingSenderNetMQ : MonoBehaviour
         string endpoint = $"tcp://{bindHost}:{port}";
         pubSocket.Bind(endpoint);
 
-        ZEDNetMQManager.RegisterSender();
+        NetMQManager.RegisterSender();
         if (log) Debug.Log($"[HandTrackingSenderNetMQ] 📡 Sender bound on {endpoint}", this);
     }
 
@@ -57,7 +57,7 @@ public class HandTrackingSenderNetMQ : MonoBehaviour
             Debug.LogWarning("[HandTrackingSenderNetMQ] ⚠️ Dispose error: " + e.Message, this);
         }
 
-        ZEDNetMQManager.UnregisterSender();
+        NetMQManager.UnregisterSender();
         if (log) Debug.Log("[HandTrackingSenderNetMQ] ✅ Sender shutdown complete", this);
     }
 }

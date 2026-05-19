@@ -13,7 +13,7 @@ PlayerSettings:
   useOnDemandResources: 0
   accelerometerFrequency: 60
   companyName: DefaultCompany
-  productName: ProxyGrip
+  productName: CoAssembly
   defaultCursor: {fileID: 0}
   cursorHotspot: {x: 0, y: 0}
   m_SplashScreenBackgroundColor: {r: 0.13725491, g: 0.12156863, b: 0.1254902, a: 1}
@@ -148,6 +148,8 @@ PlayerSettings:
   preloadedAssets:
   - {fileID: 11400000, guid: 82375e87a81f12b4f9b405b7bf1cfc69, type: 2}
   - {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
+  - {fileID: 2723451278884393677, guid: bcb826b13ec9a494aa50109f6299fcf9, type: 2}
+  - {fileID: -6103363220568728132, guid: da0fa5b212edd004d99932904a0cf04b, type: 2}
   metroInputSource: 0
   wsaTransparentSwapchain: 0
   m_HolographicPauseOnTrackingLoss: 1
@@ -169,7 +171,7 @@ PlayerSettings:
   androidMaxAspectRatio: 2.4
   androidMinAspectRatio: 1
   applicationIdentifier:
-    Android: com.UnityTechnologies.com.unity.template.urpblank
+    Android: com.DefaultCompany.CoAssembly
     Standalone: com.Unity-Technologies.com.unity.template.urp-blank
     iPhone: com.Unity-Technologies.com.unity.template.urp-blank
   buildNumber:
@@ -858,7 +860,7 @@ PlayerSettings:
   editorAssembliesCompatibilityLevel: 1
   m_RenderingPath: 1
   m_MobileRenderingPath: 1
-  metroPackageName: ProxyGrip
+  metroPackageName: CoAssembly
   metroPackageVersion: 
   metroCertificatePath: 
   metroCertificatePassword: 

@@ -6,6 +6,9 @@ EditorBuildSettings:
   serializedVersion: 2
   m_Scenes:
   - enabled: 1
+    path: Assets/Scenes/Hand_MS.unity
+    guid: 840e86805fe9e8f478af8d5dc3bd6f70
+  - enabled: 1
     path: Assets/Scenes/Controller_MS.unity
     guid: 14bd5cfa5e589e249a499f519e6f06a8
   - enabled: 1

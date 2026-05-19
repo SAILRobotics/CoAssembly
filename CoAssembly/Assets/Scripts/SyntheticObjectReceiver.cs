@@ -47,6 +47,11 @@ public class SyntheticObjectReceiver : MonoBehaviour
         new Color(1.00f, 0.30f, 0.70f), // 9 pink
     };
 
+    [Header("Stability")]
+    [Tooltip("Deactivate an object only after it has been absent for this many seconds. " +
+             "Prevents single-frame message gaps from causing visible flicker.")]
+    [SerializeField] private float deactivateTimeout = 0.5f;
+
     // ── Internal ─────────────────────────────────────────────────────
     private Thread receiveThread;
     private volatile bool isRunning   = false;
@@ -54,7 +59,8 @@ public class SyntheticObjectReceiver : MonoBehaviour
     private SubscriberSocket subscriber;
 
     private readonly ConcurrentQueue<List<ObjectData>> dataQueue = new();
-    private bool[] _visualReady;
+    private bool[]  _visualReady;
+    private float[] _lastSeenTime;
 
     [Serializable] private class ObjectData
     {
@@ -68,7 +74,8 @@ public class SyntheticObjectReceiver : MonoBehaviour
     // ── Lifecycle ─────────────────────────────────────────────────────
     void Start()
     {
-        _visualReady = new bool[objects.Length];
+        _visualReady  = new bool[objects.Length];
+        _lastSeenTime = new float[objects.Length];
         NetMQManager.RegisterReceiver();
         isRunning = true;
         receiveThread = new Thread(ReceiveLoop) { IsBackground = true };
@@ -110,21 +117,28 @@ public class SyntheticObjectReceiver : MonoBehaviour
         List<ObjectData> latest = null;
         while (dataQueue.TryDequeue(out var b)) latest = b;
         if (latest != null) ApplyObjects(latest);
+
+        // Deactivate objects that haven't been seen for deactivateTimeout seconds
+        for (int i = 0; i < objects.Length; i++)
+        {
+            if (objects[i] != null && objects[i].gameObject.activeSelf &&
+                Time.time - _lastSeenTime[i] > deactivateTimeout)
+                objects[i].gameObject.SetActive(false);
+        }
+
         if (NetMQManager.IsShutdownRequested) Shutdown();
     }
 
     // ── Apply ─────────────────────────────────────────────────────────
     private void ApplyObjects(List<ObjectData> batch)
     {
-        var received = new HashSet<int>();
-
         foreach (var obj in batch)
         {
             if (obj.id < 0 || obj.id >= objects.Length) continue;
             var tf = objects[obj.id];
             if (tf == null) continue;
 
-            received.Add(obj.id);
+            _lastSeenTime[obj.id] = Time.time;
 
             if (!tf.gameObject.activeSelf)
                 tf.gameObject.SetActive(true);
@@ -149,11 +163,6 @@ public class SyntheticObjectReceiver : MonoBehaviour
             if (applyScale && obj.size != null && obj.size.Length == 3)
                 tf.localScale = new Vector3(obj.size[0], obj.size[1], obj.size[2]);
         }
-
-        // Deactivate objects not present in this batch
-        for (int i = 0; i < objects.Length; i++)
-            if (objects[i] != null && !received.Contains(i))
-                objects[i].gameObject.SetActive(false);
     }
 
     // ── Visual (called once per object on first activation) ──────────
