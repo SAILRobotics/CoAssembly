@@ -296,9 +296,10 @@ class _HandDataReceiver:
 # =============================================================================
 
 class _ArucoPoseEstimator:
-    def __init__(self, marker_id: int, marker_size_m: float,
+    def __init__(self, world_marker_id: int, pegboard_marker_id: int, marker_size_m: float,
                  dictionary=cv.aruco.DICT_6X6_1000):
-        self.marker_id   = int(marker_id)
+        self.world_marker_id = int(world_marker_id)
+        self.pegboard_marker_id = int(pegboard_marker_id)
         self.marker_size = float(marker_size_m)
         self._dict       = cv.aruco.getPredefinedDictionary(dictionary)
         self._detector   = cv.aruco.ArucoDetector(
@@ -315,13 +316,19 @@ class _ArucoPoseEstimator:
         gray = cv.cvtColor(bgr, cv.COLOR_BGR2GRAY)
         corners, ids, _ = self._detector.detectMarkers(gray)
         vis  = bgr.copy()
-        null = {"found": False, "T_cam_marker": None, "vis": vis}
+        result = {"vis": vis, "poses": {}} # presence of a key is the indicator
         if ids is None:
-            return null
+            return result
         if draw:
             cv.aruco.drawDetectedMarkers(vis, corners, ids)
+        wanted = set(self.marker_ids) #looks for the specific IDs
         for c, mid in zip(corners, ids.flatten()):
-            if int(mid) != self.marker_id:
+            mid = int(mid)
+            if mid == self.world_marker_id:
+                key = "T_cam_world"
+            elif mid == self.pegboard_marker_id:
+                key = "T_cam_pegboard"
+            else:
                 continue
             ok, rvec, tvec = cv.solvePnP(
                 self._obj_pts, c.reshape(4, 2).astype(np.float64), K, dist,
@@ -334,8 +341,8 @@ class _ArucoPoseEstimator:
             T_cam_marker[:3, 3]  = tvec.reshape(3)
             if draw:
                 cv.drawFrameAxes(vis, K, dist, rvec, tvec, self.marker_size * 0.5, 2)
-            return {"found": True, "T_cam_marker": T_cam_marker, "vis": vis}
-        return null
+            result["poses"][mid] = {"T_cam_marker": T_cam_marker}
+        return result
 
 
 # =============================================================================
@@ -454,6 +461,7 @@ class _WorldAnchor:
     def __init__(self, pub_ip: str, pub_port: int = 5005):
         self._T_wt: np.ndarray | None = None
         self._T_offset = np.eye(4, dtype=np.float64)
+        self._T_world_pegboard: np.ndarray | None = None
         ctx = zmq.Context()
         self._pub = ctx.socket(zmq.PUB)
         self._pub.connect(f"tcp://{pub_ip}:{pub_port}")
@@ -465,10 +473,13 @@ class _WorldAnchor:
         T[:3, :3] = ScipyR.from_euler('z', yaw_deg, degrees=True).as_matrix()
         self._T_offset = T
 
-    def lock(self, T_cam_marker: np.ndarray, cam_T: np.ndarray) -> bool:
-        if T_cam_marker is None or cam_T is None:
+    def lock(self, T_cam_world: np.ndarray, T_cam_pegboard: np.ndarray, cam_T: np.ndarray) -> bool:
+        if T_cam_world is None or T_cam_pegboard is None or cam_T is None:
             return False
-        self._T_wt = np.linalg.inv(cam_T @ T_cam_marker)
+        #World = world marker
+        self._T_wt = np.linalg.inv(cam_T @ T_cam_world)
+        #Pegboard = pegboard marker
+        self._T_world_pegboard = np.linalg.inv(T_cam_world) @ T_cam_pegboard
         print("[Anchor] Locked")
         return True
 
@@ -482,6 +493,12 @@ class _WorldAnchor:
             return None
         return self._T_offset @ self._T_wt
 
+    @property
+    def T_pegboard_in_world(self) -> np.ndarray | None:
+        if self._T_world_pegboard is None:
+            return None
+        return self._T_offset @ self._T_world_pegboard
+    
     def world_T(self, T_tracking_local: np.ndarray) -> np.ndarray | None:
         if self._T_wt is None:
             return None
@@ -701,11 +718,11 @@ class _OffsetTuner:
 # Main loop
 # =============================================================================
 
-def run(quest_ip: str, marker_id: int, marker_size_m: float, hand_port: int):
+def run(quest_ip: str, world_marker_id: int, pegboard_marker_id: int, marker_size_m: float, hand_port: int):
 
     cam   = _CamFeedReceiver(quest_ip)
     xr    = _XRStateReceiver(quest_ip)
-    aruco = _ArucoPoseEstimator(marker_id, marker_size_m)
+    aruco = _ArucoPoseEstimator(world_marker_id, pegboard_marker_id, marker_size_m)
     hands = _HandDataReceiver(quest_ip, hand_port)
 
     anchor = _WorldAnchor(quest_ip, pub_port=5005)
@@ -724,13 +741,13 @@ def run(quest_ip: str, marker_id: int, marker_size_m: float, hand_port: int):
     _last_synth_pub  = 0.0
     _SYNTH_INTERVAL  = 1.0 / 30.0
 
-    vis = _SceneVis(f"Hand Tracking — World Frame  (marker #{marker_id})")
+    vis = _SceneVis(f"Hand Tracking — World Frame  (marker #{world_marker_id})")
 
-    win = f"Quest Left Passthrough  [ENTER=re-lock  ESC=quit]  marker #{marker_id}"
+    win = f"Quest Left Passthrough  [ENTER=re-lock  ESC=quit]  marker #{world_marker_id}"
     cv.namedWindow(win, cv.WINDOW_NORMAL)
     cv.resizeWindow(win, 960, 540)
 
-    print(f"\n[Running]  quest_ip={quest_ip}  marker={marker_id}  hand_port={hand_port}")
+    print(f"\n[Running]  quest_ip={quest_ip}  marker={world_marker_id}  hand_port={hand_port}")
     print("  ENTER = re-lock anchor    ESC = quit\n")
 
     try:
@@ -741,7 +758,8 @@ def run(quest_ip: str, marker_id: int, marker_size_m: float, hand_port: int):
             hands.poll()
 
             # ── ArUco detection ───────────────────────────────────────────────
-            T_cam_marker_fresh = None
+            T_cam_world_fresh = None
+            T_cam_pegboard_fresh = None
             det_vis = None
 
             if cam.frame is not None and cam.fx is not None:
@@ -751,8 +769,10 @@ def run(quest_ip: str, marker_id: int, marker_size_m: float, hand_port: int):
                     cam.width, cam.height)
                 det = aruco.detect(cam.frame, fx, fy, cx, cy, draw=True)
                 det_vis = det["vis"]
-                if det["found"]:
-                    T_cam_marker_fresh = det["T_cam_marker"]
+                T_cam_world_fresh = det["T_cam_world"]
+                T_cam_pegboard_fresh = det["T_cam_pegboard"]
+
+            both_seen = (T_cam_world_fresh is not None and T_cam_pegboard_fresh is not None and cam.camera_T is not None)
 
             # ── Anchor + publishers ───────────────────────────────────────────
             tuner.draw()
@@ -799,12 +819,15 @@ def run(quest_ip: str, marker_id: int, marker_size_m: float, hand_port: int):
                 (960, 540))
 
             locked = anchor.locked
-            det_ok = T_cam_marker_fresh is not None
+            world_ok = T_cam_world_fresh is not None
+            pegboard_ok = T_cam_pegboard_fresh is not None
 
             cv.putText(disp,
-                       f"Marker #{marker_id}: {'DETECTED' if det_ok else 'searching...'}",
-                       (12, 34), cv.FONT_HERSHEY_SIMPLEX, 0.9,
-                       (0, 255, 80) if det_ok else (0, 80, 255), 2)
+                       f"Marker #{world_marker_id}: {'DETECTED' if world_ok else 'searching...'}"
+                       f"Marker #{pegboard_marker_id}: {'DETECTED' if pegboard_ok else 'searching...'}"
+                       f"{'READY TO LOCK!' if both_seen else ''}",
+                       (12, 34), cv.FONT_HERSHEY_SIMPLEX, 0.8,
+                       (0, 255, 80) if both_seen else (0, 80, 255), 2)
             cv.putText(disp,
                        f"Anchor: {'LOCKED — WorldRoot :5005 + synth :5006' if locked else 'waiting for first detection'}",
                        (12, 68), cv.FONT_HERSHEY_SIMPLEX, 0.65,
@@ -838,11 +861,16 @@ def run(quest_ip: str, marker_id: int, marker_size_m: float, hand_port: int):
             if key == 27:
                 break
             elif key == 13:
-                if T_cam_marker_fresh is not None and cam.camera_T is not None:
-                    anchor.lock(T_cam_marker_fresh, cam.camera_T)
+                if both_seen and cam.camera_T is not None:
+                    anchor.lock(T_cam_world_fresh, T_cam_pegboard_fresh, cam.camera_T)
                     haptic_lock_sent = False
                 else:
-                    print("[ENTER] No detection this frame — point camera at marker")
+                    missing = []
+                    if T_cam_world_fresh is None:
+                        missing.append(f"marker #{world_marker_id}")
+                    if T_cam_pegboard_fresh is None:
+                        missing.append(f"pegboard marker #{pegboard_marker_id}")
+                    print(f"[ENTER] Need both markers - missing: {', '.join(missing)}")
 
             time.sleep(0.001)
 
@@ -871,13 +899,17 @@ def main():
         description="Quest passthrough ArUco + hand tracking visualizer",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     ap.add_argument("--quest-ip",    default=cfg.UNITY_IP)
-    ap.add_argument("--marker-id",   type=int,   default=113)
+    ap.add_argument("--world-marker",   type=int,   default=100,
+                    help="ArUco marker ID for world anchor (defines world frame origin)")
+    ap.add_argument("--pegboard-marker", type=int,   default=101,
+                    help="ArUco marker ID for pegboard (used to verify anchor stability)")
     ap.add_argument("--marker-size", type=float, default=0.100,
                     help="Marker side length in metres")
     ap.add_argument("--hand-port",   type=int,   default=cfg.HAND1_PORT_FROM_UNITY)
     args = ap.parse_args()
     run(quest_ip      = args.quest_ip,
-        marker_id     = args.marker_id,
+        world_marker_id     = args.world_marker,
+        pegboard_marker_id = args.pegboard_marker,
         marker_size_m = args.marker_size,
         hand_port     = args.hand_port)
 
