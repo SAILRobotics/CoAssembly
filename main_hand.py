@@ -74,6 +74,12 @@ def _adapt_cx_cy(fx, fy, cx, cy, sensor_w, sensor_h, img_w, img_h):
     return fx, fy, cx - crop_x, cy - crop_y
 
 
+def _transform_point(T: np.ndarray, p_local) -> np.ndarray:
+    """4x4 transform applied to a 3D point."""
+    p = np.array([p_local[0], p_local[1], p_local[2], 1.0], dtype=np.float64)
+    return (T @ p)[:3]
+
+
 # =============================================================================
 # Hand joint helpers
 # =============================================================================
@@ -292,15 +298,15 @@ class _HandDataReceiver:
 
 
 # =============================================================================
-# ArUco pose estimator  (same as main.py)
+# ArUco pose estimator
 # =============================================================================
 
 class _ArucoPoseEstimator:
     def __init__(self, world_marker_id: int, pegboard_marker_id: int, marker_size_m: float,
                  dictionary=cv.aruco.DICT_6X6_1000):
-        self.world_marker_id = int(world_marker_id)
+        self.world_marker_id    = int(world_marker_id)
         self.pegboard_marker_id = int(pegboard_marker_id)
-        self.marker_size = float(marker_size_m)
+        self.marker_size        = float(marker_size_m)
         self._dict       = cv.aruco.getPredefinedDictionary(dictionary)
         self._detector   = cv.aruco.ArucoDetector(
             self._dict, cv.aruco.DetectorParameters())
@@ -315,13 +321,12 @@ class _ArucoPoseEstimator:
         dist = np.zeros((5, 1)) if dist is None else np.array(dist).reshape(-1, 1)
         gray = cv.cvtColor(bgr, cv.COLOR_BGR2GRAY)
         corners, ids, _ = self._detector.detectMarkers(gray)
-        vis  = bgr.copy()
-        result = {"vis": vis, "poses": {}} # presence of a key is the indicator
+        vis = bgr.copy()
+        result = {"vis": vis, "T_cam_world": None, "T_cam_pegboard": None}
         if ids is None:
             return result
         if draw:
             cv.aruco.drawDetectedMarkers(vis, corners, ids)
-        wanted = set(self.marker_ids) #looks for the specific IDs
         for c, mid in zip(corners, ids.flatten()):
             mid = int(mid)
             if mid == self.world_marker_id:
@@ -339,9 +344,9 @@ class _ArucoPoseEstimator:
             T_cam_marker = np.eye(4, dtype=np.float64)
             T_cam_marker[:3, :3] = Rm
             T_cam_marker[:3, 3]  = tvec.reshape(3)
+            result[key] = T_cam_marker
             if draw:
                 cv.drawFrameAxes(vis, K, dist, rvec, tvec, self.marker_size * 0.5, 2)
-            result["poses"][mid] = {"T_cam_marker": T_cam_marker}
         return result
 
 
@@ -454,17 +459,21 @@ class _SceneVis:
 
 
 # =============================================================================
-# World anchor  (same as main.py)
+# World anchor
 # =============================================================================
 
 class _WorldAnchor:
-    def __init__(self, pub_ip: str, pub_port: int = 5005):
+    def __init__(self, pub_ip: str, pub_port: int = 5005, pegboard_pub_port: int = 5008):
         self._T_wt: np.ndarray | None = None
         self._T_offset = np.eye(4, dtype=np.float64)
         self._T_world_pegboard: np.ndarray | None = None
         ctx = zmq.Context()
         self._pub = ctx.socket(zmq.PUB)
         self._pub.connect(f"tcp://{pub_ip}:{pub_port}")
+
+        self._pub_pegboard = ctx.socket(zmq.PUB)
+        self._pub_pegboard.connect(f"tcp://{pub_ip}:{pegboard_pub_port}")
+
         time.sleep(0.2)
 
     def set_offset(self, pos_offset, yaw_deg: float):
@@ -476,11 +485,13 @@ class _WorldAnchor:
     def lock(self, T_cam_world: np.ndarray, T_cam_pegboard: np.ndarray, cam_T: np.ndarray) -> bool:
         if T_cam_world is None or T_cam_pegboard is None or cam_T is None:
             return False
-        #World = world marker
+        # World = world marker
         self._T_wt = np.linalg.inv(cam_T @ T_cam_world)
-        #Pegboard = pegboard marker
+        # Pegboard = pegboard marker expressed in world frame
         self._T_world_pegboard = np.linalg.inv(T_cam_world) @ T_cam_pegboard
-        print("[Anchor] Locked")
+        t = self._T_world_pegboard[:3, 3]
+        print(f"[Anchor] Locked. Pegboard in world frame: "
+              f"t=({t[0]:+.3f}, {t[1]:+.3f}, {t[2]:+.3f}) m")
         return True
 
     @property
@@ -495,10 +506,11 @@ class _WorldAnchor:
 
     @property
     def T_pegboard_in_world(self) -> np.ndarray | None:
+        """Pegboard pose in the (offset-adjusted) world frame."""
         if self._T_world_pegboard is None:
             return None
         return self._T_offset @ self._T_world_pegboard
-    
+
     def world_T(self, T_tracking_local: np.ndarray) -> np.ndarray | None:
         if self._T_wt is None:
             return None
@@ -532,9 +544,46 @@ class _WorldAnchor:
             print(f"[WorldRoot] Publish error: {e}")
             return False
 
+    def publish_pegboard(self) -> bool:
+        if self._T_world_pegboard is None:
+            return False
+
+        # Pegboard pose expressed in (offset-adjusted) world frame, Open3D coords
+        T_o3d = self._T_offset @ self._T_world_pegboard
+        R_o3d = T_o3d[:3, :3]
+        t_o3d = T_o3d[:3, 3]
+
+        # Convert to Unity coords (same dance as publish())
+        q_xyzw   = ScipyR.from_matrix(R_o3d).as_quat()
+        q_wxyz   = [q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]]
+        q_u_wxyz = open3d_to_unity_quaternion(q_wxyz)
+        t_unity  = open3d_to_unity_vector(t_o3d)
+        q_unity_xyzw = [float(q_u_wxyz[1]), float(q_u_wxyz[2]),
+                        float(q_u_wxyz[3]), float(q_u_wxyz[0])]
+        R_unity = ScipyR.from_quat(q_unity_xyzw).as_matrix()
+        T_unity = np.eye(4, dtype=np.float64)
+        T_unity[:3, :3] = R_unity
+        T_unity[:3, 3]  = t_unity
+
+        msg = {
+            "pegboard_root_position":      [float(v) for v in t_unity],
+            "pegboard_root_rotation_xyzw":  q_unity_xyzw,
+            "pegboard_root_matrix":         T_unity.T.flatten().tolist(),
+        }
+        try:
+            self._pub_pegboard.send_string(json.dumps(msg))
+            return True
+        except Exception as e:
+            print(f"[PegboardRoot] Publish error: {e}")
+            return False
+
     def close(self):
         try:
             self._pub.close(0)
+        except Exception:
+            pass
+        try:
+            self._pub_pegboard.close(0)
         except Exception:
             pass
 
@@ -570,25 +619,33 @@ class _HapticPublisher:
 
 
 # =============================================================================
-# Synthetic object publisher  (same as main.py)
+# Synthetic object publisher
 # =============================================================================
 
 class _SyntheticObject:
     def __init__(self, obj_id, centroid_o3d, width, depth, height,
-                 yaw_deg=0.0, color=None):
+                 yaw_deg=0.0, R_o3d=None, color=None):
         self.obj_id   = int(obj_id)
         self.centroid = np.array(centroid_o3d, dtype=np.float64)
         self.width    = float(np.clip(width,  0.03, 0.50))
         self.depth    = float(np.clip(depth,  0.03, 0.50))
         self.height   = float(np.clip(height, 0.01, 0.50))
         self.yaw_deg  = float(yaw_deg)
+        self.R_o3d    = np.array(R_o3d, dtype=np.float64) if R_o3d is not None else None
         self.color    = list(color) if color is not None else [0.2, 0.65, 1.0]
 
     def to_unity_dict(self) -> dict:
         p_unity    = open3d_to_unity_vector(self.centroid)
         size_unity = open3d_to_unity_vector(
             np.array([self.width, self.depth, self.height], dtype=np.float64))
-        q_xyzw = ScipyR.from_euler('z', self.yaw_deg, degrees=True).as_quat()
+
+        if self.R_o3d is not None:
+            # Full 3x3 rotation (e.g. pegboard orientation)
+            q_xyzw = ScipyR.from_matrix(self.R_o3d).as_quat()
+        else:
+            # Yaw-only fallback (original behavior)
+            q_xyzw = ScipyR.from_euler('z', self.yaw_deg, degrees=True).as_quat()
+
         q_wxyz = [q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]]
         q_u    = open3d_to_unity_quaternion(q_wxyz)
         return {
@@ -610,9 +667,10 @@ class _SyntheticObjectPublisher:
         print(f"[SynthObjects] Connected to tcp://{ip}:{port}")
 
     def add(self, centroid_o3d, width, depth, height,
-            color=None, yaw_deg=0.0) -> "_SyntheticObject":
+            color=None, yaw_deg=0.0, R_o3d=None) -> "_SyntheticObject":
         obj = _SyntheticObject(len(self._objects), centroid_o3d,
-                               width, depth, height, yaw_deg=yaw_deg, color=color)
+                               width, depth, height,
+                               yaw_deg=yaw_deg, R_o3d=R_o3d, color=color)
         self._objects.append(obj)
         return obj
 
@@ -718,7 +776,8 @@ class _OffsetTuner:
 # Main loop
 # =============================================================================
 
-def run(quest_ip: str, world_marker_id: int, pegboard_marker_id: int, marker_size_m: float, hand_port: int):
+def run(quest_ip: str, world_marker_id: int, pegboard_marker_id: int,
+        marker_size_m: float, hand_port: int):
 
     cam   = _CamFeedReceiver(quest_ip)
     xr    = _XRStateReceiver(quest_ip)
@@ -730,12 +789,22 @@ def run(quest_ip: str, world_marker_id: int, pegboard_marker_id: int, marker_siz
     tuner  = _OffsetTuner()
 
     synth = _SyntheticObjectPublisher(quest_ip, port=5006)
+    # Cubes around the WORLD marker
     synth.add([0.10,  0.00, 0.05], width=0.06, depth=0.06, height=0.10,
               color=[1.0, 0.2, 0.2])
     synth.add([0.00,  0.10, 0.05], width=0.06, depth=0.06, height=0.10,
               color=[0.2, 1.0, 0.2])
     synth.add([-0.10, 0.00, 0.05], width=0.06, depth=0.06, height=0.10,
               color=[0.2, 0.4, 1.0])
+
+    # Cubes around the PEGBOARD marker — offsets in pegboard-local frame.
+    # Added to synth after lock, once T_world_pegboard is known.
+    PEGBOARD_CUBES = [
+        {"offset": [ 0.10, 0.00, 0.05], "color": [1.0, 0.6, 0.2]},  # orange
+        {"offset": [ 0.00, 0.10, 0.05], "color": [0.8, 0.2, 0.8]},  # magenta
+        {"offset": [-0.10, 0.00, 0.05], "color": [0.2, 1.0, 0.9]},  # cyan
+    ]
+    pegboard_cubes_added = False
 
     haptic_lock_sent = False
     _last_synth_pub  = 0.0
@@ -747,7 +816,9 @@ def run(quest_ip: str, world_marker_id: int, pegboard_marker_id: int, marker_siz
     cv.namedWindow(win, cv.WINDOW_NORMAL)
     cv.resizeWindow(win, 960, 540)
 
-    print(f"\n[Running]  quest_ip={quest_ip}  marker={world_marker_id}  hand_port={hand_port}")
+    print(f"\n[Running]  quest_ip={quest_ip}  "
+          f"world_marker={world_marker_id}  pegboard_marker={pegboard_marker_id}  "
+          f"hand_port={hand_port}")
     print("  ENTER = re-lock anchor    ESC = quit\n")
 
     try:
@@ -758,7 +829,7 @@ def run(quest_ip: str, world_marker_id: int, pegboard_marker_id: int, marker_siz
             hands.poll()
 
             # ── ArUco detection ───────────────────────────────────────────────
-            T_cam_world_fresh = None
+            T_cam_world_fresh    = None
             T_cam_pegboard_fresh = None
             det_vis = None
 
@@ -768,11 +839,13 @@ def run(quest_ip: str, world_marker_id: int, pegboard_marker_id: int, marker_siz
                     cam.sensor_width, cam.sensor_height,
                     cam.width, cam.height)
                 det = aruco.detect(cam.frame, fx, fy, cx, cy, draw=True)
-                det_vis = det["vis"]
-                T_cam_world_fresh = det["T_cam_world"]
+                det_vis              = det["vis"]
+                T_cam_world_fresh    = det["T_cam_world"]
                 T_cam_pegboard_fresh = det["T_cam_pegboard"]
 
-            both_seen = (T_cam_world_fresh is not None and T_cam_pegboard_fresh is not None and cam.camera_T is not None)
+            both_seen = (T_cam_world_fresh    is not None and
+                         T_cam_pegboard_fresh is not None and
+                         cam.camera_T        is not None)
 
             # ── Anchor + publishers ───────────────────────────────────────────
             tuner.draw()
@@ -781,6 +854,7 @@ def run(quest_ip: str, world_marker_id: int, pegboard_marker_id: int, marker_siz
 
             if anchor.locked:
                 anchor.publish()
+                anchor.publish_pegboard()
                 _now = time.time()
                 if _now - _last_synth_pub >= _SYNTH_INTERVAL:
                     synth.publish()
@@ -818,18 +892,18 @@ def run(quest_ip: str, world_marker_id: int, pegboard_marker_id: int, marker_siz
                  else np.zeros((480, 640, 3), dtype=np.uint8)),
                 (960, 540))
 
-            locked = anchor.locked
-            world_ok = T_cam_world_fresh is not None
+            locked      = anchor.locked
+            world_ok    = T_cam_world_fresh    is not None
             pegboard_ok = T_cam_pegboard_fresh is not None
 
             cv.putText(disp,
-                       f"Marker #{world_marker_id}: {'DETECTED' if world_ok else 'searching...'}"
-                       f"Marker #{pegboard_marker_id}: {'DETECTED' if pegboard_ok else 'searching...'}"
+                       f"Marker #{world_marker_id}: {'DETECTED' if world_ok else 'searching...'}    "
+                       f"Marker #{pegboard_marker_id}: {'DETECTED' if pegboard_ok else 'searching...'}    "
                        f"{'READY TO LOCK!' if both_seen else ''}",
                        (12, 34), cv.FONT_HERSHEY_SIMPLEX, 0.8,
                        (0, 255, 80) if both_seen else (0, 80, 255), 2)
             cv.putText(disp,
-                       f"Anchor: {'LOCKED — WorldRoot :5005 + synth :5006' if locked else 'waiting for first detection'}",
+                       f"Anchor: {'LOCKED — WorldRoot :5005 + PegboardRoot :5008 + synth :5006' if locked else 'waiting for first detection'}",
                        (12, 68), cv.FONT_HERSHEY_SIMPLEX, 0.65,
                        (0, 255, 150) if locked else (100, 100, 100), 2)
             hand_ok = left_pts is not None or right_pts is not None
@@ -864,6 +938,17 @@ def run(quest_ip: str, world_marker_id: int, pegboard_marker_id: int, marker_siz
                 if both_seen and cam.camera_T is not None:
                     anchor.lock(T_cam_world_fresh, T_cam_pegboard_fresh, cam.camera_T)
                     haptic_lock_sent = False
+                    if not pegboard_cubes_added:
+                        T_wp = anchor.T_pegboard_in_world
+                        R_wp = T_wp[:3, :3]   # rotation of pegboard in world frame
+                        for cube in PEGBOARD_CUBES:
+                            centroid_world = _transform_point(T_wp, cube["offset"])
+                            synth.add(centroid_world,
+                                      width=0.06, depth=0.06, height=0.10,
+                                      color=cube["color"], R_o3d=R_wp)
+                        pegboard_cubes_added = True
+                        print(f"[Synth] Added {len(PEGBOARD_CUBES)} pegboard cubes "
+                              f"based on marker #{pegboard_marker_id} pose")
                 else:
                     missing = []
                     if T_cam_world_fresh is None:
@@ -898,20 +983,22 @@ def main():
     ap = argparse.ArgumentParser(
         description="Quest passthrough ArUco + hand tracking visualizer",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    ap.add_argument("--quest-ip",    default=cfg.UNITY_IP)
-    ap.add_argument("--world-marker",   type=int,   default=100,
+    ap.add_argument("--quest-ip",        default=cfg.UNITY_IP)
+    ap.add_argument("--world-marker",    type=int, default=100,
                     help="ArUco marker ID for world anchor (defines world frame origin)")
-    ap.add_argument("--pegboard-marker", type=int,   default=101,
-                    help="ArUco marker ID for pegboard (used to verify anchor stability)")
-    ap.add_argument("--marker-size", type=float, default=0.100,
+    ap.add_argument("--pegboard-marker", type=int, default=101,
+                    help="ArUco marker ID for pegboard (pose expressed relative to world)")
+    ap.add_argument("--marker-size",     type=float, default=0.100,
                     help="Marker side length in metres")
-    ap.add_argument("--hand-port",   type=int,   default=cfg.HAND1_PORT_FROM_UNITY)
+    ap.add_argument("--hand-port",       type=int, default=cfg.HAND1_PORT_FROM_UNITY)
     args = ap.parse_args()
-    run(quest_ip      = args.quest_ip,
-        world_marker_id     = args.world_marker,
+    if args.world_marker == args.pegboard_marker:
+        ap.error("--world-marker and --pegboard-marker must be different.")
+    run(quest_ip           = args.quest_ip,
+        world_marker_id    = args.world_marker,
         pegboard_marker_id = args.pegboard_marker,
-        marker_size_m = args.marker_size,
-        hand_port     = args.hand_port)
+        marker_size_m      = args.marker_size,
+        hand_port          = args.hand_port)
 
 
 if __name__ == "__main__":
