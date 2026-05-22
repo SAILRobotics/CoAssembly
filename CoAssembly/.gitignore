@@ -59,3 +59,6 @@ __pycache__/
 # Plugins and generated binaries
 Assets/Plugins/**/bin/
 Assets/Plugins/**/obj/
+
+
+ip_setting.py

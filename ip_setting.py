@@ -2,7 +2,7 @@
 # Edit the IP addresses here and import this module everywhere else.
 
 # ── Machine IPs ────────────────────────────────────────────────────────────────
-UNITY_IP   = "192.168.50.167"   # Quest / Windows machine running Unity
+UNITY_IP   = "192.168.50.201"   # Quest / Windows machine running Unity
 UBUNTU_IP  = "192.168.50.100"   # Ubuntu / Linux machine
 WINDOWS_IP = "0.0.0.0"          # bind address on this machine (all interfaces)
 LOCALHOST  = "127.0.0.1"        # loopback for same-machine inter-process comms
