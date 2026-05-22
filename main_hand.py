@@ -771,8 +771,114 @@ class _OffsetTuner:
         except Exception:
             pass
 
+class _ToolSelectionManager:
+    SELECTED_COLOR = [0.0, 1.0, 0.0, 0.5]   # green
+    HOVER_COLOR    = [1.0, 0.5, 0.0, 0.5]   # orange
+    RESET_COLOR    = [-1.0, -1.0, -1.0, -1.0]
 
-# =============================================================================
+    def __init__(self, quest_ip: str,
+                 click_port: int = 5009,
+                 color_port: int = 5010):
+        ctx = zmq.Context.instance()
+        self._sub = ctx.socket(zmq.SUB)
+        self._sub.setsockopt_string(zmq.SUBSCRIBE, "")
+        self._sub.connect(f"tcp://{quest_ip}:{click_port}")
+        self._pub = ctx.socket(zmq.PUB)
+        self._pub.connect(f"tcp://{quest_ip}:{color_port}")
+        time.sleep(0.2)
+        self._active_tool_id: int | None = None
+        self._hovered_tool_id: int | None = None
+        print(f"[ToolSelection] SUB clicks ← {quest_ip}:{click_port}")
+        print(f"[ToolSelection] PUB colors → {quest_ip}:{color_port}")
+
+    def poll(self, timeout_ms: int = 0) -> bool:
+        poller = zmq.Poller()
+        poller.register(self._sub, zmq.POLLIN)
+        if not dict(poller.poll(timeout=timeout_ms)):
+            return False
+        latest = None
+        while True:
+            try:
+                latest = self._sub.recv_string(flags=zmq.NOBLOCK)
+            except zmq.Again:
+                break
+        if latest is None:
+            return False
+        try:
+            msg = json.loads(latest)
+            tool_id = int(msg["tool_id"])
+            event_type = msg.get("event_type", "selected")
+        except (json.JSONDecodeError, KeyError, ValueError) as e:
+            print(f"[ToolSelection] Bad message: {e}")
+            return False
+        self._handle_event(tool_id, event_type)
+        return True
+
+    def _handle_event(self, tool_id: int, event_type: str):
+        if event_type == "selected":
+            self._handle_click(tool_id)
+        elif event_type == "hover_enter":
+            self._handle_hover_enter(tool_id)
+        elif event_type == "hover_exit":
+            self._handle_hover_exit(tool_id)
+        else:
+            print(f"[ToolSelection] Unknown event_type: {event_type}")
+
+    def _handle_click(self, tool_id: int):
+        # When a tool is clicked, it becomes selected and (visually) un-hovered.
+        # Hover state is cleared so the green isn't re-overwritten by orange next frame.
+        self._hovered_tool_id = None
+        updates: list[tuple[int, list[float]]] = []
+        if self._active_tool_id == tool_id:
+            updates.append((tool_id, self.RESET_COLOR))
+            self._active_tool_id = None
+            print(f"[ToolSelection] Tool {tool_id} deselected")
+        elif self._active_tool_id is not None:
+            updates.append((self._active_tool_id, self.RESET_COLOR))
+            updates.append((tool_id,              self.SELECTED_COLOR))
+            print(f"[ToolSelection] Switched: {self._active_tool_id} → off, {tool_id} → on")
+            self._active_tool_id = tool_id
+        else:
+            updates.append((tool_id, self.SELECTED_COLOR))
+            self._active_tool_id = tool_id
+            print(f"[ToolSelection] Tool {tool_id} selected")
+        for tid, color in updates:
+            self._send_color(tid, color)
+
+    def _handle_hover_enter(self, tool_id: int):
+        # Selected tools don't show hover overlay — they stay green.
+        if tool_id == self._active_tool_id:
+            return
+        self._hovered_tool_id = tool_id
+        self._send_color(tool_id, self.HOVER_COLOR)
+        print(f"[ToolSelection] Tool {tool_id} hovered")
+
+    def _handle_hover_exit(self, tool_id: int):
+        if tool_id != self._hovered_tool_id:
+            return
+        self._hovered_tool_id = None
+        # Don't reset a selected tool — it should stay green.
+        if tool_id == self._active_tool_id:
+            return
+        self._send_color(tool_id, self.RESET_COLOR)
+        print(f"[ToolSelection] Tool {tool_id} unhovered")
+
+    def _send_color(self, tool_id: int, color: list[float]):
+        msg = {"tool_id": int(tool_id), "color": [float(c) for c in color]}
+        try:
+            self._pub.send_string(json.dumps(msg))
+        except Exception as e:
+            print(f"[ToolSelection] Publish error: {e}")
+
+    @property
+    def active_tool_id(self) -> int | None:
+        return self._active_tool_id
+
+    def close(self):
+        try: self._sub.close(0)
+        except Exception: pass
+        try: self._pub.close(0)
+        except Exception: pass# =============================================================================
 # Main loop
 # =============================================================================
 
@@ -786,6 +892,10 @@ def run(quest_ip: str, world_marker_id: int, pegboard_marker_id: int,
 
     anchor = _WorldAnchor(quest_ip, pub_port=5005)
     haptic = _HapticPublisher(quest_ip, port=5007)
+    # Near the other receivers/publishers
+    tools = _ToolSelectionManager(quest_ip,
+                              click_port=5009,
+                              color_port=5010)
     tuner  = _OffsetTuner()
 
     synth = _SyntheticObjectPublisher(quest_ip, port=5006)
@@ -826,6 +936,7 @@ def run(quest_ip: str, world_marker_id: int, pegboard_marker_id: int,
             # ── Poll streams ──────────────────────────────────────────────────
             cam.poll(timeout_ms=5)
             xr.poll(timeout_ms=0)
+            tools.poll(timeout_ms=0)
             hands.poll()
 
             # ── ArUco detection ───────────────────────────────────────────────
@@ -972,6 +1083,7 @@ def run(quest_ip: str, world_marker_id: int, pegboard_marker_id: int,
         hands.close()
         xr.close()
         cam.close()
+        tools.close()
         print("[Done]")
 
 
