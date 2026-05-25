@@ -128,41 +128,41 @@ def _extract_joints(hand_block) -> np.ndarray | None:
 # ZMQ receivers  (same as main.py)
 # =============================================================================
 
-class _XRStateReceiver:
-    def __init__(self, ip: str, port: int = 5559, topic: str = "xr"):
-        ctx = zmq.Context()
-        self._sub = ctx.socket(zmq.SUB)
-        self._sub.connect(f"tcp://{ip}:{port}")
-        self._sub.setsockopt_string(zmq.SUBSCRIBE, topic)
-        self.center_T: np.ndarray | None = None
+# class _XRStateReceiver:
+#     def __init__(self, ip: str, port: int = 5559, topic: str = "xr"):
+#         ctx = zmq.Context()
+#         self._sub = ctx.socket(zmq.SUB)
+#         self._sub.connect(f"tcp://{ip}:{port}")
+#         self._sub.setsockopt_string(zmq.SUBSCRIBE, topic)
+#         self.center_T: np.ndarray | None = None
 
-    def poll(self, timeout_ms: int = 0) -> bool:
-        poller = zmq.Poller()
-        poller.register(self._sub, zmq.POLLIN)
-        if not dict(poller.poll(timeout=timeout_ms)):
-            return False
-        latest = None
-        while True:
-            try:
-                _      = self._sub.recv_string(flags=zmq.NOBLOCK)
-                latest = self._sub.recv_string(flags=zmq.NOBLOCK)
-            except zmq.Again:
-                break
-        if latest is None:
-            return False
-        msg  = json.loads(latest)
-        head = msg.get("head")
-        if head and head.get("is_valid"):
-            p, r = head.get("pos"), head.get("rot_xyzw")
-            if p and r:
-                self.center_T = _unity_pose_to_T(p, r)
-        return True
+#     def poll(self, timeout_ms: int = 0) -> bool:
+#         poller = zmq.Poller()
+#         poller.register(self._sub, zmq.POLLIN)
+#         if not dict(poller.poll(timeout=timeout_ms)):
+#             return False
+#         latest = None
+#         while True:
+#             try:
+#                 _      = self._sub.recv_string(flags=zmq.NOBLOCK)
+#                 latest = self._sub.recv_string(flags=zmq.NOBLOCK)
+#             except zmq.Again:
+#                 break
+#         if latest is None:
+#             return False
+#         msg  = json.loads(latest)
+#         head = msg.get("head")
+#         if head and head.get("is_valid"):
+#             p, r = head.get("pos"), head.get("rot_xyzw")
+#             if p and r:
+#                 self.center_T = _unity_pose_to_T(p, r)
+#         return True
 
-    def close(self):
-        try:
-            self._sub.close(0)
-        except Exception:
-            pass
+#     def close(self):
+#         try:
+#             self._sub.close(0)
+#         except Exception:
+#             pass
 
 
 class _CamFeedReceiver:
@@ -269,6 +269,21 @@ class _HandDataReceiver:
     def receiving(self) -> bool:
         return self.last_rx_time is not None and (time.time() - self.last_rx_time) < 2.0
 
+    def center_eye_T(self) -> "np.ndarray | None":
+        """Extract CenterEye pose from the latest hand-tracking frame."""
+        if self.data is None:
+            return None
+        head = self.data.get("head") or {}
+        ce = head.get("CenterEye")
+        if not ce:
+            return None
+        pos = ce.get("position") or {}
+        rot = ce.get("rotation") or {}
+        pos_xyz  = [pos.get("x", 0.0), pos.get("y", 0.0), pos.get("z", 0.0)]
+        rot_xyzw = [rot.get("x", 0.0), rot.get("y", 0.0),
+                    rot.get("z", 0.0), rot.get("w", 1.0)]
+        return _unity_pose_to_T(pos_xyz, rot_xyzw)
+
     def world_joints(self, T_world_tracking: np.ndarray):
         """Returns (left_pts, right_pts) in world frame, each (N,3) or None.
         Prefers real hand; falls back to synth hand if real is absent."""
@@ -372,11 +387,30 @@ class _SceneVis:
         self._cam_frustum      = None
         self._cam_frustum_T    = self._hidden_T()
 
-        # Head frame
-        self._head_frame   = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.12)
-        self._head_frame.transform(self._hidden_T())
-        self.vis.add_geometry(self._head_frame)
-        self._head_T = self._hidden_T()
+        # CenterEyeAnchor (real-time head pose) — magenta frustum
+        self._head_frustum = None
+
+        # Marker 101 (pegboard) — green sphere + frame, shown once anchor is locked
+        self._pegboard_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.10)
+        self._pegboard_frame.transform(self._hidden_T())
+        self.vis.add_geometry(self._pegboard_frame)
+        self._pegboard_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.020)
+        self._pegboard_sphere.paint_uniform_color([0.1, 1.0, 0.1])
+        self._pegboard_sphere.compute_vertex_normals()
+        self._pegboard_sphere.transform(self._hidden_T())
+        self.vis.add_geometry(self._pegboard_sphere)
+        self._pegboard_T = self._hidden_T()
+
+        # Quest tracking space origin — blue sphere + frame
+        self._tracking_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.10)
+        self._tracking_frame.transform(self._hidden_T())
+        self.vis.add_geometry(self._tracking_frame)
+        self._tracking_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.020)
+        self._tracking_sphere.paint_uniform_color([0.2, 0.4, 1.0])
+        self._tracking_sphere.compute_vertex_normals()
+        self._tracking_sphere.transform(self._hidden_T())
+        self.vis.add_geometry(self._tracking_sphere)
+        self._tracking_T = self._hidden_T()
 
         # Hand joints + bones
         self._pcd_l, self._lines_l = self._make_hand([0.3, 0.6, 1.0])   # blue
@@ -437,11 +471,44 @@ class _SceneVis:
             self._cam_frustum.colors = new_fr.colors
             self.vis.update_geometry(self._cam_frustum)
 
-    def update_head(self, T: np.ndarray | None):
+    def update_pegboard(self, T: np.ndarray | None):
+        """Marker 101 in world frame (green)."""
         T_new = T if T is not None else self._hidden_T()
-        self._head_frame.transform(T_new @ np.linalg.inv(self._head_T))
-        self._head_T = T_new
-        self.vis.update_geometry(self._head_frame)
+        delta = T_new @ np.linalg.inv(self._pegboard_T)
+        self._pegboard_frame.transform(delta)
+        self._pegboard_sphere.transform(delta)
+        self._pegboard_T = T_new
+        self.vis.update_geometry(self._pegboard_frame)
+        self.vis.update_geometry(self._pegboard_sphere)
+
+    def update_tracking(self, T: np.ndarray | None):
+        """Quest tracking space origin in world frame (blue)."""
+        T_new = T if T is not None else self._hidden_T()
+        delta = T_new @ np.linalg.inv(self._tracking_T)
+        self._tracking_frame.transform(delta)
+        self._tracking_sphere.transform(delta)
+        self._tracking_T = T_new
+        self.vis.update_geometry(self._tracking_frame)
+        self.vis.update_geometry(self._tracking_sphere)
+
+    def update_head(self, T: np.ndarray | None,
+                    w=640, h=480, fx=400., fy=400., cx=320., cy=240.):
+        """CenterEyeAnchor — real-time head pose, magenta frustum."""
+        T_use = T if T is not None else self._hidden_T()
+        intr  = o3d.camera.PinholeCameraIntrinsic(int(w), int(h), fx, fy, cx, cy)
+        new_fr = o3d.geometry.LineSet.create_camera_visualization(
+            int(w), int(h), intr.intrinsic_matrix,
+            np.linalg.inv(T_use), scale=self.FRUSTUM_SCALE)
+        new_fr.paint_uniform_color([1.0, 0.1, 0.9])
+
+        if self._head_frustum is None:
+            self._head_frustum = new_fr
+            self.vis.add_geometry(self._head_frustum)
+        else:
+            self._head_frustum.points = new_fr.points
+            self._head_frustum.lines  = new_fr.lines
+            self._head_frustum.colors = new_fr.colors
+            self.vis.update_geometry(self._head_frustum)
 
     def update_hands(self, left_pts: np.ndarray | None, right_pts: np.ndarray | None):
         self._set_hand(self._pcd_l, self._lines_l, left_pts)
@@ -463,18 +530,48 @@ class _SceneVis:
 # =============================================================================
 
 class _WorldAnchor:
+    _EYE_OFFSET_FILE = _FILE_DIR / "eye_offset_calibration.json"
+
     def __init__(self, pub_ip: str, pub_port: int = 5005, pegboard_pub_port: int = 5008):
         self._T_wt: np.ndarray | None = None
         self._T_offset = np.eye(4, dtype=np.float64)
         self._T_world_pegboard: np.ndarray | None = None
+        self._T_eye_offset: np.ndarray | None = None  # inv(center_T) @ cam_T, fixed HMD geometry
         ctx = zmq.Context()
         self._pub = ctx.socket(zmq.PUB)
         self._pub.connect(f"tcp://{pub_ip}:{pub_port}")
-
         self._pub_pegboard = ctx.socket(zmq.PUB)
         self._pub_pegboard.connect(f"tcp://{pub_ip}:{pegboard_pub_port}")
-
         time.sleep(0.2)
+        self._load_eye_offset()
+
+    def _load_eye_offset(self):
+        if not self._EYE_OFFSET_FILE.exists():
+            return
+        try:
+            data = json.loads(self._EYE_OFFSET_FILE.read_text())
+            self._T_eye_offset = np.array(data["T_eye_offset"],
+                                          dtype=np.float64).reshape(4, 4)
+            print(f"[Anchor] Eye offset loaded from {self._EYE_OFFSET_FILE.name}")
+        except Exception as e:
+            print(f"[Anchor] Eye offset load failed: {e}")
+
+    def _save_eye_offset(self):
+        try:
+            self._EYE_OFFSET_FILE.write_text(
+                json.dumps({"T_eye_offset": self._T_eye_offset.flatten().tolist()},
+                           indent=2))
+            print(f"[Anchor] Eye offset saved to {self._EYE_OFFSET_FILE.name}")
+        except Exception as e:
+            print(f"[Anchor] Eye offset save failed: {e}")
+
+    def _effective_cam_T(self, cam_T: np.ndarray,
+                         center_T: np.ndarray) -> np.ndarray | None:
+        """Return the best available camera pose for locking.
+        Prefers center_T @ T_eye_offset (no WiFi delay) once calibrated."""
+        if self._T_eye_offset is not None and center_T is not None:
+            return center_T @ self._T_eye_offset
+        return cam_T  # fallback to raw cam on very first lock
 
     def set_offset(self, pos_offset, yaw_deg: float):
         T = np.eye(4, dtype=np.float64)
@@ -482,16 +579,37 @@ class _WorldAnchor:
         T[:3, :3] = ScipyR.from_euler('z', yaw_deg, degrees=True).as_matrix()
         self._T_offset = T
 
-    def lock(self, T_cam_world: np.ndarray, T_cam_pegboard: np.ndarray, cam_T: np.ndarray) -> bool:
-        if T_cam_world is None or T_cam_pegboard is None or cam_T is None:
+    def lock(self, T_cam_world: np.ndarray, T_cam_pegboard: np.ndarray,
+             cam_T: np.ndarray, center_T: np.ndarray | None = None) -> bool:
+        if T_cam_world is None or T_cam_pegboard is None:
             return False
-        # World = world marker
-        self._T_wt = np.linalg.inv(cam_T @ T_cam_world)
-        # Pegboard = pegboard marker expressed in world frame
+        # Calibrate offset once if file absent and both poses available
+        if self._T_eye_offset is None and cam_T is not None and center_T is not None:
+            self._T_eye_offset = np.linalg.inv(center_T) @ cam_T
+            self._save_eye_offset()
+        eff = self._effective_cam_T(cam_T, center_T)
+        if eff is None:
+            return False
+        self._T_wt = np.linalg.inv(eff @ T_cam_world)
         self._T_world_pegboard = np.linalg.inv(T_cam_world) @ T_cam_pegboard
+        src = "CenterEye+offset" if self._T_eye_offset is not None else "cam_T"
         t = self._T_world_pegboard[:3, 3]
-        print(f"[Anchor] Locked. Pegboard in world frame: "
+        print(f"[Anchor] Locked ({src}). Pegboard: "
               f"t=({t[0]:+.3f}, {t[1]:+.3f}, {t[2]:+.3f}) m")
+        return True
+
+    def relock(self, T_cam_world: np.ndarray,
+               cam_T: np.ndarray, center_T: np.ndarray | None = None,
+               T_cam_pegboard: np.ndarray | None = None) -> bool:
+        """Update T_wt; also updates pegboard pose if T_cam_pegboard is provided."""
+        if T_cam_world is None or not self.locked:
+            return False
+        eff = self._effective_cam_T(cam_T, center_T)
+        if eff is None:
+            return False
+        self._T_wt = np.linalg.inv(eff @ T_cam_world)
+        if T_cam_pegboard is not None:
+            self._T_world_pegboard = np.linalg.inv(T_cam_world) @ T_cam_pegboard
         return True
 
     @property
@@ -874,6 +992,13 @@ class _ToolSelectionManager:
     def active_tool_id(self) -> int | None:
         return self._active_tool_id
 
+    def send_color(self, tool_id: int, color: list[float]):
+        self._send_color(tool_id, color)
+
+    def deselect(self, tool_id: int):
+        if self._active_tool_id == tool_id:
+            self._active_tool_id = None
+
     def close(self):
         try: self._sub.close(0)
         except Exception: pass
@@ -886,7 +1011,6 @@ def run(quest_ip: str, world_marker_id: int, pegboard_marker_id: int,
         marker_size_m: float, hand_port: int):
 
     cam   = _CamFeedReceiver(quest_ip)
-    xr    = _XRStateReceiver(quest_ip)
     aruco = _ArucoPoseEstimator(world_marker_id, pegboard_marker_id, marker_size_m)
     hands = _HandDataReceiver(quest_ip, hand_port)
 
@@ -915,10 +1039,14 @@ def run(quest_ip: str, world_marker_id: int, pegboard_marker_id: int,
         {"offset": [-0.10, 0.00, 0.05], "color": [0.2, 1.0, 0.9]},  # cyan
     ]
     pegboard_cubes_added = False
+    _pegboard_cube_start = None
 
     haptic_lock_sent = False
     _last_synth_pub  = 0.0
     _SYNTH_INTERVAL  = 1.0 / 30.0
+    _relock_available_prev  = False
+    _green_until            = 0.0
+    _last_proximity_relock  = 0.0
 
     vis = _SceneVis(f"Hand Tracking — World Frame  (marker #{world_marker_id})")
 
@@ -935,7 +1063,7 @@ def run(quest_ip: str, world_marker_id: int, pegboard_marker_id: int,
         while True:
             # ── Poll streams ──────────────────────────────────────────────────
             cam.poll(timeout_ms=5)
-            xr.poll(timeout_ms=0)
+
             tools.poll(timeout_ms=0)
             hands.poll()
 
@@ -963,6 +1091,9 @@ def run(quest_ip: str, world_marker_id: int, pegboard_marker_id: int,
             pos_off, yaw_off = tuner.get()
             anchor.set_offset(pos_off, yaw_off)
 
+            # ── World-frame poses ─────────────────────────────────────────────
+            _center_T       = hands.center_eye_T()
+
             if anchor.locked:
                 anchor.publish()
                 anchor.publish_pegboard()
@@ -975,14 +1106,50 @@ def run(quest_ip: str, world_marker_id: int, pegboard_marker_id: int,
                                    frequency=0.3, duration_ms=300)
                     haptic_lock_sent = True
 
-            # ── World-frame poses ─────────────────────────────────────────────
             T_wt            = anchor.T_world_tracking
             T_world_camleft = anchor.world_T(cam.camera_T) \
                               if cam.camera_T is not None else None
-            T_world_center  = anchor.world_T(xr.center_T) \
-                              if xr.center_T is not None else None
+            T_world_center  = anchor.world_T(_center_T) if _center_T is not None else None
 
             left_pts, right_pts = hands.world_joints(T_wt)
+
+            # ── World marker proximity relock ─────────────────────────────────
+            _now = time.time()
+            dist_to_world_marker = (float(np.linalg.norm(T_cam_world_fresh[:3, 3]))
+                                    if both_seen else float('inf'))
+            # Only available once already locked; initial lock stays ENTER-only.
+            _relock_available = (anchor.locked and both_seen
+                                 and dist_to_world_marker < 1.0)
+
+            if _green_until > 0.0 and _now >= _green_until:
+                _green_until = 0.0
+                _relock_available_prev = not _relock_available  # force color refresh
+
+            if _green_until == 0.0 and _relock_available != _relock_available_prev:
+                tools.send_color(world_marker_id,
+                                 _ToolSelectionManager.HOVER_COLOR if _relock_available
+                                 else _ToolSelectionManager.RESET_COLOR)
+                _relock_available_prev = _relock_available
+
+            _RELOCK_COOLDOWN = 2.0
+            if (tools.active_tool_id == world_marker_id and _relock_available
+                    and _now - _last_proximity_relock >= _RELOCK_COOLDOWN):
+                anchor.relock(T_cam_world_fresh, cam.camera_T, _center_T,
+                              T_cam_pegboard_fresh)
+                if pegboard_cubes_added and anchor.T_pegboard_in_world is not None:
+                    T_wp = anchor.T_pegboard_in_world
+                    R_wp = T_wp[:3, :3]
+                    for i, cube in enumerate(PEGBOARD_CUBES):
+                        obj = synth._objects[_pegboard_cube_start + i]
+                        obj.centroid = _transform_point(T_wp, cube["offset"])
+                        obj.R_o3d = R_wp.copy()
+                tools.send_color(world_marker_id, _ToolSelectionManager.SELECTED_COLOR)
+                _green_until = _now + 1.0
+                _relock_available_prev = True
+                _last_proximity_relock = _now
+                haptic_lock_sent = False
+                print("[AutoRelock] Relocked via proximity click")
+            tools.deselect(world_marker_id)
 
             # ── Update Open3D ─────────────────────────────────────────────────
             if cam.fx is not None:
@@ -992,6 +1159,8 @@ def run(quest_ip: str, world_marker_id: int, pegboard_marker_id: int,
                     cam.width, cam.height)
                 vis.update_cam_frustum(T_world_camleft,
                                        cam.width, cam.height, fx, fy, cx, cy)
+            vis.update_pegboard(anchor.T_pegboard_in_world)
+            vis.update_tracking(T_wt)
             vis.update_head(T_world_center)
             vis.update_hands(left_pts, right_pts)
             vis.tick()
@@ -1046,12 +1215,26 @@ def run(quest_ip: str, world_marker_id: int, pegboard_marker_id: int,
             if key == 27:
                 break
             elif key == 13:
-                if both_seen and cam.camera_T is not None:
-                    anchor.lock(T_cam_world_fresh, T_cam_pegboard_fresh, cam.camera_T)
+                if both_seen:
+                    if anchor.locked:
+                        anchor.relock(T_cam_world_fresh, cam.camera_T, _center_T,
+                                      T_cam_pegboard_fresh)
+                        print("[ENTER] Relocked")
+                        if pegboard_cubes_added and anchor.T_pegboard_in_world is not None:
+                            T_wp = anchor.T_pegboard_in_world
+                            R_wp = T_wp[:3, :3]
+                            for i, cube in enumerate(PEGBOARD_CUBES):
+                                obj = synth._objects[_pegboard_cube_start + i]
+                                obj.centroid = _transform_point(T_wp, cube["offset"])
+                                obj.R_o3d = R_wp.copy()
+                    else:
+                        anchor.lock(T_cam_world_fresh, T_cam_pegboard_fresh,
+                                    cam.camera_T, center_T=_center_T)
                     haptic_lock_sent = False
-                    if not pegboard_cubes_added:
+                    if not pegboard_cubes_added and anchor.T_pegboard_in_world is not None:
                         T_wp = anchor.T_pegboard_in_world
-                        R_wp = T_wp[:3, :3]   # rotation of pegboard in world frame
+                        R_wp = T_wp[:3, :3]
+                        _pegboard_cube_start = len(synth._objects)
                         for cube in PEGBOARD_CUBES:
                             centroid_world = _transform_point(T_wp, cube["offset"])
                             synth.add(centroid_world,
@@ -1066,7 +1249,7 @@ def run(quest_ip: str, world_marker_id: int, pegboard_marker_id: int,
                         missing.append(f"marker #{world_marker_id}")
                     if T_cam_pegboard_fresh is None:
                         missing.append(f"pegboard marker #{pegboard_marker_id}")
-                    print(f"[ENTER] Need both markers - missing: {', '.join(missing)}")
+                    print(f"[ENTER] Need both markers — missing: {', '.join(missing)}")
 
             time.sleep(0.001)
 
@@ -1081,7 +1264,6 @@ def run(quest_ip: str, world_marker_id: int, pegboard_marker_id: int,
         haptic.close()
         synth.close()
         hands.close()
-        xr.close()
         cam.close()
         tools.close()
         print("[Done]")
