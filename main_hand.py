@@ -654,11 +654,17 @@ class _WorldAnchor:
 
     def _effective_cam_T(self, cam_T: np.ndarray,
                          center_T: np.ndarray) -> np.ndarray | None:
-        """Return the best available camera pose for locking.
-        Prefers center_T @ T_eye_offset (no WiFi delay) once calibrated."""
+        """Return the best available left-camera pose.
+        Prefers center_T @ T_eye_offset (no WiFi delay, stable) once calibrated.
+        Falls back to raw cam_T only before the eye offset is known."""
         if self._T_eye_offset is not None and center_T is not None:
             return center_T @ self._T_eye_offset
-        return cam_T  # fallback to raw cam on very first lock
+        return cam_T
+
+    def effective_cam_T(self, cam_T: np.ndarray,
+                        center_T: np.ndarray | None) -> np.ndarray | None:
+        """Public wrapper — use this anywhere the left-camera pose is needed."""
+        return self._effective_cam_T(cam_T, center_T)
 
     def set_offset(self, pos_offset, yaw_deg: float):
         T = np.eye(4, dtype=np.float64)
@@ -694,7 +700,7 @@ class _WorldAnchor:
 
     def update_pegboard_pose(self, T_cam_world: np.ndarray,
                              T_cam_pegboard: np.ndarray) -> bool:
-        """Update pegboard pose independently whenever marker 101 is visible."""
+        """Update pegboard pose — requires 100 and 101 visible in the same frame."""
         if not self.locked or T_cam_world is None or T_cam_pegboard is None:
             return False
         self._T_world_pegboard = np.linalg.inv(T_cam_world) @ T_cam_pegboard
@@ -1105,12 +1111,55 @@ class _ToolSelectionManager:
         try: self._sub.close(0)
         except Exception: pass
         try: self._pub.close(0)
-        except Exception: pass# =============================================================================
+        except Exception: pass
+
+
+# =============================================================================
+# UR RTDE receiver
+# =============================================================================
+
+class _UrRtdeReceiver:
+    """Polls UR robot joint angles via RTDE. Fails gracefully if unreachable."""
+
+    def __init__(self, robot_ip: str):
+        self._rtde = None
+        self._q:    np.ndarray | None = None
+        try:
+            from rtde_receive import RTDEReceiveInterface
+            self._rtde = RTDEReceiveInterface(robot_ip)
+            print(f"[RTDE] Connected to {robot_ip}")
+        except Exception as e:
+            print(f"[RTDE] Could not connect to {robot_ip}: {e}")
+
+    def poll(self) -> "np.ndarray | None":
+        if self._rtde is None:
+            return None
+        try:
+            self._q = np.array(self._rtde.getActualQ(), dtype=float)
+            return self._q
+        except Exception:
+            return None
+
+    @property
+    def q(self) -> "np.ndarray | None":
+        return self._q
+
+    def close(self):
+        if self._rtde is not None:
+            try:
+                self._rtde.disconnect()
+            except Exception:
+                pass
+            self._rtde = None
+
+
+# =============================================================================
 # Main loop
 # =============================================================================
 
 def run(quest_ip: str, world_marker_id: int, pegboard_marker_id: int,
-        marker_size_m: float, hand_port: int, scene_marker_id: int = 10):
+        marker_size_m: float, hand_port: int, scene_marker_id: int = 10,
+        robot_ip: str | None = None):
 
     # ── PyBullet scene ────────────────────────────────────────────────────────
     pb_scene: "PyBulletScene | None" = None
@@ -1130,6 +1179,7 @@ def run(quest_ip: str, world_marker_id: int, pegboard_marker_id: int,
     aruco = _ArucoPoseEstimator(world_marker_id, pegboard_marker_id, marker_size_m,
                                 scene_marker_id=scene_marker_id)
     hands = _HandDataReceiver(quest_ip, hand_port)
+    rtde  = _UrRtdeReceiver(robot_ip) if robot_ip else None
 
     anchor = _WorldAnchor(quest_ip, pub_port=5005)
     haptic = _HapticPublisher(quest_ip, port=5007)
@@ -1254,6 +1304,11 @@ def run(quest_ip: str, world_marker_id: int, pegboard_marker_id: int,
 
             # ── PyBullet scene update ─────────────────────────────────────────
             if pb_scene is not None:
+                if rtde is not None:
+                    q = rtde.poll()
+                    if q is not None:
+                        pb_scene.update_robot(q)
+                        pb_scene.update_tcp_bodies()
                 pb_scene.update_pegboard(anchor.T_pegboard_in_world)
                 pb_scene.step()
 
@@ -1305,43 +1360,51 @@ def run(quest_ip: str, world_marker_id: int, pegboard_marker_id: int,
             if key == 27:
                 break
             elif key == 13:
+                # ── PyBullet scene origin: marker 10 (independent of 100/101) ─
                 if pb_scene is not None:
                     if scene_ok and anchor.locked and cam.camera_T is not None:
-                        T_world_10 = anchor.T_world_tracking @ cam.camera_T @ T_cam_scene_fresh
+                        eff = anchor.effective_cam_T(cam.camera_T, _center_T)
+                        T_world_10 = anchor.T_world_tracking @ eff @ T_cam_scene_fresh
                         pb_scene.set_scene_origin(T_world_10)
                         print(f"[ENTER] PyBullet scene repositioned to marker #{scene_marker_id}")
-                    elif pb_scene is not None and not scene_ok and anchor.locked:
-                        print(f"[ENTER] Marker #{scene_marker_id} not visible — PyBullet scene not updated.")
+                    elif not scene_ok and anchor.locked:
+                        print(f"[ENTER] Marker #{scene_marker_id} not visible — PyBullet not updated.")
+
+                # ── World anchor (100) + pegboard (101) — both must be visible ─
                 if world_ok and cam.camera_T is not None:
                     if anchor.locked:
                         anchor.relock(T_cam_world_fresh, cam.camera_T, _center_T,
                                       T_cam_pegboard_fresh)
                         print("[ENTER] Relocked"
-                              + (" + pegboard" if T_cam_pegboard_fresh is not None else ""))
-                        if pegboard_cubes_added and anchor.T_pegboard_in_world is not None:
-                            T_wp = anchor.T_pegboard_in_world
-                            R_wp = T_wp[:3, :3]
-                            for i, cube in enumerate(PEGBOARD_CUBES):
-                                obj = synth._objects[_pegboard_cube_start + i]
-                                obj.centroid = _transform_point(T_wp, cube["offset"])
-                                obj.R_o3d = R_wp.copy()
+                              + (" + pegboard" if pegboard_ok else ""))
                     else:
                         anchor.lock(T_cam_world_fresh, cam.camera_T,
                                     center_T=_center_T,
                                     T_cam_pegboard=T_cam_pegboard_fresh)
                     haptic_lock_sent = False
-                    if not pegboard_cubes_added and anchor.T_pegboard_in_world is not None:
-                        T_wp = anchor.T_pegboard_in_world
+                    # Draw wall at marker 100 (world origin after locking)
+                    if pb_scene is not None:
+                        pb_scene.update_wall(np.eye(4))
+                    if not pegboard_ok:
+                        print(f"[ENTER] Tip: show marker #{pegboard_marker_id} "
+                              f"alongside #{world_marker_id} to lock pegboard.")
+                    T_wp = anchor.T_pegboard_in_world
+                    if T_wp is not None:
                         R_wp = T_wp[:3, :3]
-                        _pegboard_cube_start = len(synth._objects)
-                        for cube in PEGBOARD_CUBES:
-                            centroid_world = _transform_point(T_wp, cube["offset"])
-                            synth.add(centroid_world,
-                                      width=0.06, depth=0.06, height=0.10,
-                                      color=cube["color"], R_o3d=R_wp)
-                        pegboard_cubes_added = True
-                        print(f"[Synth] Added {len(PEGBOARD_CUBES)} pegboard cubes "
-                              f"based on marker #{pegboard_marker_id} pose")
+                        if pegboard_cubes_added:
+                            for i, cube in enumerate(PEGBOARD_CUBES):
+                                obj = synth._objects[_pegboard_cube_start + i]
+                                obj.centroid = _transform_point(T_wp, cube["offset"])
+                                obj.R_o3d = R_wp.copy()
+                        else:
+                            _pegboard_cube_start = len(synth._objects)
+                            for cube in PEGBOARD_CUBES:
+                                synth.add(_transform_point(T_wp, cube["offset"]),
+                                          width=0.06, depth=0.06, height=0.10,
+                                          color=cube["color"], R_o3d=R_wp)
+                            pegboard_cubes_added = True
+                            print(f"[Synth] Added {len(PEGBOARD_CUBES)} pegboard cubes "
+                                  f"based on marker #{pegboard_marker_id} pose")
                 else:
                     print(f"[ENTER] Need marker #{world_marker_id} — not detected.")
 
@@ -1362,6 +1425,8 @@ def run(quest_ip: str, world_marker_id: int, pegboard_marker_id: int,
         hands.close()
         cam.close()
         tools.close()
+        if rtde is not None:
+            rtde.close()
         print("[Done]")
 
 
@@ -1383,6 +1448,8 @@ def main():
     ap.add_argument("--hand-port",       type=int, default=cfg.HAND1_PORT_FROM_UNITY)
     ap.add_argument("--scene-marker",    type=int, default=10,
                     help="ArUco marker ID for PyBullet scene origin (robot/desk-cam placement)")
+    ap.add_argument("--robot-ip",        default=cfg.ROBOT_IP,
+                    help="UR robot controller IP for live joint angles via RTDE")
     args = ap.parse_args()
     if args.world_marker == args.pegboard_marker:
         ap.error("--world-marker and --pegboard-marker must be different.")
@@ -1391,7 +1458,8 @@ def main():
         pegboard_marker_id = args.pegboard_marker,
         marker_size_m      = args.marker_size,
         hand_port          = args.hand_port,
-        scene_marker_id    = args.scene_marker)
+        scene_marker_id    = args.scene_marker,
+        robot_ip           = args.robot_ip)
 
 
 if __name__ == "__main__":

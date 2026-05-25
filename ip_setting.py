@@ -4,6 +4,7 @@
 # ── Machine IPs ────────────────────────────────────────────────────────────────
 UNITY_IP   = "192.168.50.201"   # Quest / Windows machine running Unity
 UBUNTU_IP  = "192.168.50.100"   # Ubuntu / Linux machine
+ROBOT_IP   = "192.168.50.70"    # UR10e robot controller
 WINDOWS_IP = "0.0.0.0"          # bind address on this machine (all interfaces)
 LOCALHOST  = "127.0.0.1"        # loopback for same-machine inter-process comms
 

@@ -58,13 +58,12 @@ def _T_adapter_in_tool() -> np.ndarray:
 def _T_robotiq_adapt_in_adapt() -> np.ndarray:
     T = np.eye(4)
     T[:3, :3] = ScipyR.from_euler('y', 180.0, degrees=True).as_matrix()
-    T[:3, 3]  = [0.0, 0.0, -0.01275]
+    T[:3, 3]  = [0.0, 0.0, -0.0100]
     return T
 
 def _T_gripper_in_adapt() -> np.ndarray:
     T = np.eye(4)
-    T[:3, :3] = ScipyR.from_euler('y', 180.0, degrees=True).as_matrix()
-    T[:3, 3]  = [0.0, 0.0, -0.0070]
+    T[:3, 3]  = [0.0, 0.0, 0.039]
     return T
 
 
@@ -126,6 +125,10 @@ class PyBulletScene:
 
         # Pegboard mesh body (loaded once, teleported when anchor locks)
         self._pegboard_body_id:   int | None  = None
+        self._table_id:           int | None  = None
+
+        # Marker wall body (flat box in marker 100's XY plane)
+        self._wall_id:            int | None  = None
 
         # Dynamic debug line IDs
         self._tcp_frame_ids:      list | None = None
@@ -174,7 +177,7 @@ class PyBulletScene:
             p.configureDebugVisualizer(p.COV_ENABLE_SHADOWS, 0)
             p.resetDebugVisualizerCamera(
                 cameraDistance=1.8, cameraYaw=45, cameraPitch=-30,
-                cameraTargetPosition=[0, 0, 0])
+                cameraTargetPosition=self.T_world_base[:3, 3].tolist())
         else:
             p.connect(p.DIRECT)
 
@@ -186,6 +189,8 @@ class PyBulletScene:
         self._load_gripper()
         self._load_table()
         self._load_pegboard_mesh()
+        self._wall_id = self._create_wall_body(width=1.5, height=1.5,
+                                               color=[0.75, 0.75, 0.70, 0.30])
         self._draw_static_debug()
 
         self.connected = True
@@ -214,9 +219,17 @@ class PyBulletScene:
             pos, quat = self._mat_to_pb(T_robot)
             p.resetBasePositionAndOrientation(self.robot_id, pos, quat)
 
+        if self._table_id is not None:
+            self._teleport(self._table_id, T_m10)
+
         p.removeAllUserDebugItems()
         self._draw_static_debug()
-        print("[PyBulletScene] Scene origin updated from marker 10.")
+        if self.gui:
+            p.resetDebugVisualizerCamera(
+                cameraDistance=1.8, cameraYaw=45, cameraPitch=-30,
+                cameraTargetPosition=self.T_world_base[:3, 3].tolist())
+        print(f"[PyBulletScene] Scene origin updated. Robot base at "
+              f"{self.T_world_base[:3,3].tolist()}")
 
     # -----------------------------------------------------------------------
     # Per-frame update API
@@ -288,6 +301,11 @@ class PyBulletScene:
         if self._pegboard_body_id is not None:
             # OBJ origin is at the marker — no centering offset applied.
             self._teleport(self._pegboard_body_id, T_world_pegboard)
+
+    def update_wall(self, T_world_marker: np.ndarray):
+        """Teleport the marker wall (flat box in marker XY plane) to pose T."""
+        if self._wall_id is not None:
+            self._teleport(self._wall_id, T_world_marker)
 
     # -----------------------------------------------------------------------
     # Static drawing helpers (public so callers can add extra debug geometry)
@@ -379,6 +397,32 @@ class PyBulletScene:
         return -1
 
     @staticmethod
+    def _disable_collisions(body_id: int):
+        """Remove body from all collision groups (visual-only ghost)."""
+        for i in range(-1, p.getNumJoints(body_id)):
+            p.setCollisionFilterGroupMask(body_id, i, 0, 0)
+
+    @staticmethod
+    def _recolor(body_id: int, rgba):
+        """Apply a uniform RGBA color to every link of a body."""
+        for i in range(-1, p.getNumJoints(body_id)):
+            try:
+                p.changeVisualShape(body_id, i, rgbaColor=list(rgba))
+            except Exception:
+                pass
+
+    def _create_wall_body(self, width: float = 0.5, height: float = 0.5,
+                          thickness: float = 0.004, color=(0.8, 0.8, 0.7, 0.35)):
+        """Return a bodyId for a thin flat box (wall in local XY plane)."""
+        vis = p.createVisualShape(
+            p.GEOM_BOX,
+            halfExtents=[width / 2, height / 2, thickness / 2],
+            rgbaColor=list(color))
+        body_id = p.createMultiBody(baseMass=0, baseVisualShapeIndex=vis,
+                                    basePosition=[0, 0, -10])
+        return body_id
+
+    @staticmethod
     def _hide_lines(ids):
         """Move existing debug lines off-screen so they disappear."""
         if ids is None:
@@ -424,6 +468,7 @@ class PyBulletScene:
             print("[PyBulletScene] Adapter: using cylinder placeholder.")
         self.adapter_id = p.createMultiBody(baseMass=0, baseVisualShapeIndex=vis,
                                             basePosition=[0, 0, -10])
+        self._disable_collisions(self.adapter_id)
 
         rq_vis = p.createVisualShape(
             p.GEOM_MESH, fileName=str(_ROBOTIQ_ADAPTER_STL),
@@ -431,6 +476,7 @@ class PyBulletScene:
         if rq_vis >= 0:
             self.robotiq_adapter_id = p.createMultiBody(
                 baseMass=0, baseVisualShapeIndex=rq_vis, basePosition=[0, 0, -10])
+            self._disable_collisions(self.robotiq_adapter_id)
         else:
             print("[PyBulletScene] WARNING: RobotiqAdapter.stl not loaded.")
 
@@ -438,6 +484,8 @@ class PyBulletScene:
         self.gripper_id    = p.loadURDF(str(_GRIPPER_URDF), useFixedBase=False,
                                         basePosition=[0, 0, -10])
         self._jmap_gripper = self._get_joint_map(self.gripper_id)
+        self._disable_collisions(self.gripper_id)
+        self._recolor(self.gripper_id, [0.20, 0.70, 0.20, 0.85])
         print(f"[PyBulletScene] Gripper loaded (id={self.gripper_id})")
 
     def _load_pegboard_mesh(self):
@@ -462,9 +510,9 @@ class PyBulletScene:
         vis  = p.createVisualShape(p.GEOM_BOX, halfExtents=half,
                                    rgbaColor=[0.55, 0.40, 0.25, 1.0])
         col  = p.createCollisionShape(p.GEOM_BOX, halfExtents=half)
-        p.createMultiBody(baseMass=0, baseVisualShapeIndex=vis,
-                          baseCollisionShapeIndex=col,
-                          basePosition=[0.0, 0.0, -0.040])
+        self._table_id = p.createMultiBody(baseMass=0, baseVisualShapeIndex=vis,
+                                           baseCollisionShapeIndex=col,
+                                           basePosition=[0.0, 0.0, 0.0])
 
     # -----------------------------------------------------------------------
     # Static debug geometry (drawn once at build())
