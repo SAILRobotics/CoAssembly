@@ -1,0 +1,555 @@
+"""
+pybullet_scene.py — Simplified PyBullet visualization scene for CoAssembly.
+
+Loads UR10e robot + Robotiq 85 gripper + adapter at calibrated world pose.
+Draws world frame, robot base frame, desk camera frustum, and pegboard frame.
+
+Usage
+-----
+    scene = PyBulletScene.from_calibration("calibration_data/results")
+    scene.build()
+
+    while True:
+        scene.update_robot(q_rad)      # optional — set arm joint angles
+        scene.update_tcp_bodies()      # move gripper/adapter to TCP via FK
+        scene.update_pegboard(T_wb)    # draw/update pegboard frame when locked
+"""
+
+from pathlib import Path
+
+import numpy as np
+import pybullet as p
+import pybullet_data
+from scipy.spatial.transform import Rotation as ScipyR
+
+# ---------------------------------------------------------------------------
+# Asset paths — local robot_assets/ folder next to this file
+# ---------------------------------------------------------------------------
+_ASSETS              = Path(__file__).resolve().parent / "robot_assets"
+_ROBOT_URDF          = _ASSETS / "ur10e.urdf"
+_GRIPPER_URDF        = _ASSETS / "robotiq85_2f" / "robotiq85_2f.urdf"
+_ADAPTER_STL         = _ASSETS / "OnlyAdapter.stl"
+_ROBOTIQ_ADAPTER_STL = _ASSETS / "RobotiqAdapter.stl"
+_PEGBOARD_OBJ        = _ASSETS / "pegboard" / "Pegboard.obj"
+
+# ---------------------------------------------------------------------------
+# Joint / gripper constants
+# ---------------------------------------------------------------------------
+_ARM_JOINT_NAMES = [
+    b"shoulder_pan_joint", b"shoulder_lift_joint", b"elbow_joint",
+    b"wrist_1_joint",      b"wrist_2_joint",       b"wrist_3_joint",
+]
+
+_GRIPPER_MIMIC = {
+    b"robotiq_85_left_knuckle_joint":          1.0,
+    b"robotiq_85_right_knuckle_joint":        -1.0,
+    b"robotiq_85_left_inner_knuckle_joint":    1.0,
+    b"robotiq_85_right_inner_knuckle_joint":  -1.0,
+    b"robotiq_85_left_finger_tip_joint":      -1.0,
+    b"robotiq_85_right_finger_tip_joint":      1.0,
+}
+
+# Rigid offsets along the tool chain
+def _T_adapter_in_tool() -> np.ndarray:
+    T = np.eye(4)
+    T[:3, :3] = ScipyR.from_euler('xyz', [0.0, 180.0, -180.0], degrees=True).as_matrix()
+    return T
+
+def _T_robotiq_adapt_in_adapt() -> np.ndarray:
+    T = np.eye(4)
+    T[:3, :3] = ScipyR.from_euler('y', 180.0, degrees=True).as_matrix()
+    T[:3, 3]  = [0.0, 0.0, -0.01275]
+    return T
+
+def _T_gripper_in_adapt() -> np.ndarray:
+    T = np.eye(4)
+    T[:3, :3] = ScipyR.from_euler('y', 180.0, degrees=True).as_matrix()
+    T[:3, 3]  = [0.0, 0.0, -0.0070]
+    return T
+
+
+# ===========================================================================
+# PyBulletScene
+# ===========================================================================
+
+class PyBulletScene:
+    """
+    Minimal PyBullet scene: robot + gripper + adapter placed at calibrated pose.
+
+    Parameters
+    ----------
+    T_world_base    : 4×4 SE3 — robot base in world frame.
+    T_world_deskcam : 4×4 SE3 — desk camera in world frame.
+    T_tcp_handcam   : 4×4 SE3 or None — hand camera in TCP frame.
+    K_desk / K_hand : 3×3 intrinsic matrices for frustum drawing (optional).
+    gui             : bool — open PyBullet GUI window (default True).
+
+    The pegboard mesh is placed at runtime via update_pegboard(T) using the
+    pose of ArUco marker 101 detected by _WorldAnchor.
+    """
+
+    def __init__(
+        self,
+        T_world_base:    np.ndarray,
+        T_world_deskcam: np.ndarray,
+        T_tcp_handcam:   np.ndarray | None,
+        *,
+        K_desk: np.ndarray | None = None,
+        K_hand: np.ndarray | None = None,
+        gui:    bool              = True,
+    ):
+        self.T_world_base    = np.array(T_world_base,    dtype=float)
+        self.T_world_deskcam = np.array(T_world_deskcam, dtype=float)
+        self.T_tcp_handcam   = None if T_tcp_handcam is None else np.array(T_tcp_handcam, dtype=float)
+
+        # Calibration-time poses (marker 10 frame) — preserved for set_scene_origin()
+        self._T_calib_base    = self.T_world_base.copy()
+        self._T_calib_deskcam = self.T_world_deskcam.copy()
+        self.K_desk = K_desk
+        self.K_hand = K_hand
+        self.gui    = gui
+
+        # Tool-chain offsets
+        self._adapt_in_tool    = _T_adapter_in_tool()
+        self._rq_adapt_in_adapt = _T_robotiq_adapt_in_adapt()
+        self._grip_in_adapt    = _T_gripper_in_adapt()
+
+        # PyBullet body handles
+        self.robot_id:            int | None = None
+        self.arm_indices:         list       = []
+        self._jmap_robot:         dict       = {}
+        self.adapter_id:          int | None = None
+        self.robotiq_adapter_id:  int | None = None
+        self.gripper_id:          int | None = None
+        self._jmap_gripper:       dict       = {}
+        self.tool0_link_idx:      int        = -1
+
+        # Pegboard mesh body (loaded once, teleported when anchor locks)
+        self._pegboard_body_id:   int | None  = None
+
+        # Dynamic debug line IDs
+        self._tcp_frame_ids:      list | None = None
+        self._hand_frust_ids:     list | None = None
+        self._pegboard_frame_ids: list | None = None
+        self._cached_T_tool0:     np.ndarray | None = None
+
+        self.connected = False
+
+    # -----------------------------------------------------------------------
+    # Factory
+    # -----------------------------------------------------------------------
+
+    @classmethod
+    def from_calibration(
+        cls,
+        results_dir: Path | str = "calibration_data/results",
+        *,
+        gui: bool = True,
+    ) -> "PyBulletScene":
+        """Build a PyBulletScene by loading the calibration NPZ files."""
+        d = Path(results_dir)
+        ph1 = np.load(str(d / "phase1_results.npz"), allow_pickle=True)
+        ph2 = np.load(str(d / "phase2_results.npz"), allow_pickle=True)
+        return cls(
+            T_world_base    = ph1["T_world_base"],
+            T_world_deskcam = ph1["T_world_deskcam"],
+            T_tcp_handcam   = ph2["T_tcp_handcam"],
+            gui=gui,
+        )
+
+    # -----------------------------------------------------------------------
+    # Build / teardown
+    # -----------------------------------------------------------------------
+
+    def build(self):
+        """Connect PyBullet and load all scene bodies. Call once before the loop."""
+        if self.connected:
+            return
+
+        if self.gui:
+            p.connect(p.GUI)
+            p.resetSimulation()
+            p.removeAllUserDebugItems()
+            p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
+            p.configureDebugVisualizer(p.COV_ENABLE_SHADOWS, 0)
+            p.resetDebugVisualizerCamera(
+                cameraDistance=1.8, cameraYaw=45, cameraPitch=-30,
+                cameraTargetPosition=[0, 0, 0])
+        else:
+            p.connect(p.DIRECT)
+
+        p.setGravity(0, 0, -9.81)
+        p.setAdditionalSearchPath(pybullet_data.getDataPath())
+
+        self._load_robot()
+        self._load_adapter()
+        self._load_gripper()
+        self._load_table()
+        self._load_pegboard_mesh()
+        self._draw_static_debug()
+
+        self.connected = True
+        print("[PyBulletScene] Built.")
+
+    def disconnect(self):
+        if self.connected:
+            p.disconnect()
+            self.connected = False
+
+    def set_scene_origin(self, T_world_marker10: np.ndarray):
+        """Reposition robot and desk-cam relative to the runtime marker 10 pose.
+
+        Calibration was captured with marker 10 as origin, so at runtime:
+            T_runtime_X = T_world_marker10 @ T_calib_X
+        """
+        if not self.connected:
+            return
+        T_m10 = np.array(T_world_marker10, dtype=float)
+        self.T_world_base    = T_m10 @ self._T_calib_base
+        self.T_world_deskcam = T_m10 @ self._T_calib_deskcam
+
+        if self.robot_id is not None:
+            T_robot = self.T_world_base.copy()
+            T_robot[:3, :3] = T_robot[:3, :3] @ ScipyR.from_euler('z', 180, degrees=True).as_matrix()
+            pos, quat = self._mat_to_pb(T_robot)
+            p.resetBasePositionAndOrientation(self.robot_id, pos, quat)
+
+        p.removeAllUserDebugItems()
+        self._draw_static_debug()
+        print("[PyBulletScene] Scene origin updated from marker 10.")
+
+    # -----------------------------------------------------------------------
+    # Per-frame update API
+    # -----------------------------------------------------------------------
+
+    def step(self):
+        """No-op — PyBullet GUI renders in background when bodies are updated."""
+        pass
+
+    def update_robot(self, q_rad: np.ndarray):
+        """Set the 6 arm joint angles in radians."""
+        for idx, q in zip(self.arm_indices, q_rad):
+            p.resetJointState(self.robot_id, idx, float(q))
+
+    def update_gripper(self, drive_q: float):
+        """Set Robotiq 85 drive angle (0 = open, 0.8 = closed)."""
+        if self.gripper_id is not None:
+            self._set_gripper(self.gripper_id, self._jmap_gripper,
+                              float(np.clip(drive_q, 0.0, 0.8)))
+
+    def update_tcp_bodies(self, life_time: float = 0.35):
+        """
+        Teleport adapter + gripper to current FK tool0 pose and draw TCP debug.
+
+        life_time controls how long TCP frame debug lines persist.
+        Use 0.35 s at ~5 Hz to keep lines visible but auto-clear if FK stops.
+        Returns the 4×4 tool0 transform or None if FK fails.
+        """
+        if self.tool0_link_idx < 0 or self.robot_id is None:
+            return None
+        try:
+            s = p.getLinkState(self.robot_id, self.tool0_link_idx,
+                               computeForwardKinematics=True)
+            T_tool0 = self._pb_to_mat(s[4], s[5])
+            self._cached_T_tool0 = T_tool0
+
+            T_adapt  = T_tool0 @ self._adapt_in_tool
+            T_rq     = T_adapt  @ self._rq_adapt_in_adapt
+            T_grip   = T_rq     @ self._grip_in_adapt
+
+            self._teleport(self.adapter_id,        T_adapt)
+            self._teleport(self.robotiq_adapter_id, T_rq)
+            self._teleport(self.gripper_id,         T_grip)
+
+            self._draw_tcp_debug(life_time)
+            return T_tool0
+        except RuntimeError:
+            return None
+
+    def update_pegboard(self, T_world_pegboard: np.ndarray | None, life_time: float = 0.0):
+        """
+        Draw/update the pegboard coordinate frame and teleport the OBJ mesh.
+
+        Pass None to hide both.  The mesh is centred at the marker origin by
+        offsetting half the board width/height in the marker's local XY plane.
+        """
+        if T_world_pegboard is None:
+            self._hide_lines(self._pegboard_frame_ids)
+            self._pegboard_frame_ids = None
+            if self._pegboard_body_id is not None:
+                p.resetBasePositionAndOrientation(
+                    self._pegboard_body_id, [0, 0, -10], [0, 0, 0, 1])
+            return
+
+        self._pegboard_frame_ids = self.draw_frame(
+            T_world_pegboard, length=0.10, width=3,
+            ids=self._pegboard_frame_ids, life_time=life_time)
+
+        if self._pegboard_body_id is not None:
+            # OBJ origin is at the marker — no centering offset applied.
+            self._teleport(self._pegboard_body_id, T_world_pegboard)
+
+    # -----------------------------------------------------------------------
+    # Static drawing helpers (public so callers can add extra debug geometry)
+    # -----------------------------------------------------------------------
+
+    @staticmethod
+    def draw_frame(T, length=0.05, width=2, ids=None, life_time: float = 0.0):
+        """Draw X (red) / Y (green) / Z (blue) frame arrows at pose T."""
+        pos, R = T[:3, 3], T[:3, :3]
+        if ids is None or len(ids) != 3:
+            ids = [-1, -1, -1]
+        new_ids = []
+        for i, col in enumerate(([1, 0, 0], [0, 1, 0], [0, 0, 1])):
+            end    = (pos + R[:, i] * length).tolist()
+            old_id = int(ids[i]) if (ids[i] is not None and int(ids[i]) >= 0) else -1
+            kw = {"replaceItemUniqueId": old_id} if old_id >= 0 else {}
+            lid = p.addUserDebugLine(
+                pos.tolist(), end, col, lineWidth=width, lifeTime=life_time, **kw)
+            new_ids.append(lid)
+        return new_ids
+
+    @staticmethod
+    def draw_frustum(T_world_cam, depth=0.15, color=(0.2, 0.6, 1.0), ids=None,
+                     fx=900.0, fy=900.0, cx=640.0, cy=360.0,
+                     w=1280, h=720, life_time: float = 0.0):
+        """Draw a camera frustum as 8 debug lines (4 rays + 4 rectangle edges)."""
+        corners_n = [
+            np.array([(0 - cx) / fx, (0 - cy) / fy, 1.0]),
+            np.array([(w - cx) / fx, (0 - cy) / fy, 1.0]),
+            np.array([(w - cx) / fx, (h - cy) / fy, 1.0]),
+            np.array([(0 - cx) / fx, (h - cy) / fy, 1.0]),
+        ]
+        R, t   = T_world_cam[:3, :3], T_world_cam[:3, 3]
+        origin = t.tolist()
+        pts    = [(R @ (c / np.linalg.norm(c) * depth) + t).tolist() for c in corners_n]
+
+        if ids is None or len(ids) != 8:
+            ids = [-1] * 8
+        new_ids = []
+        for i, pt in enumerate(pts):
+            old_id = int(ids[i]) if (ids[i] is not None and int(ids[i]) >= 0) else -1
+            kw = {"replaceItemUniqueId": old_id} if old_id >= 0 else {}
+            lid = p.addUserDebugLine(origin, pt, color, lineWidth=1.5, lifeTime=life_time, **kw)
+            new_ids.append(lid)
+        for i in range(4):
+            old_id = int(ids[4 + i]) if (ids[4 + i] is not None and int(ids[4 + i]) >= 0) else -1
+            kw = {"replaceItemUniqueId": old_id} if old_id >= 0 else {}
+            lid = p.addUserDebugLine(pts[i], pts[(i + 1) % 4], color,
+                                     lineWidth=1.5, lifeTime=life_time, **kw)
+            new_ids.append(lid)
+        return new_ids
+
+    # -----------------------------------------------------------------------
+    # Private helpers
+    # -----------------------------------------------------------------------
+
+    @staticmethod
+    def _mat_to_pb(T):
+        return T[:3, 3].tolist(), ScipyR.from_matrix(T[:3, :3]).as_quat().tolist()
+
+    @staticmethod
+    def _pb_to_mat(pos, quat):
+        T = np.eye(4)
+        T[:3, :3] = ScipyR.from_quat(quat).as_matrix()
+        T[:3, 3]  = np.array(pos)
+        return T
+
+    def _teleport(self, body_id, T):
+        if body_id is None:
+            return
+        pos, quat = self._mat_to_pb(T)
+        p.resetBasePositionAndOrientation(body_id, pos, quat)
+
+    def _set_gripper(self, body_id, jmap, drive_q):
+        for name, mult in _GRIPPER_MIMIC.items():
+            if name in jmap:
+                p.resetJointState(body_id, jmap[name], drive_q * mult)
+
+    @staticmethod
+    def _get_joint_map(body_id):
+        return {p.getJointInfo(body_id, i)[1]: i
+                for i in range(p.getNumJoints(body_id))}
+
+    @staticmethod
+    def _find_link_index(body_id: int, link_name: bytes) -> int:
+        for i in range(p.getNumJoints(body_id)):
+            if p.getJointInfo(body_id, i)[12] == link_name:
+                return i
+        return -1
+
+    @staticmethod
+    def _hide_lines(ids):
+        """Move existing debug lines off-screen so they disappear."""
+        if ids is None:
+            return
+        far, far2 = [0.0, 0.0, -50.0], [0.0, 0.0, -50.001]
+        for lid in ids:
+            if lid is not None and int(lid) >= 0:
+                try:
+                    p.addUserDebugLine(far, far2, [0, 0, 0], lineWidth=1,
+                                       lifeTime=0.01, replaceItemUniqueId=int(lid))
+                except Exception:
+                    pass
+
+    # -----------------------------------------------------------------------
+    # Scene loading
+    # -----------------------------------------------------------------------
+
+    def _load_robot(self):
+        # UR mounting convention: extra 180° Z rotation on the base frame
+        T_robot = self.T_world_base.copy()
+        T_robot[:3, :3] = T_robot[:3, :3] @ ScipyR.from_euler('z', 180, degrees=True).as_matrix()
+        base_pos, base_quat = self._mat_to_pb(T_robot)
+        self.robot_id = p.loadURDF(
+            str(_ROBOT_URDF),
+            basePosition=base_pos,
+            baseOrientation=base_quat,
+            useFixedBase=True,
+            flags=p.URDF_USE_MATERIAL_COLORS_FROM_MTL,
+        )
+        self._jmap_robot  = self._get_joint_map(self.robot_id)
+        self.arm_indices  = [self._jmap_robot[n] for n in _ARM_JOINT_NAMES]
+        self.tool0_link_idx = self._find_link_index(self.robot_id, b"tool0")
+        print(f"[PyBulletScene] Robot loaded (id={self.robot_id}, "
+              f"tool0_link={self.tool0_link_idx})")
+
+    def _load_adapter(self):
+        vis = p.createVisualShape(
+            p.GEOM_MESH, fileName=str(_ADAPTER_STL),
+            meshScale=[1.0, 1.0, 1.0], rgbaColor=[0.65, 0.65, 0.65, 1.0])
+        if vis < 0:
+            vis = p.createVisualShape(p.GEOM_CYLINDER, radius=0.031, length=0.011,
+                                      rgbaColor=[0.65, 0.65, 0.65, 1.0])
+            print("[PyBulletScene] Adapter: using cylinder placeholder.")
+        self.adapter_id = p.createMultiBody(baseMass=0, baseVisualShapeIndex=vis,
+                                            basePosition=[0, 0, -10])
+
+        rq_vis = p.createVisualShape(
+            p.GEOM_MESH, fileName=str(_ROBOTIQ_ADAPTER_STL),
+            meshScale=[0.001, 0.001, 0.001], rgbaColor=[0.30, 0.30, 0.30, 1.0])
+        if rq_vis >= 0:
+            self.robotiq_adapter_id = p.createMultiBody(
+                baseMass=0, baseVisualShapeIndex=rq_vis, basePosition=[0, 0, -10])
+        else:
+            print("[PyBulletScene] WARNING: RobotiqAdapter.stl not loaded.")
+
+    def _load_gripper(self):
+        self.gripper_id    = p.loadURDF(str(_GRIPPER_URDF), useFixedBase=False,
+                                        basePosition=[0, 0, -10])
+        self._jmap_gripper = self._get_joint_map(self.gripper_id)
+        print(f"[PyBulletScene] Gripper loaded (id={self.gripper_id})")
+
+    def _load_pegboard_mesh(self):
+        if not _PEGBOARD_OBJ.exists():
+            print(f"[PyBulletScene] WARNING: pegboard OBJ not found: {_PEGBOARD_OBJ}")
+            return
+        vis = p.createVisualShape(
+            p.GEOM_MESH,
+            fileName=str(_PEGBOARD_OBJ),
+            meshScale=[1.0, 1.0, 1.0],
+        )
+        if vis < 0:
+            print("[PyBulletScene] WARNING: pegboard OBJ failed to load as visual shape.")
+            return
+        self._pegboard_body_id = p.createMultiBody(
+            baseMass=0, baseVisualShapeIndex=vis,
+            basePosition=[0, 0, -10])
+        print(f"[PyBulletScene] Pegboard mesh loaded (id={self._pegboard_body_id})")
+
+    def _load_table(self):
+        half = [1.0, 0.5, 0.025]
+        vis  = p.createVisualShape(p.GEOM_BOX, halfExtents=half,
+                                   rgbaColor=[0.55, 0.40, 0.25, 1.0])
+        col  = p.createCollisionShape(p.GEOM_BOX, halfExtents=half)
+        p.createMultiBody(baseMass=0, baseVisualShapeIndex=vis,
+                          baseCollisionShapeIndex=col,
+                          basePosition=[0.0, 0.0, -0.040])
+
+    # -----------------------------------------------------------------------
+    # Static debug geometry (drawn once at build())
+    # -----------------------------------------------------------------------
+
+    def _draw_static_debug(self):
+        # World origin frame (large)
+        self.draw_frame(np.eye(4), length=0.12, width=4)
+        p.addUserDebugText("world", [0, 0, 0.14],
+                           textColorRGB=[0.9, 0.9, 0.9], textSize=1.1)
+
+        # Robot base frame
+        self.draw_frame(self.T_world_base, length=0.08, width=3)
+        p.addUserDebugText("robot base",
+                           self.T_world_base[:3, 3].tolist(),
+                           textColorRGB=[1.0, 0.6, 0.0], textSize=1.0)
+
+        # Desk camera — frame + frustum
+        self.draw_frame(self.T_world_deskcam, length=0.05, width=2)
+        p.addUserDebugText("desk cam",
+                           self.T_world_deskcam[:3, 3].tolist(),
+                           textColorRGB=[0.0, 0.7, 1.0], textSize=1.0)
+        kw = {}
+        if self.K_desk is not None:
+            kw = {"fx": float(self.K_desk[0, 0]), "fy": float(self.K_desk[1, 1]),
+                  "cx": float(self.K_desk[0, 2]), "cy": float(self.K_desk[1, 2])}
+        self.draw_frustum(self.T_world_deskcam, depth=0.18, color=(0.0, 0.55, 1.0), **kw)
+
+    def _draw_pegboard_grid(self, T: np.ndarray,
+                            board_w: float = 0.60, board_h: float = 0.90,
+                            n_cols: int = 8, n_rows: int = 12):
+        """Draw a green peg-hole grid in the XY plane of the marker frame."""
+        R, origin = T[:3, :3], T[:3, 3]
+        x_hat = R[:, 0]   # board horizontal axis
+        y_hat = R[:, 1]   # board vertical axis
+        color = [0.15, 0.85, 0.25]
+
+        # Outer border
+        corners = [
+            origin - x_hat * board_w / 2 - y_hat * board_h / 2,
+            origin + x_hat * board_w / 2 - y_hat * board_h / 2,
+            origin + x_hat * board_w / 2 + y_hat * board_h / 2,
+            origin - x_hat * board_w / 2 + y_hat * board_h / 2,
+        ]
+        for i in range(4):
+            p.addUserDebugLine(corners[i].tolist(), corners[(i + 1) % 4].tolist(),
+                               color, lineWidth=2.0)
+
+        # Grid lines — columns (vertical lines across board height)
+        for ci in range(n_cols + 1):
+            t = -board_w / 2 + ci * board_w / n_cols
+            start = origin + x_hat * t - y_hat * board_h / 2
+            end   = origin + x_hat * t + y_hat * board_h / 2
+            p.addUserDebugLine(start.tolist(), end.tolist(), color, lineWidth=0.5)
+
+        # Grid lines — rows (horizontal lines across board width)
+        for ri in range(n_rows + 1):
+            t = -board_h / 2 + ri * board_h / n_rows
+            start = origin - x_hat * board_w / 2 + y_hat * t
+            end   = origin + x_hat * board_w / 2 + y_hat * t
+            p.addUserDebugLine(start.tolist(), end.tolist(), color, lineWidth=0.5)
+
+    # -----------------------------------------------------------------------
+    # TCP debug (called each frame from update_tcp_bodies)
+    # -----------------------------------------------------------------------
+
+    def _draw_tcp_debug(self, life_time: float = 0.35):
+        T = self._cached_T_tool0
+        if T is None:
+            return
+
+        if self._tcp_frame_ids is None or len(self._tcp_frame_ids) != 3:
+            self._tcp_frame_ids = [-1, -1, -1]
+        self._tcp_frame_ids = self.draw_frame(
+            T, length=0.05, width=2,
+            ids=self._tcp_frame_ids, life_time=life_time)
+
+        if self.T_tcp_handcam is not None:
+            T_handcam = T @ self.T_tcp_handcam
+            if self._hand_frust_ids is None or len(self._hand_frust_ids) != 8:
+                self._hand_frust_ids = [-1] * 8
+            kw = {}
+            if self.K_hand is not None:
+                kw = {"fx": float(self.K_hand[0, 0]), "fy": float(self.K_hand[1, 1]),
+                      "cx": float(self.K_hand[0, 2]), "cy": float(self.K_hand[1, 2])}
+            self._hand_frust_ids = self.draw_frustum(
+                T_handcam, depth=0.12, color=(1.0, 0.15, 0.15),
+                ids=self._hand_frust_ids, life_time=life_time, **kw)
