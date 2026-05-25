@@ -608,13 +608,10 @@ class _SceneVis:
 class _WorldAnchor:
     _EYE_OFFSET_FILE = _FILE_DIR / "eye_offset_calibration.json"
 
-    _EYE_OFFSET_FILE = _FILE_DIR / "eye_offset_calibration.json"
-
     def __init__(self, pub_ip: str, pub_port: int = 5005, pegboard_pub_port: int = 5008):
         self._T_wt: np.ndarray | None = None
         self._T_offset = np.eye(4, dtype=np.float64)
         self._T_world_pegboard: np.ndarray | None = None
-        self._T_eye_offset: np.ndarray | None = None  # inv(center_T) @ cam_T, fixed HMD geometry
         self._T_eye_offset: np.ndarray | None = None  # inv(center_T) @ cam_T, fixed HMD geometry
         ctx = zmq.Context()
         self._pub = ctx.socket(zmq.PUB)
@@ -622,35 +619,6 @@ class _WorldAnchor:
         self._pub_pegboard = ctx.socket(zmq.PUB)
         self._pub_pegboard.connect(f"tcp://{pub_ip}:{pegboard_pub_port}")
         time.sleep(0.2)
-        self._load_eye_offset()
-
-    def _load_eye_offset(self):
-        if not self._EYE_OFFSET_FILE.exists():
-            return
-        try:
-            data = json.loads(self._EYE_OFFSET_FILE.read_text())
-            self._T_eye_offset = np.array(data["T_eye_offset"],
-                                          dtype=np.float64).reshape(4, 4)
-            print(f"[Anchor] Eye offset loaded from {self._EYE_OFFSET_FILE.name}")
-        except Exception as e:
-            print(f"[Anchor] Eye offset load failed: {e}")
-
-    def _save_eye_offset(self):
-        try:
-            self._EYE_OFFSET_FILE.write_text(
-                json.dumps({"T_eye_offset": self._T_eye_offset.flatten().tolist()},
-                           indent=2))
-            print(f"[Anchor] Eye offset saved to {self._EYE_OFFSET_FILE.name}")
-        except Exception as e:
-            print(f"[Anchor] Eye offset save failed: {e}")
-
-    def _effective_cam_T(self, cam_T: np.ndarray,
-                         center_T: np.ndarray) -> np.ndarray | None:
-        """Return the best available camera pose for locking.
-        Prefers center_T @ T_eye_offset (no WiFi delay) once calibrated."""
-        if self._T_eye_offset is not None and center_T is not None:
-            return center_T @ self._T_eye_offset
-        return cam_T  # fallback to raw cam on very first lock
         self._load_eye_offset()
 
     def _load_eye_offset(self):
@@ -690,18 +658,7 @@ class _WorldAnchor:
     def lock(self, T_cam_world: np.ndarray, T_cam_pegboard: np.ndarray,
              cam_T: np.ndarray, center_T: np.ndarray | None = None) -> bool:
         if T_cam_world is None or T_cam_pegboard is None:
-    def lock(self, T_cam_world: np.ndarray, T_cam_pegboard: np.ndarray,
-             cam_T: np.ndarray, center_T: np.ndarray | None = None) -> bool:
-        if T_cam_world is None or T_cam_pegboard is None:
             return False
-        # Calibrate offset once if file absent and both poses available
-        if self._T_eye_offset is None and cam_T is not None and center_T is not None:
-            self._T_eye_offset = np.linalg.inv(center_T) @ cam_T
-            self._save_eye_offset()
-        eff = self._effective_cam_T(cam_T, center_T)
-        if eff is None:
-            return False
-        self._T_wt = np.linalg.inv(eff @ T_cam_world)
         # Calibrate offset once if file absent and both poses available
         if self._T_eye_offset is None and cam_T is not None and center_T is not None:
             self._T_eye_offset = np.linalg.inv(center_T) @ cam_T
@@ -712,9 +669,7 @@ class _WorldAnchor:
         self._T_wt = np.linalg.inv(eff @ T_cam_world)
         self._T_world_pegboard = np.linalg.inv(T_cam_world) @ T_cam_pegboard
         src = "CenterEye+offset" if self._T_eye_offset is not None else "cam_T"
-        src = "CenterEye+offset" if self._T_eye_offset is not None else "cam_T"
         t = self._T_world_pegboard[:3, 3]
-        print(f"[Anchor] Locked ({src}). Pegboard: "
         print(f"[Anchor] Locked ({src}). Pegboard: "
               f"t=({t[0]:+.3f}, {t[1]:+.3f}, {t[2]:+.3f}) m")
         return True
