@@ -1231,6 +1231,7 @@ def run(quest_ip: str, world_marker_id: int, pegboard_marker_id: int,
                         anchor.lock(T_cam_world_fresh, T_cam_pegboard_fresh,
                                     cam.camera_T, center_T=_center_T)
                     haptic_lock_sent = False
+                    _last_proximity_relock = _now  # block proximity relock for 2 s after any manual lock
                     if not pegboard_cubes_added and anchor.T_pegboard_in_world is not None:
                         T_wp = anchor.T_pegboard_in_world
                         R_wp = T_wp[:3, :3]
