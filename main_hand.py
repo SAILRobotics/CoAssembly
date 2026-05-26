@@ -1136,6 +1136,10 @@ def run(quest_ip: str, world_marker_id: int, pegboard_marker_id: int,
     _last_synth_pub  = 0.0
     _SYNTH_INTERVAL  = 1.0 / 30.0
 
+    _relock_available_prev  = False
+    _green_until            = 0.0
+    _last_proximity_relock  = 0.0
+
     vis = _SceneVis(f"Hand Tracking — World Frame  (marker #{world_marker_id})")
 
     win = f"Quest Left Passthrough  [ENTER=re-lock  ESC=quit]  marker #{world_marker_id}"
@@ -1205,6 +1209,43 @@ def run(quest_ip: str, world_marker_id: int, pegboard_marker_id: int,
             T_world_center  = anchor.world_T(_center_T) if _center_T is not None else None
 
             left_pts, right_pts = hands.world_joints(T_wt)
+
+            # ── World marker proximity relock ─────────────────────────────────
+            _now = time.time()
+            dist_to_world_marker = (float(np.linalg.norm(T_cam_world_fresh[:3, 3]))
+                                    if world_ok and cam.camera_T is not None else float('inf'))
+            _relock_available = (anchor.locked and world_ok and cam.camera_T is not None
+                                 and dist_to_world_marker < 1.0)
+
+            if _green_until > 0.0 and _now >= _green_until:
+                _green_until = 0.0
+                _relock_available_prev = not _relock_available
+
+            if _green_until == 0.0 and _relock_available != _relock_available_prev:
+                tools.send_color(world_marker_id,
+                                 _ToolSelectionManager.HOVER_COLOR if _relock_available
+                                 else _ToolSelectionManager.RESET_COLOR)
+                _relock_available_prev = _relock_available
+
+            _RELOCK_COOLDOWN = 2.0
+            if (tools.active_tool_id == world_marker_id and _relock_available
+                    and _now - _last_proximity_relock >= _RELOCK_COOLDOWN):
+                anchor.relock(T_cam_world_fresh, cam.camera_T, _center_T,
+                              T_cam_pegboard_fresh)
+                if pegboard_cubes_added and anchor.T_pegboard_in_world is not None:
+                    T_wp = anchor.T_pegboard_in_world
+                    R_wp = T_wp[:3, :3]
+                    for i, cube in enumerate(PEGBOARD_CUBES):
+                        obj = synth._objects[_pegboard_cube_start + i]
+                        obj.centroid = _transform_point(T_wp, cube["offset"])
+                        obj.R_o3d = R_wp.copy()
+                tools.send_color(world_marker_id, _ToolSelectionManager.SELECTED_COLOR)
+                _green_until = _now + 1.0
+                _relock_available_prev = True
+                _last_proximity_relock = _now
+                haptic_lock_sent = False
+                print("[AutoRelock] Relocked via proximity click")
+            tools.deselect(world_marker_id)
 
             # ── Update Open3D ─────────────────────────────────────────────────
             if cam.fx is not None:
@@ -1300,6 +1341,7 @@ def run(quest_ip: str, world_marker_id: int, pegboard_marker_id: int,
                                     center_T=_center_T,
                                     T_cam_pegboard=T_cam_pegboard_fresh)
                     haptic_lock_sent = False
+                    _last_proximity_relock = _now
                     # Draw wall at marker 100 (world origin after locking)
                     if pb_scene is not None:
                         pb_scene.update_wall(np.eye(4))
