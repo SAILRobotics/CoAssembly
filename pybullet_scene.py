@@ -123,8 +123,17 @@ class PyBulletScene:
         self._jmap_gripper:       dict       = {}
         self.tool0_link_idx:      int        = -1
 
-        # Pegboard mesh body (loaded once, teleported when anchor locks)
-        self._pegboard_body_id:   int | None  = None
+        # 2×2 grid of pegboard mesh bodies (loaded once, teleported when anchor locks)
+        # Each board: 16" wide × 12" tall → 0.4064 m × 0.3048 m
+        # Offsets are in pegboard-local frame (marker origin = bottom-left of board 0)
+        _W, _H = 16 * 0.0254, 12 * 0.0254
+        self._PEGBOARD_GRID_OFFSETS = [
+            [0.0,  0.0,  0.0],
+            [_W,   0.0,  0.0],
+            [0.0,  _H,   0.0],
+            [_W,   _H,   0.0],
+        ]
+        self._pegboard_body_ids: list[int] = []
         self._table_id:           int | None  = None
 
         # Marker wall body (flat box in marker 100's XY plane)
@@ -220,7 +229,9 @@ class PyBulletScene:
             p.resetBasePositionAndOrientation(self.robot_id, pos, quat)
 
         if self._table_id is not None:
-            self._teleport(self._table_id, T_m10)
+            T_table = T_m10.copy()
+            T_table[:3, 3] = T_table[:3, 3] + T_m10[:3, :3] @ [0.0, 0.0, -self._table_half_z]
+            self._teleport(self._table_id, T_table)
 
         p.removeAllUserDebugItems()
         self._draw_static_debug()
@@ -289,18 +300,21 @@ class PyBulletScene:
         if T_world_pegboard is None:
             self._hide_lines(self._pegboard_frame_ids)
             self._pegboard_frame_ids = None
-            if self._pegboard_body_id is not None:
-                p.resetBasePositionAndOrientation(
-                    self._pegboard_body_id, [0, 0, -10], [0, 0, 0, 1])
+            for i, body_id in enumerate(self._pegboard_body_ids):
+                p.resetBasePositionAndOrientation(body_id, [0, 0, -10 - i], [0, 0, 0, 1])
             return
 
         self._pegboard_frame_ids = self.draw_frame(
             T_world_pegboard, length=0.10, width=3,
             ids=self._pegboard_frame_ids, life_time=life_time)
 
-        if self._pegboard_body_id is not None:
-            # OBJ origin is at the marker — no centering offset applied.
-            self._teleport(self._pegboard_body_id, T_world_pegboard)
+        R = T_world_pegboard[:3, :3]
+        t = T_world_pegboard[:3, 3]
+        for body_id, offset in zip(self._pegboard_body_ids, self._PEGBOARD_GRID_OFFSETS):
+            T_board = np.eye(4, dtype=float)
+            T_board[:3, :3] = R
+            T_board[:3, 3]  = t + R @ np.array(offset)
+            self._teleport(body_id, T_board)
 
     def update_wall(self, T_world_marker: np.ndarray):
         """Teleport the marker wall (flat box in marker XY plane) to pose T."""
@@ -321,7 +335,7 @@ class PyBulletScene:
         for i, col in enumerate(([1, 0, 0], [0, 1, 0], [0, 0, 1])):
             end    = (pos + R[:, i] * length).tolist()
             old_id = int(ids[i]) if (ids[i] is not None and int(ids[i]) >= 0) else -1
-            kw = {"replaceItemUniqueId": old_id} if old_id >= 0 else {}
+            kw = {"replaceItemUniqueId": old_id} if (old_id >= 0 and life_time == 0.0) else {}
             lid = p.addUserDebugLine(
                 pos.tolist(), end, col, lineWidth=width, lifeTime=life_time, **kw)
             new_ids.append(lid)
@@ -347,12 +361,12 @@ class PyBulletScene:
         new_ids = []
         for i, pt in enumerate(pts):
             old_id = int(ids[i]) if (ids[i] is not None and int(ids[i]) >= 0) else -1
-            kw = {"replaceItemUniqueId": old_id} if old_id >= 0 else {}
+            kw = {"replaceItemUniqueId": old_id} if (old_id >= 0 and life_time == 0.0) else {}
             lid = p.addUserDebugLine(origin, pt, color, lineWidth=1.5, lifeTime=life_time, **kw)
             new_ids.append(lid)
         for i in range(4):
             old_id = int(ids[4 + i]) if (ids[4 + i] is not None and int(ids[4 + i]) >= 0) else -1
-            kw = {"replaceItemUniqueId": old_id} if old_id >= 0 else {}
+            kw = {"replaceItemUniqueId": old_id} if (old_id >= 0 and life_time == 0.0) else {}
             lid = p.addUserDebugLine(pts[i], pts[(i + 1) % 4], color,
                                      lineWidth=1.5, lifeTime=life_time, **kw)
             new_ids.append(lid)
@@ -500,19 +514,22 @@ class PyBulletScene:
         if vis < 0:
             print("[PyBulletScene] WARNING: pegboard OBJ failed to load as visual shape.")
             return
-        self._pegboard_body_id = p.createMultiBody(
-            baseMass=0, baseVisualShapeIndex=vis,
-            basePosition=[0, 0, -10])
-        print(f"[PyBulletScene] Pegboard mesh loaded (id={self._pegboard_body_id})")
+        for i in range(4):
+            body_id = p.createMultiBody(
+                baseMass=0, baseVisualShapeIndex=vis,
+                basePosition=[0, 0, -10 - i])
+            self._pegboard_body_ids.append(body_id)
+        print(f"[PyBulletScene] Pegboard 2×2 grid loaded (ids={self._pegboard_body_ids})")
 
     def _load_table(self):
-        half = [1.0, 0.5, 0.025]
+        half = [1.0, 0.5, 0.0125] #half the table, all dimensions in meters and total Z thickness is 2.5 cm
+        self._table_half_z = half[2]
         vis  = p.createVisualShape(p.GEOM_BOX, halfExtents=half,
                                    rgbaColor=[0.55, 0.40, 0.25, 1.0])
         col  = p.createCollisionShape(p.GEOM_BOX, halfExtents=half)
         self._table_id = p.createMultiBody(baseMass=0, baseVisualShapeIndex=vis,
                                            baseCollisionShapeIndex=col,
-                                           basePosition=[0.0, 0.0, 0.0])
+                                           basePosition=[0.0, 0.0, -half[2]]) #puts table top at z=0
 
     # -----------------------------------------------------------------------
     # Static debug geometry (drawn once at build())

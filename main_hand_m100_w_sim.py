@@ -855,23 +855,22 @@ class _ToolSelectionManager:
         poller.register(self._sub, zmq.POLLIN)
         if not dict(poller.poll(timeout=timeout_ms)):
             return False
-        latest = None
+        processed = False
         while True:
             try:
-                latest = self._sub.recv_string(flags=zmq.NOBLOCK)
+                raw = self._sub.recv_string(flags=zmq.NOBLOCK)
             except zmq.Again:
                 break
-        if latest is None:
-            return False
-        try:
-            msg = json.loads(latest)
-            tool_id    = int(msg["tool_id"])
-            event_type = msg.get("event_type", "selected")
-        except (json.JSONDecodeError, KeyError, ValueError) as e:
-            print(f"[ToolSelection] Bad message: {e}")
-            return False
-        self._handle_event(tool_id, event_type)
-        return True
+            try:
+                msg = json.loads(raw)
+                tool_id    = int(msg["tool_id"])
+                event_type = msg.get("event_type", "selected")
+            except (json.JSONDecodeError, KeyError, ValueError) as e:
+                print(f"[ToolSelection] Bad message: {e}")
+                continue
+            self._handle_event(tool_id, event_type)
+            processed = True
+        return processed
 
     def _handle_event(self, tool_id: int, event_type: str):
         if event_type == "selected":
