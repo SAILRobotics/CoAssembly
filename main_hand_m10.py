@@ -922,6 +922,13 @@ class _ToolSelectionManager:
     def active_tool_id(self) -> int | None:
         return self._active_tool_id
 
+    def send_color(self, tool_id: int, color: list[float]):
+        self._send_color(tool_id, color)
+
+    def deselect(self, tool_id: int):
+        if self._active_tool_id == tool_id:
+            self._active_tool_id = None
+
     def close(self):
         try: self._sub.close(0)
         except Exception: pass
@@ -1022,6 +1029,10 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
     _last_synth_pub  = 0.0
     _SYNTH_INTERVAL  = 1.0 / 30.0
 
+    _relock_available_prev  = False
+    _green_until            = 0.0
+    _last_proximity_relock  = 0.0
+
     vis = _SceneVis(f"Hand Tracking — World Frame  (marker #{anchor_marker_id})")
     win = (f"Quest Left Passthrough  [ENTER=lock/relock  ESC=quit]"
            f"  anchor=#{anchor_marker_id}  pegboard=#{pegboard_marker_id}")
@@ -1086,6 +1097,44 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
             T_world_center  = anchor.world_T(_center_T) if _center_T is not None else None
 
             left_pts, right_pts = hands.world_joints(T_wt)
+
+            # ── Anchor marker proximity relock ────────────────────────────────
+            _now = time.time()
+            dist_to_anchor = (float(np.linalg.norm(T_cam_anchor[:3, 3]))
+                              if anchor_ok and cam.camera_T is not None else float('inf'))
+            _relock_available = (anchor.locked and anchor_ok and cam.camera_T is not None
+                                 and dist_to_anchor < 1.0)
+
+            if _green_until > 0.0 and _now >= _green_until:
+                _green_until = 0.0
+                _relock_available_prev = not _relock_available
+
+            if _green_until == 0.0 and _relock_available != _relock_available_prev:
+                tools.send_color(anchor_marker_id,
+                                 _ToolSelectionManager.HOVER_COLOR if _relock_available
+                                 else _ToolSelectionManager.RESET_COLOR)
+                _relock_available_prev = _relock_available
+
+            _RELOCK_COOLDOWN = 2.0
+            if (tools.active_tool_id == anchor_marker_id and _relock_available
+                    and _now - _last_proximity_relock >= _RELOCK_COOLDOWN):
+                anchor.relock(T_cam_anchor, cam.camera_T, _center_T)
+                if pegboard_ok:
+                    anchor.update_pegboard_from_tracking(cam.camera_T, _center_T, T_cam_pegboard)
+                if pegboard_cubes_added and anchor.T_pegboard_in_world is not None:
+                    T_wp = anchor.T_pegboard_in_world
+                    R_wp = T_wp[:3, :3]
+                    for i, cube in enumerate(PEGBOARD_CUBES):
+                        obj = synth._objects[_pegboard_cube_start + i]
+                        obj.centroid = _transform_point(T_wp, cube["offset"])
+                        obj.R_o3d = R_wp.copy()
+                tools.send_color(anchor_marker_id, _ToolSelectionManager.SELECTED_COLOR)
+                _green_until = _now + 1.0
+                _relock_available_prev = True
+                _last_proximity_relock = _now
+                haptic_lock_sent = False
+                print("[AutoRelock] Relocked via proximity click")
+            tools.deselect(anchor_marker_id)
 
             # ── Update Open3D ─────────────────────────────────────────────────
             if cam.fx is not None:
@@ -1168,6 +1217,7 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
                         else:
                             anchor.lock(T_cam_anchor, cam.camera_T, center_T=_center_T)
                         haptic_lock_sent = False
+                        _last_proximity_relock = _now
                         # Marker 10 IS the scene origin — calibration is in marker-10 frame
                         if pb_scene is not None:
                             pb_scene.set_scene_origin(np.eye(4))
