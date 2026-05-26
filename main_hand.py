@@ -291,21 +291,6 @@ class _HandDataReceiver:
                     rot.get("z", 0.0), rot.get("w", 1.0)]
         return _unity_pose_to_T(pos_xyz, rot_xyzw)
 
-    def center_eye_T(self) -> "np.ndarray | None":
-        """Extract CenterEye pose from the latest hand-tracking frame."""
-        if self.data is None:
-            return None
-        head = self.data.get("head") or {}
-        ce = head.get("CenterEye")
-        if not ce:
-            return None
-        pos = ce.get("position") or {}
-        rot = ce.get("rotation") or {}
-        pos_xyz  = [pos.get("x", 0.0), pos.get("y", 0.0), pos.get("z", 0.0)]
-        rot_xyzw = [rot.get("x", 0.0), rot.get("y", 0.0),
-                    rot.get("z", 0.0), rot.get("w", 1.0)]
-        return _unity_pose_to_T(pos_xyz, rot_xyzw)
-
     def world_joints(self, T_world_tracking: np.ndarray):
         """Returns (left_pts, right_pts) in world frame, each (N,3) or None.
         Prefers real hand; falls back to synth hand if real is absent."""
@@ -437,30 +422,6 @@ class _SceneVis:
         self._tracking_sphere.transform(self._hidden_T())
         self.vis.add_geometry(self._tracking_sphere)
         self._tracking_T = self._hidden_T()
-        # CenterEyeAnchor (real-time head pose) — magenta frustum
-        self._head_frustum = None
-
-        # Marker 101 (pegboard) — green sphere + frame, shown once anchor is locked
-        self._pegboard_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.10)
-        self._pegboard_frame.transform(self._hidden_T())
-        self.vis.add_geometry(self._pegboard_frame)
-        self._pegboard_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.020)
-        self._pegboard_sphere.paint_uniform_color([0.1, 1.0, 0.1])
-        self._pegboard_sphere.compute_vertex_normals()
-        self._pegboard_sphere.transform(self._hidden_T())
-        self.vis.add_geometry(self._pegboard_sphere)
-        self._pegboard_T = self._hidden_T()
-
-        # Quest tracking space origin — blue sphere + frame
-        self._tracking_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.10)
-        self._tracking_frame.transform(self._hidden_T())
-        self.vis.add_geometry(self._tracking_frame)
-        self._tracking_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.020)
-        self._tracking_sphere.paint_uniform_color([0.2, 0.4, 1.0])
-        self._tracking_sphere.compute_vertex_normals()
-        self._tracking_sphere.transform(self._hidden_T())
-        self.vis.add_geometry(self._tracking_sphere)
-        self._tracking_T = self._hidden_T()
 
         # Hand joints + bones
         self._pcd_l, self._lines_l = self._make_hand([0.3, 0.6, 1.0])   # blue
@@ -523,44 +484,7 @@ class _SceneVis:
 
     def update_pegboard(self, T: np.ndarray | None):
         """Marker 101 in world frame (green)."""
-    def update_pegboard(self, T: np.ndarray | None):
-        """Marker 101 in world frame (green)."""
         T_new = T if T is not None else self._hidden_T()
-        delta = T_new @ np.linalg.inv(self._pegboard_T)
-        self._pegboard_frame.transform(delta)
-        self._pegboard_sphere.transform(delta)
-        self._pegboard_T = T_new
-        self.vis.update_geometry(self._pegboard_frame)
-        self.vis.update_geometry(self._pegboard_sphere)
-
-    def update_tracking(self, T: np.ndarray | None):
-        """Quest tracking space origin in world frame (blue)."""
-        T_new = T if T is not None else self._hidden_T()
-        delta = T_new @ np.linalg.inv(self._tracking_T)
-        self._tracking_frame.transform(delta)
-        self._tracking_sphere.transform(delta)
-        self._tracking_T = T_new
-        self.vis.update_geometry(self._tracking_frame)
-        self.vis.update_geometry(self._tracking_sphere)
-
-    def update_head(self, T: np.ndarray | None,
-                    w=640, h=480, fx=400., fy=400., cx=320., cy=240.):
-        """CenterEyeAnchor — real-time head pose, magenta frustum."""
-        T_use = T if T is not None else self._hidden_T()
-        intr  = o3d.camera.PinholeCameraIntrinsic(int(w), int(h), fx, fy, cx, cy)
-        new_fr = o3d.geometry.LineSet.create_camera_visualization(
-            int(w), int(h), intr.intrinsic_matrix,
-            np.linalg.inv(T_use), scale=self.FRUSTUM_SCALE)
-        new_fr.paint_uniform_color([1.0, 0.1, 0.9])
-
-        if self._head_frustum is None:
-            self._head_frustum = new_fr
-            self.vis.add_geometry(self._head_frustum)
-        else:
-            self._head_frustum.points = new_fr.points
-            self._head_frustum.lines  = new_fr.lines
-            self._head_frustum.colors = new_fr.colors
-            self.vis.update_geometry(self._head_frustum)
         delta = T_new @ np.linalg.inv(self._pegboard_T)
         self._pegboard_frame.transform(delta)
         self._pegboard_sphere.transform(delta)
@@ -1212,6 +1136,10 @@ def run(quest_ip: str, world_marker_id: int, pegboard_marker_id: int,
     _last_synth_pub  = 0.0
     _SYNTH_INTERVAL  = 1.0 / 30.0
 
+    _relock_available_prev  = False
+    _green_until            = 0.0
+    _last_proximity_relock  = 0.0
+
     vis = _SceneVis(f"Hand Tracking — World Frame  (marker #{world_marker_id})")
 
     win = f"Quest Left Passthrough  [ENTER=re-lock  ESC=quit]  marker #{world_marker_id}"
@@ -1263,9 +1191,6 @@ def run(quest_ip: str, world_marker_id: int, pegboard_marker_id: int,
             # ── World-frame poses ─────────────────────────────────────────────
             _center_T       = hands.center_eye_T()
 
-            # ── World-frame poses ─────────────────────────────────────────────
-            _center_T       = hands.center_eye_T()
-
             if anchor.locked:
                 anchor.publish()
                 anchor.publish_pegboard()
@@ -1282,9 +1207,45 @@ def run(quest_ip: str, world_marker_id: int, pegboard_marker_id: int,
             T_world_camleft = anchor.world_T(cam.camera_T) \
                               if cam.camera_T is not None else None
             T_world_center  = anchor.world_T(_center_T) if _center_T is not None else None
-            T_world_center  = anchor.world_T(_center_T) if _center_T is not None else None
 
             left_pts, right_pts = hands.world_joints(T_wt)
+
+            # ── World marker proximity relock ─────────────────────────────────
+            _now = time.time()
+            dist_to_world_marker = (float(np.linalg.norm(T_cam_world_fresh[:3, 3]))
+                                    if world_ok and cam.camera_T is not None else float('inf'))
+            _relock_available = (anchor.locked and world_ok and cam.camera_T is not None
+                                 and dist_to_world_marker < 1.0)
+
+            if _green_until > 0.0 and _now >= _green_until:
+                _green_until = 0.0
+                _relock_available_prev = not _relock_available
+
+            if _green_until == 0.0 and _relock_available != _relock_available_prev:
+                tools.send_color(world_marker_id,
+                                 _ToolSelectionManager.HOVER_COLOR if _relock_available
+                                 else _ToolSelectionManager.RESET_COLOR)
+                _relock_available_prev = _relock_available
+
+            _RELOCK_COOLDOWN = 2.0
+            if (tools.active_tool_id == world_marker_id and _relock_available
+                    and _now - _last_proximity_relock >= _RELOCK_COOLDOWN):
+                anchor.relock(T_cam_world_fresh, cam.camera_T, _center_T,
+                              T_cam_pegboard_fresh)
+                if pegboard_cubes_added and anchor.T_pegboard_in_world is not None:
+                    T_wp = anchor.T_pegboard_in_world
+                    R_wp = T_wp[:3, :3]
+                    for i, cube in enumerate(PEGBOARD_CUBES):
+                        obj = synth._objects[_pegboard_cube_start + i]
+                        obj.centroid = _transform_point(T_wp, cube["offset"])
+                        obj.R_o3d = R_wp.copy()
+                tools.send_color(world_marker_id, _ToolSelectionManager.SELECTED_COLOR)
+                _green_until = _now + 1.0
+                _relock_available_prev = True
+                _last_proximity_relock = _now
+                haptic_lock_sent = False
+                print("[AutoRelock] Relocked via proximity click")
+            tools.deselect(world_marker_id)
 
             # ── Update Open3D ─────────────────────────────────────────────────
             if cam.fx is not None:
@@ -1294,8 +1255,6 @@ def run(quest_ip: str, world_marker_id: int, pegboard_marker_id: int,
                     cam.width, cam.height)
                 vis.update_cam_frustum(T_world_camleft,
                                        cam.width, cam.height, fx, fy, cx, cy)
-            vis.update_pegboard(anchor.T_pegboard_in_world)
-            vis.update_tracking(T_wt)
             vis.update_pegboard(anchor.T_pegboard_in_world)
             vis.update_tracking(T_wt)
             vis.update_head(T_world_center)
@@ -1382,6 +1341,7 @@ def run(quest_ip: str, world_marker_id: int, pegboard_marker_id: int,
                                     center_T=_center_T,
                                     T_cam_pegboard=T_cam_pegboard_fresh)
                     haptic_lock_sent = False
+                    _last_proximity_relock = _now
                     # Draw wall at marker 100 (world origin after locking)
                     if pb_scene is not None:
                         pb_scene.update_wall(np.eye(4))
