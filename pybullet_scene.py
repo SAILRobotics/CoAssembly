@@ -618,3 +618,66 @@ class PyBulletScene:
             self._hand_frust_ids = self.draw_frustum(
                 T_handcam, depth=0.12, color=(1.0, 0.15, 0.15),
                 ids=self._hand_frust_ids, life_time=life_time, **kw)
+
+
+# ===========================================================================
+# Robot controller
+# ===========================================================================
+
+class RobotController:
+    """
+    Moves the UR10e from a start joint configuration to a hardcoded target
+    TCP pose using PyBullet's built-in IK and linear joint interpolation.
+
+    Usage
+    -----
+        ctrl = RobotController(robot_id, end_effector_link_index, start_q_rad,
+                               arm_joint_indices)
+        # each frame:
+        ctrl.update(robot_id, arm_indices)
+    """
+
+    # ── Hardcoded target (robot-base frame) ───────────────────────────────────
+    _TARGET_POS_M   = [0.3,  0.0,  0.5]    # metres
+    _TARGET_ROT_DEG = [180.0, 0.0, 0.0]    # euler XYZ, degrees
+
+    _IK_ITER      = 200   # PyBullet IK solver iterations
+    _INTERP_STEPS = 200   # animation frames from start → target
+
+    def __init__(self, robot_id: int, end_effector_link: int,
+                 start_q: np.ndarray, arm_indices: list):
+        self._start_q = np.array(start_q, dtype=np.float64)
+        self._step    = 0
+        self.done     = False
+
+        target_orn = ScipyR.from_euler(
+            'xyz', self._TARGET_ROT_DEG, degrees=True).as_quat()  # xyzw
+
+        joint_q = p.calculateInverseKinematics(
+            robot_id,
+            end_effector_link,
+            self._TARGET_POS_M,
+            targetOrientation=target_orn,
+            maxNumIterations=self._IK_ITER,
+            residualThreshold=1e-5,
+        )
+        # calculateInverseKinematics returns values for ALL non-fixed joints;
+        # slice to just the 6 arm joints we care about.
+        self._target_q = np.array(joint_q[:len(arm_indices)], dtype=np.float64)
+        print(f"[RobotController] IK solution (deg): "
+              f"{np.rad2deg(self._target_q).round(1).tolist()}")
+
+    def update(self, robot_id: int, arm_indices: list) -> bool:
+        """Interpolate one step and apply to PyBullet. Returns True when done."""
+        if self.done:
+            return True
+
+        t = min(self._step / self._INTERP_STEPS, 1.0)
+        q = (1.0 - t) * self._start_q + t * self._target_q
+        for idx, qi in zip(arm_indices, q):
+            p.resetJointState(robot_id, idx, float(qi))
+
+        self._step += 1
+        if self._step >= self._INTERP_STEPS:
+            self.done = True
+        return self.done

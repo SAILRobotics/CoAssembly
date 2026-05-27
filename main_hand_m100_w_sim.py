@@ -35,11 +35,11 @@ import zmq
 from scipy.spatial.transform import Rotation as ScipyR
 
 try:
-    from pybullet_scene import PyBulletScene
+    from pybullet_scene import PyBulletScene, RobotController
     _PYBULLET_AVAILABLE = True
 except ImportError:
     _PYBULLET_AVAILABLE = False
-    print("[main_hand_m10] pybullet_scene import failed — 3-D sim disabled.")
+    print("[main_hand_m100_w_sim] pybullet_scene import failed — 3-D sim disabled.")
 
 _FILE_DIR = Path(__file__).resolve().parent
 if str(_FILE_DIR) not in sys.path:
@@ -1036,8 +1036,23 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
     hands = _HandDataReceiver(quest_ip, hand_port)
     rtde  = _UrRtdeReceiver(robot_ip) if (robot_ip and not simulation) else None
 
+    ctrl: "RobotController | None" = None
     if simulation:
         print(f"[Robot] Simulation mode — using fixed joint angles {_SIM_Q_DEG} deg")
+        if pb_scene is not None:
+            try:
+                ctrl = RobotController(
+                    pb_scene.robot_id,
+                    pb_scene.tool0_link_idx,
+                    _sim_q,
+                    pb_scene.arm_indices,
+                )
+            except Exception as e:
+                import traceback
+                print(f"[RobotController] Failed to initialise: {e}")
+                traceback.print_exc()
+        else:
+            print("[RobotController] pb_scene is None — cannot initialise controller.")
     elif rtde is not None:
         print(f"[Robot] Live RTDE mode — connected to {robot_ip}")
 
@@ -1070,6 +1085,7 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
     _relock_available_prev  = False
     _green_until            = 0.0
     _last_proximity_relock  = 0.0
+    _ctrl_active            = False  # set True by ENTER in simulation mode
 
     vis = _SceneVis(f"Hand Tracking — World Frame  (marker #{anchor_marker_id})")
     win = (f"Quest Left Passthrough  [ENTER=lock/relock  ESC=quit]"
@@ -1191,8 +1207,15 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
             # ── PyBullet scene update ─────────────────────────────────────────
             if pb_scene is not None:
                 if simulation:
-                    pb_scene.update_robot(_sim_q)
-                    pb_scene.update_tcp_bodies()
+                    if _ctrl_active and ctrl is not None:
+                        if not ctrl.done:
+                            ctrl.update(pb_scene.robot_id, pb_scene.arm_indices)
+                        pb_scene.update_tcp_bodies()
+                    else:
+                        if _ctrl_active and ctrl is None:
+                            print("[WARNING] _ctrl_active=True but ctrl is None — pytorch_kinematics/torch may not be installed")
+                        pb_scene.update_robot(_sim_q)
+                        pb_scene.update_tcp_bodies()
                 elif rtde is not None:
                     q = rtde.poll()
                     if q is not None:
@@ -1247,8 +1270,12 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
             if key == 27:
                 break
             elif key == 13:
+                if simulation and pb_scene is not None:
+                    pb_scene.set_scene_origin(np.eye(4))
+                    pb_scene.update_wall(np.eye(4))
                 if cam.camera_T is None:
-                    print("[ENTER] No camera pose — skipping.")
+                    if not simulation:
+                        print("[ENTER] No camera pose — skipping.")
                 else:
                     # ── Phase A: Lock/relock world frame to marker 100 ────────
                     if anchor_ok:
@@ -1273,6 +1300,9 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
                             cam.camera_T, _center_T, T_cam_pegboard)
                         T_wp = anchor.T_pegboard_in_world
                         if T_wp is not None:
+                            if simulation and not _ctrl_active:
+                                _ctrl_active = True
+                                print("[ENTER] Both world and pegboard locked — robot motion started.")
                             R_wp = T_wp[:3, :3]
                             if pegboard_cubes_added:
                                 for i, cube in enumerate(PEGBOARD_CUBES):
