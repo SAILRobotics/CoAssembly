@@ -35,7 +35,7 @@ import zmq
 from scipy.spatial.transform import Rotation as ScipyR
 
 try:
-    from pybullet_scene import PyBulletScene, RobotController
+    from pybullet_scene import PyBulletScene, RobotController, SceneOverlay
     _PYBULLET_AVAILABLE = True
 except ImportError:
     _PYBULLET_AVAILABLE = False
@@ -1056,19 +1056,25 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
     elif rtde is not None:
         print(f"[Robot] Live RTDE mode — connected to {robot_ip}")
 
+    overlay: "SceneOverlay | None" = SceneOverlay() if pb_scene is not None else None
+
     anchor = _WorldAnchor(quest_ip, pub_port=5005)
     haptic = _HapticPublisher(quest_ip, port=5007)
     tools  = _ToolSelectionManager(quest_ip, click_port=5009, color_port=5010)
     tuner  = _OffsetTuner()
     synth  = _SyntheticObjectPublisher(quest_ip, port=5006)
 
-    # Cubes around the anchor marker (world origin = marker 100)
+    # Cubes around the anchor marker (world origin = marker 100) — ids 0, 1, 2
     synth.add([0.10,  0.00, 0.05], width=0.06, depth=0.06, height=0.10,
               color=[1.0, 0.2, 0.2])
     synth.add([0.00,  0.10, 0.05], width=0.06, depth=0.06, height=0.10,
               color=[0.2, 1.0, 0.2])
     synth.add([-0.10, 0.00, 0.05], width=0.06, depth=0.06, height=0.10,
               color=[0.2, 0.4, 1.0])
+
+    # TCP marker — id 3.  Position is updated each frame from PyBullet FK.
+    _tcp_synth = synth.add([0.0, 0.0, 0.0], width=0.05, depth=0.05, height=0.05,
+                            color=[1.0, 0.8, 0.2]) if pb_scene is not None else None
 
     PEGBOARD_CUBES = [
         {"offset": [ 0.10, 0.00, 0.05], "color": [1.0, 0.6, 0.2]},
@@ -1085,7 +1091,8 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
     _relock_available_prev  = False
     _green_until            = 0.0
     _last_proximity_relock  = 0.0
-    _ctrl_active            = False  # set True by ENTER in simulation mode
+    _ctrl_active            = False  # set True when TCP marker is clicked
+    _TCP_TOOL_ID            = 200    # must match ToolClickPublisher tool_id in Unity
 
     vis = _SceneVis(f"Hand Tracking — World Frame  (marker #{anchor_marker_id})")
     win = (f"Quest Left Passthrough  [ENTER=lock/relock  ESC=quit]"
@@ -1190,6 +1197,15 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
                 print("[AutoRelock] Relocked via proximity click")
             tools.deselect(anchor_marker_id)
 
+            # ── TCP click → start robot motion ────────────────────────────────
+            if (simulation and not _ctrl_active
+                    and tools.active_tool_id == _TCP_TOOL_ID
+                    and anchor.locked
+                    and anchor.T_pegboard_in_world is not None):
+                _ctrl_active = True
+                print("[TCP click] Both markers locked — robot motion started.")
+                tools.deselect(_TCP_TOOL_ID)
+
             # ── Update Open3D ─────────────────────────────────────────────────
             if cam.fx is not None:
                 fx, fy, cx, cy = _adapt_cx_cy(
@@ -1204,18 +1220,30 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
             vis.update_hands(left_pts, right_pts)
             vis.tick()
 
+            # ── PyBullet overlay (head frustum + hands) ───────────────────────
+            if overlay is not None:
+                if cam.fx is not None:
+                    overlay.update_head(T_world_center, fx, fy,
+                                        cam.width, cam.height)
+                if T_world_center is not None:
+                    overlay.update_hands(left_pts, right_pts)
+                else:
+                    overlay.update_hands(None, None)
+
             # ── PyBullet scene update ─────────────────────────────────────────
             if pb_scene is not None:
                 if simulation:
                     if _ctrl_active and ctrl is not None:
                         if not ctrl.done:
                             ctrl.update(pb_scene.robot_id, pb_scene.arm_indices)
-                        pb_scene.update_tcp_bodies()
                     else:
                         if _ctrl_active and ctrl is None:
                             print("[WARNING] _ctrl_active=True but ctrl is None — pytorch_kinematics/torch may not be installed")
                         pb_scene.update_robot(_sim_q)
-                        pb_scene.update_tcp_bodies()
+                    T_tool0 = pb_scene.update_tcp_bodies()
+                    if T_tool0 is not None and _tcp_synth is not None:
+                        _tcp_synth.centroid = T_tool0[:3, 3]
+                        _tcp_synth.R_o3d    = T_tool0[:3, :3]
                 elif rtde is not None:
                     q = rtde.poll()
                     if q is not None:
@@ -1300,9 +1328,6 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
                             cam.camera_T, _center_T, T_cam_pegboard)
                         T_wp = anchor.T_pegboard_in_world
                         if T_wp is not None:
-                            if simulation and not _ctrl_active:
-                                _ctrl_active = True
-                                print("[ENTER] Both world and pegboard locked — robot motion started.")
                             R_wp = T_wp[:3, :3]
                             if pegboard_cubes_added:
                                 for i, cube in enumerate(PEGBOARD_CUBES):

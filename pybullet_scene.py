@@ -681,3 +681,115 @@ class RobotController:
         if self._step >= self._INTERP_STEPS:
             self.done = True
         return self.done
+
+
+# ===========================================================================
+# Live overlay — hand skeletons and camera frustums drawn in the PyBullet GUI
+# ===========================================================================
+
+# OpenXR hand bone pairs (matches utils/unity_conversion.py HAND_BONES)
+_HAND_BONES = [
+    [0, 1], [0, 2], [2, 3], [3, 4], [4, 5],
+    [0, 6], [6, 7], [7, 8], [8, 9],
+    [0, 10], [10, 11], [11, 12], [12, 13],
+    [0, 14], [14, 15], [15, 16], [16, 17],
+    [0, 18], [18, 19], [19, 20], [20, 21],
+]
+
+
+class SceneOverlay:
+    """
+    Draws hand skeletons and camera/head frustums directly in the PyBullet GUI
+    window each frame.  All coordinates must be in the same world frame used
+    by PyBulletScene.
+
+    Usage
+    -----
+        overlay = SceneOverlay()
+        # each frame:
+        overlay.update_hands(left_pts, right_pts)
+        overlay.update_cam_frustum(T_world_cam, fx, fy, cx, cy, w, h)
+        overlay.update_head(T_world_head, fx, fy, cx, cy, w, h)
+    """
+
+    _COLOR_LEFT  = [0.3, 0.6, 1.0]   # blue
+    _COLOR_RIGHT = [1.0, 0.55, 0.1]  # orange
+    _COLOR_HEAD  = [1.0, 0.1, 0.9]   # magenta
+
+    _FRUSTUM_DEPTH = 0.25  # metres — how far to draw frustum edges
+
+    def __init__(self):
+        n_bones = len(_HAND_BONES)
+        self._ids_l    = [-1] * n_bones
+        self._ids_r    = [-1] * n_bones
+        self._ids_head = [-1] * 8
+
+    # ── Hands ─────────────────────────────────────────────────────────────────
+
+    def _draw_hand(self, pts: np.ndarray | None, ids: list, color: list) -> list:
+        if pts is None or len(pts) == 0:
+            return self._hide(ids)
+        for k, (i, j) in enumerate(_HAND_BONES):
+            if i < len(pts) and j < len(pts):
+                kw = {"replaceItemUniqueId": ids[k]} if ids[k] >= 0 else {}
+                ids[k] = p.addUserDebugLine(
+                    pts[i].tolist(), pts[j].tolist(), color,
+                    lineWidth=2, lifeTime=0, **kw)
+        return ids
+
+    def update_hands(self, left_pts: np.ndarray | None,
+                     right_pts: np.ndarray | None):
+        self._ids_l = self._draw_hand(left_pts,  self._ids_l, self._COLOR_LEFT)
+        self._ids_r = self._draw_hand(right_pts, self._ids_r, self._COLOR_RIGHT)
+
+    # ── Frustums ──────────────────────────────────────────────────────────────
+
+    def _frustum_pts(self, T: np.ndarray, fx: float, fy: float,
+                     w: float, h: float) -> tuple:
+        """Returns (origin, [tl, tr, br, bl]) all in world space."""
+        depth = self._FRUSTUM_DEPTH
+        hw = (w / 2.0) / fx * depth
+        hh = (h / 2.0) / fy * depth
+        corners_cam = np.array([
+            [-hw, -hh, depth],
+            [ hw, -hh, depth],
+            [ hw,  hh, depth],
+            [-hw,  hh, depth],
+        ])
+        R, t = T[:3, :3], T[:3, 3]
+        corners = (R @ corners_cam.T).T + t
+        return t, corners
+
+    def _draw_frustum(self, T: np.ndarray | None, ids: list, color: list,
+                      fx: float, fy: float, w: float, h: float) -> list:
+        if T is None:
+            return self._hide(ids)
+        origin, corners = self._frustum_pts(T, fx, fy, w, h)
+        edges = [
+            (origin, corners[0]), (origin, corners[1]),
+            (origin, corners[2]), (origin, corners[3]),
+            (corners[0], corners[1]), (corners[1], corners[2]),
+            (corners[2], corners[3]), (corners[3], corners[0]),
+        ]
+        for k, (a, b) in enumerate(edges):
+            kw = {"replaceItemUniqueId": ids[k]} if ids[k] >= 0 else {}
+            ids[k] = p.addUserDebugLine(
+                a.tolist(), b.tolist(), color,
+                lineWidth=2, lifeTime=0, **kw)
+        return ids
+
+    def update_head(self, T: np.ndarray | None,
+                    fx: float = 400., fy: float = 400.,
+                    w: float = 640., h: float = 480.):
+        self._ids_head = self._draw_frustum(
+            T, self._ids_head, self._COLOR_HEAD, fx, fy, w, h)
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _hide(ids: list) -> list:
+        for i, item_id in enumerate(ids):
+            if item_id >= 0:
+                p.removeUserDebugItem(item_id)
+                ids[i] = -1
+        return ids

@@ -47,6 +47,11 @@ public class SyntheticObjectReceiver : MonoBehaviour
         new Color(1.00f, 0.30f, 0.70f), // 9 pink
     };
 
+    [Header("Per-object overrides")]
+    [Tooltip("IDs listed here skip the auto wireframe-cube visual setup. " +
+             "Use for objects that have their own visuals already in the scene (e.g. TCP sphere).")]
+    public int[] skipAutoVisualIds = new int[0];
+
     [Header("Stability")]
     [Tooltip("Deactivate an object only after it has been absent for this many seconds. " +
              "Prevents single-frame message gaps from causing visible flicker.")]
@@ -166,8 +171,16 @@ public class SyntheticObjectReceiver : MonoBehaviour
     }
 
     // ── Visual (called once per object on first activation) ──────────
+    private bool ShouldSkipAutoVisual(int id)
+    {
+        foreach (int skip in skipAutoVisualIds)
+            if (id == skip) return true;
+        return false;
+    }
+
     private void SetupVisual(int id, Transform tf)
     {
+        if (ShouldSkipAutoVisual(id)) return;
         Color c = id < ObjectColors.Length ? ObjectColors[id] : Color.white;
 
         // Face — instance the user's template material, tint it
