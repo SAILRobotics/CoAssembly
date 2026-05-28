@@ -2449,6 +2449,17 @@ Transform:
   - {fileID: 974233153}
   m_Father: {fileID: 1166269899}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &210610087 stripped
+MonoBehaviour:
+  m_CorrespondingSourceObject: {fileID: 5132080673206253129, guid: 0a7d2469f24041c4284c66706f84c45e, type: 3}
+  m_PrefabInstance: {fileID: 851659837}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4733c5f009d26ad49b3685117b8d3eb4, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
 --- !u!1 &223398191
 GameObject:
   m_ObjectHideFlags: 0
@@ -5189,6 +5200,17 @@ Transform:
   m_Children: []
   m_Father: {fileID: 2095239108}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &542522394 stripped
+MonoBehaviour:
+  m_CorrespondingSourceObject: {fileID: 9124509533193169957, guid: 0a7d2469f24041c4284c66706f84c45e, type: 3}
+  m_PrefabInstance: {fileID: 851659837}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4733c5f009d26ad49b3685117b8d3eb4, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
 --- !u!114 &547744103 stripped
 MonoBehaviour:
   m_CorrespondingSourceObject: {fileID: 5300513996942578409, guid: 0a7d2469f24041c4284c66706f84c45e, type: 3}
@@ -6797,6 +6819,7 @@ GameObject:
   - component: {fileID: 682926386}
   - component: {fileID: 682926385}
   - component: {fileID: 682926391}
+  - component: {fileID: 682926393}
   - component: {fileID: 682926392}
   m_Layer: 0
   m_Name: TCPMarker
@@ -6828,7 +6851,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 682926383}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 5d2f48252a8b8944ebc140506af86f3f, type: 3}
   m_Name: 
@@ -6970,49 +6993,13 @@ MonoBehaviour:
       m_Calls: []
   _whenHover:
     m_PersistentCalls:
-      m_Calls:
-      - m_Target: {fileID: 682926385}
-        m_TargetAssemblyTypeName: WorldMarkerInteractable, Assembly-CSharp
-        m_MethodName: OnInteractorHoverEnter
-        m_Mode: 1
-        m_Arguments:
-          m_ObjectArgument: {fileID: 0}
-          m_ObjectArgumentAssemblyTypeName: UnityEngine.Object, UnityEngine
-          m_IntArgument: 0
-          m_FloatArgument: 0
-          m_StringArgument: 
-          m_BoolArgument: 0
-        m_CallState: 2
+      m_Calls: []
   _whenUnhover:
     m_PersistentCalls:
-      m_Calls:
-      - m_Target: {fileID: 682926385}
-        m_TargetAssemblyTypeName: WorldMarkerInteractable, Assembly-CSharp
-        m_MethodName: OnInteractorHoverExit
-        m_Mode: 1
-        m_Arguments:
-          m_ObjectArgument: {fileID: 0}
-          m_ObjectArgumentAssemblyTypeName: UnityEngine.Object, UnityEngine
-          m_IntArgument: 0
-          m_FloatArgument: 0
-          m_StringArgument: 
-          m_BoolArgument: 0
-        m_CallState: 2
+      m_Calls: []
   _whenSelect:
     m_PersistentCalls:
-      m_Calls:
-      - m_Target: {fileID: 682926385}
-        m_TargetAssemblyTypeName: WorldMarkerInteractable, Assembly-CSharp
-        m_MethodName: OnInteractorSelect
-        m_Mode: 1
-        m_Arguments:
-          m_ObjectArgument: {fileID: 0}
-          m_ObjectArgumentAssemblyTypeName: UnityEngine.Object, UnityEngine
-          m_IntArgument: 0
-          m_FloatArgument: 0
-          m_StringArgument: 
-          m_BoolArgument: 0
-        m_CallState: 2
+      m_Calls: []
   _whenUnselect:
     m_PersistentCalls:
       m_Calls: []
@@ -7022,6 +7009,21 @@ MonoBehaviour:
   _whenCancel:
     m_PersistentCalls:
       m_Calls: []
+--- !u!114 &682926393
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 682926383}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3a3ee3f2d4b385b4ea7bf59e91fffcc9, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::HandAwareInteractable
+  _eventWrapper: {fileID: 682926392}
+  _leftInteractor: {fileID: 210610087}
+  _rightInteractor: {fileID: 542522394}
 --- !u!1 &686018159
 GameObject:
   m_ObjectHideFlags: 0
@@ -15847,8 +15849,8 @@ Transform:
   m_Children:
   - {fileID: 1556605055}
   - {fileID: 655074600}
-  - {fileID: 1032821183}
   - {fileID: 682926384}
+  - {fileID: 1032821183}
   - {fileID: 765498493}
   - {fileID: 1052602839}
   - {fileID: 1657663469}

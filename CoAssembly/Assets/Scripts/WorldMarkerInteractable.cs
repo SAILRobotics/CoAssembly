@@ -9,9 +9,9 @@ using UnityEngine;
 ///   - ToolColorReceiver   (Tool Id = same integer)
 ///
 /// Scene wiring (PointableUnityEventWrapper):
-///   WhenSelect      → WorldMarkerInteractable.OnInteractorSelect
-///   WhenPointerEnter → WorldMarkerInteractable.OnInteractorHoverEnter
-///   WhenPointerExit  → WorldMarkerInteractable.OnInteractorHoverExit
+///   WhenSelect   → WorldMarkerInteractable.OnInteractorSelect
+///   WhenHover    → WorldMarkerInteractable.OnInteractorHoverEnter
+///   WhenUnhover  → WorldMarkerInteractable.OnInteractorHoverExit
 /// </summary>
 [RequireComponent(typeof(ToolClickPublisher))]
 [RequireComponent(typeof(ToolColorReceiver))]

@@ -19,8 +19,9 @@ public class ToolClickPublisher : MonoBehaviour
     [Serializable]
     private class ClickMessage
     {
-        public int tool_id;
+        public int    tool_id;
         public string event_type;
+        public string hand;
     }
 
     private void Start()
@@ -55,13 +56,15 @@ public class ToolClickPublisher : MonoBehaviour
         SendEvent("hover_exit");
     }
 
-    private void SendEvent(string eventType)
+    private void SendEvent(string eventType)      => SendHandEvent(eventType, "unknown");
+
+    public void SendHandEvent(string eventType, string hand)
     {
-        var msg = new ClickMessage { tool_id = toolId, event_type = eventType };
+        var msg = new ClickMessage { tool_id = toolId, event_type = eventType, hand = hand };
         try
         {
             sharedSocket?.SendFrame(JsonConvert.SerializeObject(msg));
-            Debug.Log($"[ToolClickPublisher:{toolId}] 📤 Sent {eventType}");
+            Debug.Log($"[ToolClickPublisher:{toolId}] 📤 Sent {eventType} ({hand})");
         }
         catch (Exception e)
         {
