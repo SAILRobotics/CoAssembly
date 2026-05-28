@@ -250,6 +250,12 @@ class PyBulletScene:
         """No-op — PyBullet GUI renders in background when bodies are updated."""
         pass
 
+    @property
+    def current_q(self) -> np.ndarray:
+        """Current arm joint angles in radians read from PyBullet."""
+        return np.array([p.getJointState(self.robot_id, idx)[0]
+                         for idx in self.arm_indices], dtype=np.float64)
+
     def update_robot(self, q_rad: np.ndarray):
         """Set the 6 arm joint angles in radians."""
         for idx, q in zip(self.arm_indices, q_rad):
@@ -637,15 +643,13 @@ class RobotController:
         ctrl.update(robot_id, arm_indices)
     """
 
-    # ── Hardcoded target (robot-base frame) ───────────────────────────────────
-    _TARGET_POS_M   = [0.3,  0.0,  0.5]    # metres
     _TARGET_ROT_DEG = [180.0, 0.0, 0.0]    # euler XYZ, degrees
 
     _IK_ITER      = 200   # PyBullet IK solver iterations
     _INTERP_STEPS = 200   # animation frames from start → target
 
     def __init__(self, robot_id: int, end_effector_link: int,
-                 start_q: np.ndarray, arm_indices: list):
+                 start_q: np.ndarray, arm_indices: list, target_pos: list):
         self._start_q = np.array(start_q, dtype=np.float64)
         self._step    = 0
         self.done     = False
@@ -656,7 +660,7 @@ class RobotController:
         joint_q = p.calculateInverseKinematics(
             robot_id,
             end_effector_link,
-            self._TARGET_POS_M,
+            target_pos,
             targetOrientation=target_orn,
             maxNumIterations=self._IK_ITER,
             residualThreshold=1e-5,

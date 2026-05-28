@@ -847,8 +847,9 @@ class _ToolSelectionManager:
         self._pub = ctx.socket(zmq.PUB)
         self._pub.connect(f"tcp://{quest_ip}:{color_port}")
         time.sleep(0.2)
-        self._active_tool_id: int | None = None
+        self._active_tool_id: int | None  = None
         self._hovered_tool_id: int | None = None
+        self._active_hand: str | None     = None
 
     def poll(self, timeout_ms: int = 0) -> bool:
         poller = zmq.Poller()
@@ -865,34 +866,38 @@ class _ToolSelectionManager:
                 msg = json.loads(raw)
                 tool_id    = int(msg["tool_id"])
                 event_type = msg.get("event_type", "selected")
+                hand       = msg.get("hand", "unknown")
             except (json.JSONDecodeError, KeyError, ValueError) as e:
                 print(f"[ToolSelection] Bad message: {e}")
                 continue
-            self._handle_event(tool_id, event_type)
+            self._handle_event(tool_id, event_type, hand)
             processed = True
         return processed
 
-    def _handle_event(self, tool_id: int, event_type: str):
+    def _handle_event(self, tool_id: int, event_type: str, hand: str = "unknown"):
         if event_type == "selected":
-            self._handle_click(tool_id)
+            self._handle_click(tool_id, hand)
         elif event_type == "hover_enter":
             self._handle_hover_enter(tool_id)
         elif event_type == "hover_exit":
             self._handle_hover_exit(tool_id)
 
-    def _handle_click(self, tool_id: int):
+    def _handle_click(self, tool_id: int, hand: str = "unknown"):
         self._hovered_tool_id = None
         updates: list[tuple[int, list[float]]] = []
         if self._active_tool_id == tool_id:
             updates.append((tool_id, self.RESET_COLOR))
             self._active_tool_id = None
+            self._active_hand    = None
         elif self._active_tool_id is not None:
             updates.append((self._active_tool_id, self.RESET_COLOR))
             updates.append((tool_id, self.SELECTED_COLOR))
             self._active_tool_id = tool_id
+            self._active_hand    = hand
         else:
             updates.append((tool_id, self.SELECTED_COLOR))
             self._active_tool_id = tool_id
+            self._active_hand    = hand
         for tid, color in updates:
             self._send_color(tid, color)
 
@@ -921,12 +926,17 @@ class _ToolSelectionManager:
     def active_tool_id(self) -> int | None:
         return self._active_tool_id
 
+    @property
+    def active_hand(self) -> str | None:
+        return self._active_hand
+
     def send_color(self, tool_id: int, color: list[float]):
         self._send_color(tool_id, color)
 
     def deselect(self, tool_id: int):
         if self._active_tool_id == tool_id:
             self._active_tool_id = None
+            self._active_hand    = None
 
     def close(self):
         try: self._sub.close(0)
@@ -1039,20 +1049,6 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
     ctrl: "RobotController | None" = None
     if simulation:
         print(f"[Robot] Simulation mode — using fixed joint angles {_SIM_Q_DEG} deg")
-        if pb_scene is not None:
-            try:
-                ctrl = RobotController(
-                    pb_scene.robot_id,
-                    pb_scene.tool0_link_idx,
-                    _sim_q,
-                    pb_scene.arm_indices,
-                )
-            except Exception as e:
-                import traceback
-                print(f"[RobotController] Failed to initialise: {e}")
-                traceback.print_exc()
-        else:
-            print("[RobotController] pb_scene is None — cannot initialise controller.")
     elif rtde is not None:
         print(f"[Robot] Live RTDE mode — connected to {robot_ip}")
 
@@ -1197,13 +1193,37 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
                 print("[AutoRelock] Relocked via proximity click")
             tools.deselect(anchor_marker_id)
 
-            # ── TCP click → start robot motion ────────────────────────────────
-            if (simulation and not _ctrl_active
+            # ── TCP click → move robot to opposite hand's palm ────────────────
+            if (simulation
+                    and (not _ctrl_active or (ctrl is not None and ctrl.done))
                     and tools.active_tool_id == _TCP_TOOL_ID
                     and anchor.locked
                     and anchor.T_pegboard_in_world is not None):
-                _ctrl_active = True
-                print("[TCP click] Both markers locked — robot motion started.")
+                clicking_hand = tools.active_hand  # "left" or "right"
+                target_pts = right_pts if clicking_hand == "left" else left_pts
+                if target_pts is not None and pb_scene is not None:
+                    # Joint index 1 = palm
+                    target_pos = target_pts[1].tolist()
+                    try:
+                        ctrl = RobotController(
+                            pb_scene.robot_id,
+                            pb_scene.tool0_link_idx,
+                            pb_scene.current_q,
+                            pb_scene.arm_indices,
+                            target_pos,
+                        )
+                        _ctrl_active = True
+                        opposite = "right" if clicking_hand == "left" else "left"
+                        print(f"[TCP click] {clicking_hand} hand clicked — "
+                              f"moving to {opposite} palm at "
+                              f"{[round(v,3) for v in target_pos]}")
+                    except Exception as e:
+                        import traceback
+                        print(f"[RobotController] Failed to initialise: {e}")
+                        traceback.print_exc()
+                else:
+                    print(f"[TCP click] No opposite hand data available "
+                          f"(clicking={clicking_hand}) — ignoring click.")
                 tools.deselect(_TCP_TOOL_ID)
 
             # ── Update Open3D ─────────────────────────────────────────────────
@@ -1233,12 +1253,9 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
             # ── PyBullet scene update ─────────────────────────────────────────
             if pb_scene is not None:
                 if simulation:
-                    if _ctrl_active and ctrl is not None:
-                        if not ctrl.done:
-                            ctrl.update(pb_scene.robot_id, pb_scene.arm_indices)
-                    else:
-                        if _ctrl_active and ctrl is None:
-                            print("[WARNING] _ctrl_active=True but ctrl is None — pytorch_kinematics/torch may not be installed")
+                    if _ctrl_active and ctrl is not None and not ctrl.done:
+                        ctrl.update(pb_scene.robot_id, pb_scene.arm_indices)
+                    elif not _ctrl_active:
                         pb_scene.update_robot(_sim_q)
                     T_tool0 = pb_scene.update_tcp_bodies()
                     if T_tool0 is not None and _tcp_synth is not None:
