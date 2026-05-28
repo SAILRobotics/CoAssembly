@@ -106,6 +106,38 @@ def _to_world(joints_unity: np.ndarray, T_world_tracking: np.ndarray) -> np.ndar
     return (pts @ R.T) + t
 
 
+def _unit(v: np.ndarray) -> np.ndarray:
+    n = np.linalg.norm(v)
+    return v / n if n > 1e-8 else v
+
+
+def _palm_quat(pts: np.ndarray, is_left: bool = False) -> np.ndarray:
+    """Quaternion (xyzw) for gripper orientation matching a pinch grasp.
+
+    Jaw axis from thumb MCP (joint 3) → index MCP (joint 6).
+    Approach axis is world-up projected perpendicular to the jaw and then
+    negated so the gripper approaches from above.  This keeps the arm in a
+    natural reach configuration regardless of hand tilt, while the jaw still
+    tracks the pinch direction.
+    is_left must be True when pts belongs to the left hand so the anatomically
+    mirrored thumb side is corrected.
+    """
+    x_axis   = _unit(pts[6] - pts[3])           # jaw: thumb MCP → index MCP
+    if is_left:
+        x_axis = -x_axis                         # mirror: left thumb is on the opposite side
+    world_up = np.array([0.0, 0.0, 1.0])
+
+    # Remove the jaw component from world-up to stay perpendicular, then flip
+    up_perp = world_up - np.dot(world_up, x_axis) * x_axis
+    z_axis  = _unit(-up_perp)                    # approach from above
+    y_axis  = _unit(np.cross(z_axis, x_axis))
+
+    R = np.column_stack([x_axis, y_axis, z_axis])
+    q_palm   = ScipyR.from_matrix(R)
+    q_offset = ScipyR.from_euler('x', -90, degrees=True)
+    return (q_palm * q_offset).as_quat()  # xyzw
+
+
 def _extract_joints(hand_block) -> np.ndarray | None:
     if hand_block is None:
         return None
@@ -1202,8 +1234,9 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
                 clicking_hand = tools.active_hand  # "left" or "right"
                 target_pts = right_pts if clicking_hand == "left" else left_pts
                 if target_pts is not None and pb_scene is not None:
-                    # Joint index 1 = palm
-                    target_pos = target_pts[1].tolist()
+                    target_pos  = target_pts[1].tolist()   # joint 1 = palm
+                    target_is_left = (clicking_hand == "right")  # opposite of clicking hand
+                    target_quat = _palm_quat(target_pts, is_left=target_is_left)
                     try:
                         ctrl = RobotController(
                             pb_scene.robot_id,
@@ -1211,6 +1244,7 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
                             pb_scene.current_q,
                             pb_scene.arm_indices,
                             target_pos,
+                            target_quat_xyzw=target_quat,
                         )
                         _ctrl_active = True
                         opposite = "right" if clicking_hand == "left" else "left"

@@ -643,25 +643,48 @@ class RobotController:
         ctrl.update(robot_id, arm_indices)
     """
 
-    _TARGET_ROT_DEG = [180.0, 0.0, 0.0]    # euler XYZ, degrees
-
     _IK_ITER      = 200   # PyBullet IK solver iterations
     _INTERP_STEPS = 200   # animation frames from start → target
 
     def __init__(self, robot_id: int, end_effector_link: int,
-                 start_q: np.ndarray, arm_indices: list, target_pos: list):
+                 start_q: np.ndarray, arm_indices: list,
+                 target_pos: list, target_quat_xyzw: np.ndarray | None = None):
         self._start_q = np.array(start_q, dtype=np.float64)
         self._step    = 0
         self.done     = False
 
-        target_orn = ScipyR.from_euler(
-            'xyz', self._TARGET_ROT_DEG, degrees=True).as_quat()  # xyzw
+        if target_quat_xyzw is None:
+            # Default: gripper points straight down
+            target_quat_xyzw = ScipyR.from_euler(
+                'xyz', [180.0, 0.0, 0.0], degrees=True).as_quat()
+
+        # Build null-space parameters from URDF joint info so the IK solver
+        # stays close to start_q (avoids unexpected elbow flips).
+        n_joints = p.getNumJoints(robot_id)
+        movable  = [j for j in range(n_joints)
+                    if p.getJointInfo(robot_id, j)[2] != p.JOINT_FIXED]
+        lower_limits, upper_limits, joint_ranges = [], [], []
+        for j in movable:
+            info = p.getJointInfo(robot_id, j)
+            ll, ul = float(info[8]), float(info[9])
+            if ul <= ll:          # URDF didn't specify limits → use ±π
+                ll, ul = -np.pi, np.pi
+            lower_limits.append(ll)
+            upper_limits.append(ul)
+            joint_ranges.append(ul - ll)
+
+        arm_q_map = dict(zip(arm_indices, start_q))
+        rest_poses = [float(arm_q_map.get(j, 0.0)) for j in movable]
 
         joint_q = p.calculateInverseKinematics(
             robot_id,
             end_effector_link,
             target_pos,
-            targetOrientation=target_orn,
+            targetOrientation=target_quat_xyzw,
+            lowerLimits=lower_limits,
+            upperLimits=upper_limits,
+            jointRanges=joint_ranges,
+            restPoses=rest_poses,
             maxNumIterations=self._IK_ITER,
             residualThreshold=1e-5,
         )
