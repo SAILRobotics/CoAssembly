@@ -256,6 +256,7 @@ class PyBulletScene:
         return np.array([p.getJointState(self.robot_id, idx)[0]
                          for idx in self.arm_indices], dtype=np.float64)
 
+
     def update_robot(self, q_rad: np.ndarray):
         """Set the 6 arm joint angles in radians."""
         for idx, q in zip(self.arm_indices, q_rad):

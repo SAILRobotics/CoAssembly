@@ -1234,6 +1234,13 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
                     _gripper_z     = ScipyR.from_quat(target_quat).apply([0.0, 0.0, 1.0])
                     offset_dist    = 0.30  # metres from palm to TCP
                     target_pos     = (target_pts[1] - _gripper_z * offset_dist).tolist()
+                    # Flip wrist 180° about tool Z when the gripper's Y axis
+                    # points below horizontal (camera would face the table).
+                    _tool_y_world = ScipyR.from_quat(target_quat).apply([0.0, 1.0, 0.0])
+                    if _tool_y_world[2] > 0:   # world Z is vertical (Z-up)
+                        target_quat = (ScipyR.from_quat(target_quat)
+                                       * ScipyR.from_euler('z', 180, degrees=True)
+                                       ).as_quat()
                     try:
                         ctrl = RobotController(
                             pb_scene.robot_id,
