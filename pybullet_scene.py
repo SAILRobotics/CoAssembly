@@ -645,7 +645,7 @@ class RobotController:
     """
 
     _IK_ITER      = 200   # PyBullet IK solver iterations
-    _INTERP_STEPS = 200   # animation frames from start → target
+    _INTERP_STEPS = 60    # animation frames from start → target (~2 s at 26 Hz)
 
     def __init__(self, robot_id: int, end_effector_link: int,
                  start_q: np.ndarray, arm_indices: list,

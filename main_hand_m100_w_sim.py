@@ -25,6 +25,7 @@ import argparse
 import json
 import struct
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -204,6 +205,46 @@ class _CamFeedReceiver:
             self._sub.close(0)
         except Exception:
             pass
+
+
+class _ArUcoWorker:
+    """Runs camera polling and ArUco detection on a background thread so the
+    main loop is not blocked by frame capture or marker detection (~15-20 ms)."""
+
+    def __init__(self, cam: "_CamFeedReceiver", aruco):
+        self._cam   = cam
+        self._aruco = aruco
+        self._lock  = threading.Lock()
+        self._T_cam_anchor   = None
+        self._T_cam_pegboard = None
+        self._det_vis        = None
+        self._running = True
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _run(self) -> None:
+        while self._running:
+            if not self._cam.poll(timeout_ms=10):
+                continue
+            frame = self._cam.frame
+            if frame is None or self._cam.fx is None:
+                continue
+            fx, fy, cx, cy = _adapt_cx_cy(
+                self._cam.fx, self._cam.fy, self._cam.cx, self._cam.cy,
+                self._cam.sensor_width, self._cam.sensor_height,
+                self._cam.width, self._cam.height)
+            det = self._aruco.detect(frame, fx, fy, cx, cy, draw=True)
+            with self._lock:
+                self._T_cam_anchor   = det.get("T_cam_anchor")
+                self._T_cam_pegboard = det.get("T_cam_pegboard")
+                self._det_vis        = det["vis"]
+
+    def get(self):
+        """Return (T_cam_anchor, T_cam_pegboard, det_vis) — non-blocking."""
+        with self._lock:
+            return self._T_cam_anchor, self._T_cam_pegboard, self._det_vis
+
+    def stop(self) -> None:
+        self._running = False
 
 
 class _HandDataReceiver:
@@ -1069,8 +1110,9 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
                 print(f"[main_hand_m100_w_sim] Calibration dir not found: {_calib_dir}")
 
     cam   = _CamFeedReceiver(quest_ip)
-    aruco = _ArucoPoseEstimator(anchor_marker_id, pegboard_marker_id, marker_size_m)
-    hands = _HandDataReceiver(quest_ip, hand_port)
+    aruco        = _ArucoPoseEstimator(anchor_marker_id, pegboard_marker_id, marker_size_m)
+    aruco_worker = _ArUcoWorker(cam, aruco)
+    hands        = _HandDataReceiver(quest_ip, hand_port)
     rtde  = _UrRtdeReceiver(robot_ip) if (robot_ip and not simulation) else None
 
     ctrl: "RobotController | None" = None
@@ -1130,28 +1172,21 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
     print(f"  ENTER with marker #{pegboard_marker_id} visible (after locking) → lock pegboard")
     print("  ESC = quit\n")
 
+    _loop_t0        = time.perf_counter()
+    _loop_count     = 0
+    _ctrl_step_sum  = 0
+    _ctrl_step_count = 0
+
     try:
         while True:
+            _iter_t0 = time.perf_counter()
+
             # ── Poll streams ──────────────────────────────────────────────────
-            cam.poll(timeout_ms=5)
             tools.poll(timeout_ms=0)
             hands.poll()
 
-            # ── ArUco detection ───────────────────────────────────────────────
-            T_cam_anchor    = None
-            T_cam_pegboard  = None
-            det_vis         = None
-
-            if cam.frame is not None and cam.fx is not None:
-                fx, fy, cx, cy = _adapt_cx_cy(
-                    cam.fx, cam.fy, cam.cx, cam.cy,
-                    cam.sensor_width, cam.sensor_height,
-                    cam.width, cam.height)
-                det = aruco.detect(cam.frame, fx, fy, cx, cy, draw=True)
-                det_vis        = det["vis"]
-                T_cam_anchor   = det["T_cam_anchor"]
-                T_cam_pegboard = det["T_cam_pegboard"]
-
+            # ── ArUco results (produced by background thread) ─────────────────
+            T_cam_anchor, T_cam_pegboard, det_vis = aruco_worker.get()
             anchor_ok   = T_cam_anchor   is not None
             pegboard_ok = T_cam_pegboard is not None
 
@@ -1293,6 +1328,8 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
                 if simulation:
                     if _ctrl_active and ctrl is not None and not ctrl.done:
                         ctrl.update(pb_scene.robot_id, pb_scene.arm_indices)
+                        _ctrl_step_sum   += 1
+                        _ctrl_step_count += 1
                     elif not _ctrl_active:
                         pb_scene.update_robot(_sim_q)
                     T_tool0 = pb_scene.update_tcp_bodies()
@@ -1310,8 +1347,7 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
             # ── OpenCV display ────────────────────────────────────────────────
             disp = cv.resize(
                 det_vis if det_vis is not None else
-                (cam.frame.copy() if cam.frame is not None
-                 else np.zeros((480, 640, 3), dtype=np.uint8)),
+                np.zeros((480, 640, 3), dtype=np.uint8),
                 (960, 540))
 
             locked = anchor.locked
@@ -1402,12 +1438,26 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
                         print(f"[ENTER] Marker #{pegboard_marker_id} visible, but "
                               f"lock marker #{anchor_marker_id} first.")
 
+            _loop_count += 1
+            _iter_ms = (time.perf_counter() - _iter_t0) * 1000.0
+            _elapsed = time.perf_counter() - _loop_t0
+            if _elapsed >= 2.0:
+                _avg_hz  = _loop_count / _elapsed
+                _ctrl_hz = (_ctrl_step_sum / _elapsed) if _ctrl_step_count else 0.0
+                print(f"[perf] loop {_avg_hz:.1f} Hz | last iter {_iter_ms:.1f} ms"
+                      f" | ctrl steps {_ctrl_hz:.1f} Hz")
+                _loop_t0         = time.perf_counter()
+                _loop_count      = 0
+                _ctrl_step_sum   = 0
+                _ctrl_step_count = 0
+
             time.sleep(0.001)
 
     except KeyboardInterrupt:
         pass
 
     finally:
+        aruco_worker.stop()
         vis.close()
         if pb_scene is not None:
             pb_scene.disconnect()
