@@ -1229,9 +1229,11 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
                 clicking_hand = tools.active_hand  # "left" or "right"
                 target_pts = right_pts if clicking_hand == "left" else left_pts
                 if target_pts is not None and pb_scene is not None:
-                    target_pos     = target_pts[1].tolist()   # joint 1 = palm
                     target_is_left = (clicking_hand == "right")  # opposite of clicking hand
                     target_quat    = _palm_quat(target_pts, is_left=target_is_left)
+                    _gripper_z     = ScipyR.from_quat(target_quat).apply([0.0, 0.0, 1.0])
+                    offset_dist    = 0.30  # metres from palm to TCP
+                    target_pos     = (target_pts[1] - _gripper_z * offset_dist).tolist()
                     try:
                         ctrl = RobotController(
                             pb_scene.robot_id,
