@@ -1023,7 +1023,7 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
     """
 
     # Default joint angles used in simulation mode (degrees → radians)
-    _SIM_Q_DEG = [-277.97, -130.67, -109.07, -30.43, 88.83, -7.60]
+    _SIM_Q_DEG = [-105.97, -29.43, 87.53, 33.17, 92.40, 168.95]
     _sim_q = np.deg2rad(_SIM_Q_DEG)
 
     # ── PyBullet scene ────────────────────────────────────────────────────────
