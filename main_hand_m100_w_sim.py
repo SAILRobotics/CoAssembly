@@ -1388,6 +1388,11 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
             key = cv.waitKey(1) & 0xFF
             if key == 27:
                 break
+            elif key == ord('r') or key == ord('R'):
+                if pb_scene is not None and anchor.T_pegboard_in_world is not None:
+                    pb_scene.check_reachability(anchor.T_pegboard_in_world)
+                else:
+                    print("[R] Pegboard not locked yet — lock it first.")
             elif key == 13:
                 if simulation and pb_scene is not None:
                     pb_scene.set_scene_origin(np.eye(4))

@@ -124,14 +124,16 @@ class PyBulletScene:
         self.tool0_link_idx:      int        = -1
 
         # 2×2 grid of pegboard mesh bodies (loaded once, teleported when anchor locks)
-        # Each board: 16" wide × 12" tall → 0.4064 m × 0.3048 m
-        # Offsets are in pegboard-local frame (marker origin = bottom-left of board 0)
-        _W, _H = 16 * 0.0254, 12 * 0.0254
+        # Each tile: 16" wide × 12" tall → total board: 32" wide × 24" tall
+        # Marker centre is at (0.05, 0.05) from the board's bottom-left corner,
+        # so shift the whole grid by (-0.05, -0.05) to align board BL with marker BL.
+        _W, _H   = 16 * 0.0254, 12 * 0.0254
+        _X0, _Y0 = -0.05, -0.05
         self._PEGBOARD_GRID_OFFSETS = [
-            [0.0,  0.0,  0.0],
-            [_W,   0.0,  0.0],
-            [0.0,  _H,   0.0],
-            [_W,   _H,   0.0],
+            [_X0,      _Y0,      0.0],
+            [_X0 + _W, _Y0,      0.0],
+            [_X0,      _Y0 + _H, 0.0],
+            [_X0 + _W, _Y0 + _H, 0.0],
         ]
         self._pegboard_body_ids: list[int] = []
         self._table_id:           int | None  = None
@@ -256,6 +258,89 @@ class PyBulletScene:
         return np.array([p.getJointState(self.robot_id, idx)[0]
                          for idx in self.arm_indices], dtype=np.float64)
 
+    def check_reachability(self,
+                           T_pegboard_world: np.ndarray,
+                           target_quat_xyzw: np.ndarray | None = None,
+                           grid_nx: int = 12,
+                           grid_ny: int = 10,
+                           x_min: float = -0.05,   # marker is 5 cm from left edge
+                           x_max: float =  0.763,  # 32 in (0.813 m) - 0.05 m
+                           y_min: float = -0.05,   # marker is 5 cm from bottom edge
+                           y_max: float =  0.560,  # 24 in (0.610 m) - 0.05 m
+                           z_offset: float = 0.10,
+                           reach_tol: float = 0.02) -> tuple[int, int]:
+        """Sample a grid over the pegboard, test IK for each point, and draw
+        green (reachable) / red (unreachable) dots in the PyBullet window.
+        Restores the robot to its original pose when done.
+        Returns (n_reachable, n_total).
+        """
+        # Default: approach perpendicular to the pegboard (along its Z axis)
+        if target_quat_xyzw is None:
+            board_z_world = T_pegboard_world[:3, 2]
+            # build a rotation where tool-Z = -board_z (approaching from front)
+            approach = -board_z_world / (np.linalg.norm(board_z_world) + 1e-9)
+            # arbitrary perpendicular for tool-X
+            ref = np.array([1.0, 0.0, 0.0]) if abs(approach[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
+            x_ax = np.cross(ref, approach); x_ax /= np.linalg.norm(x_ax)
+            y_ax = np.cross(approach, x_ax)
+            R = np.column_stack([x_ax, y_ax, approach])
+            target_quat_xyzw = ScipyR.from_matrix(R).as_quat()
+
+        saved_q = self.current_q.copy()
+
+        # Pre-compute null-space parameters (same for every IK call)
+        n_joints = p.getNumJoints(self.robot_id)
+        movable  = [j for j in range(n_joints)
+                    if p.getJointInfo(self.robot_id, j)[2] != p.JOINT_FIXED]
+        lower_limits, upper_limits, joint_ranges = [], [], []
+        for j in movable:
+            info = p.getJointInfo(self.robot_id, j)
+            ll, ul = float(info[8]), float(info[9])
+            if ul <= ll:
+                ll, ul = -np.pi, np.pi
+            lower_limits.append(ll)
+            upper_limits.append(ul)
+            joint_ranges.append(ul - ll)
+        arm_q_map  = dict(zip(self.arm_indices, saved_q))
+        rest_poses = [float(arm_q_map.get(j, 0.0)) for j in movable]
+
+        reachable   = []
+        unreachable = []
+
+        for xi in np.linspace(x_min, x_max, grid_nx):
+            for yi in np.linspace(y_min, y_max, grid_ny):
+                p_local  = np.array([xi, yi, z_offset, 1.0])
+                p_world  = (T_pegboard_world @ p_local)[:3]
+
+                joint_q = p.calculateInverseKinematics(
+                    self.robot_id, self.tool0_link_idx, p_world.tolist(),
+                    targetOrientation=target_quat_xyzw,
+                    lowerLimits=lower_limits, upperLimits=upper_limits,
+                    jointRanges=joint_ranges, restPoses=rest_poses,
+                    maxNumIterations=200, residualThreshold=1e-5)
+
+                for idx, q in zip(self.arm_indices, joint_q[:len(self.arm_indices)]):
+                    p.resetJointState(self.robot_id, idx, float(q))
+
+                fk    = p.getLinkState(self.robot_id, self.tool0_link_idx,
+                                       computeForwardKinematics=True)
+                error = np.linalg.norm(np.array(fk[4]) - p_world)
+                (reachable if error < reach_tol else unreachable).append(p_world.tolist())
+
+        # Restore robot
+        for idx, q in zip(self.arm_indices, saved_q):
+            p.resetJointState(self.robot_id, idx, float(q))
+
+        # Visualise
+        if reachable:
+            p.addUserDebugPoints(reachable,   [[0.0, 1.0, 0.0]] * len(reachable),   pointSize=8)
+        if unreachable:
+            p.addUserDebugPoints(unreachable, [[1.0, 0.0, 0.0]] * len(unreachable), pointSize=8)
+
+        n_total = len(reachable) + len(unreachable)
+        pct = 100 * len(reachable) / max(n_total, 1)
+        print(f"[Reachability] {len(reachable)}/{n_total} points reachable ({pct:.0f}%)")
+        return len(reachable), n_total
 
     def update_robot(self, q_rad: np.ndarray):
         """Set the 6 arm joint angles in radians."""
