@@ -136,6 +136,7 @@ class PyBulletScene:
             [_X0 + _W, _Y0 + _H, 0.0],
         ]
         self._pegboard_body_ids: list[int] = []
+        self._reachability_ids:  list[int] = []
         self._table_id:           int | None  = None
 
         # Marker wall body (flat box in marker 100's XY plane)
@@ -286,6 +287,13 @@ class PyBulletScene:
             R = np.column_stack([x_ax, y_ax, approach])
             target_quat_xyzw = ScipyR.from_matrix(R).as_quat()
 
+        for rid in self._reachability_ids:
+            try:
+                p.removeUserDebugItem(rid)
+            except Exception:
+                pass
+        self._reachability_ids = []
+
         saved_q = self.current_q.copy()
 
         # Pre-compute null-space parameters (same for every IK call)
@@ -333,9 +341,11 @@ class PyBulletScene:
 
         # Visualise
         if reachable:
-            p.addUserDebugPoints(reachable,   [[0.0, 1.0, 0.0]] * len(reachable),   pointSize=8)
+            self._reachability_ids.append(
+                p.addUserDebugPoints(reachable,   [[0.0, 1.0, 0.0]] * len(reachable),   pointSize=8))
         if unreachable:
-            p.addUserDebugPoints(unreachable, [[1.0, 0.0, 0.0]] * len(unreachable), pointSize=8)
+            self._reachability_ids.append(
+                p.addUserDebugPoints(unreachable, [[1.0, 0.0, 0.0]] * len(unreachable), pointSize=8))
 
         n_total = len(reachable) + len(unreachable)
         pct = 100 * len(reachable) / max(n_total, 1)
