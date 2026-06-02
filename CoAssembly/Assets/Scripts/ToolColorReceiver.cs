@@ -10,7 +10,7 @@ using Newtonsoft.Json;
 public class ToolColorReceiver : MonoBehaviour
 {
     [Header("Tool Identity")]
-    [SerializeField] private int toolId;
+    public int toolId;
 
     [Header("Visual")]
     [SerializeField] private Renderer targetRenderer;

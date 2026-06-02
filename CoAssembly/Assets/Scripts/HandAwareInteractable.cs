@@ -19,8 +19,8 @@ using Oculus.Interaction;
 public class HandAwareInteractable : MonoBehaviour
 {
     [SerializeField] private PointableUnityEventWrapper _eventWrapper;
-    [SerializeField] private RayInteractor              _leftInteractor;
-    [SerializeField] private RayInteractor              _rightInteractor;
+    public RayInteractor _leftInteractor;
+    public RayInteractor _rightInteractor;
 
     private ToolClickPublisher _publisher;
     private string             _hoveringHand;

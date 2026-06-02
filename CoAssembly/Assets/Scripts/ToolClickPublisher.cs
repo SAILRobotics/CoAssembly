@@ -7,7 +7,7 @@ using Newtonsoft.Json;
 public class ToolClickPublisher : MonoBehaviour
 {
     [Header("Tool Identity")]
-    [SerializeField] private int toolId;
+    public int toolId;
 
     [Header("NetMQ")]
     [SerializeField] private int port = 5009;

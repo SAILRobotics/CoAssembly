@@ -815,6 +815,92 @@ class _SyntheticObjectPublisher:
 
 
 # =============================================================================
+# Tool layout manager
+# =============================================================================
+
+class _ToolLayoutManager:
+    """Loads tool_layout.json once at startup and publishes world-space tool
+    definitions to Unity (port 5011). To apply changes, restart the script."""
+
+    PORT = 5011
+
+    def __init__(self, json_path: str, ip: str):
+        self._tools: list = []
+        ctx = zmq.Context()
+        self._pub = ctx.socket(zmq.PUB)
+        self._pub.connect(f"tcp://{ip}:{self.PORT}")
+        time.sleep(0.2)
+        try:
+            data = json.loads(Path(json_path).read_text())
+            self._tools = data.get("tools", [])
+            print(f"[ToolLayout] Loaded {len(self._tools)} tool(s) from {Path(json_path).name}")
+        except Exception as e:
+            print(f"[ToolLayout] Failed to load JSON: {e}")
+
+    # ── Publishing ───────────────────────────────────────────────────────────
+
+    def publish(self, T_pegboard_in_world: np.ndarray) -> None:
+        """(Re-)publish the current layout with the given pegboard transform."""
+        self._publish(T_pegboard_in_world)
+
+    def _publish(self, T: np.ndarray) -> None:
+        out = []
+        for t in self._tools:
+            px, py = t.get("pegboard_pos", [0.0, 0.0])
+            sz     = t.get("size", [0.05, 0.05, 0.05])
+            rot    = t.get("rotation_deg", [0.0, 0.0, 0.0])
+
+            # Centre of bounding box: sits on board surface (z = half depth)
+            p_local = np.array([px, py, sz[2] / 2.0, 1.0])
+            pos_w   = (T @ p_local)[:3]
+
+            # Orientation: pegboard-local Euler → world rotation
+            R_local = ScipyR.from_euler('xyz', rot, degrees=True).as_matrix()
+            R_world = T[:3, :3] @ R_local
+            q_xyzw  = ScipyR.from_matrix(R_world).as_quat()
+
+            pos_u  = open3d_to_unity_vector(pos_w)
+            q_wxyz = [q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]]
+            q_u    = open3d_to_unity_quaternion(q_wxyz)
+            sz_u   = open3d_to_unity_vector(np.array(sz, dtype=float))
+
+            out.append({
+                "id":            int(t["id"]),
+                "type":          t.get("type", "unknown"),
+                "position":      pos_u.tolist(),
+                "rotation_xyzw": [float(q_u[1]), float(q_u[2]),
+                                   float(q_u[3]), float(q_u[0])],
+                "size":          sz_u.tolist(),
+            })
+        try:
+            self._pub.send_string(json.dumps({"tools": out}))
+        except Exception as e:
+            print(f"[ToolLayout] Publish error: {e}")
+
+    # ── PyBullet data ────────────────────────────────────────────────────────
+
+    def world_boxes(self, T: np.ndarray) -> list:
+        """Return list of (pos_world, R_world, size) for PyBullet drawing."""
+        boxes = []
+        for t in self._tools:
+            px, py = t.get("pegboard_pos", [0.0, 0.0])
+            sz     = t.get("size", [0.05, 0.05, 0.05])
+            rot    = t.get("rotation_deg", [0.0, 0.0, 0.0])
+            p_local = np.array([px, py, sz[2] / 2.0, 1.0])
+            pos_w   = (T @ p_local)[:3]
+            R_local = ScipyR.from_euler('xyz', rot, degrees=True).as_matrix()
+            R_world = T[:3, :3] @ R_local
+            boxes.append((pos_w, R_world, sz))
+        return boxes
+
+    def close(self) -> None:
+        try:
+            self._pub.close(0)
+        except Exception:
+            pass
+
+
+# =============================================================================
 # Offset tuner
 # =============================================================================
 
@@ -1123,11 +1209,12 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
 
     overlay: "SceneOverlay | None" = SceneOverlay() if pb_scene is not None else None
 
-    anchor = _WorldAnchor(quest_ip, pub_port=5005)
-    haptic = _HapticPublisher(quest_ip, port=5007)
-    tools  = _ToolSelectionManager(quest_ip, click_port=5009, color_port=5010)
-    tuner  = _OffsetTuner()
-    synth  = _SyntheticObjectPublisher(quest_ip, port=5006)
+    anchor       = _WorldAnchor(quest_ip, pub_port=5005)
+    haptic       = _HapticPublisher(quest_ip, port=5007)
+    tools        = _ToolSelectionManager(quest_ip, click_port=5009, color_port=5010)
+    tuner        = _OffsetTuner()
+    synth        = _SyntheticObjectPublisher(quest_ip, port=5006)
+    tool_layout  = _ToolLayoutManager(_FILE_DIR / "tool_layout.json", quest_ip)
 
     # Cubes around the anchor marker (world origin = marker 100) — ids 0, 1, 2
     synth.add([0.10,  0.00, 0.05], width=0.06, depth=0.06, height=0.10,
@@ -1252,6 +1339,11 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
                 _relock_available_prev = True
                 _last_proximity_relock = _now
                 haptic_lock_sent = False
+                if anchor.T_pegboard_in_world is not None:
+                    tool_layout.publish(anchor.T_pegboard_in_world)
+                    if pb_scene is not None:
+                        pb_scene.update_tool_boxes(
+                            tool_layout.world_boxes(anchor.T_pegboard_in_world))
                 print("[AutoRelock] Relocked via proximity click")
             tools.deselect(anchor_marker_id)
 
@@ -1439,6 +1531,10 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
                                 pegboard_cubes_added = True
                                 print(f"[Synth] Added {len(PEGBOARD_CUBES)} pegboard cubes "
                                       f"at marker #{pegboard_marker_id}")
+                            tool_layout.publish(T_wp)
+                            if pb_scene is not None:
+                                pb_scene.update_tool_boxes(
+                                    tool_layout.world_boxes(T_wp))
                     elif pegboard_ok and not anchor.locked:
                         print(f"[ENTER] Marker #{pegboard_marker_id} visible, but "
                               f"lock marker #{anchor_marker_id} first.")
@@ -1471,6 +1567,7 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
         anchor.close()
         haptic.close()
         synth.close()
+        tool_layout.close()
         hands.close()
         cam.close()
         tools.close()

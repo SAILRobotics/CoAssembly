@@ -125,15 +125,17 @@ class PyBulletScene:
 
         # 2×2 grid of pegboard mesh bodies (loaded once, teleported when anchor locks)
         # Each tile: 16" wide × 12" tall → total board: 32" wide × 24" tall
-        # Marker centre is at (0.05, 0.05) from the board's bottom-left corner,
-        # so shift the whole grid by (-0.05, -0.05) to align board BL with marker BL.
-        _W, _H   = 16 * 0.0254, 12 * 0.0254
-        _X0, _Y0 = -0.05, -0.05
+        # Marker centre is at (0.05, 0.05) from the board's bottom-left corner.
+        # ArUco is on the FRONT face so the mesh is shifted back by board thickness
+        # so its front face sits at Z=0. Adjust _BOARD_THICKNESS if the mesh looks off.
+        _W, _H          = 16 * 0.0254, 12 * 0.0254
+        _X0, _Y0        = -0.05, -0.05
+        _BOARD_THICKNESS = 0.0127         # 1/2 inch
         self._PEGBOARD_GRID_OFFSETS = [
-            [_X0,      _Y0,      0.0],
-            [_X0 + _W, _Y0,      0.0],
-            [_X0,      _Y0 + _H, 0.0],
-            [_X0 + _W, _Y0 + _H, 0.0],
+            [_X0,      _Y0,      -_BOARD_THICKNESS],
+            [_X0 + _W, _Y0,      -_BOARD_THICKNESS],
+            [_X0,      _Y0 + _H, -_BOARD_THICKNESS],
+            [_X0 + _W, _Y0 + _H, -_BOARD_THICKNESS],
         ]
         self._pegboard_body_ids: list[int] = []
         self._reachability_ids:  list[int] = []
@@ -351,6 +353,33 @@ class PyBulletScene:
         pct = 100 * len(reachable) / max(n_total, 1)
         print(f"[Reachability] {len(reachable)}/{n_total} points reachable ({pct:.0f}%)")
         return len(reachable), n_total
+
+    def update_tool_boxes(self, boxes: list) -> None:
+        """Draw wireframe bounding boxes for each tool. Clears previous boxes.
+        boxes: list of (pos_world, R_world, size) from _ToolLayoutManager.world_boxes().
+        """
+        for lid in getattr(self, '_tool_box_ids', []):
+            try:
+                p.removeUserDebugItem(lid)
+            except Exception:
+                pass
+        self._tool_box_ids = []
+
+        color = [1.0, 0.8, 0.0]
+        for pos, R, size in boxes:
+            hw, hd, hh = size[0] / 2, size[1] / 2, size[2] / 2
+            local = np.array([
+                [-hw, -hd, -hh], [+hw, -hd, -hh], [+hw, +hd, -hh], [-hw, +hd, -hh],
+                [-hw, -hd, +hh], [+hw, -hd, +hh], [+hw, +hd, +hh], [-hw, +hd, +hh],
+            ])
+            corners = (local @ R.T) + pos
+            for a, b in [(0,1),(1,2),(2,3),(3,0),
+                         (4,5),(5,6),(6,7),(7,4),
+                         (0,4),(1,5),(2,6),(3,7)]:
+                lid = p.addUserDebugLine(
+                    corners[a].tolist(), corners[b].tolist(),
+                    color, lineWidth=2, lifeTime=0)
+                self._tool_box_ids.append(lid)
 
     def update_robot(self, q_rad: np.ndarray):
         """Set the 6 arm joint angles in radians."""
