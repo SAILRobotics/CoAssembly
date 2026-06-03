@@ -388,6 +388,14 @@ class PyBulletScene:
                     color, lineWidth=4, lifeTime=0)
                 self._tool_box_ids.append(lid)
 
+            # Local coordinate frame at centroid
+            T = np.eye(4)
+            T[:3, :3] = R
+            T[:3, 3]  = pos
+            axis_len = max(size[0], size[1]) * 0.4
+            self._tool_box_ids.extend(
+                PyBulletScene.draw_frame(T, length=axis_len, width=2))
+
     def update_robot(self, q_rad: np.ndarray):
         """Set the 6 arm joint angles in radians."""
         for idx, q in zip(self.arm_indices, q_rad):
@@ -780,18 +788,17 @@ class RobotController:
 
     def __init__(self, robot_id: int, end_effector_link: int,
                  start_q: np.ndarray, arm_indices: list,
-                 target_pos: list, target_quat_xyzw: np.ndarray | None = None):
+                 target_pos: list, target_quat_xyzw: np.ndarray | None = None,
+                 straight_line: bool = False):
         self._start_q = np.array(start_q, dtype=np.float64)
         self._step    = 0
         self.done     = False
 
         if target_quat_xyzw is None:
-            # Default: gripper points straight down
             target_quat_xyzw = ScipyR.from_euler(
                 'xyz', [180.0, 0.0, 0.0], degrees=True).as_quat()
 
-        # Build null-space parameters from URDF joint info so the IK solver
-        # stays close to start_q (avoids unexpected elbow flips).
+        # Build null-space parameters (shared by both modes)
         n_joints = p.getNumJoints(robot_id)
         movable  = [j for j in range(n_joints)
                     if p.getJointInfo(robot_id, j)[2] != p.JOINT_FIXED]
@@ -799,42 +806,69 @@ class RobotController:
         for j in movable:
             info = p.getJointInfo(robot_id, j)
             ll, ul = float(info[8]), float(info[9])
-            if ul <= ll:          # URDF didn't specify limits → use ±π
+            if ul <= ll:
                 ll, ul = -np.pi, np.pi
             lower_limits.append(ll)
             upper_limits.append(ul)
             joint_ranges.append(ul - ll)
 
-        arm_q_map = dict(zip(arm_indices, start_q))
+        arm_q_map  = dict(zip(arm_indices, start_q))
         rest_poses = [float(arm_q_map.get(j, 0.0)) for j in movable]
 
+        # Solve IK for target (used as joint-space target and null-space bias)
         joint_q = p.calculateInverseKinematics(
-            robot_id,
-            end_effector_link,
-            target_pos,
+            robot_id, end_effector_link, target_pos,
             targetOrientation=target_quat_xyzw,
-            lowerLimits=lower_limits,
-            upperLimits=upper_limits,
-            jointRanges=joint_ranges,
-            restPoses=rest_poses,
-            maxNumIterations=self._IK_ITER,
-            residualThreshold=1e-5,
-        )
-        # calculateInverseKinematics returns values for ALL non-fixed joints;
-        # slice to just the 6 arm joints we care about.
+            lowerLimits=lower_limits, upperLimits=upper_limits,
+            jointRanges=joint_ranges, restPoses=rest_poses,
+            maxNumIterations=self._IK_ITER, residualThreshold=1e-5)
         self._target_q = np.array(joint_q[:len(arm_indices)], dtype=np.float64)
         print(f"[RobotController] IK solution (deg): "
               f"{np.rad2deg(self._target_q).round(1).tolist()}")
 
+        self._straight_line = straight_line
+        if straight_line:
+            # Store everything needed for per-step online IK
+            fk = p.getLinkState(robot_id, end_effector_link,
+                                computeForwardKinematics=True)
+            self._start_pos   = np.array(fk[4], dtype=np.float64)
+            self._end_pos     = np.array(target_pos, dtype=np.float64)
+            self._quat        = np.array(target_quat_xyzw, dtype=np.float64)
+            self._robot_id    = robot_id
+            self._ee_link     = end_effector_link
+            self._movable     = movable
+            self._lower       = lower_limits
+            self._upper       = upper_limits
+            self._ranges      = joint_ranges
+            self._arm_indices = arm_indices
+
     def update(self, robot_id: int, arm_indices: list) -> bool:
-        """Interpolate one step and apply to PyBullet. Returns True when done."""
+        """Advance one interpolation step. Returns True when done."""
         if self.done:
             return True
 
         t = min(self._step / self._INTERP_STEPS, 1.0)
-        q = (1.0 - t) * self._start_q + t * self._target_q
-        for idx, qi in zip(arm_indices, q):
-            p.resetJointState(robot_id, idx, float(qi))
+
+        if self._straight_line:
+            # Cartesian linear interpolation — IK called online each step
+            pos = ((1.0 - t) * self._start_pos + t * self._end_pos).tolist()
+            # Use target joint config as null-space bias so the arm stays
+            # in a consistent elbow configuration throughout the move
+            rest_poses = [float(dict(zip(self._arm_indices,
+                                         self._target_q)).get(j, 0.0))
+                          for j in self._movable]
+            joint_q = p.calculateInverseKinematics(
+                self._robot_id, self._ee_link, pos,
+                targetOrientation=self._quat,
+                lowerLimits=self._lower, upperLimits=self._upper,
+                jointRanges=self._ranges, restPoses=rest_poses,
+                maxNumIterations=self._IK_ITER, residualThreshold=1e-5)
+            for idx, qi in zip(arm_indices, joint_q[:len(arm_indices)]):
+                p.resetJointState(robot_id, idx, float(qi))
+        else:
+            q = (1.0 - t) * self._start_q + t * self._target_q
+            for idx, qi in zip(arm_indices, q):
+                p.resetJointState(robot_id, idx, float(qi))
 
         self._step += 1
         if self._step >= self._INTERP_STEPS:

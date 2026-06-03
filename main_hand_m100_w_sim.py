@@ -134,6 +134,30 @@ def _palm_quat(pts: np.ndarray, is_left: bool = False) -> np.ndarray:
     return (q_palm * q_offset).as_quat()  # xyzw
 
 
+def _tool_grasp_quat(R_world: np.ndarray) -> np.ndarray:
+    """Quaternion (xyzw) for grasping a pegboard tool.
+
+    After Rx(-90°), the physical gripper Z = y_axis of the pre-offset matrix R.
+    So y_axis must equal the inward approach direction (-R_world[:,2]).
+    cross(R[:,1], R[:,0]) = -R[:,2] for any right-handed rotation matrix,
+    so setting z_axis = R_world[:,1] achieves this automatically.
+    """
+    x_axis = _unit(R_world[:, 0])
+    z_axis = _unit(R_world[:, 1])              # gives y_axis = -R_world[:,2] = inward
+    y_axis = _unit(np.cross(z_axis, x_axis))
+    x_axis = _unit(np.cross(y_axis, z_axis))   # reorthogonalise
+
+    R = np.column_stack([x_axis, y_axis, z_axis])
+    q_offset = ScipyR.from_euler('x', -90, degrees=True)
+    target_q = (ScipyR.from_matrix(R) * q_offset).as_quat()
+
+    # Keep camera facing up — same wrist-flip logic as TCP click
+    if ScipyR.from_quat(target_q).apply([0.0, 1.0, 0.0])[2] > 0:
+        target_q = (ScipyR.from_quat(target_q)
+                    * ScipyR.from_euler('z', 180, degrees=True)).as_quat()
+    return target_q
+
+
 def _extract_joints(hand_block) -> np.ndarray | None:
     if hand_block is None:
         return None
@@ -893,6 +917,21 @@ class _ToolLayoutManager:
             boxes.append((pos_w, R_world, sz))
         return boxes
 
+    def get_world_data(self, tool_id: int,
+                       T: np.ndarray) -> "tuple | None":
+        """Return (pos_world, R_world, size) for tool_id, or None if not found."""
+        for t in self._tools:
+            if t["id"] == tool_id:
+                px, py = t.get("pegboard_pos", [0.0, 0.0])
+                sz     = t.get("size", [0.05, 0.05, 0.05])
+                rot    = t.get("rotation_deg", [0.0, 0.0, 0.0])
+                p_local = np.array([px, py, sz[2] / 2.0, 1.0])
+                pos_w   = (T @ p_local)[:3]
+                R_local = ScipyR.from_euler('xyz', rot, degrees=True).as_matrix()
+                R_world = T[:3, :3] @ R_local
+                return pos_w, R_world, sz
+        return None
+
     def close(self) -> None:
         try:
             self._pub.close(0)
@@ -1243,8 +1282,14 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
     _relock_available_prev  = False
     _green_until            = 0.0
     _last_proximity_relock  = 0.0
-    _ctrl_active            = False  # set True when TCP marker is clicked
+    _ctrl_active            = False  # set True when a motion is active
     _TCP_TOOL_ID            = 200    # must match ToolClickPublisher tool_id in Unity
+    _APPROACH_DIST          = 0.30   # metres — clearance before final grasp
+    _TCP_OFFSET             = 0.17   # metres — TCP to claw tip
+    _grasp_state: "str | None" = None   # None | 'approach' | 'final'
+    _grasp_tcp_final: "np.ndarray | None" = None
+    _grasp_quat: "np.ndarray | None"      = None
+    _grasp_tool_id: "int | None"          = None
 
     vis = _SceneVis(f"Hand Tracking — World Frame  (marker #{anchor_marker_id})")
     win = (f"Quest Left Passthrough  [ENTER=lock/relock  ESC=quit]"
@@ -1391,6 +1436,40 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
                           f"(clicking={clicking_hand}) — ignoring click.")
                 tools.deselect(_TCP_TOOL_ID)
 
+            # ── Tool click → grasp pegboard tool ─────────────────────────────
+            _tid = tools.active_tool_id
+            if (simulation
+                    and (not _ctrl_active or (ctrl is not None and ctrl.done))
+                    and _tid is not None
+                    and _tid != _TCP_TOOL_ID
+                    and anchor.locked
+                    and anchor.T_pegboard_in_world is not None
+                    and pb_scene is not None):
+                tool_data = tool_layout.get_world_data(_tid, anchor.T_pegboard_in_world)
+                if tool_data is not None:
+                    pos_w, R_world, _sz = tool_data
+                    board_out   = R_world[:, 2]
+                    grasp_quat  = _tool_grasp_quat(R_world)
+                    tcp_final   = pos_w + _TCP_OFFSET   * board_out
+                    tcp_approach = pos_w + (_TCP_OFFSET + _APPROACH_DIST) * board_out
+                    try:
+                        ctrl = RobotController(
+                            pb_scene.robot_id, pb_scene.tool0_link_idx,
+                            pb_scene.current_q, pb_scene.arm_indices,
+                            tcp_approach.tolist(), target_quat_xyzw=grasp_quat)
+                        _ctrl_active      = True
+                        _grasp_state      = 'approach'
+                        _grasp_tcp_final  = tcp_final
+                        _grasp_quat       = grasp_quat
+                        _grasp_tool_id    = _tid
+                        print(f"[ToolGrasp] id={_tid} — approach "
+                              f"{[round(v,3) for v in tcp_approach.tolist()]}")
+                    except Exception as e:
+                        import traceback
+                        print(f"[ToolGrasp] RobotController failed: {e}")
+                        traceback.print_exc()
+                tools.deselect(_tid)
+
             # ── Update Open3D ─────────────────────────────────────────────────
             if cam.fx is not None:
                 fx, fy, cx, cy = _adapt_cx_cy(
@@ -1422,6 +1501,34 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
                         ctrl.update(pb_scene.robot_id, pb_scene.arm_indices)
                         _ctrl_step_sum   += 1
                         _ctrl_step_count += 1
+                    elif _ctrl_active and ctrl is not None and ctrl.done:
+                        if _grasp_state == 'approach':
+                            try:
+                                ctrl = RobotController(
+                                    pb_scene.robot_id, pb_scene.tool0_link_idx,
+                                    pb_scene.current_q, pb_scene.arm_indices,
+                                    _grasp_tcp_final.tolist(),
+                                    target_quat_xyzw=_grasp_quat,
+                                    straight_line=True)
+                                _grasp_state = 'final'
+                                print(f"[ToolGrasp] approach done — moving to final "
+                                      f"{[round(v,3) for v in _grasp_tcp_final.tolist()]}")
+                            except Exception as e:
+                                print(f"[ToolGrasp] final RobotController failed: {e}")
+                                _ctrl_active = False
+                                _grasp_state = None
+                        elif _grasp_state == 'final':
+                            _ctrl_active = False
+                            _grasp_state = None
+                            _grasp_tcp_final = None
+                            _grasp_quat      = None
+                            if _grasp_tool_id is not None:
+                                tools.send_color(_grasp_tool_id,
+                                                 _ToolSelectionManager.RESET_COLOR)
+                            _grasp_tool_id = None
+                            print("[ToolGrasp] grasp complete")
+                        else:
+                            _ctrl_active = False
                     elif not _ctrl_active:
                         pb_scene.update_robot(_sim_q)
                     T_tool0 = pb_scene.update_tcp_bodies()
