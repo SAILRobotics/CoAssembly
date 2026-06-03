@@ -1287,9 +1287,10 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
     _APPROACH_DIST          = 0.30   # metres — clearance before final grasp
     _TCP_OFFSET             = 0.17   # metres — TCP to claw tip
     _grasp_state: "str | None" = None   # None | 'approach' | 'final'
-    _grasp_tcp_final: "np.ndarray | None" = None
-    _grasp_quat: "np.ndarray | None"      = None
-    _grasp_tool_id: "int | None"          = None
+    _grasp_tcp_final: "np.ndarray | None"    = None
+    _grasp_tcp_approach: "np.ndarray | None" = None
+    _grasp_quat: "np.ndarray | None"         = None
+    _grasp_tool_id: "int | None"             = None
 
     vis = _SceneVis(f"Hand Tracking — World Frame  (marker #{anchor_marker_id})")
     win = (f"Quest Left Passthrough  [ENTER=lock/relock  ESC=quit]"
@@ -1458,10 +1459,11 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
                             pb_scene.current_q, pb_scene.arm_indices,
                             tcp_approach.tolist(), target_quat_xyzw=grasp_quat)
                         _ctrl_active      = True
-                        _grasp_state      = 'approach'
-                        _grasp_tcp_final  = tcp_final
-                        _grasp_quat       = grasp_quat
-                        _grasp_tool_id    = _tid
+                        _grasp_state        = 'approach'
+                        _grasp_tcp_final    = tcp_final
+                        _grasp_tcp_approach = tcp_approach
+                        _grasp_quat         = grasp_quat
+                        _grasp_tool_id      = _tid
                         print(f"[ToolGrasp] id={_tid} — approach "
                               f"{[round(v,3) for v in tcp_approach.tolist()]}")
                     except Exception as e:
@@ -1509,7 +1511,8 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
                                     pb_scene.current_q, pb_scene.arm_indices,
                                     _grasp_tcp_final.tolist(),
                                     target_quat_xyzw=_grasp_quat,
-                                    straight_line=True)
+                                    straight_line=True,
+                                    straight_line_start=_grasp_tcp_approach.tolist())
                                 _grasp_state = 'final'
                                 print(f"[ToolGrasp] approach done — moving to final "
                                       f"{[round(v,3) for v in _grasp_tcp_final.tolist()]}")
@@ -1520,15 +1523,14 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
                         elif _grasp_state == 'final':
                             _ctrl_active = False
                             _grasp_state = None
-                            _grasp_tcp_final = None
-                            _grasp_quat      = None
+                            _grasp_tcp_final    = None
+                            _grasp_tcp_approach = None
+                            _grasp_quat         = None
                             if _grasp_tool_id is not None:
                                 tools.send_color(_grasp_tool_id,
                                                  _ToolSelectionManager.RESET_COLOR)
                             _grasp_tool_id = None
                             print("[ToolGrasp] grasp complete")
-                        else:
-                            _ctrl_active = False
                     elif not _ctrl_active:
                         pb_scene.update_robot(_sim_q)
                     T_tool0 = pb_scene.update_tcp_bodies()
@@ -1589,7 +1591,9 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
                 break
             elif key == ord('r') or key == ord('R'):
                 if pb_scene is not None and anchor.T_pegboard_in_world is not None:
-                    pb_scene.check_reachability(anchor.T_pegboard_in_world)
+                    _reach_quat = _tool_grasp_quat(anchor.T_pegboard_in_world[:3, :3])
+                    pb_scene.check_reachability(anchor.T_pegboard_in_world,
+                                                target_quat_xyzw=_reach_quat)
                 else:
                     print("[R] Pegboard not locked yet — lock it first.")
             elif key == 13:

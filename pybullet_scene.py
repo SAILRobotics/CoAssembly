@@ -789,7 +789,8 @@ class RobotController:
     def __init__(self, robot_id: int, end_effector_link: int,
                  start_q: np.ndarray, arm_indices: list,
                  target_pos: list, target_quat_xyzw: np.ndarray | None = None,
-                 straight_line: bool = False):
+                 straight_line: bool = False,
+                 straight_line_start: "list | None" = None):
         self._start_q = np.array(start_q, dtype=np.float64)
         self._step    = 0
         self.done     = False
@@ -829,9 +830,12 @@ class RobotController:
         self._straight_line = straight_line
         if straight_line:
             # Store everything needed for per-step online IK
-            fk = p.getLinkState(robot_id, end_effector_link,
-                                computeForwardKinematics=True)
-            self._start_pos   = np.array(fk[4], dtype=np.float64)
+            if straight_line_start is not None:
+                self._start_pos = np.array(straight_line_start, dtype=np.float64)
+            else:
+                fk = p.getLinkState(robot_id, end_effector_link,
+                                    computeForwardKinematics=True)
+                self._start_pos = np.array(fk[4], dtype=np.float64)
             self._end_pos     = np.array(target_pos, dtype=np.float64)
             self._quat        = np.array(target_quat_xyzw, dtype=np.float64)
             self._robot_id    = robot_id
@@ -852,11 +856,8 @@ class RobotController:
         if self._straight_line:
             # Cartesian linear interpolation — IK called online each step
             pos = ((1.0 - t) * self._start_pos + t * self._end_pos).tolist()
-            # Use target joint config as null-space bias so the arm stays
-            # in a consistent elbow configuration throughout the move
-            rest_poses = [float(dict(zip(self._arm_indices,
-                                         self._target_q)).get(j, 0.0))
-                          for j in self._movable]
+            arm_q_map  = dict(zip(self._arm_indices, self._target_q))
+            rest_poses = [float(arm_q_map.get(j, 0.0)) for j in self._movable]
             joint_q = p.calculateInverseKinematics(
                 self._robot_id, self._ee_link, pos,
                 targetOrientation=self._quat,
