@@ -239,6 +239,13 @@ class PyBulletScene:
             self._teleport(self._table_id, T_table)
 
         p.removeAllUserDebugItems()
+        # Reset all tracked IDs so the next draw creates fresh items
+        # instead of trying replaceItemUniqueId with stale IDs.
+        self._tcp_frame_ids      = None
+        self._hand_frust_ids     = None
+        self._pegboard_frame_ids = None
+        self._tool_box_ids       = []
+        self._reachability_ids   = []
         self._draw_static_debug()
         if self.gui:
             p.resetDebugVisualizerCamera(
@@ -378,7 +385,7 @@ class PyBulletScene:
                          (0,4),(1,5),(2,6),(3,7)]:
                 lid = p.addUserDebugLine(
                     corners[a].tolist(), corners[b].tolist(),
-                    color, lineWidth=2, lifeTime=0)
+                    color, lineWidth=4, lifeTime=0)
                 self._tool_box_ids.append(lid)
 
     def update_robot(self, q_rad: np.ndarray):
@@ -466,7 +473,7 @@ class PyBulletScene:
         for i, col in enumerate(([1, 0, 0], [0, 1, 0], [0, 0, 1])):
             end    = (pos + R[:, i] * length).tolist()
             old_id = int(ids[i]) if (ids[i] is not None and int(ids[i]) >= 0) else -1
-            kw = {"replaceItemUniqueId": old_id} if (old_id >= 0 and life_time == 0.0) else {}
+            kw = {"replaceItemUniqueId": old_id} if old_id >= 0 else {}
             lid = p.addUserDebugLine(
                 pos.tolist(), end, col, lineWidth=width, lifeTime=life_time, **kw)
             new_ids.append(lid)
@@ -492,12 +499,12 @@ class PyBulletScene:
         new_ids = []
         for i, pt in enumerate(pts):
             old_id = int(ids[i]) if (ids[i] is not None and int(ids[i]) >= 0) else -1
-            kw = {"replaceItemUniqueId": old_id} if (old_id >= 0 and life_time == 0.0) else {}
+            kw = {"replaceItemUniqueId": old_id} if old_id >= 0 else {}
             lid = p.addUserDebugLine(origin, pt, color, lineWidth=1.5, lifeTime=life_time, **kw)
             new_ids.append(lid)
         for i in range(4):
             old_id = int(ids[4 + i]) if (ids[4 + i] is not None and int(ids[4 + i]) >= 0) else -1
-            kw = {"replaceItemUniqueId": old_id} if (old_id >= 0 and life_time == 0.0) else {}
+            kw = {"replaceItemUniqueId": old_id} if old_id >= 0 else {}
             lid = p.addUserDebugLine(pts[i], pts[(i + 1) % 4], color,
                                      lineWidth=1.5, lifeTime=life_time, **kw)
             new_ids.append(lid)
@@ -888,6 +895,13 @@ class SceneOverlay:
                     pts[i].tolist(), pts[j].tolist(), color,
                     lineWidth=2, lifeTime=0, **kw)
         return ids
+
+    def reset_ids(self) -> None:
+        """Call after p.removeAllUserDebugItems() to prevent stale-ID failures."""
+        n = len(_HAND_BONES)
+        self._ids_l    = [-1] * n
+        self._ids_r    = [-1] * n
+        self._ids_head = [-1] * 8
 
     def update_hands(self, left_pts: np.ndarray | None,
                      right_pts: np.ndarray | None):

@@ -12169,6 +12169,7 @@ MonoBehaviour:
   - id: 9
     type: 
     prefab: {fileID: 1378334300415827735, guid: 6c9e54f7886795e40af25f4c247408eb, type: 3}
+  worldRoot: {fileID: 1683168509}
   leftRayInteractor: {fileID: 210610087}
   rightRayInteractor: {fileID: 542522394}
   host: 127.0.0.1

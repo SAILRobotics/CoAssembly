@@ -1489,6 +1489,8 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
                 if simulation and pb_scene is not None:
                     pb_scene.set_scene_origin(np.eye(4))
                     pb_scene.update_wall(np.eye(4))
+                    if overlay is not None:
+                        overlay.reset_ids()
                 if cam.camera_T is None:
                     if not simulation:
                         print("[ENTER] No camera pose — skipping.")

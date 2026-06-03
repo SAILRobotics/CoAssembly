@@ -32,6 +32,9 @@ public class ToolSpawner : MonoBehaviour
     [Header("Prefabs (id → prefab)")]
     public ToolPrefabEntry[] toolPrefabs = new ToolPrefabEntry[0];
 
+    [Header("Parent transform (drag WorldRoot here)")]
+    public Transform worldRoot;
+
     [Header("Rig references — injected into HandAwareInteractable on spawn")]
     public RayInteractor leftRayInteractor;
     public RayInteractor rightRayInteractor;
@@ -136,18 +139,18 @@ public class ToolSpawner : MonoBehaviour
                     Debug.LogWarning($"[ToolSpawner] No prefab for id {t.id} (type '{t.type}')");
                     continue;
                 }
-                go = Instantiate(prefab);
+                go = Instantiate(prefab, worldRoot);
                 InjectReferences(go, t.id);
                 spawnedTools[t.id] = go;
             }
 
-            // Apply transform
+            // Apply transform — localPosition/Rotation so positions are relative to WorldRoot
             if (t.position != null && t.position.Length == 3)
-                go.transform.position = new Vector3(t.position[0], t.position[1], t.position[2]);
+                go.transform.localPosition = new Vector3(t.position[0], t.position[1], t.position[2]);
 
             if (t.rotation_xyzw != null && t.rotation_xyzw.Length == 4)
-                go.transform.rotation = new Quaternion(t.rotation_xyzw[0], t.rotation_xyzw[1],
-                                                       t.rotation_xyzw[2], t.rotation_xyzw[3]);
+                go.transform.localRotation = new Quaternion(t.rotation_xyzw[0], t.rotation_xyzw[1],
+                                                            t.rotation_xyzw[2], t.rotation_xyzw[3]);
 
             if (t.size != null && t.size.Length == 3)
                 go.transform.localScale = new Vector3(t.size[0], t.size[1], t.size[2]);
