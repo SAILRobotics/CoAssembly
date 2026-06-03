@@ -1218,6 +1218,7 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
                     T_tcp_handcam   = _T_tcp_handcam_sim,
                 )
                 pb_scene.build()
+                pb_scene.update_robot(_sim_q)
                 print("[PyBullet] Simulation mode — using hardcoded robot base pose.")
             except Exception as e:
                 print(f"[main_hand_m100_w_sim] PyBullet scene failed to build: {e}")
@@ -1228,6 +1229,7 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
                 try:
                     pb_scene = PyBulletScene.from_calibration(_calib_dir)
                     pb_scene.build()
+                    pb_scene.update_robot(_sim_q)
                 except Exception as e:
                     print(f"[main_hand_m100_w_sim] PyBullet scene failed to build: {e}")
                     pb_scene = None
@@ -1531,8 +1533,6 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
                                                  _ToolSelectionManager.RESET_COLOR)
                             _grasp_tool_id = None
                             print("[ToolGrasp] grasp complete")
-                    elif not _ctrl_active:
-                        pb_scene.update_robot(_sim_q)
                     T_tool0 = pb_scene.update_tcp_bodies()
                     if T_tool0 is not None and _tcp_synth is not None:
                         _tcp_synth.centroid = T_tool0[:3, 3]

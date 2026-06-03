@@ -124,18 +124,18 @@ class PyBulletScene:
         self.tool0_link_idx:      int        = -1
 
         # 2×2 grid of pegboard mesh bodies (loaded once, teleported when anchor locks)
-        # Each tile: 16" wide × 12" tall → total board: 32" wide × 24" tall
+        # Each tile: 12" wide × 16" tall → total board: 24" wide × 32" tall
         # Marker centre is at (0.05, 0.05) from the board's bottom-left corner.
         # ArUco is on the FRONT face so the mesh is shifted back by board thickness
         # so its front face sits at Z=0. Adjust _BOARD_THICKNESS if the mesh looks off.
-        _W, _H          = 16 * 0.0254, 12 * 0.0254
+        _W, _H          = 12 * 0.0254, 16 * 0.0254
         _X0, _Y0        = -0.05, -0.05
         _BOARD_THICKNESS = 0.0127         # 1/2 inch
         self._PEGBOARD_GRID_OFFSETS = [
-            [_X0,      _Y0,      -_BOARD_THICKNESS],
-            [_X0 + _W, _Y0,      -_BOARD_THICKNESS],
-            [_X0,      _Y0 + _H, -_BOARD_THICKNESS],
-            [_X0 + _W, _Y0 + _H, -_BOARD_THICKNESS],
+            [_X0 + _W,      _Y0,      -_BOARD_THICKNESS],
+            [_X0 + 2 * _W,  _Y0,      -_BOARD_THICKNESS],
+            [_X0 + _W,      _Y0 + _H, -_BOARD_THICKNESS],
+            [_X0 + 2 * _W,  _Y0 + _H, -_BOARD_THICKNESS],
         ]
         self._pegboard_body_ids: list[int] = []
         self._reachability_ids:  list[int] = []
@@ -274,9 +274,9 @@ class PyBulletScene:
                            grid_nx: int = 12,
                            grid_ny: int = 10,
                            x_min: float = -0.05,   # marker is 5 cm from left edge
-                           x_max: float =  0.763,  # 32 in (0.813 m) - 0.05 m
+                           x_max: float =  0.560,  # 24 in (0.610 m) - 0.05 m
                            y_min: float = -0.05,   # marker is 5 cm from bottom edge
-                           y_max: float =  0.560,  # 24 in (0.610 m) - 0.05 m
+                           y_max: float =  0.763,  # 32 in (0.813 m) - 0.05 m
                            z_offset: float = 0.10,
                            reach_tol: float = 0.02) -> tuple[int, int]:
         """Sample a grid over the pegboard, test IK for each point, and draw
@@ -456,9 +456,11 @@ class PyBulletScene:
 
         R = T_world_pegboard[:3, :3]
         t = T_world_pegboard[:3, 3]
+        # Rotate each 16"×12" tile 90° around board Z so it stands 12"×16" (portrait)
+        _tile_R = R @ ScipyR.from_euler('z', 90, degrees=True).as_matrix()
         for body_id, offset in zip(self._pegboard_body_ids, self._PEGBOARD_GRID_OFFSETS):
             T_board = np.eye(4, dtype=float)
-            T_board[:3, :3] = R
+            T_board[:3, :3] = _tile_R
             T_board[:3, 3]  = t + R @ np.array(offset)
             self._teleport(body_id, T_board)
 

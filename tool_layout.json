@@ -3,72 +3,182 @@
     {
       "id": 0,
       "type": "hammer",
-      "pegboard_pos": [0.051, 0.399],
-      "size": [0.1, 0.25, 0.025],
-      "rotation_deg": [0.0, 0.0, 0.0]
+      "pegboard_pos": [
+        0.399,
+        0.051
+      ],
+      "size": [
+        0.1,
+        0.25,
+        0.025
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        90.0
+      ]
     },
     {
       "id": 1,
       "type": "tape",
-      "pegboard_pos": [0.1983, 0.399],
-      "size": [0.1, 0.07, 0.025],
-      "rotation_deg": [0.0, 0.0, 0.0]
+      "pegboard_pos": [
+        0.399,
+        0.1983
+      ],
+      "size": [
+        0.1,
+        0.07,
+        0.025
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        90.0
+      ]
     },
     {
       "id": 2,
       "type": "tape_measure",
-      "pegboard_pos": [0.354, 0.393],
-      "size": [0.1, 0.1, 0.025],
-      "rotation_deg": [0.0, 0.0, 23.54]
+      "pegboard_pos": [
+        0.393,
+        0.354
+      ],
+      "size": [
+        0.1,
+        0.1,
+        0.025
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        113.54
+      ]
     },
     {
       "id": 3,
       "type": "file",
-      "pegboard_pos": [0.51, 0.393],
-      "size": [0.025, 0.25, 0.025],
-      "rotation_deg": [0.0, 0.0, 0.0]
+      "pegboard_pos": [
+        0.393,
+        0.51
+      ],
+      "size": [
+        0.025,
+        0.25,
+        0.025
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        90.0
+      ]
     },
     {
       "id": 4,
       "type": "level",
-      "pegboard_pos": [0.65, 0.393],
-      "size": [0.15, 0.025, 0.025],
-      "rotation_deg": [0.0, 0.0, 0.0]
+      "pegboard_pos": [
+        0.393,
+        0.65
+      ],
+      "size": [
+        0.15,
+        0.025,
+        0.025
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        90.0
+      ]
     },
     {
       "id": 5,
       "type": "screw_holder",
-      "pegboard_pos": [0.053, 0.159],
-      "size": [0.075, 0.05, 0.1],
-      "rotation_deg": [0.0, 0.0, 0.0]
+      "pegboard_pos": [
+        0.159,
+        0.053
+      ],
+      "size": [
+        0.075,
+        0.05,
+        0.1
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        90.0
+      ]
     },
     {
       "id": 6,
       "type": "clamp",
-      "pegboard_pos": [0.1983, 0.11],
-      "size": [0.1, 0.15, 0.025],
-      "rotation_deg": [0.0, 0.0, 0.0]
+      "pegboard_pos": [
+        0.11,
+        0.1983
+      ],
+      "size": [
+        0.1,
+        0.15,
+        0.025
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        90.0
+      ]
     },
     {
       "id": 7,
       "type": "pliers",
-      "pegboard_pos": [0.353, 0.11],
-      "size": [0.1, 0.2, 0.025],
-      "rotation_deg": [0.0, 0.0, 0.0]
+      "pegboard_pos": [
+        0.11,
+        0.353
+      ],
+      "size": [
+        0.1,
+        0.2,
+        0.025
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        90.0
+      ]
     },
     {
       "id": 8,
       "type": "saw",
-      "pegboard_pos": [0.525, 0.11],
-      "size": [0.2, 0.1, 0.025],
-      "rotation_deg": [0.0, 0.0, 0.0]
+      "pegboard_pos": [
+        0.11,
+        0.525
+      ],
+      "size": [
+        0.2,
+        0.1,
+        0.025
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        90.0
+      ]
     },
     {
       "id": 9,
       "type": "screwdriver",
-      "pegboard_pos": [0.6813, 0.11],
-      "size": [0.05, 0.25, 0.025],
-      "rotation_deg": [0.0, 0.0, 0.0]
+      "pegboard_pos": [
+        0.11,
+        0.6813
+      ],
+      "size": [
+        0.05,
+        0.25,
+        0.025
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        90.0
+      ]
     }
   ]
 }
