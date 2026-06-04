@@ -277,7 +277,7 @@ class PyBulletScene:
                            x_max: float =  0.560,  # 24 in (0.610 m) - 0.05 m
                            y_min: float = -0.05,   # marker is 5 cm from bottom edge
                            y_max: float =  0.763,  # 32 in (0.813 m) - 0.05 m
-                           z_offset: float = 0.10,
+                           z_offset: float = 0.0,
                            reach_tol: float = 0.02) -> tuple[int, int]:
         """Sample a grid over the pegboard, test IK for each point, and draw
         green (reachable) / red (unreachable) dots in the PyBullet window.
