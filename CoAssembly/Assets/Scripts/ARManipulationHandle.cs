@@ -93,8 +93,6 @@ public class ARManipulationHandle : MonoBehaviour
         _isGrabbed         = false;
         _currentInteractor = null;
 
-        arBox.SetActive(false);
-
         if (targetPublisher != null && worldRoot != null)
         {
             Vector3    localPos = worldRoot.InverseTransformPoint(arBox.transform.position);

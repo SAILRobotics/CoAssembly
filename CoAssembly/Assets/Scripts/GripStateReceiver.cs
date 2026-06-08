@@ -50,7 +50,9 @@ public class GripStateReceiver : MonoBehaviour
     private volatile bool     _running;
     private readonly ConcurrentQueue<PoseData> _queue = new();
 
-    private string _prevGripState = "";
+    private string _prevGripState  = "";
+    private bool   _prevIsGrabbed;
+    private bool   _boxFrozen;
 
     private void Start()
     {
@@ -107,10 +109,15 @@ public class GripStateReceiver : MonoBehaviour
         if (latest == null) return;
 
         bool handleActive = latest.gripState == "grabbed" || latest.gripState == "moving_to_pose";
+        bool grabbed      = manipulationHandle != null && manipulationHandle.IsGrabbed;
+        bool moveComplete = latest.gripState == "grabbed" && _prevGripState == "moving_to_pose";
 
-        // Position the box only when not grabbed — ARManipulationHandle owns it while grabbed
-        bool grabbed = manipulationHandle != null && manipulationHandle.IsGrabbed;
-        if (arBox != null && !grabbed)
+        // Freeze the box the instant the user releases — before Python even transitions to 'moving_to_pose'
+        if (_prevIsGrabbed && !grabbed) _boxFrozen = true;
+        if (moveComplete)               _boxFrozen = false;
+
+        // Update box transform to follow claw only while idle and not frozen at a target
+        if (arBox != null && !grabbed && !_boxFrozen)
         {
             arBox.transform.SetParent(worldRoot, false);
             arBox.transform.localPosition = latest.boxPos;
@@ -118,8 +125,11 @@ public class GripStateReceiver : MonoBehaviour
             arBox.transform.localScale    = latest.boxSize;
         }
 
-        // Position the handle on the near face of the box only on first arrival ('grabbed' after null/unknown).
-        // After a manipulation move ('moving_to_pose' → 'grabbed'), leave it at the released position.
+        // Hide box when robot finishes moving; ARManipulationHandle shows it on each grab
+        if (moveComplete && arBox != null)
+            arBox.SetActive(false);
+
+        // Position handle on near face of box on first arrival only
         if (arHandle != null)
         {
             arHandle.SetActive(handleActive);
@@ -136,7 +146,8 @@ public class GripStateReceiver : MonoBehaviour
             }
         }
 
-        _prevGripState = latest.gripState;
+        _prevGripState  = latest.gripState;
+        _prevIsGrabbed  = grabbed;
     }
 
     private void OnDestroy()
