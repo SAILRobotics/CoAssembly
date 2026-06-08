@@ -944,7 +944,7 @@ class _ToolLayoutManager:
 # =============================================================================
 
 _BOX_FORWARD_OFFSET = 0.17   # metres from TCP to box centre along gripper Z
-_BOX_SIZE           = [0.10, 0.05, 0.05]   # metres (X, Y, Z in pegboard frame)
+_BOX_SIZE           = [0.0254, 0.20, 0.25]   # metres (X, Y, Z in pegboard frame)
 
 
 class _GripStatePublisher:

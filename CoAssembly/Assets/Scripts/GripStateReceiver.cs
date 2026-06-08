@@ -142,7 +142,7 @@ public class GripStateReceiver : MonoBehaviour
                 Vector3 boxForward = arBox.transform.rotation * Vector3.forward;
                 float   halfDepth  = latest.boxSize.z * 0.5f;
                 arHandle.transform.position = arBox.transform.position - boxForward * halfDepth;
-                arHandle.transform.rotation = arBox.transform.rotation;
+                arHandle.transform.rotation = arBox.transform.rotation * Quaternion.Euler(0f, 180f, 0f);
             }
         }
 
