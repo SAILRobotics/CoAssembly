@@ -940,6 +940,91 @@ class _ToolLayoutManager:
 
 
 # =============================================================================
+# Grip state publisher / target pose receiver  (ports 5012 / 5013)
+# =============================================================================
+
+_BOX_FORWARD_OFFSET = 0.17   # metres from TCP to box centre along gripper Z
+_BOX_SIZE           = [0.10, 0.05, 0.05]   # metres (X, Y, Z in pegboard frame)
+
+
+class _GripStatePublisher:
+    """Publishes grip state + box pose to Unity on port 5012 (PUB).
+    Unity SUB binds; Python PUB connects to Quest IP (same pattern as all other Python→Unity channels).
+    """
+
+    def __init__(self, quest_ip: str, port: int = 5012):
+        ctx = zmq.Context.instance()
+        self._pub = ctx.socket(zmq.PUB)
+        self._pub.connect(f"tcp://{quest_ip}:{port}")
+
+    def publish(self, grip_state: str, T_tcp_world: np.ndarray) -> None:
+        """Compute box pose from TCP transform and publish."""
+        # Box centre = TCP position + BOX_FORWARD_OFFSET along gripper Z
+        gripper_z_world = T_tcp_world[:3, :3] @ np.array([0.0, 0.0, 1.0])
+        box_pos_w = T_tcp_world[:3, 3] + _BOX_FORWARD_OFFSET * gripper_z_world
+
+        q_xyzw  = ScipyR.from_matrix(T_tcp_world[:3, :3]).as_quat()
+        pos_u   = open3d_to_unity_vector(box_pos_w)
+        q_wxyz  = [q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]]
+        q_u     = open3d_to_unity_quaternion(q_wxyz)
+        sz_u    = open3d_to_unity_vector(np.array(_BOX_SIZE, dtype=float))
+
+        msg = {
+            "grip_state":    grip_state,
+            "box_pos":       pos_u.tolist(),
+            "box_rot_xyzw":  [float(q_u[1]), float(q_u[2]),
+                               float(q_u[3]), float(q_u[0])],
+            "box_size":      sz_u.tolist(),
+        }
+        try:
+            self._pub.send_string(json.dumps(msg))
+        except Exception:
+            pass
+
+    def close(self) -> None:
+        try:
+            self._pub.close(0)
+        except Exception:
+            pass
+
+
+class _TargetPoseReceiver:
+    """Receives the manipulated TCP target pose from Unity on port 5013 (SUB).
+    Unity PUB binds; Python SUB connects to Quest IP (same pattern as all other Unity→Python channels).
+    """
+
+    def __init__(self, quest_ip: str, port: int = 5013):
+        ctx = zmq.Context.instance()
+        self._sub = ctx.socket(zmq.SUB)
+        self._sub.connect(f"tcp://{quest_ip}:{port}")
+        self._sub.setsockopt_string(zmq.SUBSCRIBE, "")
+        self._sub.setsockopt(zmq.RCVTIMEO, 0)
+
+    def poll(self) -> "np.ndarray | None":
+        """Return 4×4 TCP world transform if a new target pose has arrived, else None."""
+        try:
+            raw = self._sub.recv_string(flags=zmq.NOBLOCK)
+            data = json.loads(raw)
+            pos_u = data["tcp_pos"]       # Unity frame [x, y, z]
+            q_u   = data["tcp_rot_xyzw"]  # Unity xyzw
+            pos_w = unity_to_open3d_vector({"x": pos_u[0], "y": pos_u[1], "z": pos_u[2]})
+            q_o3d = unity_to_open3d_quaternion([q_u[3], q_u[0], q_u[1], q_u[2]])
+            R_w   = ScipyR.from_quat([q_o3d[1], q_o3d[2], q_o3d[3], q_o3d[0]]).as_matrix()
+            T = np.eye(4, dtype=np.float64)
+            T[:3, :3] = R_w
+            T[:3, 3]  = pos_w
+            return T
+        except Exception:
+            return None
+
+    def close(self) -> None:
+        try:
+            self._sub.close(0)
+        except Exception:
+            pass
+
+
+# =============================================================================
 # Offset tuner
 # =============================================================================
 
@@ -1256,6 +1341,8 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
     tuner        = _OffsetTuner()
     synth        = _SyntheticObjectPublisher(quest_ip, port=5006)
     tool_layout  = _ToolLayoutManager(_FILE_DIR / "tool_layout.json", quest_ip)
+    grip_pub     = _GripStatePublisher(quest_ip, port=5012)
+    target_recv  = _TargetPoseReceiver(quest_ip, port=5013)
 
     # Cubes around the anchor marker (world origin = marker 100) — ids 0, 1, 2
     synth.add([0.10,  0.00, 0.05], width=0.06, depth=0.06, height=0.10,
@@ -1293,6 +1380,7 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
     _grasp_tcp_approach: "np.ndarray | None" = None
     _grasp_quat: "np.ndarray | None"         = None
     _grasp_tool_id: "int | None"             = None
+    _grip_state: "str | None" = None  # None | 'grabbed' | 'moving_to_pose'
 
     vis = _SceneVis(f"Hand Tracking — World Frame  (marker #{anchor_marker_id})")
     win = (f"Quest Left Passthrough  [ENTER=lock/relock  ESC=quit]"
@@ -1533,10 +1621,41 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
                                                  _ToolSelectionManager.RESET_COLOR)
                             _grasp_tool_id = None
                             print("[ToolGrasp] grasp complete")
+                        elif _grasp_state is None and _grip_state is None:
+                            # TCP-click move just completed → enter grabbed state
+                            _grip_state = 'grabbed'
+                            print("[Grip] Robot at hand — grip_state = 'grabbed'")
+                        elif _grasp_state is None and _grip_state == 'moving_to_pose':
+                            # Manipulation move complete → back to grabbed
+                            _grip_state = 'grabbed'
+                            print("[Grip] Move complete — back to 'grabbed'")
                     T_tool0 = pb_scene.update_tcp_bodies()
                     if T_tool0 is not None and _tcp_synth is not None:
                         _tcp_synth.centroid = T_tool0[:3, 3]
                         _tcp_synth.R_o3d    = T_tool0[:3, :3]
+
+                    # ── Grip manipulation ──────────────────────────────────────
+                    if _grip_state is not None and T_tool0 is not None:
+                        grip_pub.publish(_grip_state, T_tool0)
+
+                    if _grip_state == 'grabbed':
+                        T_target = target_recv.poll()
+                        if T_target is not None:
+                            try:
+                                # Unity sends box pose; back-calculate TCP = box - forward offset
+                                _grip_z   = T_target[:3, :3] @ np.array([0.0, 0.0, 1.0])
+                                _tcp_pos  = T_target[:3, 3] - _BOX_FORWARD_OFFSET * _grip_z
+                                ctrl = RobotController(
+                                    pb_scene.robot_id, pb_scene.tool0_link_idx,
+                                    pb_scene.current_q, pb_scene.arm_indices,
+                                    _tcp_pos.tolist(),
+                                    target_quat_xyzw=ScipyR.from_matrix(
+                                        T_target[:3, :3]).as_quat())
+                                _ctrl_active = True
+                                _grip_state  = 'moving_to_pose'
+                                print(f"[Grip] Target pose received — moving robot")
+                            except Exception as e:
+                                print(f"[Grip] RobotController failed: {e}")
                 elif rtde is not None:
                     q = rtde.poll()
                     if q is not None:
@@ -1681,6 +1800,8 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
         haptic.close()
         synth.close()
         tool_layout.close()
+        grip_pub.close()
+        target_recv.close()
         hands.close()
         cam.close()
         tools.close()
