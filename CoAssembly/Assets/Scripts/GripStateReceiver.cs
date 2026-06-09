@@ -111,10 +111,21 @@ public class GripStateReceiver : MonoBehaviour
         bool handleActive = latest.gripState == "grabbed" || latest.gripState == "moving_to_pose";
         bool grabbed      = manipulationHandle != null && manipulationHandle.IsGrabbed;
         bool moveComplete = latest.gripState == "grabbed" && _prevGripState == "moving_to_pose";
+        bool cancelled    = latest.gripState == "idle";
 
         // Freeze the box the instant the user releases — before Python even transitions to 'moving_to_pose'
         if (_prevIsGrabbed && !grabbed) _boxFrozen = true;
-        if (moveComplete)               _boxFrozen = false;
+        if (moveComplete || cancelled)  _boxFrozen = false;
+
+        // Grip mode cancelled — hide everything and reset
+        if (cancelled)
+        {
+            if (arBox    != null) arBox.SetActive(false);
+            if (arHandle != null) arHandle.SetActive(false);
+            _prevGripState = "";
+            _prevIsGrabbed = false;
+            return;
+        }
 
         // Update box transform to follow claw only while idle and not frozen at a target
         if (arBox != null && !grabbed && !_boxFrozen)

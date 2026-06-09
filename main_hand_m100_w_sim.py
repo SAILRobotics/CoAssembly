@@ -1483,48 +1483,55 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
                 print("[AutoRelock] Relocked via proximity click")
             tools.deselect(anchor_marker_id)
 
-            # ── TCP click → move robot to opposite hand's palm ────────────────
+            # ── TCP click → toggle grip mode ──────────────────────────────────
             if (simulation
-                    and (not _ctrl_active or (ctrl is not None and ctrl.done))
                     and tools.active_tool_id == _TCP_TOOL_ID
                     and anchor.locked
                     and anchor.T_pegboard_in_world is not None):
-                clicking_hand = tools.active_hand  # "left" or "right"
-                target_pts = right_pts if clicking_hand == "left" else left_pts
-                if target_pts is not None and pb_scene is not None:
-                    target_is_left = (clicking_hand == "right")  # opposite of clicking hand
-                    target_quat    = _palm_quat(target_pts, is_left=target_is_left)
-                    _gripper_z     = ScipyR.from_quat(target_quat).apply([0.0, 0.0, 1.0])
-                    offset_dist    = 0.30  # metres from palm to TCP
-                    target_pos     = (target_pts[1] - _gripper_z * offset_dist).tolist()
-                    # Flip wrist 180° about tool Z when the gripper's Y axis
-                    # points below horizontal (camera would face the table).
-                    _tool_y_world = ScipyR.from_quat(target_quat).apply([0.0, 1.0, 0.0])
-                    if _tool_y_world[2] > 0:   # world Z is vertical (Z-up)
-                        target_quat = (ScipyR.from_quat(target_quat)
-                                       * ScipyR.from_euler('z', 180, degrees=True)
-                                       ).as_quat()
-                    try:
-                        ctrl = RobotController(
-                            pb_scene.robot_id,
-                            pb_scene.tool0_link_idx,
-                            pb_scene.current_q,
-                            pb_scene.arm_indices,
-                            target_pos,
-                            target_quat_xyzw=target_quat,
-                        )
-                        _ctrl_active = True
-                        opposite = "right" if clicking_hand == "left" else "left"
-                        print(f"[TCP click] {clicking_hand} hand clicked — "
-                              f"moving to {opposite} palm at "
-                              f"{[round(v,3) for v in target_pos]}")
-                    except Exception as e:
-                        import traceback
-                        print(f"[RobotController] Failed to initialise: {e}")
-                        traceback.print_exc()
-                else:
-                    print(f"[TCP click] No opposite hand data available "
-                          f"(clicking={clicking_hand}) — ignoring click.")
+                if _grip_state is not None:
+                    # Second click — exit grip mode; robot freezes in place
+                    _grip_state  = None
+                    _ctrl_active = False
+                    grip_pub.publish('idle', T_tool0 if T_tool0 is not None else np.eye(4))
+                    print("[TCP click] Grip mode cancelled — returning to normal")
+                elif not _ctrl_active or (ctrl is not None and ctrl.done):
+                    # First click — move robot to opposite hand's palm
+                    clicking_hand = tools.active_hand  # "left" or "right"
+                    target_pts = right_pts if clicking_hand == "left" else left_pts
+                    if target_pts is not None and pb_scene is not None:
+                        target_is_left = (clicking_hand == "right")  # opposite of clicking hand
+                        target_quat    = _palm_quat(target_pts, is_left=target_is_left)
+                        _gripper_z     = ScipyR.from_quat(target_quat).apply([0.0, 0.0, 1.0])
+                        offset_dist    = 0.30  # metres from palm to TCP
+                        target_pos     = (target_pts[1] - _gripper_z * offset_dist).tolist()
+                        # Flip wrist 180° about tool Z when the gripper's Y axis
+                        # points below horizontal (camera would face the table).
+                        _tool_y_world = ScipyR.from_quat(target_quat).apply([0.0, 1.0, 0.0])
+                        if _tool_y_world[2] > 0:   # world Z is vertical (Z-up)
+                            target_quat = (ScipyR.from_quat(target_quat)
+                                           * ScipyR.from_euler('z', 180, degrees=True)
+                                           ).as_quat()
+                        try:
+                            ctrl = RobotController(
+                                pb_scene.robot_id,
+                                pb_scene.tool0_link_idx,
+                                pb_scene.current_q,
+                                pb_scene.arm_indices,
+                                target_pos,
+                                target_quat_xyzw=target_quat,
+                            )
+                            _ctrl_active = True
+                            opposite = "right" if clicking_hand == "left" else "left"
+                            print(f"[TCP click] {clicking_hand} hand clicked — "
+                                  f"moving to {opposite} palm at "
+                                  f"{[round(v,3) for v in target_pos]}")
+                        except Exception as e:
+                            import traceback
+                            print(f"[RobotController] Failed to initialise: {e}")
+                            traceback.print_exc()
+                    else:
+                        print(f"[TCP click] No opposite hand data available "
+                              f"(clicking={clicking_hand}) — ignoring click.")
                 tools.deselect(_TCP_TOOL_ID)
 
             # ── Tool click → grasp pegboard tool ─────────────────────────────
