@@ -10429,7 +10429,7 @@ MonoBehaviour:
     _pinkyRequirement: 1
     _unselectMode: 0
   _movementProvider: {fileID: 0}
-  _handAligment: 1
+  _handAligment: 0
   _handGrabPoses:
   - {fileID: 865374026}
 --- !u!1 &1030451413
@@ -11531,7 +11531,7 @@ MonoBehaviour:
     _pinkyRequirement: 1
     _unselectMode: 0
   _movementProvider: {fileID: 0}
-  _handAligment: 1
+  _handAligment: 0
   _handGrabPoses:
   - {fileID: 1525687080}
 --- !u!54 &1061834680

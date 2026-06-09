@@ -141,7 +141,8 @@ public class GripStateReceiver : MonoBehaviour
                 arHandle.transform.SetParent(worldRoot, false);
                 Vector3 boxForward = arBox.transform.rotation * Vector3.forward;
                 float   halfDepth  = latest.boxSize.z * 0.5f;
-                arHandle.transform.position = arBox.transform.position - boxForward * halfDepth;
+                float handleHalfDepth = manipulationHandle != null ? manipulationHandle.HandleHalfDepth : 0f;
+                arHandle.transform.position = arBox.transform.position - boxForward * (halfDepth + handleHalfDepth);
                 arHandle.transform.rotation = arBox.transform.rotation * Quaternion.Euler(0f, 180f, 0f);
             }
         }

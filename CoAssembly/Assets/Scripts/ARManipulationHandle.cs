@@ -24,8 +24,8 @@ public class ARManipulationHandle : MonoBehaviour
     public GameObject          arHandle;
     public TargetPosePublisher targetPublisher;
     public Transform           worldRoot;
-
     public bool IsGrabbed => _isGrabbed;
+    public float HandleHalfDepth { get; private set; }
 
     private HandGrabInteractable _grabInteractable;
     private HandGrabInteractor   _currentInteractor;
@@ -39,6 +39,14 @@ public class ARManipulationHandle : MonoBehaviour
     private void Awake()
     {
         _grabInteractable = GetComponent<HandGrabInteractable>();
+
+        // Measure the handle's half-depth from its mesh so no manual entry is needed
+        if (arHandle != null)
+        {
+            var mf = arHandle.GetComponentInChildren<MeshFilter>();
+            if (mf != null && mf.sharedMesh != null)
+                HandleHalfDepth = mf.sharedMesh.bounds.extents.z * arHandle.transform.lossyScale.z;
+        }
     }
 
     private void OnEnable()
@@ -118,7 +126,7 @@ public class ARManipulationHandle : MonoBehaviour
         {
             Vector3 boxForward = arBox.transform.rotation * Vector3.forward;
             float   halfDepth  = arBox.transform.lossyScale.z * 0.5f;
-            arHandle.transform.position = arBox.transform.position - boxForward * halfDepth;
+            arHandle.transform.position = arBox.transform.position - boxForward * (halfDepth + HandleHalfDepth);
             arHandle.transform.rotation = arBox.transform.rotation * Quaternion.Euler(0f, 180f, 0f);
         }
     }
