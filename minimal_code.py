@@ -289,63 +289,116 @@ class _HandDataReceiver:
             pass
 
 
-class _ToolColorPublisher:
-    """Sends color overrides for Unity objects on port 5010.
+class _ToolSelectionManager:
+    SELECTED_COLOR = [0.0, 1.0, 0.0, 0.5]
+    HOVER_COLOR    = [1.0, 0.5, 0.0, 0.5]
+    RESET_COLOR    = [-1.0, -1.0, -1.0, -1.0]
 
-    Colors are RGBA in [0,1]. Use RESET_COLOR to restore the Unity default.
-    """
-    HOVER_COLOR    = [1.0, 0.5, 0.0, 0.5]      # orange — relock available
-    SELECTED_COLOR = [0.0, 1.0, 0.0, 0.5]      # green  — just relocked
-    RESET_COLOR    = [-1.0, -1.0, -1.0, -1.0]  # Unity resets to default
-
-    def __init__(self, ip: str, port: int = 5010):
-        ctx = zmq.Context.instance()
-        self._pub = ctx.socket(zmq.PUB)
-        self._pub.connect(f"tcp://{ip}:{port}")
-        time.sleep(0.1)
-
-    def send(self, tool_id: int, color: list):
-        try:
-            self._pub.send_string(json.dumps(
-                {"tool_id": int(tool_id), "color": [float(c) for c in color]}))
-        except Exception as e:
-            print(f"[ToolColor] Error: {e}")
-
-    def close(self):
-        try:
-            self._pub.close(0)
-        except Exception:
-            pass
-
-
-class _CommandReceiver:
-    """Receives reanchor commands from Unity (ZMQ SUB, port 5014).
-
-    Expected JSON: {"type": "reanchor"} or {"type": "reanchor_pegboard"}
-    """
-
-    def __init__(self, unity_ip: str, port: int = 5014):
+    def __init__(self, quest_ip: str, click_port: int = 5009, color_port: int = 5010):
         ctx = zmq.Context.instance()
         self._sub = ctx.socket(zmq.SUB)
         self._sub.setsockopt_string(zmq.SUBSCRIBE, "")
-        self._sub.connect(f"tcp://{unity_ip}:{port}")
-        print(f"[CommandReceiver] SUB → tcp://{unity_ip}:{port}")
+        self._sub.connect(f"tcp://{quest_ip}:{click_port}")
+        self._pub = ctx.socket(zmq.PUB)
+        self._pub.connect(f"tcp://{quest_ip}:{color_port}")
+        time.sleep(0.2)
+        self._active_tool_id: int | None  = None
+        self._hovered_tool_id: int | None = None
+        self._active_hand: str | None     = None
 
-    def poll(self) -> "str | None":
-        """Return the 'type' field of the latest message, or None if no message."""
+    def poll(self, timeout_ms: int = 0) -> bool:
+        poller = zmq.Poller()
+        poller.register(self._sub, zmq.POLLIN)
+        if not dict(poller.poll(timeout=timeout_ms)):
+            return False
+        processed = False
+        while True:
+            try:
+                raw = self._sub.recv_string(flags=zmq.NOBLOCK)
+            except zmq.Again:
+                break
+            try:
+                msg = json.loads(raw)
+                tool_id    = int(msg["tool_id"])
+                event_type = msg.get("event_type", "selected")
+                hand       = msg.get("hand", "unknown")
+            except (json.JSONDecodeError, KeyError, ValueError) as e:
+                print(f"[ToolSelection] Bad message: {e}")
+                continue
+            self._handle_event(tool_id, event_type, hand)
+            processed = True
+        return processed
+
+    def _handle_event(self, tool_id: int, event_type: str, hand: str = "unknown"):
+        if event_type == "selected":
+            self._handle_click(tool_id, hand)
+        elif event_type == "hover_enter":
+            self._handle_hover_enter(tool_id)
+        elif event_type == "hover_exit":
+            self._handle_hover_exit(tool_id)
+
+    def _handle_click(self, tool_id: int, hand: str = "unknown"):
+        self._hovered_tool_id = None
+        updates: list[tuple[int, list[float]]] = []
+        if self._active_tool_id == tool_id:
+            updates.append((tool_id, self.RESET_COLOR))
+            self._active_tool_id = None
+            self._active_hand    = None
+        elif self._active_tool_id is not None:
+            updates.append((self._active_tool_id, self.RESET_COLOR))
+            updates.append((tool_id, self.SELECTED_COLOR))
+            self._active_tool_id = tool_id
+            self._active_hand    = hand
+        else:
+            updates.append((tool_id, self.SELECTED_COLOR))
+            self._active_tool_id = tool_id
+            self._active_hand    = hand
+        for tid, color in updates:
+            self._send_color(tid, color)
+
+    def _handle_hover_enter(self, tool_id: int):
+        if tool_id == self._active_tool_id:
+            return
+        self._hovered_tool_id = tool_id
+        self._send_color(tool_id, self.HOVER_COLOR)
+
+    def _handle_hover_exit(self, tool_id: int):
+        if tool_id != self._hovered_tool_id:
+            return
+        self._hovered_tool_id = None
+        if tool_id == self._active_tool_id:
+            return
+        self._send_color(tool_id, self.RESET_COLOR)
+
+    def _send_color(self, tool_id: int, color: list[float]):
+        msg = {"tool_id": int(tool_id), "color": [float(c) for c in color]}
         try:
-            raw = self._sub.recv_string(flags=zmq.NOBLOCK)
-            return json.loads(raw).get("type")
-        except zmq.Again:
-            return None
-        except Exception:
-            return None
+            self._pub.send_string(json.dumps(msg))
+        except Exception as e:
+            print(f"[ToolSelection] Publish error: {e}")
+
+    @property
+    def active_tool_id(self) -> int | None:
+        return self._active_tool_id
+
+    @property
+    def active_hand(self) -> str | None:
+        return self._active_hand
+
+    def send_color(self, tool_id: int, color: list[float]):
+        self._send_color(tool_id, color)
+
+    def deselect(self, tool_id: int):
+        if self._active_tool_id == tool_id:
+            self._active_tool_id = None
+            self._active_hand    = None
 
     def close(self):
-        try:
-            self._sub.close(0)
-        except Exception:
-            pass
+        try: self._sub.close(0)
+        except Exception: pass
+        try: self._pub.close(0)
+        except Exception: pass
+
 
 
 # =============================================================================
@@ -732,8 +785,7 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
     aruco        = _ArucoPoseEstimator(anchor_marker_id, pegboard_marker_id, marker_size_m)
     aruco_worker = _ArUcoWorker(cam, aruco)
     hands        = _HandDataReceiver(quest_ip, hand_port)
-    cmd_recv     = _CommandReceiver(quest_ip, port=5014)
-    color_pub    = _ToolColorPublisher(quest_ip, port=5010)
+    tools        = _ToolSelectionManager(quest_ip, click_port=5009, color_port=5010)
     anchor       = _WorldAnchor(quest_ip, pub_port=5005, pegboard_pub_port=5008)
 
     vis = _SceneVis(f"Minimal — marker #{anchor_marker_id} world frame")
@@ -751,53 +803,61 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
 
     _relock_available_prev = False
     _green_until           = 0.0
+    _last_proximity_relock = 0.0
 
     try:
         while True:
+            # ── Poll streams ──────────────────────────────────────────────────
+            tools.poll(timeout_ms=0)
             hands.poll()
             _now = time.time()
 
+            # ── ArUco results (produced by background thread) ─────────────────
             T_cam_anchor, T_cam_pegboard, det_vis = aruco_worker.get()
             anchor_ok   = T_cam_anchor   is not None
             pegboard_ok = T_cam_pegboard is not None
 
+            # ── CenterEye pose ────────────────────────────────────────────────
             _center_T = hands.center_eye_T()
-            T_wt      = anchor.T_world_tracking
+
+            # ── Publish world root + pegboard to Unity ────────────────────────
+            if anchor.locked:
+                anchor.publish()
+                anchor.publish_pegboard()
+
+            T_wt            = anchor.T_world_tracking
             T_world_camleft = anchor.world_T(cam.camera_T)
             T_world_center  = anchor.world_T(_center_T)
             left_pts, right_pts = hands.world_joints(T_wt)
 
-            # ── Anchor marker proximity color feedback ────────────────────────
+            # ── Anchor marker proximity relock ────────────────────────────────
             dist_to_anchor = (float(np.linalg.norm(T_cam_anchor[:3, 3]))
                               if anchor_ok and cam.camera_T is not None else float('inf'))
-            _relock_available = anchor.locked and anchor_ok and dist_to_anchor < 1.0
+            _relock_available = (anchor.locked and anchor_ok and cam.camera_T is not None
+                                 and dist_to_anchor < 1.0)
 
             if _green_until > 0.0 and _now >= _green_until:
                 _green_until = 0.0
-                _relock_available_prev = not _relock_available  # force re-evaluation
+                _relock_available_prev = not _relock_available
 
             if _green_until == 0.0 and _relock_available != _relock_available_prev:
-                color_pub.send(anchor_marker_id,
-                               _ToolColorPublisher.HOVER_COLOR if _relock_available
-                               else _ToolColorPublisher.RESET_COLOR)
+                tools.send_color(anchor_marker_id,
+                                 _ToolSelectionManager.HOVER_COLOR if _relock_available
+                                 else _ToolSelectionManager.RESET_COLOR)
                 _relock_available_prev = _relock_available
 
-            # ── Unity reanchor commands ───────────────────────────────────────
-            cmd = cmd_recv.poll()
-            if cmd == "reanchor" and anchor_ok and cam.camera_T is not None:
-                anchor.lock(T_cam_anchor, cam.camera_T, _center_T)
+            _RELOCK_COOLDOWN = 2.0
+            if (tools.active_tool_id == anchor_marker_id and _relock_available
+                    and _now - _last_proximity_relock >= _RELOCK_COOLDOWN):
+                anchor.relock(T_cam_anchor, cam.camera_T, _center_T)
                 if pegboard_ok:
-                    anchor.lock_pegboard(cam.camera_T, T_cam_pegboard, _center_T)
-                color_pub.send(anchor_marker_id, _ToolColorPublisher.SELECTED_COLOR)
+                    anchor.update_pegboard_from_tracking(cam.camera_T, _center_T, T_cam_pegboard)
+                tools.send_color(anchor_marker_id, _ToolSelectionManager.SELECTED_COLOR)
                 _green_until = _now + 1.0
                 _relock_available_prev = True
-            elif cmd == "reanchor_pegboard" and pegboard_ok and cam.camera_T is not None:
-                anchor.lock_pegboard(cam.camera_T, T_cam_pegboard, _center_T)
-
-            # ── Publish anchor + pegboard to Unity ────────────────────────────
-            if anchor.locked:
-                anchor.publish()
-                anchor.publish_pegboard()
+                _last_proximity_relock = _now
+                print("[AutoRelock] Relocked via proximity click")
+            tools.deselect(anchor_marker_id)
 
             # ── Open3D update ─────────────────────────────────────────────────
             if cam.fx is not None:
@@ -819,15 +879,16 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
                 np.zeros((480, 640, 3), dtype=np.uint8),
                 (960, 540))
 
+            locked = anchor.locked
             cv.putText(disp,
                        f"Marker #{anchor_marker_id}: {'DETECTED' if anchor_ok else 'searching...'}    "
                        f"Marker #{pegboard_marker_id}: {'DETECTED' if pegboard_ok else 'searching...'}",
                        (12, 34), cv.FONT_HERSHEY_SIMPLEX, 0.8,
                        (0, 255, 80) if anchor_ok else (0, 80, 255), 2)
             cv.putText(disp,
-                       f"Anchor: {'LOCKED' if anchor.locked else 'waiting for marker #' + str(anchor_marker_id)}",
+                       f"Anchor: {'LOCKED :5005 + PegboardRoot :5008' if locked else 'waiting for marker #' + str(anchor_marker_id)}",
                        (12, 68), cv.FONT_HERSHEY_SIMPLEX, 0.65,
-                       (0, 255, 150) if anchor.locked else (100, 100, 100), 2)
+                       (0, 255, 150) if locked else (100, 100, 100), 2)
             if anchor.T_pegboard_in_world is not None:
                 t = anchor.T_pegboard_in_world[:3, 3]
                 cv.putText(disp,
@@ -836,8 +897,9 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
                            (80, 255, 80), 2)
             hand_ok = left_pts is not None or right_pts is not None
             if hand_ok:
-                hand_status = ("L+R" if (left_pts is not None and right_pts is not None)
-                               else ("L" if left_pts is not None else "R"))
+                hand_status = (
+                    "L+R" if (left_pts is not None and right_pts is not None)
+                    else ("L" if left_pts is not None else "R"))
             elif hands.receiving:
                 hand_status = f"receiving #{hands.message_count}"
             else:
@@ -846,7 +908,7 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
                        (12, 136), cv.FONT_HERSHEY_SIMPLEX, 0.65,
                        (0, 255, 200) if (hand_ok or hands.receiving) else (100, 100, 100), 2)
             cv.putText(disp,
-                       f"ENTER: lock #{anchor_marker_id} (world) or #{pegboard_marker_id} (pegboard)    ESC = quit",
+                       f"ENTER: lock #{anchor_marker_id} (world)  or  lock #{pegboard_marker_id} (pegboard)    ESC = quit",
                        (12, disp.shape[0] - 14),
                        cv.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
             cv.imshow(win, disp)
@@ -857,17 +919,25 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
             elif key == 13:  # ENTER
                 if cam.camera_T is None:
                     print("[ENTER] No camera pose yet.")
-                elif anchor_ok:
-                    anchor.lock(T_cam_anchor, cam.camera_T, _center_T)
-                    if pegboard_ok:
-                        anchor.lock_pegboard(cam.camera_T, T_cam_pegboard, _center_T)
-                    color_pub.send(anchor_marker_id, _ToolColorPublisher.SELECTED_COLOR)
-                    _green_until = _now + 1.0
-                    _relock_available_prev = True
-                elif anchor.locked and pegboard_ok:
-                    anchor.lock_pegboard(cam.camera_T, T_cam_pegboard, _center_T)
                 else:
-                    print(f"[ENTER] Marker #{anchor_marker_id} not visible — cannot lock.")
+                    # Phase A: Lock/relock world frame to anchor marker
+                    if anchor_ok:
+                        if anchor.locked:
+                            anchor.relock(T_cam_anchor, cam.camera_T, _center_T)
+                            print(f"[ENTER] Relocked world to marker #{anchor_marker_id}")
+                        else:
+                            anchor.lock(T_cam_anchor, cam.camera_T, center_T=_center_T)
+                        _last_proximity_relock = _now
+                    elif not anchor.locked:
+                        print(f"[ENTER] Marker #{anchor_marker_id} not visible — cannot lock.")
+
+                    # Phase B: Update pegboard from marker 101
+                    if pegboard_ok and anchor.locked:
+                        anchor.update_pegboard_from_tracking(
+                            cam.camera_T, _center_T, T_cam_pegboard)
+                    elif pegboard_ok and not anchor.locked:
+                        print(f"[ENTER] Marker #{pegboard_marker_id} visible, but "
+                              f"lock marker #{anchor_marker_id} first.")
 
             time.sleep(0.001)
 
@@ -878,10 +948,9 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
         aruco_worker.stop()
         vis.close()
         cv.destroyAllWindows()
+        tools.close()
         hands.close()
         cam.close()
-        cmd_recv.close()
-        color_pub.close()
         anchor.close()
         print("[Done]")
 

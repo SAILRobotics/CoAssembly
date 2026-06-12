@@ -6574,7 +6574,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: da103c2bbdfcb9643bf22f35f493434d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ToolColorReceiver
-  toolId: 11
+  toolId: 100
   targetRenderer: {fileID: 0}
   port: 5010
 --- !u!114 &655074605
@@ -6589,7 +6589,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 099de3242cb042049b36a381df9dcc7a, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ToolClickPublisher
-  toolId: 11
+  toolId: 100
   port: 5009
 --- !u!114 &655074606
 MonoBehaviour:
