@@ -6574,7 +6574,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: da103c2bbdfcb9643bf22f35f493434d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ToolColorReceiver
-  toolId: 100
+  toolId: 11
   targetRenderer: {fileID: 0}
   port: 5010
 --- !u!114 &655074605
@@ -6589,7 +6589,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 099de3242cb042049b36a381df9dcc7a, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ToolClickPublisher
-  toolId: 100
+  toolId: 11
   port: 5009
 --- !u!114 &655074606
 MonoBehaviour:
@@ -6900,7 +6900,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!4 &682926384
 Transform:
   m_ObjectHideFlags: 0
@@ -10535,7 +10535,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!4 &1032821183
 Transform:
   m_ObjectHideFlags: 0
@@ -10823,6 +10823,10 @@ PrefabInstance:
     - target: {fileID: 2894956743544312080, guid: f60e6d425881d33409ef73564f7b859f, type: 3}
       propertyPath: m_Name
       value: AR Handle
+      objectReference: {fileID: 0}
+    - target: {fileID: 2894956743544312080, guid: f60e6d425881d33409ef73564f7b859f, type: 3}
+      propertyPath: m_IsActive
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 5855890103141667583, guid: f60e6d425881d33409ef73564f7b859f, type: 3}
       propertyPath: m_LocalScale.x
@@ -12058,7 +12062,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!4 &1125000203 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: 452328020845392735, guid: 3c74bfdbdcd88174ea845e02e806c435, type: 3}
@@ -16205,7 +16209,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!114 &1582667808
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -18282,7 +18286,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!4 &1816780777
 Transform:
   m_ObjectHideFlags: 0

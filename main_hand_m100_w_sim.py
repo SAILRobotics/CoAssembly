@@ -1826,11 +1826,12 @@ def main():
         description="Quest passthrough hand tracking — marker 100 as world+scene origin",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     ap.add_argument("--quest-ip",        default=cfg.UNITY_IP)
-    ap.add_argument("--anchor-marker",   type=int, default=100,
+    ap.add_argument("--anchor-marker",   type=int, default=11,
                     help="ArUco marker ID for world frame + PyBullet scene origin")
     ap.add_argument("--pegboard-marker", type=int, default=101,
                     help="ArUco marker ID for pegboard")
-    ap.add_argument("--marker-size",     type=float, default=0.100,
+    ap.add_argument("--marker-size",     type=float, default=0.090
+                    ,
                     help="Marker side length in metres")
     ap.add_argument("--hand-port",       type=int, default=cfg.HAND1_PORT_FROM_UNITY)
     ap.add_argument("--robot-ip",        default=cfg.ROBOT_IP,
