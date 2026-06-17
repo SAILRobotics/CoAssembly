@@ -1,5 +1,5 @@
 fileFormatVersion: 2
-guid: b055cff6c23cf01448ae5c148600bdfc
+guid: 00b2c56af8bde2c41805c50f032e712d
 ScriptedImporter:
   internalIDToNameTable: []
   externalObjects: {}
@@ -25,11 +25,4 @@ ScriptedImporter:
     lightIntensityFactor: 1
     sceneObjectCreation: 2
   assetDependencies: []
-  reportItems:
-  - type: 2
-    code: 20
-    messages:
-    - PTC_onshape_metadata
-  - type: 2
-    code: 19
-    messages: []
+  reportItems: []

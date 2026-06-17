@@ -600,11 +600,11 @@ class _SceneVis:
 
 
 # =============================================================================
-# Tracked board geometry — 250 x 200 x 25 mm board with an ArUco marker
+# Tracked board geometry — 250 x 200 x 30 mm board with an ArUco marker
 # centred on each of its two large (250x200) faces, marker Y axes aligned
 # in the same world direction. Board origin = geometric centre of the box.
 # Each marker is inset 1mm from its exterior face, so its centre sits
-# 11.5mm (half the 25mm thickness, minus the 1mm inset) from the board
+# 14mm (half the 30mm thickness, minus the 1mm inset) from the board
 # origin along its own -Z axis.
 #
 #   _BOARD_SIZE         : (X, Y, Z) full extents in the board's local frame.
@@ -615,20 +615,20 @@ class _SceneVis:
 #                          opposite face, related by a 180° rotation about Y.
 # =============================================================================
 
-_BOARD_SIZE = (0.250, 0.200, 0.025)
+_BOARD_SIZE = (0.250, 0.200, 0.030)
 
 _T_BOARD_FROM_MARKER_A = np.array([
-    [1.0, 0.0,  0.0,  0.0   ],
-    [0.0, 1.0,  0.0,  0.0   ],
-    [0.0, 0.0,  1.0, -0.0115],
-    [0.0, 0.0,  0.0,  1.0   ],
+    [1.0, 0.0,  0.0,  0.0  ],
+    [0.0, 1.0,  0.0,  0.0  ],
+    [0.0, 0.0,  1.0, -0.014],
+    [0.0, 0.0,  0.0,  1.0  ],
 ], dtype=np.float64)
 
 _T_BOARD_FROM_MARKER_B = np.array([
-    [-1.0, 0.0,  0.0,  0.0   ],
-    [ 0.0, 1.0,  0.0,  0.0   ],
-    [ 0.0, 0.0, -1.0, -0.0115],
-    [ 0.0, 0.0,  0.0,  1.0   ],
+    [-1.0, 0.0,  0.0,  0.0  ],
+    [ 0.0, 1.0,  0.0,  0.0  ],
+    [ 0.0, 0.0, -1.0, -0.014],
+    [ 0.0, 0.0,  0.0,  1.0  ],
 ], dtype=np.float64)
 
 
