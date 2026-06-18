@@ -128,17 +128,17 @@ class PyBulletScene:
 
         # 2×2 grid of pegboard mesh bodies (loaded once, teleported when anchor locks)
         # Each tile: 12" wide × 16" tall → total board: 24" wide × 32" tall
-        # Marker centre is at (0.05, 0.05) from the board's bottom-left corner.
+        # Marker centre is at (0.05, 0.05) from the board's top-right corner.
         # ArUco is on the FRONT face so the mesh is shifted back by board thickness
         # so its front face sits at Z=0. Adjust _BOARD_THICKNESS if the mesh looks off.
         _W, _H          = 12 * 0.0254, 16 * 0.0254
-        _X0, _Y0        = -0.05, -0.05
+        _X0, _Y0        = 0.05, 0.05
         _BOARD_THICKNESS = 0.0127         # 1/2 inch
         self._PEGBOARD_GRID_OFFSETS = [
-            [_X0 + _W,      _Y0,      -_BOARD_THICKNESS],
-            [_X0 + 2 * _W,  _Y0,      -_BOARD_THICKNESS],
-            [_X0 + _W,      _Y0 + _H, -_BOARD_THICKNESS],
-            [_X0 + 2 * _W,  _Y0 + _H, -_BOARD_THICKNESS],
+            [_X0 - _W,      _Y0,      -_BOARD_THICKNESS],
+            [_X0 - 2 * _W,  _Y0,      -_BOARD_THICKNESS],
+            [_X0 - _W,      _Y0 - _H, -_BOARD_THICKNESS],
+            [_X0 - 2 * _W,  _Y0 - _H, -_BOARD_THICKNESS],
         ]
         self._pegboard_body_ids: list[int] = []
         self._reachability_ids:  list[int] = []
