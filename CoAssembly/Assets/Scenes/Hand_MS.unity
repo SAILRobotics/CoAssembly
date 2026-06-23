@@ -6900,7 +6900,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 0
+  m_IsActive: 1
 --- !u!4 &682926384
 Transform:
   m_ObjectHideFlags: 0
@@ -10210,6 +10210,7 @@ GameObject:
   - component: {fileID: 1005247604}
   - component: {fileID: 1005247603}
   - component: {fileID: 1005247602}
+  - component: {fileID: 1005247606}
   - component: {fileID: 1005247605}
   m_Layer: 0
   m_Name: '[BuildingBlock] Passthrough Camera Access'
@@ -10281,13 +10282,30 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PassthroughCameraPublisher
   leftCamera: {fileID: 1005247602}
-  rightCamera: {fileID: 1005247602}
+  rightCamera: {fileID: 1005247606}
   port: 5560
   sendHz: 60
   jpegQuality: 60
   sendLeft: 1
-  sendRight: 0
+  sendRight: 1
   verboseLogs: 1
+--- !u!114 &1005247606
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1005247601}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ef9a7893e57c04c0db4114c70954b915, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: meta.xr.mrutilitykit::Meta.XR.PassthroughCameraAccess
+  CameraPosition: 1
+  RequestedResolution: {x: 1280, y: 960}
+  _maxFramerate: 60
+  TargetMaterial: {fileID: 0}
+  _texturePropertyName: 
 --- !u!1 &1008424754
 GameObject:
   m_ObjectHideFlags: 0

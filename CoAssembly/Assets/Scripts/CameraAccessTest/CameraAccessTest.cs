@@ -21,7 +21,7 @@ public class PassthroughCameraPublisher : MonoBehaviour
 
     [Header("Send flags")]
     public bool sendLeft = true;
-    public bool sendRight = false;
+    public bool sendRight = true;
 
     [Header("Debug")]
     public bool verboseLogs = true;
