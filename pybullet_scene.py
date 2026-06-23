@@ -32,6 +32,9 @@ _ADAPTER_STL         = _ASSETS / "OnlyAdapter.stl"
 _ROBOTIQ_ADAPTER_STL = _ASSETS / "RobotiqAdapter.stl"
 _PEGBOARD_OBJ        = _ASSETS / "pegboard" / "Pegboard.obj"
 
+# Tracked board (markers 102/103) — 250 x 200 x 25 mm, drawn as a wireframe box
+_BOARD_SIZE = (0.250, 0.200, 0.025)
+
 # ---------------------------------------------------------------------------
 # Joint / gripper constants
 # ---------------------------------------------------------------------------
@@ -125,17 +128,17 @@ class PyBulletScene:
 
         # 2×2 grid of pegboard mesh bodies (loaded once, teleported when anchor locks)
         # Each tile: 12" wide × 16" tall → total board: 24" wide × 32" tall
-        # Marker centre is at (0.05, 0.05) from the board's bottom-left corner.
+        # Marker centre is at (0.05, 0.05) from the board's top-right corner.
         # ArUco is on the FRONT face so the mesh is shifted back by board thickness
         # so its front face sits at Z=0. Adjust _BOARD_THICKNESS if the mesh looks off.
         _W, _H          = 12 * 0.0254, 16 * 0.0254
-        _X0, _Y0        = -0.05, -0.05
+        _X0, _Y0        = 0.05, 0.05
         _BOARD_THICKNESS = 0.0127         # 1/2 inch
         self._PEGBOARD_GRID_OFFSETS = [
-            [_X0 + _W,      _Y0,      -_BOARD_THICKNESS],
-            [_X0 + 2 * _W,  _Y0,      -_BOARD_THICKNESS],
-            [_X0 + _W,      _Y0 + _H, -_BOARD_THICKNESS],
-            [_X0 + 2 * _W,  _Y0 + _H, -_BOARD_THICKNESS],
+            [_X0 - _W,      _Y0,      -_BOARD_THICKNESS],
+            [_X0 - 2 * _W,  _Y0,      -_BOARD_THICKNESS],
+            [_X0 - _W,      _Y0 - _H, -_BOARD_THICKNESS],
+            [_X0 - 2 * _W,  _Y0 - _H, -_BOARD_THICKNESS],
         ]
         self._pegboard_body_ids: list[int] = []
         self._reachability_ids:  list[int] = []
@@ -148,6 +151,8 @@ class PyBulletScene:
         self._tcp_frame_ids:      list | None = None
         self._hand_frust_ids:     list | None = None
         self._pegboard_frame_ids: list | None = None
+        self._board_frame_ids:    list | None = None
+        self._board_box_ids:      list | None = None
         self._cached_T_tool0:     np.ndarray | None = None
 
         self.connected = False
@@ -244,6 +249,8 @@ class PyBulletScene:
         self._tcp_frame_ids      = None
         self._hand_frust_ids     = None
         self._pegboard_frame_ids = None
+        self._board_frame_ids    = None
+        self._board_box_ids      = None
         self._tool_box_ids       = []
         self._reachability_ids   = []
         self._draw_static_debug()
@@ -464,6 +471,26 @@ class PyBulletScene:
             T_board[:3, 3]  = t + R @ np.array(offset)
             self._teleport(body_id, T_board)
 
+    def update_tracked_board(self, T_world_board: np.ndarray | None, life_time: float = 0.0):
+        """
+        Draw/update a wireframe box + coordinate frame for the tracked
+        250x200x25mm board (ArUco markers 102/103). Pass None to hide both.
+        """
+        if T_world_board is None:
+            self._hide_lines(self._board_frame_ids)
+            self._hide_lines(self._board_box_ids)
+            self._board_frame_ids = None
+            self._board_box_ids   = None
+            return
+
+        self._board_frame_ids = self.draw_frame(
+            T_world_board, length=0.10, width=3,
+            ids=self._board_frame_ids, life_time=life_time)
+        self._board_box_ids = self._draw_wireframe_box(
+            T_world_board, _BOARD_SIZE,
+            ids=self._board_box_ids, life_time=life_time,
+            color=[1.0, 0.9, 0.2])
+
     def update_wall(self, T_world_marker: np.ndarray):
         """Teleport the marker wall (flat box in marker XY plane) to pose T."""
         if self._wall_id is not None:
@@ -517,6 +544,34 @@ class PyBulletScene:
             kw = {"replaceItemUniqueId": old_id} if old_id >= 0 else {}
             lid = p.addUserDebugLine(pts[i], pts[(i + 1) % 4], color,
                                      lineWidth=1.5, lifeTime=life_time, **kw)
+            new_ids.append(lid)
+        return new_ids
+
+    @staticmethod
+    def _draw_wireframe_box(T, size, ids=None, life_time: float = 0.0,
+                            color=(1.0, 0.9, 0.2)):
+        """Draw a 12-edge wireframe box of (X, Y, Z) `size` at pose T (local
+        frame centred on the box). Reuses `ids` via replaceItemUniqueId."""
+        hw, hd, hh = size[0] / 2, size[1] / 2, size[2] / 2
+        local = np.array([
+            [-hw, -hd, -hh], [+hw, -hd, -hh], [+hw, +hd, -hh], [-hw, +hd, -hh],
+            [-hw, -hd, +hh], [+hw, -hd, +hh], [+hw, +hd, +hh], [-hw, +hd, +hh],
+        ])
+        R, t   = T[:3, :3], T[:3, 3]
+        corners = (local @ R.T) + t
+
+        edges = [(0,1),(1,2),(2,3),(3,0),
+                 (4,5),(5,6),(6,7),(7,4),
+                 (0,4),(1,5),(2,6),(3,7)]
+        if ids is None or len(ids) != len(edges):
+            ids = [-1] * len(edges)
+        new_ids = []
+        for i, (a, b) in enumerate(edges):
+            old_id = int(ids[i]) if (ids[i] is not None and int(ids[i]) >= 0) else -1
+            kw = {"replaceItemUniqueId": old_id} if old_id >= 0 else {}
+            lid = p.addUserDebugLine(
+                corners[a].tolist(), corners[b].tolist(), color,
+                lineWidth=2, lifeTime=life_time, **kw)
             new_ids.append(lid)
         return new_ids
 

@@ -9,6 +9,11 @@ Workflow
   2. Hold marker 101 visible → press ENTER to lock the pegboard pose.
      Marker 100 does NOT need to be visible at this step.
   3. Press ENTER again at any time to re-lock either (whichever marker is visible).
+  4. The tracked 250x200x25mm board (markers 102/103, one on each large
+     face) is tracked continuously once the world frame is locked — no
+     ENTER press required. Either marker being visible is enough; its pose
+     is published on port 5014 (board_root_matrix) and drawn as a wireframe
+     box in PyBullet.
 
 Keys (OpenCV window must be focused)
 --------------------------------------
@@ -241,6 +246,7 @@ class _ArUcoWorker:
         self._lock  = threading.Lock()
         self._T_cam_anchor   = None
         self._T_cam_pegboard = None
+        self._T_cam_board    = {}
         self._det_vis        = None
         self._running = True
         threading.Thread(target=self._run, daemon=True).start()
@@ -260,12 +266,14 @@ class _ArUcoWorker:
             with self._lock:
                 self._T_cam_anchor   = det.get("T_cam_anchor")
                 self._T_cam_pegboard = det.get("T_cam_pegboard")
+                self._T_cam_board    = det.get("T_cam_board", {})
                 self._det_vis        = det["vis"]
 
     def get(self):
-        """Return (T_cam_anchor, T_cam_pegboard, det_vis) — non-blocking."""
+        """Return (T_cam_anchor, T_cam_pegboard, T_cam_board, det_vis) — non-blocking."""
         with self._lock:
-            return self._T_cam_anchor, self._T_cam_pegboard, self._det_vis
+            return (self._T_cam_anchor, self._T_cam_pegboard,
+                    self._T_cam_board, self._det_vis)
 
     def stop(self) -> None:
         self._running = False
@@ -359,10 +367,16 @@ class _HandDataReceiver:
 
 class _ArucoPoseEstimator:
     def __init__(self, anchor_marker_id: int, pegboard_marker_id: int,
-                 marker_size_m: float, dictionary=cv.aruco.DICT_6X6_1000):
+                 marker_size_m: float, board_marker_ids: tuple = (),
+                 board_marker_size_m: float | None = None,
+                 dictionary=cv.aruco.DICT_6X6_1000):
         self.anchor_marker_id   = int(anchor_marker_id)
         self.pegboard_marker_id = int(pegboard_marker_id)
+        self.board_marker_ids   = tuple(int(m) for m in board_marker_ids)
         self.marker_size        = float(marker_size_m)
+        self.board_marker_size  = float(board_marker_size_m
+                                         if board_marker_size_m is not None
+                                         else marker_size_m)
         self._dict     = cv.aruco.getPredefinedDictionary(dictionary)
         self._detector = cv.aruco.ArucoDetector(
             self._dict, cv.aruco.DetectorParameters())
@@ -371,6 +385,11 @@ class _ArucoPoseEstimator:
             [-s,  s, 0.], [ s,  s, 0.],
             [ s, -s, 0.], [-s, -s, 0.],
         ], dtype=np.float64)
+        bs = self.board_marker_size / 2.0
+        self._board_obj_pts = np.array([
+            [-bs,  bs, 0.], [ bs,  bs, 0.],
+            [ bs, -bs, 0.], [-bs, -bs, 0.],
+        ], dtype=np.float64)
 
     def detect(self, bgr, fx, fy, cx, cy, dist=None, draw=True) -> dict:
         K    = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=np.float64)
@@ -378,7 +397,8 @@ class _ArucoPoseEstimator:
         gray = cv.cvtColor(bgr, cv.COLOR_BGR2GRAY)
         corners, ids, _ = self._detector.detectMarkers(gray)
         vis = bgr.copy()
-        result = {"vis": vis, "T_cam_anchor": None, "T_cam_pegboard": None}
+        result = {"vis": vis, "T_cam_anchor": None, "T_cam_pegboard": None,
+                  "T_cam_board": {}}
         if ids is None:
             return result
         if draw:
@@ -386,13 +406,15 @@ class _ArucoPoseEstimator:
         for c, mid in zip(corners, ids.flatten()):
             mid = int(mid)
             if mid == self.anchor_marker_id:
-                key = "T_cam_anchor"
+                key, obj_pts, axis_len = "T_cam_anchor", self._obj_pts, self.marker_size
             elif mid == self.pegboard_marker_id:
-                key = "T_cam_pegboard"
+                key, obj_pts, axis_len = "T_cam_pegboard", self._obj_pts, self.marker_size
+            elif mid in self.board_marker_ids:
+                key, obj_pts, axis_len = None, self._board_obj_pts, self.board_marker_size
             else:
                 continue
             ok, rvec, tvec = cv.solvePnP(
-                self._obj_pts, c.reshape(4, 2).astype(np.float64), K, dist,
+                obj_pts, c.reshape(4, 2).astype(np.float64), K, dist,
                 flags=cv.SOLVEPNP_IPPE_SQUARE)
             if not ok:
                 continue
@@ -400,9 +422,12 @@ class _ArucoPoseEstimator:
             T = np.eye(4, dtype=np.float64)
             T[:3, :3] = Rm
             T[:3, 3]  = tvec.reshape(3)
-            result[key] = T
+            if key is None:
+                result["T_cam_board"][mid] = T
+            else:
+                result[key] = T
             if draw:
-                cv.drawFrameAxes(vis, K, dist, rvec, tvec, self.marker_size * 0.5, 2)
+                cv.drawFrameAxes(vis, K, dist, rvec, tvec, axis_len * 0.5, 2)
         return result
 
 
@@ -446,6 +471,17 @@ class _SceneVis:
         self._tracking_sphere.transform(self._hidden_T())
         self.vis.add_geometry(self._tracking_sphere)
         self._tracking_T = self._hidden_T()
+
+        self._board_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.10)
+        self._board_frame.transform(self._hidden_T())
+        self.vis.add_geometry(self._board_frame)
+        self._board_box = o3d.geometry.TriangleMesh.create_box(*_BOARD_SIZE)
+        self._board_box.translate(-np.array(_BOARD_SIZE) / 2.0)  # centre on origin
+        self._board_box.paint_uniform_color([1.0, 0.9, 0.2])
+        self._board_box.compute_vertex_normals()
+        self._board_box.transform(self._hidden_T())
+        self.vis.add_geometry(self._board_box)
+        self._board_T = self._hidden_T()
 
         self._pcd_l, self._lines_l = self._make_hand([0.3, 0.6, 1.0])
         self._pcd_r, self._lines_r = self._make_hand([1.0, 0.55, 0.1])
@@ -539,6 +575,15 @@ class _SceneVis:
         self.vis.update_geometry(self._tracking_frame)
         self.vis.update_geometry(self._tracking_sphere)
 
+    def update_board(self, T: np.ndarray | None):
+        T_new = T if T is not None else self._hidden_T()
+        delta = T_new @ np.linalg.inv(self._board_T)
+        self._board_frame.transform(delta)
+        self._board_box.transform(delta)
+        self._board_T = T_new
+        self.vis.update_geometry(self._board_frame)
+        self.vis.update_geometry(self._board_box)
+
     def update_hands(self, left_pts: np.ndarray | None, right_pts: np.ndarray | None):
         self._set_hand(self._pcd_l, self._lines_l, left_pts)
         self._set_hand(self._pcd_r, self._lines_r, right_pts)
@@ -555,22 +600,59 @@ class _SceneVis:
 
 
 # =============================================================================
+# Tracked board geometry — 250 x 200 x 30 mm board with an ArUco marker
+# centred on each of its two large (250x200) faces, marker Y axes aligned
+# in the same world direction. Board origin = geometric centre of the box.
+# Each marker is inset 1mm from its exterior face, so its centre sits
+# 14mm (half the 30mm thickness, minus the 1mm inset) from the board
+# origin along its own -Z axis.
+#
+#   _BOARD_SIZE         : (X, Y, Z) full extents in the board's local frame.
+#   _T_BOARD_FROM_MARKER_A/_B : fixed transforms from each marker's frame to
+#                          the board frame (board origin expressed in the
+#                          marker's local coordinates). Marker A defines the
+#                          board's Z axis directly; marker B is on the
+#                          opposite face, related by a 180° rotation about Y.
+# =============================================================================
+
+_BOARD_SIZE = (0.250, 0.200, 0.030)
+
+_T_BOARD_FROM_MARKER_A = np.array([
+    [1.0, 0.0,  0.0,  0.0  ],
+    [0.0, 1.0,  0.0,  0.0  ],
+    [0.0, 0.0,  1.0, -0.014],
+    [0.0, 0.0,  0.0,  1.0  ],
+], dtype=np.float64)
+
+_T_BOARD_FROM_MARKER_B = np.array([
+    [-1.0, 0.0,  0.0,  0.0  ],
+    [ 0.0, 1.0,  0.0,  0.0  ],
+    [ 0.0, 0.0, -1.0, -0.014],
+    [ 0.0, 0.0,  0.0,  1.0  ],
+], dtype=np.float64)
+
+
+# =============================================================================
 # World anchor
 # =============================================================================
 
 class _WorldAnchor:
     _EYE_OFFSET_FILE = _FILE_DIR / "eye_offset_calibration.json"
 
-    def __init__(self, pub_ip: str, pub_port: int = 5005, pegboard_pub_port: int = 5008):
+    def __init__(self, pub_ip: str, pub_port: int = 5005, pegboard_pub_port: int = 5008,
+                 board_pub_port: int = 5014):
         self._T_wt: np.ndarray | None = None
         self._T_offset = np.eye(4, dtype=np.float64)
         self._T_world_pegboard: np.ndarray | None = None
+        self._T_world_board: np.ndarray | None = None
         self._T_eye_offset: np.ndarray | None = None
         ctx = zmq.Context()
         self._pub = ctx.socket(zmq.PUB)
         self._pub.connect(f"tcp://{pub_ip}:{pub_port}")
         self._pub_pegboard = ctx.socket(zmq.PUB)
         self._pub_pegboard.connect(f"tcp://{pub_ip}:{pegboard_pub_port}")
+        self._pub_board = ctx.socket(zmq.PUB)
+        self._pub_board.connect(f"tcp://{pub_ip}:{board_pub_port}")
         time.sleep(0.2)
         self._load_eye_offset()
 
@@ -654,6 +736,26 @@ class _WorldAnchor:
         print(f"[Anchor] Pegboard updated: t=({t[0]:+.3f}, {t[1]:+.3f}, {t[2]:+.3f}) m")
         return True
 
+    def update_board_from_tracking(self, cam_T: np.ndarray,
+                                   center_T: np.ndarray | None,
+                                   T_cam_marker: np.ndarray,
+                                   T_board_from_marker: np.ndarray) -> bool:
+        """Compute tracked-board pose in raw world frame from whichever of
+        markers 102/103 is currently visible.
+
+        T_board_from_marker is the fixed offset (board origin expressed in
+        the detected marker's local frame) for that specific marker.
+        Marker 100 does NOT need to be visible — uses the locked _T_wt instead.
+        """
+        if not self.locked or T_cam_marker is None:
+            return False
+        eff = self._effective_cam_T(cam_T, center_T)
+        if eff is None:
+            return False
+        T_world_marker = self._T_wt @ eff @ T_cam_marker
+        self._T_world_board = T_world_marker @ T_board_from_marker
+        return True
+
     @property
     def locked(self) -> bool:
         return self._T_wt is not None
@@ -669,6 +771,12 @@ class _WorldAnchor:
         if self._T_world_pegboard is None:
             return None
         return self._T_offset @ self._T_world_pegboard
+
+    @property
+    def T_board_in_world(self) -> np.ndarray | None:
+        if self._T_world_board is None:
+            return None
+        return self._T_offset @ self._T_world_board
 
     def world_T(self, T_tracking_local: np.ndarray) -> np.ndarray | None:
         if self._T_wt is None:
@@ -731,6 +839,34 @@ class _WorldAnchor:
             print(f"[PegboardRoot] Publish error: {e}")
             return False
 
+    def publish_board(self) -> bool:
+        if self._T_world_board is None:
+            return False
+        T_o3d = self._T_offset @ self._T_world_board
+        R_o3d = T_o3d[:3, :3]
+        t_o3d = T_o3d[:3, 3]
+        q_xyzw   = ScipyR.from_matrix(R_o3d).as_quat()
+        q_wxyz   = [q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]]
+        q_u_wxyz = open3d_to_unity_quaternion(q_wxyz)
+        t_unity  = open3d_to_unity_vector(t_o3d)
+        q_unity_xyzw = [float(q_u_wxyz[1]), float(q_u_wxyz[2]),
+                        float(q_u_wxyz[3]), float(q_u_wxyz[0])]
+        R_unity = ScipyR.from_quat(q_unity_xyzw).as_matrix()
+        T_unity = np.eye(4, dtype=np.float64)
+        T_unity[:3, :3] = R_unity
+        T_unity[:3, 3]  = t_unity
+        msg = {
+            "board_root_position":      [float(v) for v in t_unity],
+            "board_root_rotation_xyzw":  q_unity_xyzw,
+            "board_root_matrix":         T_unity.T.flatten().tolist(),
+        }
+        try:
+            self._pub_board.send_string(json.dumps(msg))
+            return True
+        except Exception as e:
+            print(f"[BoardRoot] Publish error: {e}")
+            return False
+
     def close(self):
         try:
             self._pub.close(0)
@@ -738,6 +874,10 @@ class _WorldAnchor:
             pass
         try:
             self._pub_pegboard.close(0)
+        except Exception:
+            pass
+        try:
+            self._pub_board.close(0)
         except Exception:
             pass
 
@@ -1266,12 +1406,25 @@ class _UrRtdeReceiver:
 
 def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
         marker_size_m: float, hand_port: int, robot_ip: str | None = None,
-        simulation: bool = True):
+        simulation: bool = True,
+        board_marker_a: int = 102, board_marker_b: int = 103,
+        board_marker_size_m: float | None = None):
     """
     anchor_marker_id  : ArUco marker that defines world frame + PyBullet origin (default 100)
     pegboard_marker_id: ArUco marker for pegboard pose (default 101)
+    board_marker_a/b  : ArUco markers on the two large faces of the tracked
+                        250x200x25mm board (default 102/103). Either marker
+                        being visible is enough to continuously track the
+                        board's pose.
+    board_marker_size_m: side length of markers 102/103 in metres
+                          (defaults to marker_size_m if not given)
     simulation        : if True, use fixed default joint angles instead of live RTDE
     """
+
+    _T_BOARD_FROM_MARKER = {
+        board_marker_a: _T_BOARD_FROM_MARKER_A,
+        board_marker_b: _T_BOARD_FROM_MARKER_B,
+    }
 
     # Default joint angles used in simulation mode (degrees → radians)
     _SIM_Q_DEG = [-105.97, -29.43, 87.53, 33.17, 92.40, 168.95]
@@ -1322,7 +1475,9 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
                 print(f"[main_hand_m100_w_sim] Calibration dir not found: {_calib_dir}")
 
     cam   = _CamFeedReceiver(quest_ip)
-    aruco        = _ArucoPoseEstimator(anchor_marker_id, pegboard_marker_id, marker_size_m)
+    aruco        = _ArucoPoseEstimator(anchor_marker_id, pegboard_marker_id, marker_size_m,
+                                       board_marker_ids=(board_marker_a, board_marker_b),
+                                       board_marker_size_m=board_marker_size_m)
     aruco_worker = _ArUcoWorker(cam, aruco)
     hands        = _HandDataReceiver(quest_ip, hand_port)
     rtde  = _UrRtdeReceiver(robot_ip) if (robot_ip and not simulation) else None
@@ -1409,9 +1564,13 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
             hands.poll()
 
             # ── ArUco results (produced by background thread) ─────────────────
-            T_cam_anchor, T_cam_pegboard, det_vis = aruco_worker.get()
+            T_cam_anchor, T_cam_pegboard, T_cam_board, det_vis = aruco_worker.get()
             anchor_ok   = T_cam_anchor   is not None
             pegboard_ok = T_cam_pegboard is not None
+            board_marker_seen = next(
+                (mid for mid in (board_marker_a, board_marker_b) if mid in T_cam_board),
+                None)
+            board_ok = board_marker_seen is not None
 
             # ── Offset tuner ──────────────────────────────────────────────────
             tuner.draw()
@@ -1421,10 +1580,18 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
             # ── CenterEye pose ────────────────────────────────────────────────
             _center_T = hands.center_eye_T()
 
+            # ── Tracked board (markers 102/103) — constantly updated ──────────
+            if anchor.locked and board_ok:
+                anchor.update_board_from_tracking(
+                    cam.camera_T, _center_T,
+                    T_cam_board[board_marker_seen],
+                    _T_BOARD_FROM_MARKER[board_marker_seen])
+
             # ── Publish world root + pegboard to Unity ────────────────────────
             if anchor.locked:
                 anchor.publish()
                 anchor.publish_pegboard()
+                anchor.publish_board()
                 _now = time.time()
                 if _now - _last_synth_pub >= _SYNTH_INTERVAL:
                     synth.publish()
@@ -1578,6 +1745,7 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
                 vis.update_cam_frustum(T_world_camleft,
                                        cam.width, cam.height, fx, fy, cx, cy)
             vis.update_pegboard(anchor.T_pegboard_in_world)
+            vis.update_board(anchor.T_board_in_world)
             vis.update_tracking(T_wt)
             vis.update_head(T_world_center)
             vis.update_hands(left_pts, right_pts)
@@ -1669,6 +1837,7 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
                         pb_scene.update_robot(q)
                         pb_scene.update_tcp_bodies()
                 pb_scene.update_pegboard(anchor.T_pegboard_in_world)
+                pb_scene.update_tracked_board(anchor.T_board_in_world)
                 pb_scene.step()
 
             # ── OpenCV display ────────────────────────────────────────────────
@@ -1706,6 +1875,15 @@ def run(quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
                        f"Hands: {hand_status}",
                        (12, 136), cv.FONT_HERSHEY_SIMPLEX, 0.65,
                        (0, 255, 200) if (hand_ok or hands.receiving) else (100, 100, 100), 2)
+            board_status = (f"marker #{board_marker_seen}" if board_ok
+                            else f"searching #{board_marker_a}/#{board_marker_b}")
+            if anchor.T_board_in_world is not None:
+                t = anchor.T_board_in_world[:3, 3]
+                board_status += f"  ({t[0]:+.2f}, {t[1]:+.2f}, {t[2]:+.2f}) m  → :5014"
+            cv.putText(disp,
+                       f"Board: {board_status}",
+                       (12, 170), cv.FONT_HERSHEY_SIMPLEX, 0.60,
+                       (0, 255, 200) if board_ok else (100, 100, 100), 2)
             cv.putText(disp,
                        f"ENTER: lock #{anchor_marker_id} (world+scene)  or  lock #{pegboard_marker_id} (pegboard)    ESC = quit",
                        (12, disp.shape[0] - 14),
@@ -1830,9 +2008,15 @@ def main():
                     help="ArUco marker ID for world frame + PyBullet scene origin")
     ap.add_argument("--pegboard-marker", type=int, default=101,
                     help="ArUco marker ID for pegboard")
-    ap.add_argument("--marker-size",     type=float, default=0.100
-                    ,
+    ap.add_argument("--board-marker-a",  type=int, default=102,
+                    help="ArUco marker ID on one face of the tracked board")
+    ap.add_argument("--board-marker-b",  type=int, default=103,
+                    help="ArUco marker ID on the opposite face of the tracked board")
+    ap.add_argument("--marker-size",     type=float, default=0.100,
                     help="Marker side length in metres")
+    ap.add_argument("--board-marker-size", type=float, default=None,
+                    help="Side length of board markers 102/103 in metres "
+                         "(defaults to --marker-size)")
     ap.add_argument("--hand-port",       type=int, default=cfg.HAND1_PORT_FROM_UNITY)
     ap.add_argument("--robot-ip",        default=cfg.ROBOT_IP,
                     help="UR robot controller IP for live joint angles via RTDE")
@@ -1841,13 +2025,22 @@ def main():
     args = ap.parse_args()
     if args.anchor_marker == args.pegboard_marker:
         ap.error("--anchor-marker and --pegboard-marker must be different.")
+    if args.board_marker_a == args.board_marker_b:
+        ap.error("--board-marker-a and --board-marker-b must be different.")
+    if len({args.anchor_marker, args.pegboard_marker,
+            args.board_marker_a, args.board_marker_b}) != 4:
+        ap.error("--anchor-marker, --pegboard-marker, --board-marker-a and "
+                 "--board-marker-b must all be different.")
     run(quest_ip           = args.quest_ip,
         anchor_marker_id   = args.anchor_marker,
         pegboard_marker_id = args.pegboard_marker,
         marker_size_m      = args.marker_size,
         hand_port          = args.hand_port,
         robot_ip           = args.robot_ip,
-        simulation         = args.simulation)
+        simulation         = args.simulation,
+        board_marker_a     = args.board_marker_a,
+        board_marker_b     = args.board_marker_b,
+        board_marker_size_m = args.board_marker_size)
 
 
 if __name__ == "__main__":
