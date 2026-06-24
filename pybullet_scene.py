@@ -940,19 +940,21 @@ class HandTrackController:
     pose, one rate-limited IK step per call — unlike RobotController, there
     is no fixed start/end interpolation; the target may change every call.
 
-    The per-call joint delta is clamped to _MAX_JOINT_STEP so a noisy or
-    jumpy tracked target (e.g. hand-tracking jitter) doesn't snap the arm;
-    it smoothly chases whatever target is passed to step() each frame.
+    The joint delta is clamped to _MAX_JOINT_SPEED * dt (a real angular
+    velocity limit, not a per-call constant) so a noisy or jumpy tracked
+    target (e.g. hand-tracking jitter) doesn't snap the arm, and the motion
+    stays consistent regardless of how fast the calling loop is ticking; it
+    smoothly chases whatever target is passed to step() each frame.
 
     Usage
     -----
         tracker = HandTrackController(robot_id, end_effector_link, arm_indices)
         # each frame while tracking:
-        new_q = tracker.step(pb_scene.current_q, target_pos, target_quat_xyzw)
+        new_q = tracker.step(pb_scene.current_q, target_pos, target_quat_xyzw, dt)
     """
 
-    _IK_ITER        = 200
-    _MAX_JOINT_STEP = np.deg2rad(4.0)   # max joint movement per call
+    _IK_ITER         = 200
+    _MAX_JOINT_SPEED = np.deg2rad(45.0)   # rad/sec — max joint angular velocity
 
     def __init__(self, robot_id: int, end_effector_link: int, arm_indices: list):
         self._robot_id    = robot_id
@@ -972,10 +974,13 @@ class HandTrackController:
             self._upper.append(ul)
             self._ranges.append(ul - ll)
 
-    def step(self, current_q: np.ndarray, target_pos, target_quat_xyzw) -> np.ndarray:
+    def step(self, current_q: np.ndarray, target_pos, target_quat_xyzw,
+             dt: float) -> np.ndarray:
         """Solve IK for target_pos/quat, move the arm one rate-limited step
-        toward the solution, and apply it directly. Returns the new arm
-        joint angles (radians)."""
+        toward the solution, and apply it directly. `dt` is the elapsed time
+        (seconds) since the previous call, used to convert _MAX_JOINT_SPEED
+        into a per-step joint delta. Returns the new arm joint angles
+        (radians)."""
         arm_q_map  = dict(zip(self._arm_indices, current_q))
         rest_poses = [float(arm_q_map.get(j, 0.0)) for j in self._movable]
         joint_q = p.calculateInverseKinematics(
@@ -986,7 +991,8 @@ class HandTrackController:
             maxNumIterations=self._IK_ITER, residualThreshold=1e-5)
         target_q = np.array(joint_q[:len(self._arm_indices)], dtype=np.float64)
 
-        delta = np.clip(target_q - current_q, -self._MAX_JOINT_STEP, self._MAX_JOINT_STEP)
+        max_step = self._MAX_JOINT_SPEED * dt
+        delta = np.clip(target_q - current_q, -max_step, max_step)
         new_q = current_q + delta
         for idx, qi in zip(self._arm_indices, new_q):
             p.resetJointState(self._robot_id, idx, float(qi))
