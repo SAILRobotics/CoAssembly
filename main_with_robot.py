@@ -1420,6 +1420,7 @@ class MainScene:
         self._tracking_hand_id: "str | None"       = None
         self._track_hits                           = 0
         self._track_target_pos: "np.ndarray | None" = None
+        self._last_hand_track_t: "float | None"    = None
         self._pegboard_cubes_added                 = False
         self._pegboard_cube_start: "int | None"    = None
         self._loop_t0         = time.perf_counter()
@@ -1671,8 +1672,13 @@ class MainScene:
                                                    * ScipyR.from_euler('z', 180, degrees=True)
                                                    ).as_quat()
                                 self._track_target_pos = target_pos
+                                _track_now = time.perf_counter()
+                                _track_dt  = (min(_track_now - self._last_hand_track_t, 0.1)
+                                              if self._last_hand_track_t is not None else 1.0 / 30.0)
+                                self._last_hand_track_t = _track_now
                                 self._hand_tracker.step(self.pb_scene.current_q,
-                                                        target_pos.tolist(), target_quat)
+                                                        target_pos.tolist(), target_quat,
+                                                        _track_dt)
                             # else: hand lost this frame — hold last commanded pose
                         elif self._ctrl_active and self._ctrl is not None and not self._ctrl.done:
                             self._ctrl.update(self.pb_scene.robot_id,
