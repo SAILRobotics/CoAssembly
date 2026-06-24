@@ -934,6 +934,65 @@ class RobotController:
         return self.done
 
 
+class HandTrackController:
+    """
+    Continuously re-targets the UR10e's TCP toward a live (moving) target
+    pose, one rate-limited IK step per call — unlike RobotController, there
+    is no fixed start/end interpolation; the target may change every call.
+
+    The per-call joint delta is clamped to _MAX_JOINT_STEP so a noisy or
+    jumpy tracked target (e.g. hand-tracking jitter) doesn't snap the arm;
+    it smoothly chases whatever target is passed to step() each frame.
+
+    Usage
+    -----
+        tracker = HandTrackController(robot_id, end_effector_link, arm_indices)
+        # each frame while tracking:
+        new_q = tracker.step(pb_scene.current_q, target_pos, target_quat_xyzw)
+    """
+
+    _IK_ITER        = 200
+    _MAX_JOINT_STEP = np.deg2rad(4.0)   # max joint movement per call
+
+    def __init__(self, robot_id: int, end_effector_link: int, arm_indices: list):
+        self._robot_id    = robot_id
+        self._ee_link     = end_effector_link
+        self._arm_indices = arm_indices
+
+        n_joints = p.getNumJoints(robot_id)
+        self._movable = [j for j in range(n_joints)
+                         if p.getJointInfo(robot_id, j)[2] != p.JOINT_FIXED]
+        self._lower, self._upper, self._ranges = [], [], []
+        for j in self._movable:
+            info = p.getJointInfo(robot_id, j)
+            ll, ul = float(info[8]), float(info[9])
+            if ul <= ll:
+                ll, ul = -np.pi, np.pi
+            self._lower.append(ll)
+            self._upper.append(ul)
+            self._ranges.append(ul - ll)
+
+    def step(self, current_q: np.ndarray, target_pos, target_quat_xyzw) -> np.ndarray:
+        """Solve IK for target_pos/quat, move the arm one rate-limited step
+        toward the solution, and apply it directly. Returns the new arm
+        joint angles (radians)."""
+        arm_q_map  = dict(zip(self._arm_indices, current_q))
+        rest_poses = [float(arm_q_map.get(j, 0.0)) for j in self._movable]
+        joint_q = p.calculateInverseKinematics(
+            self._robot_id, self._ee_link, target_pos,
+            targetOrientation=target_quat_xyzw,
+            lowerLimits=self._lower, upperLimits=self._upper,
+            jointRanges=self._ranges, restPoses=rest_poses,
+            maxNumIterations=self._IK_ITER, residualThreshold=1e-5)
+        target_q = np.array(joint_q[:len(self._arm_indices)], dtype=np.float64)
+
+        delta = np.clip(target_q - current_q, -self._MAX_JOINT_STEP, self._MAX_JOINT_STEP)
+        new_q = current_q + delta
+        for idx, qi in zip(self._arm_indices, new_q):
+            p.resetJointState(self._robot_id, idx, float(qi))
+        return new_q
+
+
 # ===========================================================================
 # Live overlay — hand skeletons and camera frustums drawn in the PyBullet GUI
 # ===========================================================================
