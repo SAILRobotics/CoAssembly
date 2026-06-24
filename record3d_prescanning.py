@@ -633,6 +633,604 @@ def visualize_scene():
 
 
 # ---------------------------------------------------------------------------
+# Annotate mode
+# ---------------------------------------------------------------------------
+
+class AnnotateApp:
+    """
+    GUI tool for placing and editing tool bounding-boxes on the pegboard.
+
+    3-D view  : Open3D GUI window — shows PLY mesh + pegboard outline + boxes.
+                Click on the mesh to place a new box (when pick mode is active).
+    Control panel : DearPyGUI window — add / remove / edit boxes, save JSON.
+    Robot     : connects to the UR10e via RTDE and moves to a viewing pose
+                50 cm in front of the pegboard centre (background thread).
+
+    Output saved to scene_layout/tool_layout2.json in the same schema as
+    tool_layout.json so it can be dropped in as a replacement.
+    """
+
+    _CAL_DIR    = Path("calibration_data/results")
+    _LAYOUT_DIR = SCENE_LAYOUT_DIR
+
+    # ── init ──────────────────────────────────────────────────────────────
+
+    def __init__(self, robot_ip: str = "192.168.50.70"):
+        import json
+        from scipy.spatial.transform import Rotation as ScipyR
+
+        self.robot_ip  = robot_ip
+        self._ScipyR   = ScipyR
+        self._boxes: list[dict] = []
+        self._selected_idx = -1
+        self._next_id      = 0
+        self._pick_mode    = False
+
+        # Scene layout
+        npz_path = self._LAYOUT_DIR / "T_world10_pegboard101.npz"
+        if not npz_path.exists():
+            raise FileNotFoundError(f"No scene layout at {npz_path}. "
+                                    "Run the prescan first.")
+        data = np.load(str(npz_path))
+        self.T_world_peg = data["T_world10_pegboard"]
+        self.peg_width   = float(data["pegboard_width_m"])
+        self.peg_height  = float(data["pegboard_height_m"])
+        self.offset_x    = float(data["marker_offset_right_m"])
+        self.offset_y    = float(data["marker_offset_top_m"])
+
+        # Pegboard plane parameters for ray casting
+        self._plane_pt   = self.T_world_peg[:3, 3].copy()
+        self._plane_n    = self.T_world_peg[:3, 2].copy()
+        self._T_inv_peg  = np.linalg.inv(self.T_world_peg)
+
+        # Robot base pose in world frame (from eye–hand calibration)
+        cal_path = self._CAL_DIR / "phase1_results.npz"
+        if cal_path.exists():
+            cal = np.load(str(cal_path))
+            self.T_world_base = cal["T_world_base"]
+        else:
+            self.T_world_base = np.eye(4)
+            print("[Annotate] No calibration found — robot move pose may be wrong.")
+
+        # Pre-load existing tool_layout.json if present
+        tl_path = self._LAYOUT_DIR / "tool_layout.json"
+        if tl_path.exists():
+            raw = json.loads(tl_path.read_text())
+            for t in raw.get("tools", []):
+                self._boxes.append({
+                    "id":           int(t["id"]),
+                    "name":         str(t.get("type", "tool")),
+                    "category":     str(t.get("category", "tool")),
+                    "pegboard_pos": list(t.get("pegboard_pos", [0.0, 0.0])),
+                    "size":         list(t.get("size",         [0.10, 0.10, 0.025])),
+                    "rotation_deg": list(t.get("rotation_deg", [0.0,  0.0,  0.0])),
+                })
+                self._next_id = max(self._next_id, int(t["id"]) + 1)
+            print(f"[Annotate] Loaded {len(self._boxes)} existing boxes "
+                  f"from tool_layout.json")
+
+        # Open3D scene reference — set in run()
+        self._scene_widget = None
+        self._box_geom_names: list[str] = []
+        self._pending_refresh: str | None = None  # 'all' | 'selected' | None
+
+        # DearPyGUI tag constants
+        self._TAG_LIST    = "box_listbox"
+        self._TAG_NAME    = "edit_name"
+        self._TAG_CAT     = "edit_cat"
+        self._TAG_POSX    = "edit_posX"
+        self._TAG_POSY    = "edit_posY"
+        self._TAG_SIZEW   = "edit_sizeW"
+        self._TAG_SIZED   = "edit_sizeD"
+        self._TAG_SIZEH   = "edit_sizeH"
+        self._TAG_ROTZ    = "edit_rotZ"
+        self._TAG_STATUS  = "status_text"
+
+    # ── Robot ─────────────────────────────────────────────────────────────
+
+    def _compute_robot_view_pose(self) -> list[float]:
+        """TCP pose [x,y,z,rx,ry,rz] in robot base frame facing pegboard at 50 cm."""
+        # Board centre in pegboard-local frame
+        cx = (PEG_X_MIN + PEG_X_MAX) / 2.0
+        cy = (PEG_Y_MIN + PEG_Y_MAX) / 2.0
+        centre_world = (self.T_world_peg @ np.array([cx, cy, 0.0, 1.0]))[:3]
+
+        # Board outward normal
+        normal = self._plane_n / (np.linalg.norm(self._plane_n) + 1e-9)
+
+        # TCP is 50 cm in front of the board
+        tcp_pos_world = centre_world + 0.5 * normal
+
+        # TCP Z points INTO the board; Y follows pegboard Y axis
+        z_tcp = -normal
+        y_tmp = self.T_world_peg[:3, 1]
+        y_tcp = y_tmp - np.dot(y_tmp, z_tcp) * z_tcp
+        if np.linalg.norm(y_tcp) < 1e-6:
+            y_tcp = np.array([0.0, 0.0, 1.0])
+        y_tcp /= np.linalg.norm(y_tcp)
+        x_tcp = np.cross(y_tcp, z_tcp)
+        x_tcp /= np.linalg.norm(x_tcp)
+        y_tcp  = np.cross(z_tcp, x_tcp)
+
+        T_tcp_world = np.eye(4)
+        T_tcp_world[:3, :3] = np.column_stack([x_tcp, y_tcp, z_tcp])
+        T_tcp_world[:3, 3]  = tcp_pos_world
+
+        T_base_tcp = np.linalg.inv(self.T_world_base) @ T_tcp_world
+        pos     = T_base_tcp[:3, 3].tolist()
+        rot_vec = self._ScipyR.from_matrix(T_base_tcp[:3, :3]).as_rotvec().tolist()
+        return pos + rot_vec
+
+    def _move_robot_to_view(self):
+        """Send moveL to the viewing pose in a background thread."""
+        import threading
+        def _worker():
+            try:
+                from rtde_control import RTDEControlInterface
+                pose = self._compute_robot_view_pose()
+                print(f"[Robot] Connecting to {self.robot_ip}…")
+                ctrl = RTDEControlInterface(self.robot_ip)
+                print(f"[Robot] Moving to view pose: "
+                      f"{[round(v, 3) for v in pose]}")
+                ctrl.moveL(pose, speed=0.08, acceleration=0.2)
+                ctrl.disconnect()
+                print("[Robot] Reached view pose.")
+            except Exception as exc:
+                print(f"[Robot] Move failed: {exc}")
+        threading.Thread(target=_worker, daemon=True).start()
+
+    # ── Geometry helpers ──────────────────────────────────────────────────
+
+    def _box_world_corners(self, box: dict) -> np.ndarray:
+        """8 world-space corners of a tool box."""
+        px, py = box["pegboard_pos"]
+        w, d, h = (box["size"][0]/2, box["size"][1]/2, box["size"][2])
+        local = np.array([
+            [-w, -d, 0], [w, -d, 0], [w, d, 0], [-w, d, 0],
+            [-w, -d, h], [w, -d, h], [w, d, h], [-w, d, h],
+        ])
+        R_local = self._ScipyR.from_euler(
+            'xyz', box["rotation_deg"], degrees=True).as_matrix()
+        peg_pts = (R_local @ local.T).T + np.array([px, py, 0.0])
+        peg_h   = np.hstack([peg_pts, np.ones((8, 1))])
+        return (self.T_world_peg @ peg_h.T).T[:, :3]
+
+    def _make_box_lineset(self, box: dict, selected: bool) -> o3d.geometry.LineSet:
+        corners = self._box_world_corners(box)
+        edges   = [[0,1],[1,2],[2,3],[3,0],
+                   [4,5],[5,6],[6,7],[7,4],
+                   [0,4],[1,5],[2,6],[3,7]]
+        color   = [1.0, 1.0, 0.0] if selected else [0.2, 0.9, 1.0]
+        ls = o3d.geometry.LineSet()
+        ls.points = o3d.utility.Vector3dVector(corners)
+        ls.lines  = o3d.utility.Vector2iVector(edges)
+        ls.colors = o3d.utility.Vector3dVector([color] * 12)
+        return ls
+
+    def _refresh_boxes(self, selected_only: bool = False):
+        """Schedule a scene refresh; safe to call from any callback."""
+        if selected_only and self._pending_refresh != 'all':
+            self._pending_refresh = 'selected'
+        else:
+            self._pending_refresh = 'all'
+
+    def _do_refresh_boxes(self):
+        """Rebuild all box wireframes in the scene (called from main loop)."""
+        import open3d.visualization.rendering as rendering
+        scene = self._scene_widget.scene
+        for name in self._box_geom_names:
+            scene.remove_geometry(name)
+        self._box_geom_names.clear()
+
+        mat = rendering.MaterialRecord()
+        mat.shader     = "unlitLine"
+        mat.line_width = 2.5
+
+        for i, box in enumerate(self._boxes):
+            ls   = self._make_box_lineset(box, selected=(i == self._selected_idx))
+            name = f"__box_{i}"
+            scene.add_geometry(name, ls, mat)
+            self._box_geom_names.append(name)
+        self._scene_widget.force_redraw()
+
+    def _do_refresh_selected_box(self):
+        """Update only the selected box wireframe (faster, for slider drags)."""
+        import open3d.visualization.rendering as rendering
+        if not (0 <= self._selected_idx < len(self._boxes)):
+            return
+        scene = self._scene_widget.scene
+        name  = f"__box_{self._selected_idx}"
+        if name in self._box_geom_names:
+            scene.remove_geometry(name)
+            self._box_geom_names.remove(name)
+
+        mat = rendering.MaterialRecord()
+        mat.shader     = "unlitLine"
+        mat.line_width = 2.5
+        ls = self._make_box_lineset(self._boxes[self._selected_idx], selected=True)
+        scene.add_geometry(name, ls, mat)
+        self._box_geom_names.append(name)
+        self._scene_widget.force_redraw()
+
+    # ── DearPyGUI sync helpers ────────────────────────────────────────────
+
+    def _sync_list(self):
+        import dearpygui.dearpygui as dpg
+        items = [f"[{b['id']}]  {b['name']}  ({b['category']})"
+                 for b in self._boxes]
+        dpg.configure_item(self._TAG_LIST, items=items)
+        if 0 <= self._selected_idx < len(items):
+            dpg.set_value(self._TAG_LIST, items[self._selected_idx])
+
+    def _sync_edit(self):
+        import dearpygui.dearpygui as dpg
+        if not (0 <= self._selected_idx < len(self._boxes)):
+            return
+        box = self._boxes[self._selected_idx]
+        dpg.set_value(self._TAG_NAME,  box["name"])
+        dpg.set_value(self._TAG_CAT,   box["category"])
+        dpg.set_value(self._TAG_POSX,  float(box["pegboard_pos"][0]))
+        dpg.set_value(self._TAG_POSY,  float(box["pegboard_pos"][1]))
+        dpg.set_value(self._TAG_SIZEW, float(box["size"][0]))
+        dpg.set_value(self._TAG_SIZED, float(box["size"][1]))
+        dpg.set_value(self._TAG_SIZEH, float(box["size"][2]))
+        dpg.set_value(self._TAG_ROTZ,  float(box["rotation_deg"][2]))
+
+    def _read_edit_into_box(self):
+        """Flush DearPyGUI field values into the selected box dict."""
+        import dearpygui.dearpygui as dpg
+        if not (0 <= self._selected_idx < len(self._boxes)):
+            return
+        box = self._boxes[self._selected_idx]
+        box["name"]         = dpg.get_value(self._TAG_NAME)
+        box["category"]     = dpg.get_value(self._TAG_CAT)
+        box["pegboard_pos"] = [round(dpg.get_value(self._TAG_POSX), 4),
+                               round(dpg.get_value(self._TAG_POSY), 4)]
+        box["size"]         = [round(dpg.get_value(self._TAG_SIZEW), 4),
+                               round(dpg.get_value(self._TAG_SIZED), 4),
+                               round(dpg.get_value(self._TAG_SIZEH), 4)]
+        box["rotation_deg"] = [0.0, 0.0,
+                               round(dpg.get_value(self._TAG_ROTZ), 2)]
+
+    # ── Save ──────────────────────────────────────────────────────────────
+
+    def _save(self):
+        import json
+        payload = {"tools": [
+            {
+                "id":           b["id"],
+                "type":         b["name"],
+                "category":     b["category"],
+                "pegboard_pos": b["pegboard_pos"],
+                "size":         b["size"],
+                "rotation_deg": b["rotation_deg"],
+            }
+            for b in self._boxes
+        ]}
+        out = self._LAYOUT_DIR / "tool_layout2.json"
+        out.write_text(json.dumps(payload, indent=2))
+        print(f"[Annotate] Saved {len(self._boxes)} boxes → {out}")
+
+    # ── Main run ──────────────────────────────────────────────────────────
+
+    def run(self):
+        import dearpygui.dearpygui as dpg
+        import open3d.visualization.gui as gui
+        import open3d.visualization.rendering as rendering
+
+        # ── Open3D GUI window ──────────────────────────────────────────
+        app = gui.Application.instance
+        app.initialize()
+
+        o3d_win = app.create_window(
+            "Pegboard Annotator — 3D View", width=1100, height=800)
+
+        scene_widget = gui.SceneWidget()
+        scene_widget.scene = rendering.Open3DScene(o3d_win.renderer)
+        o3d_win.add_child(scene_widget)
+        self._scene_widget = scene_widget
+
+        def _on_layout(ctx):
+            scene_widget.frame = o3d_win.content_rect
+        o3d_win.set_on_layout(_on_layout)
+
+        scene = scene_widget.scene
+        scene.set_background([0.06, 0.06, 0.10, 1.0])
+
+        mat_unlit = rendering.MaterialRecord()
+        mat_unlit.shader = "defaultUnlit"
+        mat_line = rendering.MaterialRecord()
+        mat_line.shader     = "unlitLine"
+        mat_line.line_width = 2.0
+
+        # World origin
+        scene.add_geometry("world_frame",
+            o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.15),
+            mat_unlit)
+        # Pegboard marker axes
+        scene.add_geometry("peg_axes",
+            make_axes_lineset(self.T_world_peg, PEG_MARKER_SIZE * 0.9),
+            mat_line)
+        # Pegboard outline rectangle
+        scene.add_geometry("peg_outline",
+            make_pegboard_lineset(self.T_world_peg),
+            mat_line)
+        # PLY scan mesh
+        mesh_path = self._LAYOUT_DIR / "pegboard_scan.ply"
+        if mesh_path.exists():
+            mesh = o3d.io.read_triangle_mesh(str(mesh_path))
+            mesh.compute_vertex_normals()
+            mat_mesh = rendering.MaterialRecord()
+            mat_mesh.shader = "defaultLit"
+            scene.add_geometry("ply_mesh", mesh, mat_mesh)
+            print(f"[Annotate] Loaded mesh from {mesh_path}")
+        else:
+            print(f"[Annotate] No PLY mesh found at {mesh_path}")
+
+        # Initial box wireframes
+        self._refresh_boxes()
+
+        # Camera: look at pegboard centre
+        cx = (PEG_X_MIN + PEG_X_MAX) / 2.0
+        cy = (PEG_Y_MIN + PEG_Y_MAX) / 2.0
+        look_at = (self.T_world_peg @ np.array([cx, cy, 0.0, 1.0]))[:3]
+        eye     = look_at + self._plane_n * 1.2
+        up      = self.T_world_peg[:3, 1]
+        scene_widget.look_at(look_at, eye, up)
+
+        # Mouse callback — active only in pick mode.
+        # IMPORTANT: must not call scene.add/remove_geometry here (segfault).
+        # Instead mutate self._boxes and set _pending_refresh; the main loop
+        # drains the flag before the next Open3D tick.
+        def _on_mouse(event):
+            if not self._pick_mode:
+                return gui.SceneWidget.EventCallbackResult.IGNORED
+            if (event.type == gui.MouseEvent.Type.BUTTON_DOWN
+                    and event.is_button_down(gui.MouseButton.LEFT)):
+                x = float(event.x - scene_widget.frame.x)
+                y = float(event.y - scene_widget.frame.y)
+                w = float(scene_widget.frame.width)
+                h = float(scene_widget.frame.height)
+                # Reject clicks outside the widget or before the camera is ready
+                if w <= 0 or h <= 0 or x < 0 or y < 0 or x >= w or y >= h:
+                    return gui.SceneWidget.EventCallbackResult.HANDLED
+                cam     = scene_widget.scene.camera
+                near_pt = np.array(cam.unproject(x, y, 0.0, w, h), dtype=float).flatten()
+                far_pt  = np.array(cam.unproject(x, y, 1.0, w, h), dtype=float).flatten()
+                # Guard against NaN (camera not initialised yet)
+                if np.any(np.isnan(near_pt)) or np.any(np.isnan(far_pt)):
+                    return gui.SceneWidget.EventCallbackResult.HANDLED
+                ray_d   = far_pt - near_pt
+                rd_norm = np.linalg.norm(ray_d)
+                if rd_norm < 1e-9:
+                    return gui.SceneWidget.EventCallbackResult.HANDLED
+                ray_d  /= rd_norm
+
+                _, hit = ray_plane_intersect(near_pt, ray_d,
+                                             self._plane_pt, self._plane_n)
+                if hit is not None and not np.any(np.isnan(hit)):
+                    local = (self._T_inv_peg @ np.append(hit, 1.0))[:3]
+                    if np.any(np.isnan(local)):
+                        return gui.SceneWidget.EventCallbackResult.HANDLED
+                    self._boxes.append({
+                        "id":           self._next_id,
+                        "name":         "new_tool",
+                        "category":     "tool",
+                        "pegboard_pos": [round(float(local[0]), 4),
+                                         round(float(local[1]), 4)],
+                        "size":         [0.10, 0.10, 0.025],
+                        "rotation_deg": [0.0, 0.0, 0.0],
+                    })
+                    self._next_id     += 1
+                    self._selected_idx = len(self._boxes) - 1
+                    self._pick_mode    = False
+                    self._pending_refresh = 'all'   # scene update deferred to main loop
+                    # DearPyGUI state updates (thread-safe)
+                    self._sync_list()
+                    self._sync_edit()
+                    dpg.set_value(self._TAG_STATUS,
+                                  f"Placed box at peg ({local[0]:.3f}, {local[1]:.3f})")
+                return gui.SceneWidget.EventCallbackResult.HANDLED
+            return gui.SceneWidget.EventCallbackResult.IGNORED
+
+        scene_widget.set_on_mouse(_on_mouse)
+
+        # ── DearPyGUI panel ────────────────────────────────────────────
+        dpg.create_context()
+        dpg.create_viewport(title="Annotator Controls",
+                            width=430, height=800, x_pos=1110, y_pos=0)
+        dpg.setup_dearpygui()
+        dpg.show_viewport()
+
+        with dpg.window(label="Tool Annotator", tag="main_win",
+                        no_close=True, no_move=True, no_resize=True,
+                        width=425, height=800, pos=[0, 0]):
+
+            # ── Robot ──────────────────────────────────────────────────
+            dpg.add_button(label="Move Robot to Viewing Pose (50 cm from board)",
+                           callback=lambda: self._move_robot_to_view(), width=-1)
+            dpg.add_separator()
+
+            # ── Box list ───────────────────────────────────────────────
+            dpg.add_text("Boxes")
+            dpg.add_listbox(items=[], tag=self._TAG_LIST,
+                            num_items=7, width=-1,
+                            callback=lambda s, a: self._on_list_select(a))
+
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Add",   width=70,
+                               callback=lambda: self._on_add())
+                dpg.add_button(label="Place on Pointcloud", width=175,
+                               callback=lambda: self._on_place_mode())
+                dpg.add_button(label="Remove", width=-1,
+                               callback=lambda: self._on_remove())
+
+            dpg.add_separator()
+
+            # ── Edit panel ─────────────────────────────────────────────
+            dpg.add_text("Edit Selected Box")
+
+            with dpg.table(header_row=False, policy=dpg.mvTable_SizingFixedFit,
+                           borders_innerV=False, pad_outerX=True):
+                dpg.add_table_column(init_width_or_weight=90)
+                dpg.add_table_column(width_stretch=True, init_width_or_weight=1.0)
+
+                def _row(label, widget_fn):
+                    with dpg.table_row():
+                        dpg.add_text(label)
+                        widget_fn()
+
+                def _live():
+                    # Called from dpg callbacks (between Open3D ticks) — safe to
+                    # modify the scene directly for immediate visual feedback.
+                    self._read_edit_into_box()
+                    self._do_refresh_selected_box()
+
+                def _live_meta():
+                    self._read_edit_into_box()
+                    self._sync_list()
+
+                _row("Name",      lambda: dpg.add_input_text(
+                    tag=self._TAG_NAME, default_value="", width=-1,
+                    callback=lambda: _live_meta(), on_enter=False))
+                _row("Category",  lambda: dpg.add_combo(
+                    ["tool", "part"], tag=self._TAG_CAT,
+                    default_value="tool", width=-1,
+                    callback=lambda: _live_meta()))
+                _row("Pos X (m)", lambda: dpg.add_slider_float(
+                    tag=self._TAG_POSX, default_value=0.0, width=-1,
+                    min_value=PEG_X_MIN, max_value=PEG_X_MAX,
+                    format="%.4f", callback=lambda: _live()))
+                _row("Pos Y (m)", lambda: dpg.add_slider_float(
+                    tag=self._TAG_POSY, default_value=0.0, width=-1,
+                    min_value=PEG_Y_MIN, max_value=PEG_Y_MAX,
+                    format="%.4f", callback=lambda: _live()))
+                _row("Width (m)", lambda: dpg.add_slider_float(
+                    tag=self._TAG_SIZEW, default_value=0.10, width=-1,
+                    min_value=0.01, max_value=0.60,
+                    format="%.3f", callback=lambda: _live()))
+                _row("Depth (m)", lambda: dpg.add_slider_float(
+                    tag=self._TAG_SIZED, default_value=0.10, width=-1,
+                    min_value=0.01, max_value=0.60,
+                    format="%.3f", callback=lambda: _live()))
+                _row("Height(m)", lambda: dpg.add_slider_float(
+                    tag=self._TAG_SIZEH, default_value=0.025, width=-1,
+                    min_value=0.005, max_value=0.40,
+                    format="%.3f", callback=lambda: _live()))
+                _row("Rot Z (°)", lambda: dpg.add_slider_float(
+                    tag=self._TAG_ROTZ, default_value=0.0, width=-1,
+                    min_value=-180.0, max_value=180.0,
+                    format="%.1f", callback=lambda: _live()))
+
+            dpg.add_separator()
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Apply",     width=-110,
+                               callback=lambda: self._on_apply())
+                dpg.add_button(label="Save JSON", width=-1,
+                               callback=lambda: self._on_save())
+
+            dpg.add_separator()
+            dpg.add_text("", tag=self._TAG_STATUS, wrap=420)
+
+        dpg.set_primary_window("main_win", True)
+
+        # Initial population
+        self._sync_list()
+        if self._boxes:
+            self._selected_idx = 0
+            self._sync_edit()
+        self._do_refresh_boxes()  # direct call is safe here (not inside a callback)
+
+        # ── Main loop ──────────────────────────────────────────────────
+        # Order matters: run DearPyGUI FIRST so slider/button callbacks can
+        # modify the Open3D scene, then run_one_tick() renders the result in
+        # the same iteration → true live updates with no one-frame lag.
+        # _on_mouse (Open3D callback) still uses the pending flag because it
+        # fires inside run_one_tick(); that flag is drained at the top of the
+        # NEXT iteration, before the next dpg frame.
+        while True:
+            # Drain pending scene updates from the previous Open3D mouse event
+            if self._pending_refresh == 'all':
+                self._pending_refresh = None
+                self._do_refresh_boxes()
+            elif self._pending_refresh == 'selected':
+                self._pending_refresh = None
+                self._do_refresh_selected_box()
+
+            if not dpg.is_dearpygui_running():
+                break
+            dpg.render_dearpygui_frame()   # callbacks modify scene here
+
+            if not app.run_one_tick():     # Open3D renders the updated scene
+                break
+
+        dpg.destroy_context()
+
+    # ── DearPyGUI callbacks ───────────────────────────────────────────────
+
+    def _on_list_select(self, value: str):
+        import dearpygui.dearpygui as dpg
+        items = dpg.get_item_configuration(self._TAG_LIST)["items"]
+        try:
+            self._selected_idx = items.index(value)
+        except ValueError:
+            return
+        self._refresh_boxes()
+        self._sync_edit()
+
+    def _on_add(self):
+        import dearpygui.dearpygui as dpg
+        self._boxes.append({
+            "id":           self._next_id,
+            "name":         "new_tool",
+            "category":     "tool",
+            "pegboard_pos": [round((PEG_X_MIN + PEG_X_MAX) / 2, 3),
+                             round((PEG_Y_MIN + PEG_Y_MAX) / 2, 3)],
+            "size":         [0.10, 0.10, 0.025],
+            "rotation_deg": [0.0, 0.0, 0.0],
+        })
+        self._next_id     += 1
+        self._selected_idx = len(self._boxes) - 1
+        self._refresh_boxes()
+        self._sync_list()
+        self._sync_edit()
+        dpg.set_value(self._TAG_STATUS, "New box added at board centre.")
+
+    def _on_place_mode(self):
+        import dearpygui.dearpygui as dpg
+        self._pick_mode = True
+        dpg.set_value(self._TAG_STATUS,
+                      "PICK MODE — click a point on the 3D mesh to place a box.")
+
+    def _on_remove(self):
+        import dearpygui.dearpygui as dpg
+        if not (0 <= self._selected_idx < len(self._boxes)):
+            return
+        removed = self._boxes.pop(self._selected_idx)
+        self._selected_idx = max(0, self._selected_idx - 1) \
+                             if self._boxes else -1
+        self._refresh_boxes()
+        self._sync_list()
+        self._sync_edit()
+        dpg.set_value(self._TAG_STATUS,
+                      f"Removed box [{removed['id']}] '{removed['name']}'.")
+
+    def _on_apply(self):
+        import dearpygui.dearpygui as dpg
+        self._read_edit_into_box()
+        self._refresh_boxes()
+        self._sync_list()
+        dpg.set_value(self._TAG_STATUS, "Applied — box updated in 3D view.")
+
+    def _on_save(self):
+        import dearpygui.dearpygui as dpg
+        self._read_edit_into_box()
+        self._save()
+        dpg.set_value(self._TAG_STATUS,
+                      f"Saved {len(self._boxes)} boxes to tool_layout2.json")
+
+
+# ---------------------------------------------------------------------------
 
 def main():
     parser = argparse.ArgumentParser(
@@ -646,10 +1244,19 @@ def main():
     parser.add_argument('--visualize',     action='store_true',
                         help='Open a static viewer for the saved scene_layout/ '
                              'files (no device needed)')
+    parser.add_argument('--annotate',      action='store_true',
+                        help='Open the tool-box annotator GUI (no device needed)')
+    parser.add_argument('--robot-ip',      default='192.168.50.70',
+                        help='UR10e IP for the annotate robot-move button '
+                             '(default: 192.168.50.70)')
     args = parser.parse_args()
 
     if args.visualize:
         visualize_scene()
+        return
+
+    if args.annotate:
+        AnnotateApp(robot_ip=args.robot_ip).run()
         return
 
     app = PreScanApp(device_idx=args.device, tsdf_interval=args.tsdf_interval)
