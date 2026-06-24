@@ -10,7 +10,7 @@ Pipeline
   Phase 2 – Show marker 101 (10 cm, pegboard) live in 3-D.
              Press ENTER to lock it; saves T_world10_pegboard to scene_layout/.
 
-  Phase 3 – TSDF fusion while the iPad ray hits the pegboard face.
+  Phase 3 – TSDF fusion of every frame (ray-hit sphere shown when ray hits pegboard).
              Live mesh preview refreshes every --tsdf-interval fused frames.
              Press Q to finish; final mesh saved to scene_layout/pegboard_scan.ply.
 
@@ -28,13 +28,24 @@ Controls (OpenCV window)
 """
 
 import argparse
+import json
+import threading
 from pathlib import Path
 from threading import Event
 
 import cv2
 import numpy as np
 import open3d as o3d
+import open3d.visualization.gui as gui
+import open3d.visualization.rendering as rendering
 from record3d import Record3DStream
+from scipy.spatial.transform import Rotation as ScipyR
+
+try:
+    import dearpygui.dearpygui as dpg
+    _DPG_AVAILABLE = True
+except ImportError:
+    _DPG_AVAILABLE = False
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -216,12 +227,11 @@ class PreScanApp:
         self.T_world10_world: np.ndarray | None = None
         self.T_world10_peg:   np.ndarray | None = None
 
-        self.tsdf = o3d.pipelines.integration.ScalableTSDFVolume(
-            voxel_length=0.004,
-            sdf_trunc=0.02,
-            color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8,
-        )
-        self.fusion_count = 0
+        self.fusion_count  = 0
+        self._scan_dir: Path | None = None   # set when scanning starts
+        self._saved_poses: list    = []       # list of (4,4) extrinsic arrays
+        self._saved_K:    np.ndarray | None = None
+        self._saved_hw:   tuple | None      = None
 
     # ------------------------------------------------------------------
     # Record3D callbacks
@@ -306,23 +316,22 @@ class PreScanApp:
                  marker_offset_top_m=PEG_OFFSET_Y)
         print(f'[Scene] Saved → {path}')
 
-    def _integrate_frame(self, rgb: np.ndarray, depth: np.ndarray,
-                         K: np.ndarray, T_w10_cam: np.ndarray):
+    def _save_frame(self, rgb: np.ndarray, depth: np.ndarray,
+                    K: np.ndarray, T_w10_cam: np.ndarray):
         if depth is None:
             return
         h, w = rgb.shape[:2]
         if depth.shape[:2] != (h, w):
             depth = cv2.resize(depth, (w, h), interpolation=cv2.INTER_NEAREST)
-        rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
-            o3d.geometry.Image(rgb),
-            o3d.geometry.Image(depth.astype(np.float32)),
-            depth_scale=1.0, depth_trunc=3.0,
-            convert_rgb_to_intensity=False)
-        intrinsic = o3d.camera.PinholeCameraIntrinsic(
-            w, h, K[0,0], K[1,1], K[0,2], K[1,2])
-        # Open3D wants world-to-camera in OpenCV convention.
-        extrinsic = _ARKIT_TO_CV_4x4 @ np.linalg.inv(T_w10_cam)
-        self.tsdf.integrate(rgbd, intrinsic, extrinsic)
+
+        idx = self.fusion_count
+        cv2.imwrite(str(self._scan_dir / "color" / f"{idx:06d}.jpg"), rgb[:, :, ::-1],
+                    [cv2.IMWRITE_JPEG_QUALITY, 95])
+        np.save(str(self._scan_dir / "depth" / f"{idx:06d}.npy"),
+                depth.astype(np.float32))
+        self._saved_poses.append(_ARKIT_TO_CV_4x4 @ np.linalg.inv(T_w10_cam))
+        self._saved_K  = K
+        self._saved_hw = (h, w)
         self.fusion_count += 1
 
     # ------------------------------------------------------------------
@@ -370,8 +379,6 @@ class PreScanApp:
         live_surface       = None
         traj_pts: list     = []
         traj_ls            = None
-        tsdf_mesh_geom     = None   # live TSDF mesh shown in 3-D viewer
-        last_tsdf_count    = 0
         first_pose_added   = False
 
         phase = 'await_world'   # → 'await_peg' → 'scanning'
@@ -424,7 +431,14 @@ class PreScanApp:
                 T_arkit_peg = T_wc @ _ARKIT_TO_CV_4x4 @ detections[PEG_MARKER_ID]
                 self.T_world10_peg = self.T_world10_world @ T_arkit_peg
                 phase = 'scanning'
-                print(f'[Phase 2 ✓] Marker {PEG_MARKER_ID} locked. Scanning active.')
+                # Create output directories for this scan session
+                import time as _time
+                self._scan_dir = (SCENE_LAYOUT_DIR
+                                  / f"rgbd_scan_{_time.strftime('%Y%m%d_%H%M%S')}")
+                (self._scan_dir / "color").mkdir(parents=True)
+                (self._scan_dir / "depth").mkdir(parents=True)
+                print(f'[Phase 2 ✓] Marker {PEG_MARKER_ID} locked.'
+                      f' Saving frames to {self._scan_dir}')
 
                 # Replace live preview with locked geometry.
                 self._remove(vis, live_axes)
@@ -537,38 +551,28 @@ class PreScanApp:
                     current_hit_sphere = sphere
                     vis.add_geometry(current_hit_sphere, reset_bounding_box=False)
 
-                    self._integrate_frame(rgb, depth, K, T_w10_cam)
-
-                    # ── Live TSDF mesh update ─────────────────────────────
-                    if (self.fusion_count > 0
-                            and self.fusion_count % self.tsdf_interval == 0
-                            and self.fusion_count != last_tsdf_count):
-                        last_tsdf_count = self.fusion_count
-                        print(f'[TSDF] Updating mesh at {self.fusion_count} frames…')
-                        self._remove(vis, tsdf_mesh_geom)
-                        tsdf_mesh_geom = self.tsdf.extract_triangle_mesh()
-                        tsdf_mesh_geom.compute_vertex_normals()
-                        vis.add_geometry(tsdf_mesh_geom, reset_bounding_box=False)
+                    self._save_frame(rgb, depth, K, T_w10_cam)
 
             vis.poll_events()
             vis.update_renderer()
 
-        # ── Export on quit ───────────────────────────────────────────────
-        if self.fusion_count > 0:
-            print(f'[TSDF] {self.fusion_count} frames – extracting final mesh…')
-            mesh = self.tsdf.extract_triangle_mesh()
-            mesh.compute_vertex_normals()
-            SCENE_LAYOUT_DIR.mkdir(parents=True, exist_ok=True)
-            out_path = SCENE_LAYOUT_DIR / 'pegboard_scan.ply'
-            o3d.io.write_triangle_mesh(str(out_path), mesh)
-            print(f'[TSDF] Mesh saved → {out_path}')
-            vis.destroy_window()
-            cv2.destroyAllWindows()
-            o3d.visualization.draw_geometries(
-                [mesh], window_name='TSDF Reconstruction')
+        # ── Save metadata on quit ────────────────────────────────────────
+        vis.destroy_window()
+        cv2.destroyAllWindows()
+        if self.fusion_count > 0 and self._scan_dir is not None:
+            h, w = self._saved_hw
+            K = self._saved_K
+            import json as _json
+            meta = {"width": w, "height": h,
+                    "fx": K[0,0], "fy": K[1,1],
+                    "cx": K[0,2], "cy": K[1,2]}
+            (self._scan_dir / "meta.json").write_text(_json.dumps(meta, indent=2))
+            np.save(str(self._scan_dir / "poses.npy"),
+                    np.stack(self._saved_poses).astype(np.float64))
+            print(f'[Scan] {self.fusion_count} frames saved → {self._scan_dir}')
+            print(f'[Scan] Run:  python3 offline_fusion.py {self._scan_dir}')
         else:
-            vis.destroy_window()
-            cv2.destroyAllWindows()
+            print('[Scan] No frames recorded.')
 
 
 # ---------------------------------------------------------------------------
@@ -656,9 +660,6 @@ class AnnotateApp:
     # ── init ──────────────────────────────────────────────────────────────
 
     def __init__(self, robot_ip: str = "192.168.50.70"):
-        import json
-        from scipy.spatial.transform import Rotation as ScipyR
-
         self.robot_ip  = robot_ip
         self._ScipyR   = ScipyR
         self._boxes: list[dict] = []
@@ -709,10 +710,10 @@ class AnnotateApp:
             print(f"[Annotate] Loaded {len(self._boxes)} existing boxes "
                   f"from tool_layout.json")
 
-        # Open3D scene reference — set in run()
+        # Open3D scene references — set in run()
+        self._win          = None
         self._scene_widget = None
         self._box_geom_names: list[str] = []
-        self._pending_refresh: str | None = None  # 'all' | 'selected' | None
 
         # DearPyGUI tag constants
         self._TAG_LIST    = "box_listbox"
@@ -763,7 +764,6 @@ class AnnotateApp:
 
     def _move_robot_to_view(self):
         """Send moveL to the viewing pose in a background thread."""
-        import threading
         def _worker():
             try:
                 from rtde_control import RTDEControlInterface
@@ -808,15 +808,15 @@ class AnnotateApp:
         return ls
 
     def _refresh_boxes(self, selected_only: bool = False):
-        """Schedule a scene refresh; safe to call from any callback."""
-        if selected_only and self._pending_refresh != 'all':
-            self._pending_refresh = 'selected'
-        else:
-            self._pending_refresh = 'all'
+        """Post a scene refresh onto the Open3D main-thread queue.
+        Safe to call from any callback (Open3D or DearPyGUI)."""
+        if self._win is None:
+            return
+        fn = self._do_refresh_selected_box if selected_only else self._do_refresh_boxes
+        gui.Application.instance.post_to_main_thread(self._win, fn)
 
     def _do_refresh_boxes(self):
         """Rebuild all box wireframes in the scene (called from main loop)."""
-        import open3d.visualization.rendering as rendering
         scene = self._scene_widget.scene
         for name in self._box_geom_names:
             scene.remove_geometry(name)
@@ -835,7 +835,6 @@ class AnnotateApp:
 
     def _do_refresh_selected_box(self):
         """Update only the selected box wireframe (faster, for slider drags)."""
-        import open3d.visualization.rendering as rendering
         if not (0 <= self._selected_idx < len(self._boxes)):
             return
         scene = self._scene_widget.scene
@@ -855,7 +854,6 @@ class AnnotateApp:
     # ── DearPyGUI sync helpers ────────────────────────────────────────────
 
     def _sync_list(self):
-        import dearpygui.dearpygui as dpg
         items = [f"[{b['id']}]  {b['name']}  ({b['category']})"
                  for b in self._boxes]
         dpg.configure_item(self._TAG_LIST, items=items)
@@ -863,7 +861,6 @@ class AnnotateApp:
             dpg.set_value(self._TAG_LIST, items[self._selected_idx])
 
     def _sync_edit(self):
-        import dearpygui.dearpygui as dpg
         if not (0 <= self._selected_idx < len(self._boxes)):
             return
         box = self._boxes[self._selected_idx]
@@ -878,7 +875,6 @@ class AnnotateApp:
 
     def _read_edit_into_box(self):
         """Flush DearPyGUI field values into the selected box dict."""
-        import dearpygui.dearpygui as dpg
         if not (0 <= self._selected_idx < len(self._boxes)):
             return
         box = self._boxes[self._selected_idx]
@@ -895,7 +891,6 @@ class AnnotateApp:
     # ── Save ──────────────────────────────────────────────────────────────
 
     def _save(self):
-        import json
         payload = {"tools": [
             {
                 "id":           b["id"],
@@ -914,9 +909,6 @@ class AnnotateApp:
     # ── Main run ──────────────────────────────────────────────────────────
 
     def run(self):
-        import dearpygui.dearpygui as dpg
-        import open3d.visualization.gui as gui
-        import open3d.visualization.rendering as rendering
 
         # ── Open3D GUI window ──────────────────────────────────────────
         app = gui.Application.instance
@@ -924,6 +916,7 @@ class AnnotateApp:
 
         o3d_win = app.create_window(
             "Pegboard Annotator — 3D View", width=1100, height=800)
+        self._win = o3d_win
 
         scene_widget = gui.SceneWidget()
         scene_widget.scene = rendering.Open3DScene(o3d_win.renderer)
@@ -991,45 +984,68 @@ class AnnotateApp:
                 y = float(event.y - scene_widget.frame.y)
                 w = float(scene_widget.frame.width)
                 h = float(scene_widget.frame.height)
-                # Reject clicks outside the widget or before the camera is ready
+                # Reject clicks outside the widget
                 if w <= 0 or h <= 0 or x < 0 or y < 0 or x >= w or y >= h:
                     return gui.SceneWidget.EventCallbackResult.HANDLED
-                cam     = scene_widget.scene.camera
+                cam = scene_widget.scene.camera
+                # Camera position from inverse view matrix (avoids infinite far plane)
+                view_m  = np.array(cam.get_view_matrix(), dtype=float)
+                cam_pos = np.linalg.inv(view_m)[:3, 3]
                 near_pt = np.array(cam.unproject(x, y, 0.0, w, h), dtype=float).flatten()
-                far_pt  = np.array(cam.unproject(x, y, 1.0, w, h), dtype=float).flatten()
-                # Guard against NaN (camera not initialised yet)
-                if np.any(np.isnan(near_pt)) or np.any(np.isnan(far_pt)):
+                if not np.all(np.isfinite(cam_pos)) or not np.all(np.isfinite(near_pt)):
                     return gui.SceneWidget.EventCallbackResult.HANDLED
-                ray_d   = far_pt - near_pt
+                ray_d   = near_pt - cam_pos
                 rd_norm = np.linalg.norm(ray_d)
-                if rd_norm < 1e-9:
+                if not np.isfinite(rd_norm) or rd_norm < 1e-9:
                     return gui.SceneWidget.EventCallbackResult.HANDLED
                 ray_d  /= rd_norm
 
-                _, hit = ray_plane_intersect(near_pt, ray_d,
+                t, hit = ray_plane_intersect(cam_pos, ray_d,
                                              self._plane_pt, self._plane_n)
                 if hit is not None and not np.any(np.isnan(hit)):
                     local = (self._T_inv_peg @ np.append(hit, 1.0))[:3]
                     if np.any(np.isnan(local)):
                         return gui.SceneWidget.EventCallbackResult.HANDLED
-                    self._boxes.append({
-                        "id":           self._next_id,
-                        "name":         "new_tool",
-                        "category":     "tool",
-                        "pegboard_pos": [round(float(local[0]), 4),
-                                         round(float(local[1]), 4)],
-                        "size":         [0.10, 0.10, 0.025],
-                        "rotation_deg": [0.0, 0.0, 0.0],
-                    })
-                    self._next_id     += 1
-                    self._selected_idx = len(self._boxes) - 1
-                    self._pick_mode    = False
-                    self._pending_refresh = 'all'   # scene update deferred to main loop
-                    # DearPyGUI state updates (thread-safe)
+
+                    # Show a small sphere at the hit point, removed on next tick
+                    hit_pt = hit.copy()
+                    def _place_sphere():
+                        s = o3d.geometry.TriangleMesh.create_sphere(radius=0.010)
+                        s.translate(hit_pt)
+                        s.paint_uniform_color([1.0, 0.6, 0.1])
+                        s.compute_vertex_normals()
+                        mat_s = rendering.MaterialRecord()
+                        mat_s.shader = "defaultLit"
+                        scene_widget.scene.remove_geometry("__hit_sphere")
+                        scene_widget.scene.add_geometry("__hit_sphere", s, mat_s)
+                        scene_widget.force_redraw()
+                    gui.Application.instance.post_to_main_thread(o3d_win, _place_sphere)
+
+                    # Move selected box, or create a new one if nothing is selected
+                    print(f"[pick] selected_idx={self._selected_idx}  n_boxes={len(self._boxes)}")
+                    if 0 <= self._selected_idx < len(self._boxes):
+                        self._boxes[self._selected_idx]["pegboard_pos"] = [
+                            round(float(local[0]), 4),
+                            round(float(local[1]), 4),
+                        ]
+                    else:
+                        self._boxes.append({
+                            "id":           self._next_id,
+                            "name":         "new_tool",
+                            "category":     "tool",
+                            "pegboard_pos": [round(float(local[0]), 4),
+                                             round(float(local[1]), 4)],
+                            "size":         [0.10, 0.10, 0.025],
+                            "rotation_deg": [0.0, 0.0, 0.0],
+                        })
+                        self._next_id     += 1
+                        self._selected_idx = len(self._boxes) - 1
+                    self._pick_mode = False
+                    self._refresh_boxes()
                     self._sync_list()
                     self._sync_edit()
                     dpg.set_value(self._TAG_STATUS,
-                                  f"Placed box at peg ({local[0]:.3f}, {local[1]:.3f})")
+                                  f"Moved to peg ({local[0]:.3f}, {local[1]:.3f})")
                 return gui.SceneWidget.EventCallbackResult.HANDLED
             return gui.SceneWidget.EventCallbackResult.IGNORED
 
@@ -1081,10 +1097,8 @@ class AnnotateApp:
                         widget_fn()
 
                 def _live():
-                    # Called from dpg callbacks (between Open3D ticks) — safe to
-                    # modify the scene directly for immediate visual feedback.
                     self._read_edit_into_box()
-                    self._do_refresh_selected_box()
+                    self._refresh_boxes(selected_only=True)
 
                 def _live_meta():
                     self._read_edit_into_box()
@@ -1142,26 +1156,13 @@ class AnnotateApp:
         self._do_refresh_boxes()  # direct call is safe here (not inside a callback)
 
         # ── Main loop ──────────────────────────────────────────────────
-        # Order matters: run DearPyGUI FIRST so slider/button callbacks can
-        # modify the Open3D scene, then run_one_tick() renders the result in
-        # the same iteration → true live updates with no one-frame lag.
-        # _on_mouse (Open3D callback) still uses the pending flag because it
-        # fires inside run_one_tick(); that flag is drained at the top of the
-        # NEXT iteration, before the next dpg frame.
+        # All scene updates go through _refresh_boxes() → post_to_main_thread,
+        # so they execute inside run_one_tick() at a renderer-safe point.
         while True:
-            # Drain pending scene updates from the previous Open3D mouse event
-            if self._pending_refresh == 'all':
-                self._pending_refresh = None
-                self._do_refresh_boxes()
-            elif self._pending_refresh == 'selected':
-                self._pending_refresh = None
-                self._do_refresh_selected_box()
-
             if not dpg.is_dearpygui_running():
                 break
-            dpg.render_dearpygui_frame()   # callbacks modify scene here
-
-            if not app.run_one_tick():     # Open3D renders the updated scene
+            dpg.render_dearpygui_frame()
+            if not app.run_one_tick():
                 break
 
         dpg.destroy_context()
@@ -1169,7 +1170,6 @@ class AnnotateApp:
     # ── DearPyGUI callbacks ───────────────────────────────────────────────
 
     def _on_list_select(self, value: str):
-        import dearpygui.dearpygui as dpg
         items = dpg.get_item_configuration(self._TAG_LIST)["items"]
         try:
             self._selected_idx = items.index(value)
@@ -1179,7 +1179,6 @@ class AnnotateApp:
         self._sync_edit()
 
     def _on_add(self):
-        import dearpygui.dearpygui as dpg
         self._boxes.append({
             "id":           self._next_id,
             "name":         "new_tool",
@@ -1197,13 +1196,11 @@ class AnnotateApp:
         dpg.set_value(self._TAG_STATUS, "New box added at board centre.")
 
     def _on_place_mode(self):
-        import dearpygui.dearpygui as dpg
         self._pick_mode = True
         dpg.set_value(self._TAG_STATUS,
-                      "PICK MODE — click a point on the 3D mesh to place a box.")
+                      "PICK MODE — click on the pegboard to move the selected box there.")
 
     def _on_remove(self):
-        import dearpygui.dearpygui as dpg
         if not (0 <= self._selected_idx < len(self._boxes)):
             return
         removed = self._boxes.pop(self._selected_idx)
@@ -1216,18 +1213,68 @@ class AnnotateApp:
                       f"Removed box [{removed['id']}] '{removed['name']}'.")
 
     def _on_apply(self):
-        import dearpygui.dearpygui as dpg
         self._read_edit_into_box()
         self._refresh_boxes()
         self._sync_list()
         dpg.set_value(self._TAG_STATUS, "Applied — box updated in 3D view.")
 
     def _on_save(self):
-        import dearpygui.dearpygui as dpg
         self._read_edit_into_box()
         self._save()
         dpg.set_value(self._TAG_STATUS,
                       f"Saved {len(self._boxes)} boxes to tool_layout2.json")
+
+
+# ---------------------------------------------------------------------------
+
+def fuse_offline(scan_dir: Path, voxel_length: float = 0.004,
+                 depth_trunc: float = 3.0):
+    """Offline TSDF fusion from a directory saved by PreScanApp."""
+    meta = json.loads((scan_dir / "meta.json").read_text())
+    poses = np.load(str(scan_dir / "poses.npy"))
+
+    intrinsic = o3d.camera.PinholeCameraIntrinsic(
+        width=meta["width"], height=meta["height"],
+        fx=meta["fx"], fy=meta["fy"],
+        cx=meta["cx"], cy=meta["cy"])
+
+    color_files = sorted((scan_dir / "color").glob("*.jpg"))
+    depth_files = sorted((scan_dir / "depth").glob("*.npy"))
+
+    if len(color_files) != len(depth_files) or len(color_files) != len(poses):
+        raise ValueError(
+            f"Frame count mismatch: {len(color_files)} color, "
+            f"{len(depth_files)} depth, {len(poses)} poses")
+
+    tsdf = o3d.pipelines.integration.ScalableTSDFVolume(
+        voxel_length=voxel_length,
+        sdf_trunc=voxel_length * 5,
+        color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8)
+
+    n = len(color_files)
+    print(f"[fuse] Integrating {n} frames  (voxel={voxel_length*100:.1f} cm)…")
+    for i, (c_file, d_file, extrinsic) in enumerate(
+            zip(color_files, depth_files, poses)):
+        color     = o3d.io.read_image(str(c_file))
+        depth_arr = np.load(str(d_file)).astype(np.float32)
+        depth_img = o3d.geometry.Image(depth_arr)
+        rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
+            color, depth_img,
+            depth_scale=1.0, depth_trunc=depth_trunc,
+            convert_rgb_to_intensity=False)
+        tsdf.integrate(rgbd, intrinsic, extrinsic)
+        if (i + 1) % 100 == 0 or i == n - 1:
+            print(f"  {i+1}/{n}")
+
+    print("[fuse] Extracting mesh…")
+    mesh = tsdf.extract_triangle_mesh()
+    mesh.compute_vertex_normals()
+
+    out = SCENE_LAYOUT_DIR / "pegboard_scan.ply"
+    SCENE_LAYOUT_DIR.mkdir(parents=True, exist_ok=True)
+    o3d.io.write_triangle_mesh(str(out), mesh)
+    print(f"[fuse] Saved → {out}")
+    o3d.visualization.draw_geometries([mesh], window_name="TSDF Reconstruction")
 
 
 # ---------------------------------------------------------------------------
@@ -1249,6 +1296,12 @@ def main():
     parser.add_argument('--robot-ip',      default='192.168.50.70',
                         help='UR10e IP for the annotate robot-move button '
                              '(default: 192.168.50.70)')
+    parser.add_argument('--fuse',          type=Path, metavar='SCAN_DIR',
+                        help='Offline TSDF fusion of a saved scan directory')
+    parser.add_argument('--voxel',         type=float, default=0.004,
+                        help='Voxel size in metres for --fuse (default: 0.004)')
+    parser.add_argument('--depth-trunc',   type=float, default=3.0,
+                        help='Depth truncation in metres for --fuse (default: 3.0)')
     args = parser.parse_args()
 
     if args.visualize:
@@ -1257,6 +1310,10 @@ def main():
 
     if args.annotate:
         AnnotateApp(robot_ip=args.robot_ip).run()
+        return
+
+    if args.fuse:
+        fuse_offline(args.fuse, voxel_length=args.voxel, depth_trunc=args.depth_trunc)
         return
 
     app = PreScanApp(device_idx=args.device, tsdf_interval=args.tsdf_interval)
