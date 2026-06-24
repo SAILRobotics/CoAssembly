@@ -698,14 +698,18 @@ class AnnotateApp:
         if tl_path.exists():
             raw = json.loads(tl_path.read_text())
             for t in raw.get("tools", []):
-                self._boxes.append({
+                entry = {
                     "id":           int(t["id"]),
                     "name":         str(t.get("type", "tool")),
                     "category":     str(t.get("category", "tool")),
                     "pegboard_pos": list(t.get("pegboard_pos", [0.0, 0.0])),
                     "size":         list(t.get("size",         [0.10, 0.10, 0.025])),
                     "rotation_deg": list(t.get("rotation_deg", [0.0,  0.0,  0.0])),
-                })
+                }
+                for gk in ("grasp_joints", "grasp_tcp_world", "approach_tcp_world"):
+                    if gk in t:
+                        entry[gk] = t[gk]
+                self._boxes.append(entry)
                 self._next_id = max(self._next_id, int(t["id"]) + 1)
             print(f"[Annotate] Loaded {len(self._boxes)} existing boxes "
                   f"from tool_layout.json")
@@ -725,7 +729,25 @@ class AnnotateApp:
         self._TAG_SIZED   = "edit_sizeD"
         self._TAG_SIZEH   = "edit_sizeH"
         self._TAG_ROTZ    = "edit_rotZ"
-        self._TAG_STATUS  = "status_text"
+        self._TAG_STATUS   = "status_text"
+        # robot-control tags
+        self._TAG_FD_BTN   = "freedrive_btn"
+        self._TAG_JOG_X    = "jog_x"
+        self._TAG_JOG_Y    = "jog_y"
+        self._TAG_JOG_Z    = "jog_z"
+        self._TAG_GRIP_BTN = "gripper_btn"
+        self._TAG_JOINT_TXT= "joint_txt"
+        self._TAG_TCP_TXT  = "tcp_txt"
+
+        # robot runtime state
+        self._rtde_ctrl       = None
+        self._rtde_recv       = None
+        self._gripper         = None
+        self._freedrive       = False
+        self._gripper_closed  = False
+        self._joint_q         = [0.0] * 6
+        self._tcp_world_pos   = np.zeros(3)
+        self._tcp_world_T     = np.eye(4)
 
     # ── Robot ─────────────────────────────────────────────────────────────
 
@@ -778,6 +800,160 @@ class AnnotateApp:
             except Exception as exc:
                 print(f"[Robot] Move failed: {exc}")
         threading.Thread(target=_worker, daemon=True).start()
+
+    def _get_rtde_ctrl(self):
+        if self._rtde_ctrl is None:
+            from rtde_control import RTDEControlInterface
+            print(f"[Robot] Connecting RTDE control → {self.robot_ip}")
+            self._rtde_ctrl = RTDEControlInterface(self.robot_ip)
+        return self._rtde_ctrl
+
+    def _get_rtde_recv(self):
+        if self._rtde_recv is None:
+            from rtde_receive import RTDEReceiveInterface
+            self._rtde_recv = RTDEReceiveInterface(self.robot_ip)
+        return self._rtde_recv
+
+    def _get_gripper(self):
+        if self._gripper is None:
+            import sys
+            sys.path.insert(0, str(Path(__file__).parent / "robot_controller"))
+            from robotiq_gripper import RobotiqGripper
+            print(f"[Gripper] Connecting → {self.robot_ip}:63352")
+            g = RobotiqGripper()
+            g.connect(self.robot_ip, 63352)
+            g.activate()
+            self._gripper = g
+            print("[Gripper] Ready.")
+        return self._gripper
+
+    def _compute_tcp_from_peg(self, peg_x: float, peg_y: float,
+                               dist: float) -> list[float]:
+        """TCP pose facing the pegboard at pegboard-local (peg_x, peg_y) + dist offset."""
+        pt_world = (self.T_world_peg @ np.array([peg_x, peg_y, 0.0, 1.0]))[:3]
+        normal   = self._plane_n / (np.linalg.norm(self._plane_n) + 1e-9)
+        tcp_pos  = pt_world + dist * normal
+        z_tcp = -normal
+        y_tmp = self.T_world_peg[:3, 1]
+        y_tcp = y_tmp - np.dot(y_tmp, z_tcp) * z_tcp
+        if np.linalg.norm(y_tcp) < 1e-6:
+            y_tcp = np.array([0.0, 0.0, 1.0])
+        y_tcp /= np.linalg.norm(y_tcp)
+        x_tcp  = np.cross(y_tcp, z_tcp)
+        x_tcp /= np.linalg.norm(x_tcp)
+        y_tcp   = np.cross(z_tcp, x_tcp)
+        T = np.eye(4)
+        T[:3, :3] = np.column_stack([x_tcp, y_tcp, z_tcp])
+        T[:3, 3]  = tcp_pos
+        T_base = np.linalg.inv(self.T_world_base) @ T
+        return T_base[:3, 3].tolist() + \
+               ScipyR.from_matrix(T_base[:3, :3]).as_rotvec().tolist()
+
+    def _on_freedrive_toggle(self):
+        def _worker():
+            try:
+                ctrl = self._get_rtde_ctrl()
+                if not self._freedrive:
+                    ctrl.freedriveMode()
+                    self._freedrive = True
+                    dpg.configure_item(self._TAG_FD_BTN,
+                                       label="🟢  FREE DRIVE: ON  (click to lock)")
+                    dpg.bind_item_theme(self._TAG_FD_BTN, self._theme_green)
+                else:
+                    ctrl.endFreedriveMode()
+                    self._freedrive = False
+                    dpg.configure_item(self._TAG_FD_BTN,
+                                       label="🔴  FREE DRIVE: OFF  (click to enable)")
+                    dpg.bind_item_theme(self._TAG_FD_BTN, self._theme_red)
+            except Exception as e:
+                print(f"[Freedrive] {e}")
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _jog_send(self):
+        if self._freedrive:
+            dpg.set_value(self._TAG_STATUS, "Exit freedrive first before jogging.")
+            return
+        peg_x = dpg.get_value(self._TAG_JOG_X)
+        peg_y = dpg.get_value(self._TAG_JOG_Y)
+        dist  = dpg.get_value(self._TAG_JOG_Z)
+        pose  = self._compute_tcp_from_peg(peg_x, peg_y, dist)
+        def _worker():
+            try:
+                ctrl = self._get_rtde_ctrl()
+                ctrl.moveL(pose, speed=0.05, acceleration=0.3)
+            except Exception as e:
+                print(f"[Jog] {e}")
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_gripper_toggle(self):
+        def _worker():
+            try:
+                g = self._get_gripper()
+                if self._gripper_closed:
+                    g.move_and_wait_for_pos(g.get_open_position(), 255, 10)
+                    self._gripper_closed = False
+                    dpg.configure_item(self._TAG_GRIP_BTN,
+                                       label="🟢  GRIPPER: OPEN  (click to close)")
+                    dpg.bind_item_theme(self._TAG_GRIP_BTN, self._theme_green)
+                else:
+                    g.move_and_wait_for_pos(g.get_closed_position(), 255, 10)
+                    self._gripper_closed = True
+                    dpg.configure_item(self._TAG_GRIP_BTN,
+                                       label="🔴  GRIPPER: CLOSED  (click to open)")
+                    dpg.bind_item_theme(self._TAG_GRIP_BTN, self._theme_red)
+            except Exception as e:
+                print(f"[Gripper] {e}")
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_save_grasp(self):
+        if not (0 <= self._selected_idx < len(self._boxes)):
+            dpg.set_value(self._TAG_STATUS, "Select a box first before saving a grasp.")
+            return
+        q   = list(self._joint_q)
+        T_g = self._tcp_world_T.copy()
+        normal = self._plane_n / (np.linalg.norm(self._plane_n) + 1e-9)
+        T_a    = T_g.copy()
+        T_a[:3, 3] = T_g[:3, 3] + 0.10 * normal   # 10 cm approach offset
+
+        def _T_to_list(T):
+            return (T[:3, 3].tolist()
+                    + ScipyR.from_matrix(T[:3, :3]).as_rotvec().tolist())
+
+        box = self._boxes[self._selected_idx]
+        box["grasp_joints"]       = [round(v, 6) for v in q]
+        box["grasp_tcp_world"]    = _T_to_list(T_g)
+        box["approach_tcp_world"] = _T_to_list(T_a)
+        name = box.get("name", "?")
+        dpg.set_value(self._TAG_STATUS,
+                      f"Grasp saved for '{name}' — click Save JSON to persist.")
+
+    def _start_robot_poll(self):
+        """Background thread: update joint angles + TCP display every 200 ms."""
+        def _poll():
+            while True:
+                try:
+                    recv = self._get_rtde_recv()
+                    q    = recv.getActualQ()           # radians
+                    tcp  = recv.getActualTCPPose()     # [x,y,z,rx,ry,rz] in base
+                    self._joint_q = q
+                    T_base = np.eye(4)
+                    T_base[:3, :3] = ScipyR.from_rotvec(tcp[3:]).as_matrix()
+                    T_base[:3, 3]  = tcp[:3]
+                    self._tcp_world_T   = self.T_world_base @ T_base
+                    self._tcp_world_pos = self._tcp_world_T[:3, 3]
+                    q_deg = [np.degrees(v) for v in q]
+                    dpg.set_value(self._TAG_JOINT_TXT,
+                        f"J1:{q_deg[0]:6.1f}°  J2:{q_deg[1]:6.1f}°  "
+                        f"J3:{q_deg[2]:6.1f}°\n"
+                        f"J4:{q_deg[3]:6.1f}°  J5:{q_deg[4]:6.1f}°  "
+                        f"J6:{q_deg[5]:6.1f}°")
+                    p = self._tcp_world_pos
+                    dpg.set_value(self._TAG_TCP_TXT,
+                        f"TCP world: ({p[0]:.3f}, {p[1]:.3f}, {p[2]:.3f}) m")
+                except Exception:
+                    pass
+                import time as _t; _t.sleep(0.2)
+        threading.Thread(target=_poll, daemon=True).start()
 
     # ── Geometry helpers ──────────────────────────────────────────────────
 
@@ -891,8 +1067,8 @@ class AnnotateApp:
     # ── Save ──────────────────────────────────────────────────────────────
 
     def _save(self):
-        payload = {"tools": [
-            {
+        def _entry(b):
+            e = {
                 "id":           b["id"],
                 "type":         b["name"],
                 "category":     b["category"],
@@ -900,8 +1076,13 @@ class AnnotateApp:
                 "size":         b["size"],
                 "rotation_deg": b["rotation_deg"],
             }
-            for b in self._boxes
-        ]}
+            if "grasp_joints" in b:
+                e["grasp_joints"]       = b["grasp_joints"]
+                e["grasp_tcp_world"]    = b["grasp_tcp_world"]
+                e["approach_tcp_world"] = b["approach_tcp_world"]
+            return e
+
+        payload = {"tools": [_entry(b) for b in self._boxes]}
         out = self._LAYOUT_DIR / "tool_layout2.json"
         out.write_text(json.dumps(payload, indent=2))
         print(f"[Annotate] Saved {len(self._boxes)} boxes → {out}")
@@ -1054,13 +1235,25 @@ class AnnotateApp:
         # ── DearPyGUI panel ────────────────────────────────────────────
         dpg.create_context()
         dpg.create_viewport(title="Annotator Controls",
-                            width=430, height=800, x_pos=1110, y_pos=0)
+                            width=450, height=1100, x_pos=1110, y_pos=0)
         dpg.setup_dearpygui()
         dpg.show_viewport()
 
+        # ── Button colour themes ────────────────────────────────────────
+        with dpg.theme() as self._theme_green:
+            with dpg.theme_component(dpg.mvButton):
+                dpg.add_theme_color(dpg.mvThemeCol_Button,        (30, 140, 60))
+                dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered,  (40, 170, 75))
+                dpg.add_theme_color(dpg.mvThemeCol_ButtonActive,   (20, 110, 45))
+        with dpg.theme() as self._theme_red:
+            with dpg.theme_component(dpg.mvButton):
+                dpg.add_theme_color(dpg.mvThemeCol_Button,        (160, 40, 40))
+                dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered,  (190, 55, 55))
+                dpg.add_theme_color(dpg.mvThemeCol_ButtonActive,   (130, 30, 30))
+
         with dpg.window(label="Tool Annotator", tag="main_win",
                         no_close=True, no_move=True, no_resize=True,
-                        width=425, height=800, pos=[0, 0]):
+                        width=445, height=1100, pos=[0, 0]):
 
             # ── Robot ──────────────────────────────────────────────────
             dpg.add_button(label="Move Robot to Viewing Pose (50 cm from board)",
@@ -1144,7 +1337,54 @@ class AnnotateApp:
                                callback=lambda: self._on_save())
 
             dpg.add_separator()
-            dpg.add_text("", tag=self._TAG_STATUS, wrap=420)
+            dpg.add_text("", tag=self._TAG_STATUS, wrap=440)
+
+            # ── Robot Control ─────────────────────────────────────────
+            dpg.add_separator()
+            dpg.add_text("Robot Control")
+
+            dpg.add_button(tag=self._TAG_FD_BTN, width=-1,
+                           label="🔴  FREE DRIVE: OFF  (click to enable)",
+                           callback=lambda: self._on_freedrive_toggle())
+            dpg.bind_item_theme(self._TAG_FD_BTN, self._theme_red)
+
+            dpg.add_separator()
+            dpg.add_text("TCP Jog — pegboard frame")
+            with dpg.table(header_row=False, policy=dpg.mvTable_SizingFixedFit,
+                           borders_innerV=False, pad_outerX=True):
+                dpg.add_table_column(init_width_or_weight=75)
+                dpg.add_table_column(width_stretch=True, init_width_or_weight=1.0)
+
+                def _jrow(label, widget_fn):
+                    with dpg.table_row():
+                        dpg.add_text(label)
+                        widget_fn()
+
+                _jrow("X (m)", lambda: dpg.add_slider_float(
+                    tag=self._TAG_JOG_X, default_value=0.0, width=-1,
+                    min_value=PEG_X_MIN, max_value=PEG_X_MAX,
+                    format="%.3f", callback=lambda: self._jog_send()))
+                _jrow("Y (m)", lambda: dpg.add_slider_float(
+                    tag=self._TAG_JOG_Y, default_value=0.0, width=-1,
+                    min_value=PEG_Y_MIN, max_value=PEG_Y_MAX,
+                    format="%.3f", callback=lambda: self._jog_send()))
+                _jrow("Dist (m)", lambda: dpg.add_slider_float(
+                    tag=self._TAG_JOG_Z, default_value=0.40, width=-1,
+                    min_value=0.10, max_value=0.70,
+                    format="%.3f", callback=lambda: self._jog_send()))
+
+            dpg.add_separator()
+            dpg.add_button(tag=self._TAG_GRIP_BTN, width=-1,
+                           label="🟢  GRIPPER: OPEN  (click to close)",
+                           callback=lambda: self._on_gripper_toggle())
+            dpg.bind_item_theme(self._TAG_GRIP_BTN, self._theme_green)
+
+            dpg.add_separator()
+            dpg.add_text("Joint Angles")
+            dpg.add_text("J: —  —  —  —  —  —", tag=self._TAG_JOINT_TXT)
+            dpg.add_text("TCP world: —", tag=self._TAG_TCP_TXT)
+            dpg.add_button(label="Save Grasp Pose", width=-1,
+                           callback=lambda: self._on_save_grasp())
 
         dpg.set_primary_window("main_win", True)
 
@@ -1154,6 +1394,7 @@ class AnnotateApp:
             self._selected_idx = 0
             self._sync_edit()
         self._do_refresh_boxes()  # direct call is safe here (not inside a callback)
+        self._start_robot_poll()
 
         # ── Main loop ──────────────────────────────────────────────────
         # All scene updates go through _refresh_boxes() → post_to_main_thread,
