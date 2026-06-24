@@ -41,11 +41,11 @@ import zmq
 from scipy.spatial.transform import Rotation as ScipyR
 
 try:
-    from pybullet_scene import PyBulletScene, RobotController, SceneOverlay
+    from pybullet_ik import IKScene as PyBulletScene, RobotController
     _PYBULLET_AVAILABLE = True
 except ImportError:
     _PYBULLET_AVAILABLE = False
-    print("[main_hand_m100_w_sim] pybullet_scene import failed — 3-D sim disabled.")
+    print("[main_with_robot] pybullet_ik import failed — IK/FK disabled.")
 
 _FILE_DIR = Path(__file__).resolve().parent
 if str(_FILE_DIR) not in sys.path:
@@ -621,15 +621,22 @@ class _SyntheticObjectPublisher:
         self._pub.connect(f"tcp://{ip}:{port}")
         time.sleep(0.2)
         self._objects: list[_SyntheticObject] = []
+        self._names:   dict[str, _SyntheticObject] = {}
         print(f"[SynthObjects] Connected to tcp://{ip}:{port}")
 
     def add(self, centroid_o3d, width, depth, height,
-            color=None, yaw_deg=0.0, R_o3d=None) -> "_SyntheticObject":
+            color=None, yaw_deg=0.0, R_o3d=None,
+            name: str | None = None) -> "_SyntheticObject":
         obj = _SyntheticObject(len(self._objects), centroid_o3d,
                                width, depth, height,
                                yaw_deg=yaw_deg, R_o3d=R_o3d, color=color)
         self._objects.append(obj)
+        if name is not None:
+            self._names[name] = obj
         return obj
+
+    def get(self, name: str) -> "_SyntheticObject | None":
+        return self._names.get(name)
 
     def publish(self):
         payload = {"objects": [o.to_unity_dict() for o in self._objects]}
@@ -1142,6 +1149,10 @@ class _SceneVis:
         self.vis.add_geometry(self._pegboard_lineset)
         self._pegboard_T = self._hidden_T()
 
+        # Reachability arrows (shown for 5 s after pressing R, then hidden)
+        self._reach_lineset = o3d.geometry.LineSet()
+        self.vis.add_geometry(self._reach_lineset)
+
         # Tracking origin (coordinate frame + sphere)
         self._tracking_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.10)
         self._tracking_frame.transform(self._hidden_T())
@@ -1394,6 +1405,31 @@ class _SceneVis:
             self.vis.update_geometry(mesh)
             self._robot_mesh_Ts[i] = T_new
 
+    def update_reachability_arrows(self, points: np.ndarray, flags: np.ndarray,
+                                    board_normal: np.ndarray, arrow_len: float = 0.04):
+        """Draw one arrow per grid point along board_normal: green=reachable, red=not.
+        Call hide_reachability_arrows() to clear them."""
+        n = len(points)
+        if n == 0:
+            return
+        norm = board_normal / (np.linalg.norm(board_normal) + 1e-9)
+        tips  = points + norm * arrow_len
+        pts   = np.empty((2 * n, 3), dtype=np.float64)
+        pts[0::2] = points
+        pts[1::2] = tips
+        lines  = [[2*i, 2*i+1] for i in range(n)]
+        colors = [[0.1, 0.9, 0.1] if f else [0.9, 0.1, 0.1] for f in flags]
+        self._reach_lineset.points = o3d.utility.Vector3dVector(pts)
+        self._reach_lineset.lines  = o3d.utility.Vector2iVector(lines)
+        self._reach_lineset.colors = o3d.utility.Vector3dVector(colors)
+        self.vis.update_geometry(self._reach_lineset)
+
+    def hide_reachability_arrows(self):
+        self._reach_lineset.points = o3d.utility.Vector3dVector(np.zeros((0, 3)))
+        self._reach_lineset.lines  = o3d.utility.Vector2iVector(np.zeros((0, 2), dtype=int))
+        self._reach_lineset.colors = o3d.utility.Vector3dVector(np.zeros((0, 3)))
+        self.vis.update_geometry(self._reach_lineset)
+
     def update_hands(self, left_pts: np.ndarray | None, right_pts: np.ndarray | None):
         self._set_hand(self._pcd_l, self._lines_l, left_pts)
         self._set_hand(self._pcd_r, self._lines_r, right_pts)
@@ -1422,9 +1458,9 @@ class MainScene:
     _RELOCK_COOLDOWN = 2.0
 
     PEGBOARD_CUBES = [
-        {"offset": [ 0.10, 0.00, 0.05], "color": [1.0, 0.6, 0.2]},
-        {"offset": [ 0.00, 0.10, 0.05], "color": [0.8, 0.2, 0.8]},
-        {"offset": [-0.10, 0.00, 0.05], "color": [0.2, 1.0, 0.9]},
+        {"offset": [ 0.10, 0.00, 0.05], "color": [1.0, 0.6, 0.2], "name": "pegboard_cube_0"},
+        {"offset": [ 0.00, 0.10, 0.05], "color": [0.8, 0.2, 0.8], "name": "pegboard_cube_1"},
+        {"offset": [-0.10, 0.00, 0.05], "color": [0.2, 1.0, 0.9], "name": "pegboard_cube_2"},
     ]
 
     def __init__(self, quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
@@ -1435,8 +1471,7 @@ class MainScene:
                  board_marker_b: int = cfg.BOARD_MARKER_B_ID,
                  board_marker_size_m: float | None = None,
                  use_calibrated_robot_base: bool = cfg.USE_CALIBRATED_ROBOT_BASE_POSE,
-                 load_pegboard_from_file: bool = cfg.LOAD_PEGBOARD_FROM_FILE,
-                 pybullet_gui: bool = cfg.PYBULLET_GUI):
+                 load_pegboard_from_file: bool = cfg.LOAD_PEGBOARD_FROM_FILE):
 
         self.quest_ip                 = quest_ip
         self.anchor_marker_id         = anchor_marker_id
@@ -1455,7 +1490,7 @@ class MainScene:
         }
         self._sim_q = np.deg2rad(self._SIM_Q_DEG)
 
-        # ── PyBullet scene ────────────────────────────────────────────────────
+        # ── PyBullet IK scene (headless) ──────────────────────────────────────
         _calib_dir = _FILE_DIR / "calibration_data" / "results"
         self.pb_scene: "PyBulletScene | None" = None
         if _PYBULLET_AVAILABLE:
@@ -1463,52 +1498,30 @@ class MainScene:
                 if use_calibrated_robot_base and _calib_dir.exists():
                     try:
                         _p1 = np.load(_calib_dir / "phase1_results.npz")
-                        _p2 = np.load(_calib_dir / "phase2_results.npz")
-                        _T_deskcam_hidden = np.eye(4, dtype=float)
-                        _T_deskcam_hidden[:3, 3] = [0.0, 0.0, -10.0]
                         self.pb_scene = PyBulletScene(
-                            T_world_base    = _p1["T_world_base"],
-                            T_world_deskcam = _T_deskcam_hidden,
-                            T_tcp_handcam   = _p2["T_tcp_handcam"],
-                            gui             = pybullet_gui,
-                        )
+                            T_world_base=_p1["T_world_base"])
                         self.pb_scene.build()
                         self.pb_scene.update_robot(self._sim_q)
-                        print(f"[PyBullet] Simulation + calibrated base pose  "
-                              f"(gui={'on' if pybullet_gui else 'off'}).")
+                        print("[PyBullet] Simulation + calibrated base pose (headless).")
                     except Exception as e:
                         print(f"[MainScene] PyBullet (calibrated) failed: {e}")
                         self.pb_scene = None
                 else:
                     _T_world_base_sim = np.eye(4, dtype=float)
                     _T_world_base_sim[:3, 3] = [-0.4, -0.8, 0.4]
-                    _T_tcp_handcam_sim = np.array([
-                        [ 9.99831286e-01, -1.52293140e-02, -1.02697110e-02, -8.15478042e-03],
-                        [ 1.83648570e-02,  8.39818667e-01,  5.42556299e-01, -1.30062224e-01],
-                        [ 3.61934770e-04, -5.42653365e-01,  8.39956663e-01,  4.29530814e-02],
-                        [ 0.00000000e+00,  0.00000000e+00,  0.00000000e+00,  1.00000000e+00],
-                    ])
-                    _T_deskcam_hidden = np.eye(4, dtype=float)
-                    _T_deskcam_hidden[:3, 3] = [0.0, 0.0, -10.0]
                     try:
                         self.pb_scene = PyBulletScene(
-                            T_world_base    = _T_world_base_sim,
-                            T_world_deskcam = _T_deskcam_hidden,
-                            T_tcp_handcam   = _T_tcp_handcam_sim,
-                            gui             = pybullet_gui,
-                        )
+                            T_world_base=_T_world_base_sim)
                         self.pb_scene.build()
                         self.pb_scene.update_robot(self._sim_q)
-                        print(f"[PyBullet] Simulation — hardcoded base pose  "
-                              f"(gui={'on' if pybullet_gui else 'off'}).")
+                        print("[PyBullet] Simulation — hardcoded base pose (headless).")
                     except Exception as e:
                         print(f"[MainScene] PyBullet scene failed to build: {e}")
                         self.pb_scene = None
             else:
                 if _calib_dir.exists():
                     try:
-                        self.pb_scene = PyBulletScene.from_calibration(
-                            _calib_dir, gui=pybullet_gui)
+                        self.pb_scene = PyBulletScene.from_calibration(_calib_dir)
                         self.pb_scene.build()
                         self.pb_scene.update_robot(self._sim_q)
                     except Exception as e:
@@ -1535,8 +1548,6 @@ class MainScene:
         elif self.rtde is not None:
             print(f"[Robot] Live RTDE mode — connected to {robot_ip}")
 
-        self.overlay: "SceneOverlay | None" = (SceneOverlay()
-                                               if self.pb_scene is not None else None)
         self.anchor      = _WorldAnchor(quest_ip)
         self.tools       = _ToolSelectionManager(quest_ip)
         self.tuner       = _OffsetTuner()
@@ -1548,16 +1559,16 @@ class MainScene:
 
         # Cubes around the anchor marker (world origin) — ids 0, 1, 2
         self.synth.add([ 0.10, 0.00, 0.05], width=0.06, depth=0.06, height=0.10,
-                       color=[1.0, 0.2, 0.2])
+                       color=[1.0, 0.2, 0.2], name="anchor_cube_x")
         self.synth.add([ 0.00, 0.10, 0.05], width=0.06, depth=0.06, height=0.10,
-                       color=[0.2, 1.0, 0.2])
+                       color=[0.2, 1.0, 0.2], name="anchor_cube_y")
         self.synth.add([-0.10, 0.00, 0.05], width=0.06, depth=0.06, height=0.10,
-                       color=[0.2, 0.4, 1.0])
+                       color=[0.2, 0.4, 1.0], name="anchor_cube_neg_x")
 
         # TCP marker — id 3; position updated each frame from PyBullet FK
         self._tcp_synth = (self.synth.add([0.0, 0.0, 0.0],
                                           width=0.05, depth=0.05, height=0.05,
-                                          color=[1.0, 0.8, 0.2])
+                                          color=[1.0, 0.8, 0.2], name="tcp")
                            if self.pb_scene is not None else None)
 
         # ── Open3D visualizer + OpenCV window ─────────────────────────────────
@@ -1573,6 +1584,7 @@ class MainScene:
         self._relock_available_prev = False
         self._green_until           = 0.0
         self._last_proximity_relock = 0.0
+        self._reach_until           = 0.0
         self._ctrl_active           = False
         self._ctrl: "RobotController | None"       = None
         self._T_tool0: "np.ndarray | None"         = None
@@ -1624,8 +1636,6 @@ class MainScene:
         if T_wp is not None:
             self.tool_layout.publish(T_wp)
             boxes = self.tool_layout.world_boxes(T_wp)
-            if self.pb_scene is not None:
-                self.pb_scene.update_tool_boxes(boxes)
             self.vis.update_tool_boxes(boxes)
         return True
 
@@ -1682,10 +1692,15 @@ class MainScene:
                                    if _center_T is not None else None)
                 left_pts, right_pts = self.hands.world_joints(T_wt)
 
-                # ── Anchor marker proximity relock ────────────────────────────
+                # ── Reachability arrow expiry ─────────────────────────────────
                 _now = time.time()
+                if self._reach_until > 0.0 and _now >= self._reach_until:
+                    self.vis.hide_reachability_arrows()
+                    self._reach_until = 0.0
+
+                # ── Anchor marker proximity relock ────────────────────────────
                 dist_to_anchor = (
-                    float(np.linalg.norm(T_cam_anchor[:3, 3]))
+                    float(np.linalg.norm(T_cam_anchor[:3, 3])) #T_cam_anchor: 4×4 pose of the anchor ArUco marker (ID 10) relative to the camera, 
                     if anchor_ok and self.cam.camera_T is not None else float('inf'))
                 _relock_available = (self.anchor.locked and anchor_ok
                                      and self.cam.camera_T is not None
@@ -1726,8 +1741,6 @@ class MainScene:
                     if self.anchor.T_pegboard_in_world is not None:
                         self.tool_layout.publish(self.anchor.T_pegboard_in_world)
                         _boxes = self.tool_layout.world_boxes(self.anchor.T_pegboard_in_world)
-                        if self.pb_scene is not None:
-                            self.pb_scene.update_tool_boxes(_boxes)
                         self.vis.update_tool_boxes(_boxes)
                     print("[AutoRelock] Relocked via proximity click")
                 self.tools.deselect(self.anchor_marker_id)
@@ -1829,15 +1842,6 @@ class MainScene:
                 self.vis.update_hands(left_pts, right_pts)
                 self.vis.tick()
 
-                # ── PyBullet overlay ──────────────────────────────────────────
-                if self.overlay is not None:
-                    if self.cam.fx is not None:
-                        self.overlay.update_head(T_world_center, fx, fy,
-                                                 self.cam.width, self.cam.height)
-                    self.overlay.update_hands(
-                        left_pts if T_world_center is not None else None,
-                        right_pts if T_world_center is not None else None)
-
                 # ── PyBullet scene update ─────────────────────────────────────
                 if self.pb_scene is not None:
                     if self.simulation:
@@ -1914,10 +1918,6 @@ class MainScene:
                         q = self.rtde.poll()
                         if q is not None:
                             self.pb_scene.update_robot(q)
-                            self.pb_scene.update_tcp_bodies()
-                    self.pb_scene.update_pegboard(self.anchor.T_pegboard_in_world)
-                    self.pb_scene.update_tracked_board(self.anchor.T_board_in_world)
-                    self.pb_scene.step()
 
                 # ── OpenCV display ────────────────────────────────────────────
                 disp = cv.resize(
@@ -1981,19 +1981,21 @@ class MainScene:
                 elif key == ord('r') or key == ord('R'):
                     if (self.pb_scene is not None
                             and self.anchor.T_pegboard_in_world is not None):
-                        _reach_quat = _tool_grasp_quat(
-                            self.anchor.T_pegboard_in_world[:3, :3])
-                        self.pb_scene.check_reachability(
-                            self.anchor.T_pegboard_in_world,
-                            target_quat_xyzw=_reach_quat)
+                        T_wp = self.anchor.T_pegboard_in_world
+                        _reach_quat = _tool_grasp_quat(T_wp[:3, :3])
+                        _, _, _reach_pts, _reach_flags = \
+                            self.pb_scene.check_reachability(
+                                T_wp, target_quat_xyzw=_reach_quat)
+                        if len(_reach_pts):
+                            _board_normal = T_wp[:3, 2]
+                            self.vis.update_reachability_arrows(
+                                _reach_pts, _reach_flags, _board_normal)
+                            self._reach_until = time.time() + 5.0
                     else:
                         print("[R] Pegboard not locked yet — lock it first.")
                 elif key == 13:  # ENTER
                     if self.simulation and self.pb_scene is not None:
                         self.pb_scene.set_scene_origin(np.eye(4))
-                        self.pb_scene.update_wall(np.eye(4))
-                        if self.overlay is not None:
-                            self.overlay.reset_ids()
                     if self.cam.camera_T is None:
                         if not self.simulation:
                             print("[ENTER] No camera pose — skipping.")
@@ -2010,7 +2012,6 @@ class MainScene:
                             self._last_proximity_relock = _now
                             if self.pb_scene is not None:
                                 self.pb_scene.set_scene_origin(np.eye(4))
-                                self.pb_scene.update_wall(np.eye(4))
                             if self._load_pegboard_from_file:
                                 self._try_load_pegboard_from_file()
                         elif not self.anchor.locked:
@@ -2036,15 +2037,14 @@ class MainScene:
                                         self.synth.add(
                                             _transform_point(T_wp, cube["offset"]),
                                             width=0.06, depth=0.06, height=0.10,
-                                            color=cube["color"], R_o3d=R_wp)
+                                            color=cube["color"], R_o3d=R_wp,
+                                            name=cube["name"])
                                     self._pegboard_cubes_added = True
                                     print(f"[Synth] Added {len(self.PEGBOARD_CUBES)}"
                                           f" pegboard cubes at marker "
                                           f"#{self.pegboard_marker_id}")
                                 self.tool_layout.publish(T_wp)
                                 _boxes = self.tool_layout.world_boxes(T_wp)
-                                if self.pb_scene is not None:
-                                    self.pb_scene.update_tool_boxes(_boxes)
                                 self.vis.update_tool_boxes(_boxes)
                         elif pegboard_ok and not self.anchor.locked:
                             print(f"[ENTER] Marker #{self.pegboard_marker_id} visible, "
@@ -2127,10 +2127,6 @@ def main():
                     default=cfg.LOAD_PEGBOARD_FROM_FILE,
                     help="Auto-load pegboard pose from scene_layout NPZ on anchor lock "
                          "(skips needing marker 101 visible)")
-    ap.add_argument("--pybullet-gui", action=argparse.BooleanOptionalAction,
-                    default=cfg.PYBULLET_GUI,
-                    help="Open PyBullet GUI window (--pybullet-gui) or run headless "
-                         "(--no-pybullet-gui); IK/FK still active either way")
     args = ap.parse_args()
     if args.anchor_marker == args.pegboard_marker:
         ap.error("--anchor-marker and --pegboard-marker must be different.")
@@ -2153,8 +2149,7 @@ def main():
         board_marker_b             = args.board_marker_b,
         board_marker_size_m        = args.board_marker_size,
         use_calibrated_robot_base  = args.calibrated_robot_base,
-        load_pegboard_from_file    = args.load_pegboard_from_file,
-        pybullet_gui               = args.pybullet_gui)
+        load_pegboard_from_file    = args.load_pegboard_from_file)
     scene.run()
 
 
