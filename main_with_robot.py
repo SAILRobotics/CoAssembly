@@ -798,7 +798,7 @@ class _ToolSelectionManager:
             self._handle_hover_exit(tool_id)
 
     def _handle_click(self, tool_id: int, hand: str = "unknown"):
-        self._hovered_tool_id = None
+        self._hovered_tool_id = None # clears _hovered_tool_id at the start — if you click, the hover state is irrelevant.
         updates: list[tuple[int, list[float]]] = []
         if self._active_tool_id == tool_id:
             updates.append((tool_id, self.RESET_COLOR))
@@ -808,8 +808,8 @@ class _ToolSelectionManager:
             updates.append((self._active_tool_id, self.RESET_COLOR))
             updates.append((tool_id, self.SELECTED_COLOR))
             self._active_tool_id = tool_id
-            self._active_hand    = hand
-        else:
+            self._active_hand    = hand 
+        else: #nothing was selected
             updates.append((tool_id, self.SELECTED_COLOR))
             self._active_tool_id = tool_id
             self._active_hand    = hand
@@ -823,10 +823,10 @@ class _ToolSelectionManager:
         self._send_color(tool_id, self.HOVER_COLOR)
 
     def _handle_hover_exit(self, tool_id: int):
-        if tool_id != self._hovered_tool_id:
+        if tool_id != self._hovered_tool_id: #it's not the tool we recorded as hovered
             return
-        self._hovered_tool_id = None
-        if tool_id == self._active_tool_id:
+        self._hovered_tool_id = None 
+        if tool_id == self._active_tool_id: #it's currently selected (don't un-highlight a selected tool on hover exit)
             return
         self._send_color(tool_id, self.RESET_COLOR)
 
@@ -1075,6 +1075,43 @@ class _UrRtdeReceiver:
 class _SceneVis:
     FRUSTUM_SCALE = 0.2
 
+    # ── Static geometry helpers ───────────────────────────────────────────────
+
+    @staticmethod
+    def make_axes_lineset(T: np.ndarray, size: float = 0.10) -> o3d.geometry.LineSet:
+        """RGB XYZ axes as a LineSet at the given 4×4 pose."""
+        o = T[:3, 3]
+        pts = np.array([o,
+                        o + T[:3, 0] * size,
+                        o + T[:3, 1] * size,
+                        o + T[:3, 2] * size])
+        ls = o3d.geometry.LineSet()
+        ls.points = o3d.utility.Vector3dVector(pts)
+        ls.lines  = o3d.utility.Vector2iVector([[0, 1], [0, 2], [0, 3]])
+        ls.colors = o3d.utility.Vector3dVector([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+        return ls
+
+    @staticmethod
+    def make_box_lineset(pos: np.ndarray, R: np.ndarray,
+                         size, color=(0.2, 0.9, 1.0)) -> o3d.geometry.LineSet:
+        """12-edge wireframe box. pos = centre, R = rotation, size = [w, d, h]."""
+        w, d, h = size[0] / 2, size[1] / 2, size[2] / 2
+        corners_local = np.array([
+            [-w, -d, -h], [ w, -d, -h], [ w,  d, -h], [-w,  d, -h],
+            [-w, -d,  h], [ w, -d,  h], [ w,  d,  h], [-w,  d,  h],
+        ])
+        corners = (R @ corners_local.T).T + pos
+        edges = [[0,1],[1,2],[2,3],[3,0],
+                 [4,5],[5,6],[6,7],[7,4],
+                 [0,4],[1,5],[2,6],[3,7]]
+        ls = o3d.geometry.LineSet()
+        ls.points = o3d.utility.Vector3dVector(corners)
+        ls.lines  = o3d.utility.Vector2iVector(edges)
+        ls.colors = o3d.utility.Vector3dVector([list(color)] * 12)
+        return ls
+
+    # ── Init ─────────────────────────────────────────────────────────────────
+
     def __init__(self, title: str, width: int = 1000, height: int = 680):
         self.vis = o3d.visualization.Visualizer()
         self.vis.create_window(title, width=width, height=height)
@@ -1088,7 +1125,11 @@ class _SceneVis:
 
         self._cam_frustum   = None
         self._head_frustum  = None
+        self._tcp_axes      = None          # lazy — added on first update_tcp() call
+        self._tool_box_linesets: list = []  # lazy — grows to match number of tool boxes
+        self._pegboard_corners_local: np.ndarray | None = None
 
+        # Pegboard (coordinate frame + sphere + rectangle outline)
         self._pegboard_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.10)
         self._pegboard_frame.transform(self._hidden_T())
         self.vis.add_geometry(self._pegboard_frame)
@@ -1097,8 +1138,11 @@ class _SceneVis:
         self._pegboard_sphere.compute_vertex_normals()
         self._pegboard_sphere.transform(self._hidden_T())
         self.vis.add_geometry(self._pegboard_sphere)
+        self._pegboard_lineset = o3d.geometry.LineSet()
+        self.vis.add_geometry(self._pegboard_lineset)
         self._pegboard_T = self._hidden_T()
 
+        # Tracking origin (coordinate frame + sphere)
         self._tracking_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.10)
         self._tracking_frame.transform(self._hidden_T())
         self.vis.add_geometry(self._tracking_frame)
@@ -1109,6 +1153,7 @@ class _SceneVis:
         self.vis.add_geometry(self._tracking_sphere)
         self._tracking_T = self._hidden_T()
 
+        # Tracked board (coordinate frame + bounding box)
         self._board_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.10)
         self._board_frame.transform(self._hidden_T())
         self.vis.add_geometry(self._board_frame)
@@ -1120,6 +1165,55 @@ class _SceneVis:
         self.vis.add_geometry(self._board_box)
         self._board_T = self._hidden_T()
 
+        # Gripper mesh — loaded once, placed at TCP pose each frame via delta
+        # transforms. OBJ tool axis is mesh-Y; Rx(+90°) is baked into vertices
+        # at load time so mesh-Y aligns with TCP-Z (standard robot convention).
+        self._tcp_gripper_mesh = None
+        self._tcp_T = self._hidden_T()
+        _gripper_path = cfg.SCENE_LAYOUT_DIR / "gripperWtihAdapters.obj"
+        if _gripper_path.exists():
+            _mesh = o3d.io.read_triangle_mesh(str(_gripper_path))
+            _mesh.compute_vertex_normals()
+            _mesh.paint_uniform_color([0.75, 0.75, 0.75])
+            _T_fix = np.eye(4, dtype=np.float64)
+            _T_fix[:3, :3] = ScipyR.from_euler('x', 90, degrees=True).as_matrix()
+            _mesh.transform(_T_fix)
+            _mesh.transform(self._hidden_T())
+            self.vis.add_geometry(_mesh)
+            self._tcp_gripper_mesh = _mesh
+
+        # UR10e arm meshes — visual offsets from URDF <visual><origin> baked into
+        # vertices at load time, so update_robot() only needs the PyBullet link poses.
+        # Order: [base, shoulder, upper_arm, forearm, wrist1, wrist2, wrist3]
+        _UR10E_VIS = [
+            ("base.obj",     [0,       0,      0      ], [0,         0,       np.pi       ]),
+            ("shoulder.obj", [0,       0,      0      ], [0,         0,       np.pi       ]),
+            ("upperarm.obj", [0,       0,      0.1762 ], [np.pi/2,   0,      -np.pi/2    ]),
+            ("forearm.obj",  [0,       0,      0.0393 ], [np.pi/2,   0,      -np.pi/2    ]),
+            ("wrist1.obj",   [0,       0,     -0.135  ], [np.pi/2,   0,       0          ]),
+            ("wrist2.obj",   [0,       0,     -0.12   ], [0,         0,       0          ]),
+            ("wrist3.obj",   [0,       0,     -0.1168 ], [np.pi/2,   0,       0          ]),
+        ]
+        _mesh_dir = cfg.SCENE_LAYOUT_DIR.parent / "robot_assets" / "meshes" / "ur10e" / "visual"
+        self._robot_meshes: list = []
+        self._robot_mesh_Ts: list = []
+        for _fname, _vis_xyz, _vis_rpy in _UR10E_VIS:
+            _path = _mesh_dir / _fname
+            if _path.exists():
+                _m = o3d.io.read_triangle_mesh(str(_path))
+                _m.compute_vertex_normals()
+                _m.paint_uniform_color([0.50, 0.52, 0.58])
+                _T_vis = np.eye(4, dtype=np.float64)
+                _T_vis[:3, :3] = ScipyR.from_euler('xyz', _vis_rpy).as_matrix()
+                _T_vis[:3, 3]  = _vis_xyz
+                _m.transform(_T_vis)
+                _m.transform(self._hidden_T())
+                self.vis.add_geometry(_m)
+                self._robot_meshes.append(_m)
+            else:
+                self._robot_meshes.append(None)
+            self._robot_mesh_Ts.append(self._hidden_T().copy())
+
         self._pcd_l, self._lines_l = self._make_hand([0.3, 0.6, 1.0])
         self._pcd_r, self._lines_r = self._make_hand([1.0, 0.55, 0.1])
 
@@ -1128,6 +1222,8 @@ class _SceneVis:
         ctr.set_front([0., -0.5, -1.])
         ctr.set_up([0., 1., 0.])
         ctr.set_zoom(0.5)
+
+    # ── Internal helpers ──────────────────────────────────────────────────────
 
     @staticmethod
     def _hidden_T():
@@ -1159,6 +1255,8 @@ class _SceneVis:
         lines.points = o3d.utility.Vector3dVector(pts_use)
         self.vis.update_geometry(pcd)
         self.vis.update_geometry(lines)
+
+    # ── Update methods ────────────────────────────────────────────────────────
 
     def update_cam_frustum(self, T: np.ndarray | None,
                            w=640, h=480, fx=400., fy=400., cx=320., cy=240.):
@@ -1194,6 +1292,22 @@ class _SceneVis:
             self._head_frustum.colors = new_fr.colors
             self.vis.update_geometry(self._head_frustum)
 
+    def set_pegboard_outline(self, offset_x: float, offset_y: float,
+                              width: float, height: float):
+        """Store pegboard corners in marker-local frame (marker = origin).
+        offset_x/y: distance from marker centre to the right/top board edge.
+        Call once after loading the pegboard NPZ; update_pegboard() uses it."""
+        self._pegboard_corners_local = np.array([
+            [ offset_x,         offset_y,          0.0],   # top-right (≈ marker)
+            [ offset_x - width, offset_y,          0.0],   # top-left
+            [ offset_x - width, offset_y - height, 0.0],   # bottom-left
+            [ offset_x,         offset_y - height, 0.0],   # bottom-right
+        ])
+        self._pegboard_lineset.lines = o3d.utility.Vector2iVector(
+            [[0, 1], [1, 2], [2, 3], [3, 0]])
+        self._pegboard_lineset.colors = o3d.utility.Vector3dVector(
+            [[0.1, 0.6, 1.0]] * 4)
+
     def update_pegboard(self, T: np.ndarray | None):
         T_new = T if T is not None else self._hidden_T()
         delta = T_new @ np.linalg.inv(self._pegboard_T)
@@ -1202,6 +1316,12 @@ class _SceneVis:
         self._pegboard_T = T_new
         self.vis.update_geometry(self._pegboard_frame)
         self.vis.update_geometry(self._pegboard_sphere)
+        if self._pegboard_corners_local is not None:
+            corners_h = np.hstack([self._pegboard_corners_local,
+                                   np.ones((4, 1))])
+            pts = (T_new @ corners_h.T).T[:, :3]
+            self._pegboard_lineset.points = o3d.utility.Vector3dVector(pts)
+            self.vis.update_geometry(self._pegboard_lineset)
 
     def update_tracking(self, T: np.ndarray | None):
         T_new = T if T is not None else self._hidden_T()
@@ -1220,6 +1340,59 @@ class _SceneVis:
         self._board_T = T_new
         self.vis.update_geometry(self._board_frame)
         self.vis.update_geometry(self._board_box)
+
+    def update_tcp(self, T: np.ndarray | None):
+        """Update the TCP axes lineset and gripper mesh to pose T."""
+        T_new = T if T is not None else self._hidden_T()
+        new_axes = self.make_axes_lineset(T_new, size=0.08)
+        if self._tcp_axes is None:
+            self._tcp_axes = new_axes
+            self.vis.add_geometry(self._tcp_axes)
+        else:
+            self._tcp_axes.points = new_axes.points
+            self._tcp_axes.lines  = new_axes.lines
+            self._tcp_axes.colors = new_axes.colors
+            self.vis.update_geometry(self._tcp_axes)
+        if self._tcp_gripper_mesh is not None:
+            delta = T_new @ np.linalg.inv(self._tcp_T)
+            self._tcp_gripper_mesh.transform(delta)
+            self.vis.update_geometry(self._tcp_gripper_mesh)
+        self._tcp_T = T_new
+
+    def update_tool_boxes(self, boxes):
+        """Update wireframe box linesets for all tool bounding boxes.
+        boxes: list of (pos_world, R_world, size) from tool_layout.world_boxes()."""
+        while len(self._tool_box_linesets) < len(boxes):
+            ls = o3d.geometry.LineSet()
+            self.vis.add_geometry(ls)
+            self._tool_box_linesets.append(ls)
+        _hidden_pts = o3d.utility.Vector3dVector(np.tile([0., -1.5, 0.], (8, 1)))
+        _box_edges  = o3d.utility.Vector2iVector(
+            [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]])
+        for i, ls in enumerate(self._tool_box_linesets):
+            if i < len(boxes):
+                pos, R, size = boxes[i]
+                new_ls = self.make_box_lineset(pos, R, size)
+                ls.points = new_ls.points
+                ls.lines  = new_ls.lines
+                ls.colors = new_ls.colors
+            else:
+                ls.points = _hidden_pts
+                ls.lines  = _box_edges
+            self.vis.update_geometry(ls)
+
+    def update_robot(self, link_poses: list[np.ndarray]):
+        """Move UR10e arm meshes to the given PyBullet link world poses.
+        link_poses: 7 transforms [base, shoulder, upper_arm, forearm, wrist1, wrist2, wrist3]
+        from PyBulletScene.get_arm_link_world_poses()."""
+        for i, (mesh, T_new) in enumerate(zip(self._robot_meshes, link_poses)):
+            if mesh is None:
+                continue
+            T_cur = self._robot_mesh_Ts[i]
+            delta = T_new @ np.linalg.inv(T_cur)
+            mesh.transform(delta)
+            self.vis.update_geometry(mesh)
+            self._robot_mesh_Ts[i] = T_new
 
     def update_hands(self, left_pts: np.ndarray | None, right_pts: np.ndarray | None):
         self._set_hand(self._pcd_l, self._lines_l, left_pts)
@@ -1438,14 +1611,22 @@ class MainScene:
         try:
             data = np.load(npz_path)
             self.anchor.set_pegboard(data["T_world10_pegboard"])
+            self.vis.set_pegboard_outline(
+                offset_x=float(data["marker_offset_right_m"]),
+                offset_y=float(data["marker_offset_top_m"]),
+                width=float(data["pegboard_width_m"]),
+                height=float(data["pegboard_height_m"]),
+            )
         except Exception as e:
             print(f"[PegboardFile] Load failed: {e}")
             return False
         T_wp = self.anchor.T_pegboard_in_world
         if T_wp is not None:
             self.tool_layout.publish(T_wp)
+            boxes = self.tool_layout.world_boxes(T_wp)
             if self.pb_scene is not None:
-                self.pb_scene.update_tool_boxes(self.tool_layout.world_boxes(T_wp))
+                self.pb_scene.update_tool_boxes(boxes)
+            self.vis.update_tool_boxes(boxes)
         return True
 
     # ── Main loop ─────────────────────────────────────────────────────────────
@@ -1544,9 +1725,10 @@ class MainScene:
                     self._last_proximity_relock = _now
                     if self.anchor.T_pegboard_in_world is not None:
                         self.tool_layout.publish(self.anchor.T_pegboard_in_world)
+                        _boxes = self.tool_layout.world_boxes(self.anchor.T_pegboard_in_world)
                         if self.pb_scene is not None:
-                            self.pb_scene.update_tool_boxes(
-                                self.tool_layout.world_boxes(self.anchor.T_pegboard_in_world))
+                            self.pb_scene.update_tool_boxes(_boxes)
+                        self.vis.update_tool_boxes(_boxes)
                     print("[AutoRelock] Relocked via proximity click")
                 self.tools.deselect(self.anchor_marker_id)
 
@@ -1701,6 +1883,9 @@ class MainScene:
                                 self._grip_state = 'grabbed'
                                 print("[Grip] Move complete — back to 'grabbed'")
                         self._T_tool0 = self.pb_scene.update_tcp_bodies()
+                        if self._T_tool0 is not None:
+                            self.vis.update_tcp(self._T_tool0)
+                        self.vis.update_robot(self.pb_scene.get_arm_link_world_poses())
                         if self._T_tool0 is not None and self._tcp_synth is not None:
                             self._tcp_synth.centroid = self._T_tool0[:3, 3]
                             self._tcp_synth.R_o3d    = self._T_tool0[:3, :3]
@@ -1857,9 +2042,10 @@ class MainScene:
                                           f" pegboard cubes at marker "
                                           f"#{self.pegboard_marker_id}")
                                 self.tool_layout.publish(T_wp)
+                                _boxes = self.tool_layout.world_boxes(T_wp)
                                 if self.pb_scene is not None:
-                                    self.pb_scene.update_tool_boxes(
-                                        self.tool_layout.world_boxes(T_wp))
+                                    self.pb_scene.update_tool_boxes(_boxes)
+                                self.vis.update_tool_boxes(_boxes)
                         elif pegboard_ok and not self.anchor.locked:
                             print(f"[ENTER] Marker #{self.pegboard_marker_id} visible, "
                                   f"but lock marker #{self.anchor_marker_id} first.")
