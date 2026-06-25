@@ -84,7 +84,6 @@ PEG_Y_MIN = PEG_OFFSET_Y - PEG_H    # bottom edge (≈ -0.756 m)
 PEG_Y_MAX = PEG_OFFSET_Y            # top edge   (≈ +0.057 m, near marker)
 
 SCENE_LAYOUT_DIR   = Path("scene_layout")
-TSDF_MESH_INTERVAL = 30   # refresh live mesh every N fused frames
 
 # ---------------------------------------------------------------------------
 # ARKit ↔ OpenCV convention
@@ -213,10 +212,10 @@ class PreScanApp:
     MAX_TRAJ_PTS = 300
 
     def __init__(self, device_idx: int = 0,
-                 tsdf_interval: int = TSDF_MESH_INTERVAL,
-                 aruco_dict_id: int = cv2.aruco.DICT_6X6_1000):
+                 aruco_dict_id: int = cv2.aruco.DICT_6X6_1000,
+                 scan_mode: str = 'board'):
         self.device_idx    = device_idx
-        self.tsdf_interval = tsdf_interval
+        self.scan_mode     = scan_mode   # 'board': bounded rect; 'plane': infinite plane
         self.event         = Event()
         self.session       = None
 
@@ -230,7 +229,7 @@ class PreScanApp:
         self.fusion_count  = 0
         self._scan_dir: Path | None = None   # set when scanning starts
         self._saved_poses: list    = []       # list of (4,4) extrinsic arrays
-        self._saved_K:    np.ndarray | None = None
+        self._saved_Ks:   list    = []       # list of (3,3) intrinsic arrays, one per frame
         self._saved_hw:   tuple | None      = None
 
     # ------------------------------------------------------------------
@@ -330,7 +329,7 @@ class PreScanApp:
         np.save(str(self._scan_dir / "depth" / f"{idx:06d}.npy"),
                 depth.astype(np.float32))
         self._saved_poses.append(_ARKIT_TO_CV_4x4 @ np.linalg.inv(T_w10_cam))
-        self._saved_K  = K
+        self._saved_Ks.append(K.copy())
         self._saved_hw = (h, w)
         self.fusion_count += 1
 
@@ -411,7 +410,7 @@ class PreScanApp:
             # ── Phase 1: ENTER locks marker 10 as world origin ──────────
             if (phase == 'await_world' and enter_pressed
                     and WORLD_MARKER_ID in detections):
-                T_arkit_wm = T_wc @ _ARKIT_TO_CV_4x4 @ detections[WORLD_MARKER_ID]
+                T_arkit_wm = T_wc @ _ARKIT_TO_CV_4x4 @ detections[WORLD_MARKER_ID] #marker in ARKit world frame
                 self.T_world10_world = np.linalg.inv(T_arkit_wm)
                 phase = 'await_peg'
                 print(f'[Phase 1 ✓] Marker {WORLD_MARKER_ID} locked as world origin.')
@@ -543,14 +542,23 @@ class PreScanApp:
                 self._remove(vis, current_hit_sphere)
                 current_hit_sphere = None
 
-                if hit is not None and point_in_pegboard(hit, self.T_world10_peg):
-                    sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.008)
-                    sphere.translate(hit)
-                    sphere.paint_uniform_color([1.0, 0.15, 0.15])
-                    sphere.compute_vertex_normals()
-                    current_hit_sphere = sphere
-                    vis.add_geometry(current_hit_sphere, reset_bounding_box=False)
+                if hit is not None:
+                    on_board = point_in_pegboard(hit, self.T_world10_peg)
+                    if on_board:
+                        sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.008)
+                        sphere.translate(hit)
+                        sphere.paint_uniform_color([1.0, 0.15, 0.15])
+                        sphere.compute_vertex_normals()
+                        current_hit_sphere = sphere
+                        vis.add_geometry(current_hit_sphere, reset_bounding_box=False)
 
+                    should_save = (self.scan_mode == 'all'
+                                   or (self.scan_mode == 'plane')
+                                   or (self.scan_mode == 'board' and on_board))
+                    if should_save:
+                        self._save_frame(rgb, depth, K, T_w10_cam)
+
+                elif self.scan_mode == 'all':
                     self._save_frame(rgb, depth, K, T_w10_cam)
 
             vis.poll_events()
@@ -561,14 +569,13 @@ class PreScanApp:
         cv2.destroyAllWindows()
         if self.fusion_count > 0 and self._scan_dir is not None:
             h, w = self._saved_hw
-            K = self._saved_K
             import json as _json
-            meta = {"width": w, "height": h,
-                    "fx": K[0,0], "fy": K[1,1],
-                    "cx": K[0,2], "cy": K[1,2]}
+            meta = {"width": w, "height": h}
             (self._scan_dir / "meta.json").write_text(_json.dumps(meta, indent=2))
             np.save(str(self._scan_dir / "poses.npy"),
                     np.stack(self._saved_poses).astype(np.float64))
+            np.save(str(self._scan_dir / "intrinsics.npy"),
+                    np.stack(self._saved_Ks).astype(np.float64))
             print(f'[Scan] {self.fusion_count} frames saved → {self._scan_dir}')
             print(f'[Scan] Run:  python3 offline_fusion.py {self._scan_dir}')
         else:
@@ -1666,11 +1673,7 @@ def fuse_offline(scan_dir: Path, voxel_length: float = 0.004,
     """Offline TSDF fusion from a directory saved by PreScanApp."""
     meta = json.loads((scan_dir / "meta.json").read_text())
     poses = np.load(str(scan_dir / "poses.npy"))
-
-    intrinsic = o3d.camera.PinholeCameraIntrinsic(
-        width=meta["width"], height=meta["height"],
-        fx=meta["fx"], fy=meta["fy"],
-        cx=meta["cx"], cy=meta["cy"])
+    Ks    = np.load(str(scan_dir / "intrinsics.npy"))  # (N, 3, 3)
 
     color_files = sorted((scan_dir / "color").glob("*.jpg"))
     depth_files = sorted((scan_dir / "depth").glob("*.npy"))
@@ -1682,13 +1685,17 @@ def fuse_offline(scan_dir: Path, voxel_length: float = 0.004,
 
     tsdf = o3d.pipelines.integration.ScalableTSDFVolume(
         voxel_length=voxel_length,
-        sdf_trunc=voxel_length * 5,
+        sdf_trunc=voxel_length * 30,
         color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8)
 
     n = len(color_files)
     print(f"[fuse] Integrating {n} frames  (voxel={voxel_length*100:.1f} cm)…")
     for i, (c_file, d_file, extrinsic) in enumerate(
             zip(color_files, depth_files, poses)):
+        K = Ks[i]
+        intrinsic = o3d.camera.PinholeCameraIntrinsic(
+            width=meta["width"], height=meta["height"],
+            fx=K[0,0], fy=K[1,1], cx=K[0,2], cy=K[1,2])
         color     = o3d.io.read_image(str(c_file))
         depth_arr = np.load(str(d_file)).astype(np.float32)
         depth_img = o3d.geometry.Image(depth_arr)
@@ -1719,9 +1726,6 @@ def main():
     )
     parser.add_argument('--device',        type=int, default=0,
                         help='Record3D device index (default: 0)')
-    parser.add_argument('--tsdf-interval', type=int, default=TSDF_MESH_INTERVAL,
-                        help='Refresh live TSDF mesh every N fused frames '
-                             f'(default: {TSDF_MESH_INTERVAL})')
     parser.add_argument('--visualize',     action='store_true',
                         help='Open a static viewer for the saved scene_layout/ '
                              'files (no device needed)')
@@ -1730,11 +1734,16 @@ def main():
     parser.add_argument('--robot-ip',      default='192.168.50.70',
                         help='UR10e IP for the annotate robot-move button '
                              '(default: 192.168.50.70)')
+    parser.add_argument('--scan-mode',     choices=['board', 'plane', 'all'], default='board',
+                        help='Frame-save trigger: "board" saves only when ray hits '
+                             'the pegboard rectangle (default); "plane" saves whenever '
+                             'the ray hits the infinite plane the board lies on; '
+                             '"all" saves every frame unconditionally')
     parser.add_argument('--fuse',          type=Path, metavar='SCAN_DIR',
                         help='Offline TSDF fusion of a saved scan directory')
-    parser.add_argument('--voxel',         type=float, default=0.004,
+    parser.add_argument('--voxel',         type=float, default=0.0025,
                         help='Voxel size in metres for --fuse (default: 0.004)')
-    parser.add_argument('--depth-trunc',   type=float, default=3.0,
+    parser.add_argument('--depth-trunc',   type=float, default=2.0,
                         help='Depth truncation in metres for --fuse (default: 3.0)')
     args = parser.parse_args()
 
@@ -1750,7 +1759,7 @@ def main():
         fuse_offline(args.fuse, voxel_length=args.voxel, depth_trunc=args.depth_trunc)
         return
 
-    app = PreScanApp(device_idx=args.device, tsdf_interval=args.tsdf_interval)
+    app = PreScanApp(device_idx=args.device, scan_mode=args.scan_mode)
     app.connect_to_device(dev_idx=args.device)
     app.start_processing_stream()
 
