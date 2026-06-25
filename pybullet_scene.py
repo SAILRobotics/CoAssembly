@@ -275,6 +275,19 @@ class PyBulletScene:
         return np.array([p.getJointState(self.robot_id, idx)[0]
                          for idx in self.arm_indices], dtype=np.float64)
 
+    def get_arm_link_world_poses(self) -> list[np.ndarray]:
+        """7 world-space 4×4 transforms for [base, shoulder, upper_arm, forearm,
+        wrist1, wrist2, wrist3]. Apply URDF visual offsets separately to get
+        mesh world poses. Returns identity matrices if not connected."""
+        if not self.connected or self.robot_id is None:
+            return [np.eye(4, dtype=np.float64)] * 7
+        pos, orn = p.getBasePositionAndOrientation(self.robot_id)
+        poses = [self._pb_to_mat(pos, orn)]
+        for idx in self.arm_indices:
+            s = p.getLinkState(self.robot_id, idx, computeForwardKinematics=True)
+            poses.append(self._pb_to_mat(s[4], s[5]))
+        return poses
+
     def check_reachability(self,
                            T_pegboard_world: np.ndarray,
                            target_quat_xyzw: np.ndarray | None = None,

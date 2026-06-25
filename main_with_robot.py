@@ -41,11 +41,11 @@ import zmq
 from scipy.spatial.transform import Rotation as ScipyR
 
 try:
-    from pybullet_scene import PyBulletScene, RobotController, SceneOverlay, HandTrackController
+    from pybullet_ik import IKScene as PyBulletScene, RobotController
     _PYBULLET_AVAILABLE = True
 except ImportError:
     _PYBULLET_AVAILABLE = False
-    print("[main_hand_m100_w_sim] pybullet_scene import failed — 3-D sim disabled.")
+    print("[main_with_robot] pybullet_ik import failed — IK/FK disabled.")
 
 _FILE_DIR = Path(__file__).resolve().parent
 if str(_FILE_DIR) not in sys.path:
@@ -621,15 +621,22 @@ class _SyntheticObjectPublisher:
         self._pub.connect(f"tcp://{ip}:{port}")
         time.sleep(0.2)
         self._objects: list[_SyntheticObject] = []
+        self._names:   dict[str, _SyntheticObject] = {}
         print(f"[SynthObjects] Connected to tcp://{ip}:{port}")
 
     def add(self, centroid_o3d, width, depth, height,
-            color=None, yaw_deg=0.0, R_o3d=None) -> "_SyntheticObject":
+            color=None, yaw_deg=0.0, R_o3d=None,
+            name: str | None = None) -> "_SyntheticObject":
         obj = _SyntheticObject(len(self._objects), centroid_o3d,
                                width, depth, height,
                                yaw_deg=yaw_deg, R_o3d=R_o3d, color=color)
         self._objects.append(obj)
+        if name is not None:
+            self._names[name] = obj
         return obj
+
+    def get(self, name: str) -> "_SyntheticObject | None":
+        return self._names.get(name)
 
     def publish(self):
         payload = {"objects": [o.to_unity_dict() for o in self._objects]}
@@ -798,7 +805,7 @@ class _ToolSelectionManager:
             self._handle_hover_exit(tool_id)
 
     def _handle_click(self, tool_id: int, hand: str = "unknown"):
-        self._hovered_tool_id = None
+        self._hovered_tool_id = None # clears _hovered_tool_id at the start — if you click, the hover state is irrelevant.
         updates: list[tuple[int, list[float]]] = []
         if self._active_tool_id == tool_id:
             updates.append((tool_id, self.RESET_COLOR))
@@ -808,8 +815,8 @@ class _ToolSelectionManager:
             updates.append((self._active_tool_id, self.RESET_COLOR))
             updates.append((tool_id, self.SELECTED_COLOR))
             self._active_tool_id = tool_id
-            self._active_hand    = hand
-        else:
+            self._active_hand    = hand 
+        else: #nothing was selected
             updates.append((tool_id, self.SELECTED_COLOR))
             self._active_tool_id = tool_id
             self._active_hand    = hand
@@ -823,10 +830,10 @@ class _ToolSelectionManager:
         self._send_color(tool_id, self.HOVER_COLOR)
 
     def _handle_hover_exit(self, tool_id: int):
-        if tool_id != self._hovered_tool_id:
+        if tool_id != self._hovered_tool_id: #it's not the tool we recorded as hovered
             return
-        self._hovered_tool_id = None
-        if tool_id == self._active_tool_id:
+        self._hovered_tool_id = None 
+        if tool_id == self._active_tool_id: #it's currently selected (don't un-highlight a selected tool on hover exit)
             return
         self._send_color(tool_id, self.RESET_COLOR)
 
@@ -1075,6 +1082,43 @@ class _UrRtdeReceiver:
 class _SceneVis:
     FRUSTUM_SCALE = 0.2
 
+    # ── Static geometry helpers ───────────────────────────────────────────────
+
+    @staticmethod
+    def make_axes_lineset(T: np.ndarray, size: float = 0.10) -> o3d.geometry.LineSet:
+        """RGB XYZ axes as a LineSet at the given 4×4 pose."""
+        o = T[:3, 3]
+        pts = np.array([o,
+                        o + T[:3, 0] * size,
+                        o + T[:3, 1] * size,
+                        o + T[:3, 2] * size])
+        ls = o3d.geometry.LineSet()
+        ls.points = o3d.utility.Vector3dVector(pts)
+        ls.lines  = o3d.utility.Vector2iVector([[0, 1], [0, 2], [0, 3]])
+        ls.colors = o3d.utility.Vector3dVector([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+        return ls
+
+    @staticmethod
+    def make_box_lineset(pos: np.ndarray, R: np.ndarray,
+                         size, color=(0.2, 0.9, 1.0)) -> o3d.geometry.LineSet:
+        """12-edge wireframe box. pos = centre, R = rotation, size = [w, d, h]."""
+        w, d, h = size[0] / 2, size[1] / 2, size[2] / 2
+        corners_local = np.array([
+            [-w, -d, -h], [ w, -d, -h], [ w,  d, -h], [-w,  d, -h],
+            [-w, -d,  h], [ w, -d,  h], [ w,  d,  h], [-w,  d,  h],
+        ])
+        corners = (R @ corners_local.T).T + pos
+        edges = [[0,1],[1,2],[2,3],[3,0],
+                 [4,5],[5,6],[6,7],[7,4],
+                 [0,4],[1,5],[2,6],[3,7]]
+        ls = o3d.geometry.LineSet()
+        ls.points = o3d.utility.Vector3dVector(corners)
+        ls.lines  = o3d.utility.Vector2iVector(edges)
+        ls.colors = o3d.utility.Vector3dVector([list(color)] * 12)
+        return ls
+
+    # ── Init ─────────────────────────────────────────────────────────────────
+
     def __init__(self, title: str, width: int = 1000, height: int = 680):
         self.vis = o3d.visualization.Visualizer()
         self.vis.create_window(title, width=width, height=height)
@@ -1088,7 +1132,11 @@ class _SceneVis:
 
         self._cam_frustum   = None
         self._head_frustum  = None
+        self._tcp_axes      = None          # lazy — added on first update_tcp() call
+        self._tool_box_linesets: list = []  # lazy — grows to match number of tool boxes
+        self._pegboard_corners_local: np.ndarray | None = None
 
+        # Pegboard (coordinate frame + sphere + rectangle outline)
         self._pegboard_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.10)
         self._pegboard_frame.transform(self._hidden_T())
         self.vis.add_geometry(self._pegboard_frame)
@@ -1097,8 +1145,15 @@ class _SceneVis:
         self._pegboard_sphere.compute_vertex_normals()
         self._pegboard_sphere.transform(self._hidden_T())
         self.vis.add_geometry(self._pegboard_sphere)
+        self._pegboard_lineset = o3d.geometry.LineSet()
+        self.vis.add_geometry(self._pegboard_lineset)
         self._pegboard_T = self._hidden_T()
 
+        # Reachability arrows (shown for 5 s after pressing R, then hidden)
+        self._reach_lineset = o3d.geometry.LineSet()
+        self.vis.add_geometry(self._reach_lineset)
+
+        # Tracking origin (coordinate frame + sphere)
         self._tracking_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.10)
         self._tracking_frame.transform(self._hidden_T())
         self.vis.add_geometry(self._tracking_frame)
@@ -1109,6 +1164,7 @@ class _SceneVis:
         self.vis.add_geometry(self._tracking_sphere)
         self._tracking_T = self._hidden_T()
 
+        # Tracked board (coordinate frame + bounding box)
         self._board_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.10)
         self._board_frame.transform(self._hidden_T())
         self.vis.add_geometry(self._board_frame)
@@ -1120,6 +1176,55 @@ class _SceneVis:
         self.vis.add_geometry(self._board_box)
         self._board_T = self._hidden_T()
 
+        # Gripper mesh — loaded once, placed at TCP pose each frame via delta
+        # transforms. OBJ tool axis is mesh-Y; Rx(+90°) is baked into vertices
+        # at load time so mesh-Y aligns with TCP-Z (standard robot convention).
+        self._tcp_gripper_mesh = None
+        self._tcp_T = self._hidden_T()
+        _gripper_path = cfg.SCENE_LAYOUT_DIR / "gripperWtihAdapters.obj"
+        if _gripper_path.exists():
+            _mesh = o3d.io.read_triangle_mesh(str(_gripper_path))
+            _mesh.compute_vertex_normals()
+            _mesh.paint_uniform_color([0.75, 0.75, 0.75])
+            _T_fix = np.eye(4, dtype=np.float64)
+            _T_fix[:3, :3] = ScipyR.from_euler('x', 90, degrees=True).as_matrix()
+            _mesh.transform(_T_fix)
+            _mesh.transform(self._hidden_T())
+            self.vis.add_geometry(_mesh)
+            self._tcp_gripper_mesh = _mesh
+
+        # UR10e arm meshes — visual offsets from URDF <visual><origin> baked into
+        # vertices at load time, so update_robot() only needs the PyBullet link poses.
+        # Order: [base, shoulder, upper_arm, forearm, wrist1, wrist2, wrist3]
+        _UR10E_VIS = [
+            ("base.obj",     [0,       0,      0      ], [0,         0,       np.pi       ]),
+            ("shoulder.obj", [0,       0,      0      ], [0,         0,       np.pi       ]),
+            ("upperarm.obj", [0,       0,      0.1762 ], [np.pi/2,   0,      -np.pi/2    ]),
+            ("forearm.obj",  [0,       0,      0.0393 ], [np.pi/2,   0,      -np.pi/2    ]),
+            ("wrist1.obj",   [0,       0,     -0.135  ], [np.pi/2,   0,       0          ]),
+            ("wrist2.obj",   [0,       0,     -0.12   ], [0,         0,       0          ]),
+            ("wrist3.obj",   [0,       0,     -0.1168 ], [np.pi/2,   0,       0          ]),
+        ]
+        _mesh_dir = cfg.SCENE_LAYOUT_DIR.parent / "robot_assets" / "meshes" / "ur10e" / "visual"
+        self._robot_meshes: list = []
+        self._robot_mesh_Ts: list = []
+        for _fname, _vis_xyz, _vis_rpy in _UR10E_VIS:
+            _path = _mesh_dir / _fname
+            if _path.exists():
+                _m = o3d.io.read_triangle_mesh(str(_path))
+                _m.compute_vertex_normals()
+                _m.paint_uniform_color([0.50, 0.52, 0.58])
+                _T_vis = np.eye(4, dtype=np.float64)
+                _T_vis[:3, :3] = ScipyR.from_euler('xyz', _vis_rpy).as_matrix()
+                _T_vis[:3, 3]  = _vis_xyz
+                _m.transform(_T_vis)
+                _m.transform(self._hidden_T())
+                self.vis.add_geometry(_m)
+                self._robot_meshes.append(_m)
+            else:
+                self._robot_meshes.append(None)
+            self._robot_mesh_Ts.append(self._hidden_T().copy())
+
         self._pcd_l, self._lines_l = self._make_hand([0.3, 0.6, 1.0])
         self._pcd_r, self._lines_r = self._make_hand([1.0, 0.55, 0.1])
 
@@ -1128,6 +1233,8 @@ class _SceneVis:
         ctr.set_front([0., -0.5, -1.])
         ctr.set_up([0., 1., 0.])
         ctr.set_zoom(0.5)
+
+    # ── Internal helpers ──────────────────────────────────────────────────────
 
     @staticmethod
     def _hidden_T():
@@ -1159,6 +1266,8 @@ class _SceneVis:
         lines.points = o3d.utility.Vector3dVector(pts_use)
         self.vis.update_geometry(pcd)
         self.vis.update_geometry(lines)
+
+    # ── Update methods ────────────────────────────────────────────────────────
 
     def update_cam_frustum(self, T: np.ndarray | None,
                            w=640, h=480, fx=400., fy=400., cx=320., cy=240.):
@@ -1194,6 +1303,22 @@ class _SceneVis:
             self._head_frustum.colors = new_fr.colors
             self.vis.update_geometry(self._head_frustum)
 
+    def set_pegboard_outline(self, offset_x: float, offset_y: float,
+                              width: float, height: float):
+        """Store pegboard corners in marker-local frame (marker = origin).
+        offset_x/y: distance from marker centre to the right/top board edge.
+        Call once after loading the pegboard NPZ; update_pegboard() uses it."""
+        self._pegboard_corners_local = np.array([
+            [ offset_x,         offset_y,          0.0],   # top-right (≈ marker)
+            [ offset_x - width, offset_y,          0.0],   # top-left
+            [ offset_x - width, offset_y - height, 0.0],   # bottom-left
+            [ offset_x,         offset_y - height, 0.0],   # bottom-right
+        ])
+        self._pegboard_lineset.lines = o3d.utility.Vector2iVector(
+            [[0, 1], [1, 2], [2, 3], [3, 0]])
+        self._pegboard_lineset.colors = o3d.utility.Vector3dVector(
+            [[0.1, 0.6, 1.0]] * 4)
+
     def update_pegboard(self, T: np.ndarray | None):
         T_new = T if T is not None else self._hidden_T()
         delta = T_new @ np.linalg.inv(self._pegboard_T)
@@ -1202,6 +1327,12 @@ class _SceneVis:
         self._pegboard_T = T_new
         self.vis.update_geometry(self._pegboard_frame)
         self.vis.update_geometry(self._pegboard_sphere)
+        if self._pegboard_corners_local is not None:
+            corners_h = np.hstack([self._pegboard_corners_local,
+                                   np.ones((4, 1))])
+            pts = (T_new @ corners_h.T).T[:, :3]
+            self._pegboard_lineset.points = o3d.utility.Vector3dVector(pts)
+            self.vis.update_geometry(self._pegboard_lineset)
 
     def update_tracking(self, T: np.ndarray | None):
         T_new = T if T is not None else self._hidden_T()
@@ -1220,6 +1351,84 @@ class _SceneVis:
         self._board_T = T_new
         self.vis.update_geometry(self._board_frame)
         self.vis.update_geometry(self._board_box)
+
+    def update_tcp(self, T: np.ndarray | None):
+        """Update the TCP axes lineset and gripper mesh to pose T."""
+        T_new = T if T is not None else self._hidden_T()
+        new_axes = self.make_axes_lineset(T_new, size=0.08)
+        if self._tcp_axes is None:
+            self._tcp_axes = new_axes
+            self.vis.add_geometry(self._tcp_axes)
+        else:
+            self._tcp_axes.points = new_axes.points
+            self._tcp_axes.lines  = new_axes.lines
+            self._tcp_axes.colors = new_axes.colors
+            self.vis.update_geometry(self._tcp_axes)
+        if self._tcp_gripper_mesh is not None:
+            delta = T_new @ np.linalg.inv(self._tcp_T)
+            self._tcp_gripper_mesh.transform(delta)
+            self.vis.update_geometry(self._tcp_gripper_mesh)
+        self._tcp_T = T_new
+
+    def update_tool_boxes(self, boxes):
+        """Update wireframe box linesets for all tool bounding boxes.
+        boxes: list of (pos_world, R_world, size) from tool_layout.world_boxes()."""
+        while len(self._tool_box_linesets) < len(boxes):
+            ls = o3d.geometry.LineSet()
+            self.vis.add_geometry(ls)
+            self._tool_box_linesets.append(ls)
+        _hidden_pts = o3d.utility.Vector3dVector(np.tile([0., -1.5, 0.], (8, 1)))
+        _box_edges  = o3d.utility.Vector2iVector(
+            [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]])
+        for i, ls in enumerate(self._tool_box_linesets):
+            if i < len(boxes):
+                pos, R, size = boxes[i]
+                new_ls = self.make_box_lineset(pos, R, size)
+                ls.points = new_ls.points
+                ls.lines  = new_ls.lines
+                ls.colors = new_ls.colors
+            else:
+                ls.points = _hidden_pts
+                ls.lines  = _box_edges
+            self.vis.update_geometry(ls)
+
+    def update_robot(self, link_poses: list[np.ndarray]):
+        """Move UR10e arm meshes to the given PyBullet link world poses.
+        link_poses: 7 transforms [base, shoulder, upper_arm, forearm, wrist1, wrist2, wrist3]
+        from PyBulletScene.get_arm_link_world_poses()."""
+        for i, (mesh, T_new) in enumerate(zip(self._robot_meshes, link_poses)):
+            if mesh is None:
+                continue
+            T_cur = self._robot_mesh_Ts[i]
+            delta = T_new @ np.linalg.inv(T_cur)
+            mesh.transform(delta)
+            self.vis.update_geometry(mesh)
+            self._robot_mesh_Ts[i] = T_new
+
+    def update_reachability_arrows(self, points: np.ndarray, flags: np.ndarray,
+                                    board_normal: np.ndarray, arrow_len: float = 0.04):
+        """Draw one arrow per grid point along board_normal: green=reachable, red=not.
+        Call hide_reachability_arrows() to clear them."""
+        n = len(points)
+        if n == 0:
+            return
+        norm = board_normal / (np.linalg.norm(board_normal) + 1e-9)
+        tips  = points + norm * arrow_len
+        pts   = np.empty((2 * n, 3), dtype=np.float64)
+        pts[0::2] = points
+        pts[1::2] = tips
+        lines  = [[2*i, 2*i+1] for i in range(n)]
+        colors = [[0.1, 0.9, 0.1] if f else [0.9, 0.1, 0.1] for f in flags]
+        self._reach_lineset.points = o3d.utility.Vector3dVector(pts)
+        self._reach_lineset.lines  = o3d.utility.Vector2iVector(lines)
+        self._reach_lineset.colors = o3d.utility.Vector3dVector(colors)
+        self.vis.update_geometry(self._reach_lineset)
+
+    def hide_reachability_arrows(self):
+        self._reach_lineset.points = o3d.utility.Vector3dVector(np.zeros((0, 3)))
+        self._reach_lineset.lines  = o3d.utility.Vector2iVector(np.zeros((0, 2), dtype=int))
+        self._reach_lineset.colors = o3d.utility.Vector3dVector(np.zeros((0, 3)))
+        self.vis.update_geometry(self._reach_lineset)
 
     def update_hands(self, left_pts: np.ndarray | None, right_pts: np.ndarray | None):
         self._set_hand(self._pcd_l, self._lines_l, left_pts)
@@ -1251,9 +1460,9 @@ class MainScene:
     _TRACK_HOLD_FRAMES    = 15     # consecutive frames under threshold before locking grip
 
     PEGBOARD_CUBES = [
-        {"offset": [ 0.10, 0.00, 0.05], "color": [1.0, 0.6, 0.2]},
-        {"offset": [ 0.00, 0.10, 0.05], "color": [0.8, 0.2, 0.8]},
-        {"offset": [-0.10, 0.00, 0.05], "color": [0.2, 1.0, 0.9]},
+        {"offset": [ 0.10, 0.00, 0.05], "color": [1.0, 0.6, 0.2], "name": "pegboard_cube_0"},
+        {"offset": [ 0.00, 0.10, 0.05], "color": [0.8, 0.2, 0.8], "name": "pegboard_cube_1"},
+        {"offset": [-0.10, 0.00, 0.05], "color": [0.2, 1.0, 0.9], "name": "pegboard_cube_2"},
     ]
 
     def __init__(self, quest_ip: str, anchor_marker_id: int, pegboard_marker_id: int,
@@ -1264,8 +1473,7 @@ class MainScene:
                  board_marker_b: int = cfg.BOARD_MARKER_B_ID,
                  board_marker_size_m: float | None = None,
                  use_calibrated_robot_base: bool = cfg.USE_CALIBRATED_ROBOT_BASE_POSE,
-                 load_pegboard_from_file: bool = cfg.LOAD_PEGBOARD_FROM_FILE,
-                 pybullet_gui: bool = cfg.PYBULLET_GUI):
+                 load_pegboard_from_file: bool = cfg.LOAD_PEGBOARD_FROM_FILE):
 
         self.quest_ip                 = quest_ip
         self.anchor_marker_id         = anchor_marker_id
@@ -1284,7 +1492,7 @@ class MainScene:
         }
         self._sim_q = np.deg2rad(self._SIM_Q_DEG)
 
-        # ── PyBullet scene ────────────────────────────────────────────────────
+        # ── PyBullet IK scene (headless) ──────────────────────────────────────
         _calib_dir = _FILE_DIR / "calibration_data" / "results"
         self.pb_scene: "PyBulletScene | None" = None
         if _PYBULLET_AVAILABLE:
@@ -1292,52 +1500,30 @@ class MainScene:
                 if use_calibrated_robot_base and _calib_dir.exists():
                     try:
                         _p1 = np.load(_calib_dir / "phase1_results.npz")
-                        _p2 = np.load(_calib_dir / "phase2_results.npz")
-                        _T_deskcam_hidden = np.eye(4, dtype=float)
-                        _T_deskcam_hidden[:3, 3] = [0.0, 0.0, -10.0]
                         self.pb_scene = PyBulletScene(
-                            T_world_base    = _p1["T_world_base"],
-                            T_world_deskcam = _T_deskcam_hidden,
-                            T_tcp_handcam   = _p2["T_tcp_handcam"],
-                            gui             = pybullet_gui,
-                        )
+                            T_world_base=_p1["T_world_base"])
                         self.pb_scene.build()
                         self.pb_scene.update_robot(self._sim_q)
-                        print(f"[PyBullet] Simulation + calibrated base pose  "
-                              f"(gui={'on' if pybullet_gui else 'off'}).")
+                        print("[PyBullet] Simulation + calibrated base pose (headless).")
                     except Exception as e:
                         print(f"[MainScene] PyBullet (calibrated) failed: {e}")
                         self.pb_scene = None
                 else:
                     _T_world_base_sim = np.eye(4, dtype=float)
                     _T_world_base_sim[:3, 3] = [-0.4, -0.8, 0.4]
-                    _T_tcp_handcam_sim = np.array([
-                        [ 9.99831286e-01, -1.52293140e-02, -1.02697110e-02, -8.15478042e-03],
-                        [ 1.83648570e-02,  8.39818667e-01,  5.42556299e-01, -1.30062224e-01],
-                        [ 3.61934770e-04, -5.42653365e-01,  8.39956663e-01,  4.29530814e-02],
-                        [ 0.00000000e+00,  0.00000000e+00,  0.00000000e+00,  1.00000000e+00],
-                    ])
-                    _T_deskcam_hidden = np.eye(4, dtype=float)
-                    _T_deskcam_hidden[:3, 3] = [0.0, 0.0, -10.0]
                     try:
                         self.pb_scene = PyBulletScene(
-                            T_world_base    = _T_world_base_sim,
-                            T_world_deskcam = _T_deskcam_hidden,
-                            T_tcp_handcam   = _T_tcp_handcam_sim,
-                            gui             = pybullet_gui,
-                        )
+                            T_world_base=_T_world_base_sim)
                         self.pb_scene.build()
                         self.pb_scene.update_robot(self._sim_q)
-                        print(f"[PyBullet] Simulation — hardcoded base pose  "
-                              f"(gui={'on' if pybullet_gui else 'off'}).")
+                        print("[PyBullet] Simulation — hardcoded base pose (headless).")
                     except Exception as e:
                         print(f"[MainScene] PyBullet scene failed to build: {e}")
                         self.pb_scene = None
             else:
                 if _calib_dir.exists():
                     try:
-                        self.pb_scene = PyBulletScene.from_calibration(
-                            _calib_dir, gui=pybullet_gui)
+                        self.pb_scene = PyBulletScene.from_calibration(_calib_dir)
                         self.pb_scene.build()
                         self.pb_scene.update_robot(self._sim_q)
                     except Exception as e:
@@ -1369,8 +1555,6 @@ class MainScene:
         elif self.rtde is not None:
             print(f"[Robot] Live RTDE mode — connected to {robot_ip}")
 
-        self.overlay: "SceneOverlay | None" = (SceneOverlay()
-                                               if self.pb_scene is not None else None)
         self.anchor      = _WorldAnchor(quest_ip)
         self.tools       = _ToolSelectionManager(quest_ip)
         self.tuner       = _OffsetTuner()
@@ -1382,16 +1566,16 @@ class MainScene:
 
         # Cubes around the anchor marker (world origin) — ids 0, 1, 2
         self.synth.add([ 0.10, 0.00, 0.05], width=0.06, depth=0.06, height=0.10,
-                       color=[1.0, 0.2, 0.2])
+                       color=[1.0, 0.2, 0.2], name="anchor_cube_x")
         self.synth.add([ 0.00, 0.10, 0.05], width=0.06, depth=0.06, height=0.10,
-                       color=[0.2, 1.0, 0.2])
+                       color=[0.2, 1.0, 0.2], name="anchor_cube_y")
         self.synth.add([-0.10, 0.00, 0.05], width=0.06, depth=0.06, height=0.10,
-                       color=[0.2, 0.4, 1.0])
+                       color=[0.2, 0.4, 1.0], name="anchor_cube_neg_x")
 
         # TCP marker — id 3; position updated each frame from PyBullet FK
         self._tcp_synth = (self.synth.add([0.0, 0.0, 0.0],
                                           width=0.05, depth=0.05, height=0.05,
-                                          color=[1.0, 0.8, 0.2])
+                                          color=[1.0, 0.8, 0.2], name="tcp")
                            if self.pb_scene is not None else None)
 
         # ── Open3D visualizer + OpenCV window ─────────────────────────────────
@@ -1407,6 +1591,7 @@ class MainScene:
         self._relock_available_prev = False
         self._green_until           = 0.0
         self._last_proximity_relock = 0.0
+        self._reach_until           = 0.0
         self._ctrl_active           = False
         self._ctrl: "RobotController | None"       = None
         self._T_tool0: "np.ndarray | None"         = None
@@ -1450,14 +1635,20 @@ class MainScene:
         try:
             data = np.load(npz_path)
             self.anchor.set_pegboard(data["T_world10_pegboard"])
+            self.vis.set_pegboard_outline(
+                offset_x=float(data["marker_offset_right_m"]),
+                offset_y=float(data["marker_offset_top_m"]),
+                width=float(data["pegboard_width_m"]),
+                height=float(data["pegboard_height_m"]),
+            )
         except Exception as e:
             print(f"[PegboardFile] Load failed: {e}")
             return False
         T_wp = self.anchor.T_pegboard_in_world
         if T_wp is not None:
             self.tool_layout.publish(T_wp)
-            if self.pb_scene is not None:
-                self.pb_scene.update_tool_boxes(self.tool_layout.world_boxes(T_wp))
+            boxes = self.tool_layout.world_boxes(T_wp)
+            self.vis.update_tool_boxes(boxes)
         return True
 
     # ── Main loop ─────────────────────────────────────────────────────────────
@@ -1513,10 +1704,15 @@ class MainScene:
                                    if _center_T is not None else None)
                 left_pts, right_pts = self.hands.world_joints(T_wt)
 
-                # ── Anchor marker proximity relock ────────────────────────────
+                # ── Reachability arrow expiry ─────────────────────────────────
                 _now = time.time()
+                if self._reach_until > 0.0 and _now >= self._reach_until:
+                    self.vis.hide_reachability_arrows()
+                    self._reach_until = 0.0
+
+                # ── Anchor marker proximity relock ────────────────────────────
                 dist_to_anchor = (
-                    float(np.linalg.norm(T_cam_anchor[:3, 3]))
+                    float(np.linalg.norm(T_cam_anchor[:3, 3])) #T_cam_anchor: 4×4 pose of the anchor ArUco marker (ID 10) relative to the camera, 
                     if anchor_ok and self.cam.camera_T is not None else float('inf'))
                 _relock_available = (self.anchor.locked and anchor_ok
                                      and self.cam.camera_T is not None
@@ -1556,9 +1752,8 @@ class MainScene:
                     self._last_proximity_relock = _now
                     if self.anchor.T_pegboard_in_world is not None:
                         self.tool_layout.publish(self.anchor.T_pegboard_in_world)
-                        if self.pb_scene is not None:
-                            self.pb_scene.update_tool_boxes(
-                                self.tool_layout.world_boxes(self.anchor.T_pegboard_in_world))
+                        _boxes = self.tool_layout.world_boxes(self.anchor.T_pegboard_in_world)
+                        self.vis.update_tool_boxes(_boxes)
                     print("[AutoRelock] Relocked via proximity click")
                 self.tools.deselect(self.anchor_marker_id)
 
@@ -1644,15 +1839,6 @@ class MainScene:
                 self.vis.update_hands(left_pts, right_pts)
                 self.vis.tick()
 
-                # ── PyBullet overlay ──────────────────────────────────────────
-                if self.overlay is not None:
-                    if self.cam.fx is not None:
-                        self.overlay.update_head(T_world_center, fx, fy,
-                                                 self.cam.width, self.cam.height)
-                    self.overlay.update_hands(
-                        left_pts if T_world_center is not None else None,
-                        right_pts if T_world_center is not None else None)
-
                 # ── PyBullet scene update ─────────────────────────────────────
                 if self.pb_scene is not None:
                     if self.simulation:
@@ -1722,6 +1908,9 @@ class MainScene:
                                 self._grip_state = 'grabbed'
                                 print("[Grip] Move complete — back to 'grabbed'")
                         self._T_tool0 = self.pb_scene.update_tcp_bodies()
+                        if self._T_tool0 is not None:
+                            self.vis.update_tcp(self._T_tool0)
+                        self.vis.update_robot(self.pb_scene.get_arm_link_world_poses())
                         if self._T_tool0 is not None and self._tcp_synth is not None:
                             self._tcp_synth.centroid = self._T_tool0[:3, 3]
                             self._tcp_synth.R_o3d    = self._T_tool0[:3, :3]
@@ -1767,10 +1956,6 @@ class MainScene:
                         q = self.rtde.poll()
                         if q is not None:
                             self.pb_scene.update_robot(q)
-                            self.pb_scene.update_tcp_bodies()
-                    self.pb_scene.update_pegboard(self.anchor.T_pegboard_in_world)
-                    self.pb_scene.update_tracked_board(self.anchor.T_board_in_world)
-                    self.pb_scene.step()
 
                 # ── OpenCV display ────────────────────────────────────────────
                 disp = cv.resize(
@@ -1834,19 +2019,21 @@ class MainScene:
                 elif key == ord('r') or key == ord('R'):
                     if (self.pb_scene is not None
                             and self.anchor.T_pegboard_in_world is not None):
-                        _reach_quat = _tool_grasp_quat(
-                            self.anchor.T_pegboard_in_world[:3, :3])
-                        self.pb_scene.check_reachability(
-                            self.anchor.T_pegboard_in_world,
-                            target_quat_xyzw=_reach_quat)
+                        T_wp = self.anchor.T_pegboard_in_world
+                        _reach_quat = _tool_grasp_quat(T_wp[:3, :3])
+                        _, _, _reach_pts, _reach_flags = \
+                            self.pb_scene.check_reachability(
+                                T_wp, target_quat_xyzw=_reach_quat)
+                        if len(_reach_pts):
+                            _board_normal = T_wp[:3, 2]
+                            self.vis.update_reachability_arrows(
+                                _reach_pts, _reach_flags, _board_normal)
+                            self._reach_until = time.time() + 5.0
                     else:
                         print("[R] Pegboard not locked yet — lock it first.")
                 elif key == 13:  # ENTER
                     if self.simulation and self.pb_scene is not None:
                         self.pb_scene.set_scene_origin(np.eye(4))
-                        self.pb_scene.update_wall(np.eye(4))
-                        if self.overlay is not None:
-                            self.overlay.reset_ids()
                     if self.cam.camera_T is None:
                         if not self.simulation:
                             print("[ENTER] No camera pose — skipping.")
@@ -1863,7 +2050,6 @@ class MainScene:
                             self._last_proximity_relock = _now
                             if self.pb_scene is not None:
                                 self.pb_scene.set_scene_origin(np.eye(4))
-                                self.pb_scene.update_wall(np.eye(4))
                             if self._load_pegboard_from_file:
                                 self._try_load_pegboard_from_file()
                         elif not self.anchor.locked:
@@ -1889,15 +2075,15 @@ class MainScene:
                                         self.synth.add(
                                             _transform_point(T_wp, cube["offset"]),
                                             width=0.06, depth=0.06, height=0.10,
-                                            color=cube["color"], R_o3d=R_wp)
+                                            color=cube["color"], R_o3d=R_wp,
+                                            name=cube["name"])
                                     self._pegboard_cubes_added = True
                                     print(f"[Synth] Added {len(self.PEGBOARD_CUBES)}"
                                           f" pegboard cubes at marker "
                                           f"#{self.pegboard_marker_id}")
                                 self.tool_layout.publish(T_wp)
-                                if self.pb_scene is not None:
-                                    self.pb_scene.update_tool_boxes(
-                                        self.tool_layout.world_boxes(T_wp))
+                                _boxes = self.tool_layout.world_boxes(T_wp)
+                                self.vis.update_tool_boxes(_boxes)
                         elif pegboard_ok and not self.anchor.locked:
                             print(f"[ENTER] Marker #{self.pegboard_marker_id} visible, "
                                   f"but lock marker #{self.anchor_marker_id} first.")
@@ -1979,10 +2165,6 @@ def main():
                     default=cfg.LOAD_PEGBOARD_FROM_FILE,
                     help="Auto-load pegboard pose from scene_layout NPZ on anchor lock "
                          "(skips needing marker 101 visible)")
-    ap.add_argument("--pybullet-gui", action=argparse.BooleanOptionalAction,
-                    default=cfg.PYBULLET_GUI,
-                    help="Open PyBullet GUI window (--pybullet-gui) or run headless "
-                         "(--no-pybullet-gui); IK/FK still active either way")
     args = ap.parse_args()
     if args.anchor_marker == args.pegboard_marker:
         ap.error("--anchor-marker and --pegboard-marker must be different.")
@@ -2005,8 +2187,7 @@ def main():
         board_marker_b             = args.board_marker_b,
         board_marker_size_m        = args.board_marker_size,
         use_calibrated_robot_base  = args.calibrated_robot_base,
-        load_pegboard_from_file    = args.load_pegboard_from_file,
-        pybullet_gui               = args.pybullet_gui)
+        load_pegboard_from_file    = args.load_pegboard_from_file)
     scene.run()
 
 

@@ -56,10 +56,6 @@ USE_CALIBRATED_ROBOT_BASE_POSE = True
 # so you don't need to show marker 101 separately.
 LOAD_PEGBOARD_FROM_FILE = True
 
-# If True, open the PyBullet GUI window. Set False to run headless (DIRECT
-# mode) — IK and FK still work, only the 3D viewer is disabled.
-PYBULLET_GUI = False
-
 # ── Helpers (kept for compatibility with code that calls cfg.to_unity() etc.) ─
 def to_unity(port: int) -> str:
     return f"tcp://{UNITY_IP}:{port}"
