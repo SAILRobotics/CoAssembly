@@ -12,7 +12,7 @@ _HERE = Path(__file__).resolve().parent
 SCENE_LAYOUT_DIR = _HERE / "scene_layout"
 
 # ── Machine IPs ───────────────────────────────────────────────────────────────
-UNITY_IP   = "192.168.50.201"   # Quest / Windows machine running Unity
+UNITY_IP   = "192.168.50.167"   # Quest / Windows machine running Unity
 ROBOT_IP   = "192.168.50.70"    # UR10e robot controller
 
 # ── Ports (Unity → Python) ────────────────────────────────────────────────────
@@ -32,7 +32,7 @@ GRIP_STATE_PORT    = 5012   # grip state + gripper box pose
 BOARD_ROOT_PORT    = 5014   # tracked board root transform
 
 # ── ArUco marker IDs ──────────────────────────────────────────────────────────
-ANCHOR_MARKER_ID   = 10   # world frame + PyBullet scene origin
+ANCHOR_MARKER_ID   = 100   # world frame + PyBullet scene origin
 PEGBOARD_MARKER_ID = 101   # pegboard origin (top-right corner)
 BOARD_MARKER_A_ID  = 102   # one large face of the tracked board
 BOARD_MARKER_B_ID  = 103   # opposite large face of the tracked board
