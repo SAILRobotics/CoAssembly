@@ -657,6 +657,10 @@ class AnnotateApp:
     _CAL_DIR    = Path("calibration_data/results")
     _LAYOUT_DIR = SCENE_LAYOUT_DIR
 
+    # OBJ → TCP frame: rotate Y_mesh → Z_tcp, shift fingertip to TCP origin.
+    # If the mesh appears shifted on the real robot, adjust _GRIPPER_FINGERTIP_Y.
+    _GRIPPER_FINGERTIP_Y: float = 0.1661  # OBJ Y at fingertip centre (m)
+
     # ── init ──────────────────────────────────────────────────────────────
 
     def __init__(self, robot_ip: str = "192.168.50.70"):
@@ -732,6 +736,7 @@ class AnnotateApp:
         self._TAG_STATUS   = "status_text"
         # robot-control tags
         self._TAG_FD_BTN   = "freedrive_btn"
+        self._TAG_FD_MODE  = "freedrive_mode"
         self._TAG_JOG_X    = "jog_x"
         self._TAG_JOG_Y    = "jog_y"
         self._TAG_JOG_Z    = "jog_z"
@@ -748,6 +753,9 @@ class AnnotateApp:
         self._joint_q         = [0.0] * 6
         self._tcp_world_pos   = np.zeros(3)
         self._tcp_world_T     = np.eye(4)
+        self._jog_target_pose  = None   # updated by slider; consumed by servo loop
+        self._jog_servo_active = False  # True while servo loop thread is running
+        self._gripper_mesh_raw = None   # loaded once in run(); template at OBJ origin
 
     # ── Robot ─────────────────────────────────────────────────────────────
 
@@ -802,11 +810,20 @@ class AnnotateApp:
         threading.Thread(target=_worker, daemon=True).start()
 
     def _get_rtde_ctrl(self):
+        """Persistent RTDE connection — kept alive for freedrive."""
         if self._rtde_ctrl is None:
             from rtde_control import RTDEControlInterface
             print(f"[Robot] Connecting RTDE control → {self.robot_ip}")
             self._rtde_ctrl = RTDEControlInterface(self.robot_ip)
         return self._rtde_ctrl
+
+    def _new_rtde_ctrl(self):
+        """Fresh RTDE connection for one-shot operations (jog, test, e-stop).
+        The RTDE control script times out between uses, so stale cached
+        connections raise 'control script is not running'. A fresh connect
+        always works."""
+        from rtde_control import RTDEControlInterface
+        return RTDEControlInterface(self.robot_ip)
 
     def _get_rtde_recv(self):
         if self._rtde_recv is None:
@@ -849,12 +866,28 @@ class AnnotateApp:
         return T_base[:3, 3].tolist() + \
                ScipyR.from_matrix(T_base[:3, :3]).as_rotvec().tolist()
 
+    _FREEDRIVE_MODES = {
+        "All 6DOF":          [1,1,1,1,1,1],
+        "Translation only":  [1,1,1,0,0,0],
+        "Rotation only":     [0,0,0,1,1,1],
+        "XY plane":          [1,1,0,0,0,0],
+        "Z only":            [0,0,1,0,0,0],
+    }
+
     def _on_freedrive_toggle(self):
+        mode_name = dpg.get_value(self._TAG_FD_MODE)
+        free_axes = self._FREEDRIVE_MODES.get(mode_name, [1,1,1,1,1,1])
         def _worker():
             try:
                 ctrl = self._get_rtde_ctrl()
                 if not self._freedrive:
-                    ctrl.freedriveMode()
+                    # stop any active servo loop before entering freedrive
+                    self._jog_servo_active = False
+                    try:
+                        ctrl.servoStop()
+                    except Exception:
+                        pass
+                    ctrl.freedriveMode(free_axes)
                     self._freedrive = True
                     dpg.configure_item(self._TAG_FD_BTN,
                                        label="🟢  FREE DRIVE: ON  (click to lock)")
@@ -869,21 +902,120 @@ class AnnotateApp:
                 print(f"[Freedrive] {e}")
         threading.Thread(target=_worker, daemon=True).start()
 
+    def _on_estop(self):
+        def _worker():
+            try:
+                ctrl = self._stop_servo_and_get_ctrl()
+                if self._freedrive:
+                    ctrl.endFreedriveMode()
+                    self._freedrive = False
+                ctrl.stopL(2.0)   # max deceleration software stop
+                dpg.configure_item(self._TAG_FD_BTN,
+                                   label="🔴  FREE DRIVE: OFF  (click to enable)")
+                dpg.bind_item_theme(self._TAG_FD_BTN, self._theme_red)
+                dpg.set_value(self._TAG_STATUS, "⚠ Robot stopped.")
+            except Exception as e:
+                print(f"[EStop] {e}")
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _stop_servo_and_get_ctrl(self):
+        """Stop the servoL loop and return the persistent ctrl connection.
+        Call this from any worker that needs to issue moveL/stopL while the
+        servo loop may be running — UR allows only one RTDE control session."""
+        import time as _t
+        self._jog_servo_active = False
+        self._jog_target_pose  = None
+        _t.sleep(0.05)          # let the servo loop exit its current iteration
+        ctrl = self._get_rtde_ctrl()
+        try:
+            ctrl.servoStop()    # exit servo mode so moveL is accepted
+        except Exception:
+            pass
+        return ctrl
+
+    def _world_pose_to_base(self, pose_world: list) -> list:
+        T = np.eye(4)
+        T[:3, :3] = ScipyR.from_rotvec(pose_world[3:]).as_matrix()
+        T[:3, 3]  = pose_world[:3]
+        T_base = np.linalg.inv(self.T_world_base) @ T
+        return (T_base[:3, 3].tolist()
+                + ScipyR.from_matrix(T_base[:3, :3]).as_rotvec().tolist())
+
+    def _on_test_grasp(self):
+        if not (0 <= self._selected_idx < len(self._boxes)):
+            dpg.set_value(self._TAG_STATUS, "Select a box first.")
+            return
+        box = self._boxes[self._selected_idx]
+        if "grasp_tcp_world" not in box:
+            dpg.set_value(self._TAG_STATUS, "No grasp pose saved for this box.")
+            return
+        grasp_base    = self._world_pose_to_base(box["grasp_tcp_world"])
+        approach_base = self._world_pose_to_base(box["approach_tcp_world"])
+        def _worker():
+            try:
+                ctrl = self._stop_servo_and_get_ctrl()
+                g    = self._get_gripper()
+                dpg.set_value(self._TAG_STATUS, "Opening gripper…")
+                g.move_and_wait_for_pos(g.get_open_position(), 255, 10)
+                dpg.set_value(self._TAG_STATUS, "Moving to approach pose…")
+                ctrl.moveL(approach_base, speed=0.05, acceleration=0.2)
+                dpg.set_value(self._TAG_STATUS, "Moving to grasp pose…")
+                ctrl.moveL(grasp_base, speed=0.02, acceleration=0.1)
+                dpg.set_value(self._TAG_STATUS, "Closing gripper…")
+                g.move_and_wait_for_pos(g.get_closed_position(), 255, 100)
+                import time as _t; _t.sleep(0.5)
+                dpg.set_value(self._TAG_STATUS, "Opening gripper…")
+                g.move_and_wait_for_pos(g.get_open_position(), 255, 10)
+                dpg.set_value(self._TAG_STATUS, "Retracting to approach pose…")
+                ctrl.moveL(approach_base, speed=0.05, acceleration=0.2)
+                dpg.set_value(self._TAG_STATUS, "✅ Test grasp complete.")
+            except Exception as e:
+                print(f"[TestGrasp] {e}")
+                dpg.set_value(self._TAG_STATUS, f"Test grasp failed: {e}")
+        threading.Thread(target=_worker, daemon=True).start()
+
     def _jog_send(self):
+        """Called on every slider drag event — just updates the target pose.
+        The servo loop thread picks it up and streams servoL at ~125 Hz."""
         if self._freedrive:
             dpg.set_value(self._TAG_STATUS, "Exit freedrive first before jogging.")
             return
         peg_x = dpg.get_value(self._TAG_JOG_X)
         peg_y = dpg.get_value(self._TAG_JOG_Y)
         dist  = dpg.get_value(self._TAG_JOG_Z)
-        pose  = self._compute_tcp_from_peg(peg_x, peg_y, dist)
-        def _worker():
+        self._jog_target_pose = self._compute_tcp_from_peg(peg_x, peg_y, dist)
+        if not self._jog_servo_active:
+            self._jog_servo_active = True
+            threading.Thread(target=self._servo_loop, daemon=True).start()
+
+    def _servo_loop(self):
+        """Background thread: streams servoL at ~125 Hz so the robot follows
+        slider values continuously. Pauses automatically during freedrive."""
+        import time as _t
+        try:
+            ctrl = self._get_rtde_ctrl()
+            while self._jog_servo_active:
+                if self._freedrive or self._jog_target_pose is None:
+                    _t.sleep(0.05)
+                    continue
+                try:
+                    ctrl.servoL(
+                        self._jog_target_pose,
+                        0.5, 0.5,   # speed, acceleration (unused by servoL)
+                        0.008,      # time: control period 8 ms
+                        0.1,        # lookahead_time: smoothing horizon
+                        300,        # gain
+                    )
+                except Exception as e:
+                    print(f"[ServoL] {e}")
+                    break
+                _t.sleep(0.008)
+        finally:
             try:
-                ctrl = self._get_rtde_ctrl()
-                ctrl.moveL(pose, speed=0.05, acceleration=0.3)
-            except Exception as e:
-                print(f"[Jog] {e}")
-        threading.Thread(target=_worker, daemon=True).start()
+                self._get_rtde_ctrl().servoStop()
+            except Exception:
+                pass
+            self._jog_servo_active = False
 
     def _on_gripper_toggle(self):
         def _worker():
@@ -950,10 +1082,46 @@ class AnnotateApp:
                     p = self._tcp_world_pos
                     dpg.set_value(self._TAG_TCP_TXT,
                         f"TCP world: ({p[0]:.3f}, {p[1]:.3f}, {p[2]:.3f}) m")
+                    if self._win is not None:
+                        gui.Application.instance.post_to_main_thread(
+                            self._win, self._do_update_tcp_viz)
                 except Exception:
                     pass
                 import time as _t; _t.sleep(0.2)
         threading.Thread(target=_poll, daemon=True).start()
+
+    def _do_update_tcp_viz(self):
+        """Called on the Open3D main thread: refresh gripper mesh + TCP frame."""
+        import copy
+        scene = self._scene_widget.scene
+        T = self._tcp_world_T.copy()
+
+        # TCP coordinate frame (size 5 cm)
+        frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.05)
+        frame.transform(T)
+        mat_lit = rendering.MaterialRecord()
+        mat_lit.shader = "defaultLit"
+        scene.remove_geometry("__tcp_frame")
+        scene.add_geometry("__tcp_frame", frame, mat_lit)
+
+        # Gripper mesh
+        if self._gripper_mesh_raw is not None:
+            fy = self._GRIPPER_FINGERTIP_Y
+            T_tcp_mesh = np.array([
+                [1,  0,  0,  0],
+                [0,  0, -1,  0],
+                [0,  1,  0, -fy],
+                [0,  0,  0,  1],
+            ], dtype=float)
+            mesh = copy.deepcopy(self._gripper_mesh_raw)
+            mesh.transform(T @ T_tcp_mesh)
+            mat_mesh = rendering.MaterialRecord()
+            mat_mesh.shader = "defaultLit"
+            mat_mesh.base_color = [0.7, 0.7, 0.75, 1.0]
+            scene.remove_geometry("__gripper_mesh")
+            scene.add_geometry("__gripper_mesh", mesh, mat_mesh)
+
+        self._scene_widget.force_redraw()
 
     # ── Geometry helpers ──────────────────────────────────────────────────
 
@@ -1343,10 +1511,23 @@ class AnnotateApp:
             dpg.add_separator()
             dpg.add_text("Robot Control")
 
-            dpg.add_button(tag=self._TAG_FD_BTN, width=-1,
-                           label="🔴  FREE DRIVE: OFF  (click to enable)",
-                           callback=lambda: self._on_freedrive_toggle())
-            dpg.bind_item_theme(self._TAG_FD_BTN, self._theme_red)
+            with dpg.group(horizontal=True):
+                dpg.add_combo(list(self._FREEDRIVE_MODES.keys()),
+                              tag=self._TAG_FD_MODE,
+                              default_value="All 6DOF", width=160)
+                dpg.add_button(tag=self._TAG_FD_BTN, width=-1,
+                               label="🔴  FREE DRIVE: OFF",
+                               callback=lambda: self._on_freedrive_toggle())
+                dpg.bind_item_theme(self._TAG_FD_BTN, self._theme_red)
+
+            dpg.add_button(label="⚠  EMERGENCY STOP", width=-1,
+                           callback=lambda: self._on_estop())
+            with dpg.theme() as _theme_orange:
+                with dpg.theme_component(dpg.mvButton):
+                    dpg.add_theme_color(dpg.mvThemeCol_Button,        (180, 90, 0))
+                    dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered,  (210, 110, 0))
+                    dpg.add_theme_color(dpg.mvThemeCol_ButtonActive,   (150, 70, 0))
+            dpg.bind_item_theme(dpg.last_item(), _theme_orange)
 
             dpg.add_separator()
             dpg.add_text("TCP Jog — pegboard frame")
@@ -1383,10 +1564,22 @@ class AnnotateApp:
             dpg.add_text("Joint Angles")
             dpg.add_text("J: —  —  —  —  —  —", tag=self._TAG_JOINT_TXT)
             dpg.add_text("TCP world: —", tag=self._TAG_TCP_TXT)
-            dpg.add_button(label="Save Grasp Pose", width=-1,
-                           callback=lambda: self._on_save_grasp())
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Save Grasp Pose", width=-1,
+                               callback=lambda: self._on_save_grasp())
+            dpg.add_button(label="▶  Test Approach → Grasp → Open → Retract", width=-1,
+                           callback=lambda: self._on_test_grasp())
 
         dpg.set_primary_window("main_win", True)
+
+        # Load gripper mesh template (once — deepcopy per frame for transform)
+        gripper_obj = self._LAYOUT_DIR / "gripperWtihAdapters.obj"
+        if gripper_obj.exists():
+            self._gripper_mesh_raw = o3d.io.read_triangle_mesh(str(gripper_obj))
+            self._gripper_mesh_raw.compute_vertex_normals()
+            print(f"[Annotate] Gripper mesh loaded ({len(self._gripper_mesh_raw.vertices)} verts)")
+        else:
+            print(f"[Annotate] Gripper mesh not found at {gripper_obj}")
 
         # Initial population
         self._sync_list()
