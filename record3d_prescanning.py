@@ -10,7 +10,7 @@ Pipeline
   Phase 2 – Show marker 101 (10 cm, pegboard) live in 3-D.
              Press ENTER to lock it; saves T_world10_pegboard to scene_layout/.
 
-  Phase 3 – TSDF fusion while the iPad ray hits the pegboard face.
+  Phase 3 – TSDF fusion of every frame (ray-hit sphere shown when ray hits pegboard).
              Live mesh preview refreshes every --tsdf-interval fused frames.
              Press Q to finish; final mesh saved to scene_layout/pegboard_scan.ply.
 
@@ -28,13 +28,24 @@ Controls (OpenCV window)
 """
 
 import argparse
+import json
+import threading
 from pathlib import Path
 from threading import Event
 
 import cv2
 import numpy as np
 import open3d as o3d
+import open3d.visualization.gui as gui
+import open3d.visualization.rendering as rendering
 from record3d import Record3DStream
+from scipy.spatial.transform import Rotation as ScipyR
+
+try:
+    import dearpygui.dearpygui as dpg
+    _DPG_AVAILABLE = True
+except ImportError:
+    _DPG_AVAILABLE = False
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -73,7 +84,6 @@ PEG_Y_MIN = PEG_OFFSET_Y - PEG_H    # bottom edge (≈ -0.756 m)
 PEG_Y_MAX = PEG_OFFSET_Y            # top edge   (≈ +0.057 m, near marker)
 
 SCENE_LAYOUT_DIR   = Path("scene_layout")
-TSDF_MESH_INTERVAL = 30   # refresh live mesh every N fused frames
 
 # ---------------------------------------------------------------------------
 # ARKit ↔ OpenCV convention
@@ -202,10 +212,10 @@ class PreScanApp:
     MAX_TRAJ_PTS = 300
 
     def __init__(self, device_idx: int = 0,
-                 tsdf_interval: int = TSDF_MESH_INTERVAL,
-                 aruco_dict_id: int = cv2.aruco.DICT_6X6_1000):
+                 aruco_dict_id: int = cv2.aruco.DICT_6X6_1000,
+                 scan_mode: str = 'board'):
         self.device_idx    = device_idx
-        self.tsdf_interval = tsdf_interval
+        self.scan_mode     = scan_mode   # 'board': bounded rect; 'plane': infinite plane
         self.event         = Event()
         self.session       = None
 
@@ -216,12 +226,11 @@ class PreScanApp:
         self.T_world10_world: np.ndarray | None = None
         self.T_world10_peg:   np.ndarray | None = None
 
-        self.tsdf = o3d.pipelines.integration.ScalableTSDFVolume(
-            voxel_length=0.004,
-            sdf_trunc=0.02,
-            color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8,
-        )
-        self.fusion_count = 0
+        self.fusion_count  = 0
+        self._scan_dir: Path | None = None   # set when scanning starts
+        self._saved_poses: list    = []       # list of (4,4) extrinsic arrays
+        self._saved_Ks:   list    = []       # list of (3,3) intrinsic arrays, one per frame
+        self._saved_hw:   tuple | None      = None
 
     # ------------------------------------------------------------------
     # Record3D callbacks
@@ -306,23 +315,22 @@ class PreScanApp:
                  marker_offset_top_m=PEG_OFFSET_Y)
         print(f'[Scene] Saved → {path}')
 
-    def _integrate_frame(self, rgb: np.ndarray, depth: np.ndarray,
-                         K: np.ndarray, T_w10_cam: np.ndarray):
+    def _save_frame(self, rgb: np.ndarray, depth: np.ndarray,
+                    K: np.ndarray, T_w10_cam: np.ndarray):
         if depth is None:
             return
         h, w = rgb.shape[:2]
         if depth.shape[:2] != (h, w):
             depth = cv2.resize(depth, (w, h), interpolation=cv2.INTER_NEAREST)
-        rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
-            o3d.geometry.Image(rgb),
-            o3d.geometry.Image(depth.astype(np.float32)),
-            depth_scale=1.0, depth_trunc=3.0,
-            convert_rgb_to_intensity=False)
-        intrinsic = o3d.camera.PinholeCameraIntrinsic(
-            w, h, K[0,0], K[1,1], K[0,2], K[1,2])
-        # Open3D wants world-to-camera in OpenCV convention.
-        extrinsic = _ARKIT_TO_CV_4x4 @ np.linalg.inv(T_w10_cam)
-        self.tsdf.integrate(rgbd, intrinsic, extrinsic)
+
+        idx = self.fusion_count
+        cv2.imwrite(str(self._scan_dir / "color" / f"{idx:06d}.jpg"), rgb[:, :, ::-1],
+                    [cv2.IMWRITE_JPEG_QUALITY, 95])
+        np.save(str(self._scan_dir / "depth" / f"{idx:06d}.npy"),
+                depth.astype(np.float32))
+        self._saved_poses.append(_ARKIT_TO_CV_4x4 @ np.linalg.inv(T_w10_cam))
+        self._saved_Ks.append(K.copy())
+        self._saved_hw = (h, w)
         self.fusion_count += 1
 
     # ------------------------------------------------------------------
@@ -370,8 +378,6 @@ class PreScanApp:
         live_surface       = None
         traj_pts: list     = []
         traj_ls            = None
-        tsdf_mesh_geom     = None   # live TSDF mesh shown in 3-D viewer
-        last_tsdf_count    = 0
         first_pose_added   = False
 
         phase = 'await_world'   # → 'await_peg' → 'scanning'
@@ -404,7 +410,7 @@ class PreScanApp:
             # ── Phase 1: ENTER locks marker 10 as world origin ──────────
             if (phase == 'await_world' and enter_pressed
                     and WORLD_MARKER_ID in detections):
-                T_arkit_wm = T_wc @ _ARKIT_TO_CV_4x4 @ detections[WORLD_MARKER_ID]
+                T_arkit_wm = T_wc @ _ARKIT_TO_CV_4x4 @ detections[WORLD_MARKER_ID] #marker in ARKit world frame
                 self.T_world10_world = np.linalg.inv(T_arkit_wm)
                 phase = 'await_peg'
                 print(f'[Phase 1 ✓] Marker {WORLD_MARKER_ID} locked as world origin.')
@@ -424,7 +430,14 @@ class PreScanApp:
                 T_arkit_peg = T_wc @ _ARKIT_TO_CV_4x4 @ detections[PEG_MARKER_ID]
                 self.T_world10_peg = self.T_world10_world @ T_arkit_peg
                 phase = 'scanning'
-                print(f'[Phase 2 ✓] Marker {PEG_MARKER_ID} locked. Scanning active.')
+                # Create output directories for this scan session
+                import time as _time
+                self._scan_dir = (SCENE_LAYOUT_DIR
+                                  / f"rgbd_scan_{_time.strftime('%Y%m%d_%H%M%S')}")
+                (self._scan_dir / "color").mkdir(parents=True)
+                (self._scan_dir / "depth").mkdir(parents=True)
+                print(f'[Phase 2 ✓] Marker {PEG_MARKER_ID} locked.'
+                      f' Saving frames to {self._scan_dir}')
 
                 # Replace live preview with locked geometry.
                 self._remove(vis, live_axes)
@@ -529,46 +542,44 @@ class PreScanApp:
                 self._remove(vis, current_hit_sphere)
                 current_hit_sphere = None
 
-                if hit is not None and point_in_pegboard(hit, self.T_world10_peg):
-                    sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.008)
-                    sphere.translate(hit)
-                    sphere.paint_uniform_color([1.0, 0.15, 0.15])
-                    sphere.compute_vertex_normals()
-                    current_hit_sphere = sphere
-                    vis.add_geometry(current_hit_sphere, reset_bounding_box=False)
+                if hit is not None:
+                    on_board = point_in_pegboard(hit, self.T_world10_peg)
+                    if on_board:
+                        sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.008)
+                        sphere.translate(hit)
+                        sphere.paint_uniform_color([1.0, 0.15, 0.15])
+                        sphere.compute_vertex_normals()
+                        current_hit_sphere = sphere
+                        vis.add_geometry(current_hit_sphere, reset_bounding_box=False)
 
-                    self._integrate_frame(rgb, depth, K, T_w10_cam)
+                    should_save = (self.scan_mode == 'all'
+                                   or (self.scan_mode == 'plane')
+                                   or (self.scan_mode == 'board' and on_board))
+                    if should_save:
+                        self._save_frame(rgb, depth, K, T_w10_cam)
 
-                    # ── Live TSDF mesh update ─────────────────────────────
-                    if (self.fusion_count > 0
-                            and self.fusion_count % self.tsdf_interval == 0
-                            and self.fusion_count != last_tsdf_count):
-                        last_tsdf_count = self.fusion_count
-                        print(f'[TSDF] Updating mesh at {self.fusion_count} frames…')
-                        self._remove(vis, tsdf_mesh_geom)
-                        tsdf_mesh_geom = self.tsdf.extract_triangle_mesh()
-                        tsdf_mesh_geom.compute_vertex_normals()
-                        vis.add_geometry(tsdf_mesh_geom, reset_bounding_box=False)
+                elif self.scan_mode == 'all':
+                    self._save_frame(rgb, depth, K, T_w10_cam)
 
             vis.poll_events()
             vis.update_renderer()
 
-        # ── Export on quit ───────────────────────────────────────────────
-        if self.fusion_count > 0:
-            print(f'[TSDF] {self.fusion_count} frames – extracting final mesh…')
-            mesh = self.tsdf.extract_triangle_mesh()
-            mesh.compute_vertex_normals()
-            SCENE_LAYOUT_DIR.mkdir(parents=True, exist_ok=True)
-            out_path = SCENE_LAYOUT_DIR / 'pegboard_scan.ply'
-            o3d.io.write_triangle_mesh(str(out_path), mesh)
-            print(f'[TSDF] Mesh saved → {out_path}')
-            vis.destroy_window()
-            cv2.destroyAllWindows()
-            o3d.visualization.draw_geometries(
-                [mesh], window_name='TSDF Reconstruction')
+        # ── Save metadata on quit ────────────────────────────────────────
+        vis.destroy_window()
+        cv2.destroyAllWindows()
+        if self.fusion_count > 0 and self._scan_dir is not None:
+            h, w = self._saved_hw
+            import json as _json
+            meta = {"width": w, "height": h}
+            (self._scan_dir / "meta.json").write_text(_json.dumps(meta, indent=2))
+            np.save(str(self._scan_dir / "poses.npy"),
+                    np.stack(self._saved_poses).astype(np.float64))
+            np.save(str(self._scan_dir / "intrinsics.npy"),
+                    np.stack(self._saved_Ks).astype(np.float64))
+            print(f'[Scan] {self.fusion_count} frames saved → {self._scan_dir}')
+            print(f'[Scan] Run:  python3 offline_fusion.py {self._scan_dir}')
         else:
-            vis.destroy_window()
-            cv2.destroyAllWindows()
+            print('[Scan] No frames recorded.')
 
 
 # ---------------------------------------------------------------------------
@@ -633,6 +644,1081 @@ def visualize_scene():
 
 
 # ---------------------------------------------------------------------------
+# Annotate mode
+# ---------------------------------------------------------------------------
+
+class AnnotateApp:
+    """
+    GUI tool for placing and editing tool bounding-boxes on the pegboard.
+
+    3-D view  : Open3D GUI window — shows PLY mesh + pegboard outline + boxes.
+                Click on the mesh to place a new box (when pick mode is active).
+    Control panel : DearPyGUI window — add / remove / edit boxes, save JSON.
+    Robot     : connects to the UR10e via RTDE and moves to a viewing pose
+                50 cm in front of the pegboard centre (background thread).
+
+    Output saved to scene_layout/tool_layout2.json in the same schema as
+    tool_layout.json so it can be dropped in as a replacement.
+    """
+
+    _CAL_DIR    = Path("calibration_data/results")
+    _LAYOUT_DIR = SCENE_LAYOUT_DIR
+
+    # OBJ → TCP frame: rotate Y_mesh → Z_tcp, shift fingertip to TCP origin.
+    # If the mesh appears shifted on the real robot, adjust _GRIPPER_FINGERTIP_Y.
+    _GRIPPER_FINGERTIP_Y: float = 0.1661  # OBJ Y at fingertip centre (m)
+
+    # ── init ──────────────────────────────────────────────────────────────
+
+    def __init__(self, robot_ip: str = "192.168.50.70"):
+        self.robot_ip  = robot_ip
+        self._ScipyR   = ScipyR
+        self._boxes: list[dict] = []
+        self._selected_idx = -1
+        self._next_id      = 0
+        self._pick_mode    = False
+
+        # Scene layout
+        npz_path = self._LAYOUT_DIR / "T_world10_pegboard101.npz"
+        if not npz_path.exists():
+            raise FileNotFoundError(f"No scene layout at {npz_path}. "
+                                    "Run the prescan first.")
+        data = np.load(str(npz_path))
+        self.T_world_peg = data["T_world10_pegboard"]
+        self.peg_width   = float(data["pegboard_width_m"])
+        self.peg_height  = float(data["pegboard_height_m"])
+        self.offset_x    = float(data["marker_offset_right_m"])
+        self.offset_y    = float(data["marker_offset_top_m"])
+
+        # Pegboard plane parameters for ray casting
+        self._plane_pt   = self.T_world_peg[:3, 3].copy()
+        self._plane_n    = self.T_world_peg[:3, 2].copy()
+        self._T_inv_peg  = np.linalg.inv(self.T_world_peg)
+
+        # Robot base pose in world frame (from eye–hand calibration)
+        cal_path = self._CAL_DIR / "phase1_results.npz"
+        if cal_path.exists():
+            cal = np.load(str(cal_path))
+            self.T_world_base = cal["T_world_base"]
+        else:
+            self.T_world_base = np.eye(4)
+            print("[Annotate] No calibration found — robot move pose may be wrong.")
+
+        # Pre-load existing tool_layout.json if present
+        tl_path = self._LAYOUT_DIR / "tool_layout.json"
+        if tl_path.exists():
+            raw = json.loads(tl_path.read_text())
+            for t in raw.get("tools", []):
+                entry = {
+                    "id":           int(t["id"]),
+                    "name":         str(t.get("type", "tool")),
+                    "category":     str(t.get("category", "tool")),
+                    "pegboard_pos": list(t.get("pegboard_pos", [0.0, 0.0])),
+                    "size":         list(t.get("size",         [0.10, 0.10, 0.025])),
+                    "rotation_deg": list(t.get("rotation_deg", [0.0,  0.0,  0.0])),
+                }
+                for gk in ("grasp_joints", "grasp_tcp_world", "approach_tcp_world"):
+                    if gk in t:
+                        entry[gk] = t[gk]
+                self._boxes.append(entry)
+                self._next_id = max(self._next_id, int(t["id"]) + 1)
+            print(f"[Annotate] Loaded {len(self._boxes)} existing boxes "
+                  f"from tool_layout.json")
+
+        # Open3D scene references — set in run()
+        self._win          = None
+        self._scene_widget = None
+        self._box_geom_names: list[str] = []
+
+        # DearPyGUI tag constants
+        self._TAG_LIST    = "box_listbox"
+        self._TAG_NAME    = "edit_name"
+        self._TAG_CAT     = "edit_cat"
+        self._TAG_POSX    = "edit_posX"
+        self._TAG_POSY    = "edit_posY"
+        self._TAG_SIZEW   = "edit_sizeW"
+        self._TAG_SIZED   = "edit_sizeD"
+        self._TAG_SIZEH   = "edit_sizeH"
+        self._TAG_ROTZ    = "edit_rotZ"
+        self._TAG_STATUS   = "status_text"
+        # robot-control tags
+        self._TAG_FD_BTN   = "freedrive_btn"
+        self._TAG_FD_MODE  = "freedrive_mode"
+        self._TAG_JOG_X    = "jog_x"
+        self._TAG_JOG_Y    = "jog_y"
+        self._TAG_JOG_Z    = "jog_z"
+        self._TAG_GRIP_BTN = "gripper_btn"
+        self._TAG_JOINT_TXT= "joint_txt"
+        self._TAG_TCP_TXT  = "tcp_txt"
+
+        # robot runtime state
+        self._rtde_ctrl       = None
+        self._rtde_recv       = None
+        self._gripper         = None
+        self._freedrive       = False
+        self._gripper_closed  = False
+        self._joint_q         = [0.0] * 6
+        self._tcp_world_pos   = np.zeros(3)
+        self._tcp_world_T     = np.eye(4)
+        self._jog_target_pose  = None   # updated by slider; consumed by servo loop
+        self._jog_servo_active = False  # True while servo loop thread is running
+        self._gripper_mesh_raw = None   # loaded once in run(); template at OBJ origin
+
+    # ── Robot ─────────────────────────────────────────────────────────────
+
+    def _compute_robot_view_pose(self) -> list[float]:
+        """TCP pose [x,y,z,rx,ry,rz] in robot base frame facing pegboard at 50 cm."""
+        # Board centre in pegboard-local frame
+        cx = (PEG_X_MIN + PEG_X_MAX) / 2.0
+        cy = (PEG_Y_MIN + PEG_Y_MAX) / 2.0
+        centre_world = (self.T_world_peg @ np.array([cx, cy, 0.0, 1.0]))[:3]
+
+        # Board outward normal
+        normal = self._plane_n / (np.linalg.norm(self._plane_n) + 1e-9)
+
+        # TCP is 50 cm in front of the board
+        tcp_pos_world = centre_world + 0.5 * normal
+
+        # TCP Z points INTO the board; Y follows pegboard Y axis
+        z_tcp = -normal
+        y_tmp = self.T_world_peg[:3, 1]
+        y_tcp = y_tmp - np.dot(y_tmp, z_tcp) * z_tcp
+        if np.linalg.norm(y_tcp) < 1e-6:
+            y_tcp = np.array([0.0, 0.0, 1.0])
+        y_tcp /= np.linalg.norm(y_tcp)
+        x_tcp = np.cross(y_tcp, z_tcp)
+        x_tcp /= np.linalg.norm(x_tcp)
+        y_tcp  = np.cross(z_tcp, x_tcp)
+
+        T_tcp_world = np.eye(4)
+        T_tcp_world[:3, :3] = np.column_stack([x_tcp, y_tcp, z_tcp])
+        T_tcp_world[:3, 3]  = tcp_pos_world
+
+        T_base_tcp = np.linalg.inv(self.T_world_base) @ T_tcp_world
+        pos     = T_base_tcp[:3, 3].tolist()
+        rot_vec = self._ScipyR.from_matrix(T_base_tcp[:3, :3]).as_rotvec().tolist()
+        return pos + rot_vec
+
+    def _move_robot_to_view(self):
+        """Send moveL to the viewing pose in a background thread."""
+        def _worker():
+            try:
+                from rtde_control import RTDEControlInterface
+                pose = self._compute_robot_view_pose()
+                print(f"[Robot] Connecting to {self.robot_ip}…")
+                ctrl = RTDEControlInterface(self.robot_ip)
+                print(f"[Robot] Moving to view pose: "
+                      f"{[round(v, 3) for v in pose]}")
+                ctrl.moveL(pose, speed=0.08, acceleration=0.2)
+                ctrl.disconnect()
+                print("[Robot] Reached view pose.")
+            except Exception as exc:
+                print(f"[Robot] Move failed: {exc}")
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _get_rtde_ctrl(self):
+        """Persistent RTDE connection — kept alive for freedrive."""
+        if self._rtde_ctrl is None:
+            from rtde_control import RTDEControlInterface
+            print(f"[Robot] Connecting RTDE control → {self.robot_ip}")
+            self._rtde_ctrl = RTDEControlInterface(self.robot_ip)
+        return self._rtde_ctrl
+
+    def _new_rtde_ctrl(self):
+        """Fresh RTDE connection for one-shot operations (jog, test, e-stop).
+        The RTDE control script times out between uses, so stale cached
+        connections raise 'control script is not running'. A fresh connect
+        always works."""
+        from rtde_control import RTDEControlInterface
+        return RTDEControlInterface(self.robot_ip)
+
+    def _get_rtde_recv(self):
+        if self._rtde_recv is None:
+            from rtde_receive import RTDEReceiveInterface
+            self._rtde_recv = RTDEReceiveInterface(self.robot_ip)
+        return self._rtde_recv
+
+    def _get_gripper(self):
+        if self._gripper is None:
+            import sys
+            sys.path.insert(0, str(Path(__file__).parent / "robot_controller"))
+            from robotiq_gripper import RobotiqGripper
+            print(f"[Gripper] Connecting → {self.robot_ip}:63352")
+            g = RobotiqGripper()
+            g.connect(self.robot_ip, 63352)
+            g.activate()
+            self._gripper = g
+            print("[Gripper] Ready.")
+        return self._gripper
+
+    def _compute_tcp_from_peg(self, peg_x: float, peg_y: float,
+                               dist: float) -> list[float]:
+        """TCP pose facing the pegboard at pegboard-local (peg_x, peg_y) + dist offset."""
+        pt_world = (self.T_world_peg @ np.array([peg_x, peg_y, 0.0, 1.0]))[:3]
+        normal   = self._plane_n / (np.linalg.norm(self._plane_n) + 1e-9)
+        tcp_pos  = pt_world + dist * normal
+        z_tcp = -normal
+        y_tmp = self.T_world_peg[:3, 1]
+        y_tcp = y_tmp - np.dot(y_tmp, z_tcp) * z_tcp
+        if np.linalg.norm(y_tcp) < 1e-6:
+            y_tcp = np.array([0.0, 0.0, 1.0])
+        y_tcp /= np.linalg.norm(y_tcp)
+        x_tcp  = np.cross(y_tcp, z_tcp)
+        x_tcp /= np.linalg.norm(x_tcp)
+        y_tcp   = np.cross(z_tcp, x_tcp)
+        T = np.eye(4)
+        T[:3, :3] = np.column_stack([x_tcp, y_tcp, z_tcp])
+        T[:3, 3]  = tcp_pos
+        T_base = np.linalg.inv(self.T_world_base) @ T
+        return T_base[:3, 3].tolist() + \
+               ScipyR.from_matrix(T_base[:3, :3]).as_rotvec().tolist()
+
+    _FREEDRIVE_MODES = {
+        "All 6DOF":          [1,1,1,1,1,1],
+        "Translation only":  [1,1,1,0,0,0],
+        "Rotation only":     [0,0,0,1,1,1],
+        "XY plane":          [1,1,0,0,0,0],
+        "Z only":            [0,0,1,0,0,0],
+    }
+
+    def _on_freedrive_toggle(self):
+        mode_name = dpg.get_value(self._TAG_FD_MODE)
+        free_axes = self._FREEDRIVE_MODES.get(mode_name, [1,1,1,1,1,1])
+        def _worker():
+            try:
+                ctrl = self._get_rtde_ctrl()
+                if not self._freedrive:
+                    # stop any active servo loop before entering freedrive
+                    self._jog_servo_active = False
+                    try:
+                        ctrl.servoStop()
+                    except Exception:
+                        pass
+                    ctrl.freedriveMode(free_axes)
+                    self._freedrive = True
+                    dpg.configure_item(self._TAG_FD_BTN,
+                                       label="🟢  FREE DRIVE: ON  (click to lock)")
+                    dpg.bind_item_theme(self._TAG_FD_BTN, self._theme_green)
+                else:
+                    ctrl.endFreedriveMode()
+                    self._freedrive = False
+                    dpg.configure_item(self._TAG_FD_BTN,
+                                       label="🔴  FREE DRIVE: OFF  (click to enable)")
+                    dpg.bind_item_theme(self._TAG_FD_BTN, self._theme_red)
+            except Exception as e:
+                print(f"[Freedrive] {e}")
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_estop(self):
+        def _worker():
+            try:
+                ctrl = self._stop_servo_and_get_ctrl()
+                if self._freedrive:
+                    ctrl.endFreedriveMode()
+                    self._freedrive = False
+                ctrl.stopL(2.0)   # max deceleration software stop
+                dpg.configure_item(self._TAG_FD_BTN,
+                                   label="🔴  FREE DRIVE: OFF  (click to enable)")
+                dpg.bind_item_theme(self._TAG_FD_BTN, self._theme_red)
+                dpg.set_value(self._TAG_STATUS, "⚠ Robot stopped.")
+            except Exception as e:
+                print(f"[EStop] {e}")
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _stop_servo_and_get_ctrl(self):
+        """Stop the servoL loop and return the persistent ctrl connection.
+        Call this from any worker that needs to issue moveL/stopL while the
+        servo loop may be running — UR allows only one RTDE control session."""
+        import time as _t
+        self._jog_servo_active = False
+        self._jog_target_pose  = None
+        _t.sleep(0.05)          # let the servo loop exit its current iteration
+        ctrl = self._get_rtde_ctrl()
+        try:
+            ctrl.servoStop()    # exit servo mode so moveL is accepted
+        except Exception:
+            pass
+        return ctrl
+
+    def _world_pose_to_base(self, pose_world: list) -> list:
+        T = np.eye(4)
+        T[:3, :3] = ScipyR.from_rotvec(pose_world[3:]).as_matrix()
+        T[:3, 3]  = pose_world[:3]
+        T_base = np.linalg.inv(self.T_world_base) @ T
+        return (T_base[:3, 3].tolist()
+                + ScipyR.from_matrix(T_base[:3, :3]).as_rotvec().tolist())
+
+    def _on_test_grasp(self):
+        if not (0 <= self._selected_idx < len(self._boxes)):
+            dpg.set_value(self._TAG_STATUS, "Select a box first.")
+            return
+        box = self._boxes[self._selected_idx]
+        if "grasp_tcp_world" not in box:
+            dpg.set_value(self._TAG_STATUS, "No grasp pose saved for this box.")
+            return
+        grasp_base    = self._world_pose_to_base(box["grasp_tcp_world"])
+        approach_base = self._world_pose_to_base(box["approach_tcp_world"])
+        def _worker():
+            try:
+                ctrl = self._stop_servo_and_get_ctrl()
+                g    = self._get_gripper()
+                dpg.set_value(self._TAG_STATUS, "Opening gripper…")
+                g.move_and_wait_for_pos(g.get_open_position(), 255, 10)
+                dpg.set_value(self._TAG_STATUS, "Moving to approach pose…")
+                ctrl.moveL(approach_base, speed=0.05, acceleration=0.2)
+                dpg.set_value(self._TAG_STATUS, "Moving to grasp pose…")
+                ctrl.moveL(grasp_base, speed=0.02, acceleration=0.1)
+                dpg.set_value(self._TAG_STATUS, "Closing gripper…")
+                g.move_and_wait_for_pos(g.get_closed_position(), 255, 100)
+                import time as _t; _t.sleep(0.5)
+                dpg.set_value(self._TAG_STATUS, "Opening gripper…")
+                g.move_and_wait_for_pos(g.get_open_position(), 255, 10)
+                dpg.set_value(self._TAG_STATUS, "Retracting to approach pose…")
+                ctrl.moveL(approach_base, speed=0.05, acceleration=0.2)
+                dpg.set_value(self._TAG_STATUS, "✅ Test grasp complete.")
+            except Exception as e:
+                print(f"[TestGrasp] {e}")
+                dpg.set_value(self._TAG_STATUS, f"Test grasp failed: {e}")
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _jog_send(self):
+        """Called on every slider drag event — just updates the target pose.
+        The servo loop thread picks it up and streams servoL at ~125 Hz."""
+        if self._freedrive:
+            dpg.set_value(self._TAG_STATUS, "Exit freedrive first before jogging.")
+            return
+        peg_x = dpg.get_value(self._TAG_JOG_X)
+        peg_y = dpg.get_value(self._TAG_JOG_Y)
+        dist  = dpg.get_value(self._TAG_JOG_Z)
+        self._jog_target_pose = self._compute_tcp_from_peg(peg_x, peg_y, dist)
+        if not self._jog_servo_active:
+            self._jog_servo_active = True
+            threading.Thread(target=self._servo_loop, daemon=True).start()
+
+    def _servo_loop(self):
+        """Background thread: streams servoL at ~125 Hz so the robot follows
+        slider values continuously. Pauses automatically during freedrive."""
+        import time as _t
+        try:
+            ctrl = self._get_rtde_ctrl()
+            while self._jog_servo_active:
+                if self._freedrive or self._jog_target_pose is None:
+                    _t.sleep(0.05)
+                    continue
+                try:
+                    ctrl.servoL(
+                        self._jog_target_pose,
+                        0.5, 0.5,   # speed, acceleration (unused by servoL)
+                        0.008,      # time: control period 8 ms
+                        0.1,        # lookahead_time: smoothing horizon
+                        300,        # gain
+                    )
+                except Exception as e:
+                    print(f"[ServoL] {e}")
+                    break
+                _t.sleep(0.008)
+        finally:
+            try:
+                self._get_rtde_ctrl().servoStop()
+            except Exception:
+                pass
+            self._jog_servo_active = False
+
+    def _on_gripper_toggle(self):
+        def _worker():
+            try:
+                g = self._get_gripper()
+                if self._gripper_closed:
+                    g.move_and_wait_for_pos(g.get_open_position(), 255, 10)
+                    self._gripper_closed = False
+                    dpg.configure_item(self._TAG_GRIP_BTN,
+                                       label="🟢  GRIPPER: OPEN  (click to close)")
+                    dpg.bind_item_theme(self._TAG_GRIP_BTN, self._theme_green)
+                else:
+                    g.move_and_wait_for_pos(g.get_closed_position(), 255, 10)
+                    self._gripper_closed = True
+                    dpg.configure_item(self._TAG_GRIP_BTN,
+                                       label="🔴  GRIPPER: CLOSED  (click to open)")
+                    dpg.bind_item_theme(self._TAG_GRIP_BTN, self._theme_red)
+            except Exception as e:
+                print(f"[Gripper] {e}")
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_save_grasp(self):
+        if not (0 <= self._selected_idx < len(self._boxes)):
+            dpg.set_value(self._TAG_STATUS, "Select a box first before saving a grasp.")
+            return
+        q   = list(self._joint_q)
+        T_g = self._tcp_world_T.copy()
+        normal = self._plane_n / (np.linalg.norm(self._plane_n) + 1e-9)
+        T_a    = T_g.copy()
+        T_a[:3, 3] = T_g[:3, 3] + 0.10 * normal   # 10 cm approach offset
+
+        def _T_to_list(T):
+            return (T[:3, 3].tolist()
+                    + ScipyR.from_matrix(T[:3, :3]).as_rotvec().tolist())
+
+        box = self._boxes[self._selected_idx]
+        box["grasp_joints"]       = [round(v, 6) for v in q]
+        box["grasp_tcp_world"]    = _T_to_list(T_g)
+        box["approach_tcp_world"] = _T_to_list(T_a)
+        name = box.get("name", "?")
+        dpg.set_value(self._TAG_STATUS,
+                      f"Grasp saved for '{name}' — click Save JSON to persist.")
+
+    def _start_robot_poll(self):
+        """Background thread: update joint angles + TCP display every 200 ms."""
+        def _poll():
+            while True:
+                try:
+                    recv = self._get_rtde_recv()
+                    q    = recv.getActualQ()           # radians
+                    tcp  = recv.getActualTCPPose()     # [x,y,z,rx,ry,rz] in base
+                    self._joint_q = q
+                    T_base = np.eye(4)
+                    T_base[:3, :3] = ScipyR.from_rotvec(tcp[3:]).as_matrix()
+                    T_base[:3, 3]  = tcp[:3]
+                    self._tcp_world_T   = self.T_world_base @ T_base
+                    self._tcp_world_pos = self._tcp_world_T[:3, 3]
+                    q_deg = [np.degrees(v) for v in q]
+                    dpg.set_value(self._TAG_JOINT_TXT,
+                        f"J1:{q_deg[0]:6.1f}°  J2:{q_deg[1]:6.1f}°  "
+                        f"J3:{q_deg[2]:6.1f}°\n"
+                        f"J4:{q_deg[3]:6.1f}°  J5:{q_deg[4]:6.1f}°  "
+                        f"J6:{q_deg[5]:6.1f}°")
+                    p = self._tcp_world_pos
+                    dpg.set_value(self._TAG_TCP_TXT,
+                        f"TCP world: ({p[0]:.3f}, {p[1]:.3f}, {p[2]:.3f}) m")
+                    if self._win is not None:
+                        gui.Application.instance.post_to_main_thread(
+                            self._win, self._do_update_tcp_viz)
+                except Exception:
+                    pass
+                import time as _t; _t.sleep(0.2)
+        threading.Thread(target=_poll, daemon=True).start()
+
+    def _do_update_tcp_viz(self):
+        """Called on the Open3D main thread: refresh gripper mesh + TCP frame."""
+        import copy
+        scene = self._scene_widget.scene
+        T = self._tcp_world_T.copy()
+
+        # TCP coordinate frame (size 5 cm)
+        frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.05)
+        frame.transform(T)
+        mat_lit = rendering.MaterialRecord()
+        mat_lit.shader = "defaultLit"
+        scene.remove_geometry("__tcp_frame")
+        scene.add_geometry("__tcp_frame", frame, mat_lit)
+
+        # Gripper mesh
+        if self._gripper_mesh_raw is not None:
+            fy = self._GRIPPER_FINGERTIP_Y
+            T_tcp_mesh = np.array([
+                [1,  0,  0,  0],
+                [0,  0, -1,  0],
+                [0,  1,  0, -fy],
+                [0,  0,  0,  1],
+            ], dtype=float)
+            mesh = copy.deepcopy(self._gripper_mesh_raw)
+            mesh.transform(T @ T_tcp_mesh)
+            mat_mesh = rendering.MaterialRecord()
+            mat_mesh.shader = "defaultLit"
+            mat_mesh.base_color = [0.7, 0.7, 0.75, 1.0]
+            scene.remove_geometry("__gripper_mesh")
+            scene.add_geometry("__gripper_mesh", mesh, mat_mesh)
+
+        self._scene_widget.force_redraw()
+
+    # ── Geometry helpers ──────────────────────────────────────────────────
+
+    def _box_world_corners(self, box: dict) -> np.ndarray:
+        """8 world-space corners of a tool box."""
+        px, py = box["pegboard_pos"]
+        w, d, h = (box["size"][0]/2, box["size"][1]/2, box["size"][2])
+        local = np.array([
+            [-w, -d, 0], [w, -d, 0], [w, d, 0], [-w, d, 0],
+            [-w, -d, h], [w, -d, h], [w, d, h], [-w, d, h],
+        ])
+        R_local = self._ScipyR.from_euler(
+            'xyz', box["rotation_deg"], degrees=True).as_matrix()
+        peg_pts = (R_local @ local.T).T + np.array([px, py, 0.0])
+        peg_h   = np.hstack([peg_pts, np.ones((8, 1))])
+        return (self.T_world_peg @ peg_h.T).T[:, :3]
+
+    def _make_box_lineset(self, box: dict, selected: bool) -> o3d.geometry.LineSet:
+        corners = self._box_world_corners(box)
+        edges   = [[0,1],[1,2],[2,3],[3,0],
+                   [4,5],[5,6],[6,7],[7,4],
+                   [0,4],[1,5],[2,6],[3,7]]
+        color   = [1.0, 1.0, 0.0] if selected else [0.2, 0.9, 1.0]
+        ls = o3d.geometry.LineSet()
+        ls.points = o3d.utility.Vector3dVector(corners)
+        ls.lines  = o3d.utility.Vector2iVector(edges)
+        ls.colors = o3d.utility.Vector3dVector([color] * 12)
+        return ls
+
+    def _refresh_boxes(self, selected_only: bool = False):
+        """Post a scene refresh onto the Open3D main-thread queue.
+        Safe to call from any callback (Open3D or DearPyGUI)."""
+        if self._win is None:
+            return
+        fn = self._do_refresh_selected_box if selected_only else self._do_refresh_boxes
+        gui.Application.instance.post_to_main_thread(self._win, fn)
+
+    def _do_refresh_boxes(self):
+        """Rebuild all box wireframes in the scene (called from main loop)."""
+        scene = self._scene_widget.scene
+        for name in self._box_geom_names:
+            scene.remove_geometry(name)
+        self._box_geom_names.clear()
+
+        mat = rendering.MaterialRecord()
+        mat.shader     = "unlitLine"
+        mat.line_width = 2.5
+
+        for i, box in enumerate(self._boxes):
+            ls   = self._make_box_lineset(box, selected=(i == self._selected_idx))
+            name = f"__box_{i}"
+            scene.add_geometry(name, ls, mat)
+            self._box_geom_names.append(name)
+        self._scene_widget.force_redraw()
+
+    def _do_refresh_selected_box(self):
+        """Update only the selected box wireframe (faster, for slider drags)."""
+        if not (0 <= self._selected_idx < len(self._boxes)):
+            return
+        scene = self._scene_widget.scene
+        name  = f"__box_{self._selected_idx}"
+        if name in self._box_geom_names:
+            scene.remove_geometry(name)
+            self._box_geom_names.remove(name)
+
+        mat = rendering.MaterialRecord()
+        mat.shader     = "unlitLine"
+        mat.line_width = 2.5
+        ls = self._make_box_lineset(self._boxes[self._selected_idx], selected=True)
+        scene.add_geometry(name, ls, mat)
+        self._box_geom_names.append(name)
+        self._scene_widget.force_redraw()
+
+    # ── DearPyGUI sync helpers ────────────────────────────────────────────
+
+    def _sync_list(self):
+        items = [f"[{b['id']}]  {b['name']}  ({b['category']})"
+                 for b in self._boxes]
+        dpg.configure_item(self._TAG_LIST, items=items)
+        if 0 <= self._selected_idx < len(items):
+            dpg.set_value(self._TAG_LIST, items[self._selected_idx])
+
+    def _sync_edit(self):
+        if not (0 <= self._selected_idx < len(self._boxes)):
+            return
+        box = self._boxes[self._selected_idx]
+        dpg.set_value(self._TAG_NAME,  box["name"])
+        dpg.set_value(self._TAG_CAT,   box["category"])
+        dpg.set_value(self._TAG_POSX,  float(box["pegboard_pos"][0]))
+        dpg.set_value(self._TAG_POSY,  float(box["pegboard_pos"][1]))
+        dpg.set_value(self._TAG_SIZEW, float(box["size"][0]))
+        dpg.set_value(self._TAG_SIZED, float(box["size"][1]))
+        dpg.set_value(self._TAG_SIZEH, float(box["size"][2]))
+        dpg.set_value(self._TAG_ROTZ,  float(box["rotation_deg"][2]))
+
+    def _read_edit_into_box(self):
+        """Flush DearPyGUI field values into the selected box dict."""
+        if not (0 <= self._selected_idx < len(self._boxes)):
+            return
+        box = self._boxes[self._selected_idx]
+        box["name"]         = dpg.get_value(self._TAG_NAME)
+        box["category"]     = dpg.get_value(self._TAG_CAT)
+        box["pegboard_pos"] = [round(dpg.get_value(self._TAG_POSX), 4),
+                               round(dpg.get_value(self._TAG_POSY), 4)]
+        box["size"]         = [round(dpg.get_value(self._TAG_SIZEW), 4),
+                               round(dpg.get_value(self._TAG_SIZED), 4),
+                               round(dpg.get_value(self._TAG_SIZEH), 4)]
+        box["rotation_deg"] = [0.0, 0.0,
+                               round(dpg.get_value(self._TAG_ROTZ), 2)]
+
+    # ── Save ──────────────────────────────────────────────────────────────
+
+    def _save(self):
+        def _entry(b):
+            e = {
+                "id":           b["id"],
+                "type":         b["name"],
+                "category":     b["category"],
+                "pegboard_pos": b["pegboard_pos"],
+                "size":         b["size"],
+                "rotation_deg": b["rotation_deg"],
+            }
+            if "grasp_joints" in b:
+                e["grasp_joints"]       = b["grasp_joints"]
+                e["grasp_tcp_world"]    = b["grasp_tcp_world"]
+                e["approach_tcp_world"] = b["approach_tcp_world"]
+            return e
+
+        payload = {"tools": [_entry(b) for b in self._boxes]}
+        out = self._LAYOUT_DIR / "tool_layout2.json"
+        out.write_text(json.dumps(payload, indent=2))
+        print(f"[Annotate] Saved {len(self._boxes)} boxes → {out}")
+
+    # ── Main run ──────────────────────────────────────────────────────────
+
+    def run(self):
+
+        # ── Open3D GUI window ──────────────────────────────────────────
+        app = gui.Application.instance
+        app.initialize()
+
+        o3d_win = app.create_window(
+            "Pegboard Annotator — 3D View", width=1100, height=800)
+        self._win = o3d_win
+
+        scene_widget = gui.SceneWidget()
+        scene_widget.scene = rendering.Open3DScene(o3d_win.renderer)
+        o3d_win.add_child(scene_widget)
+        self._scene_widget = scene_widget
+
+        def _on_layout(ctx):
+            scene_widget.frame = o3d_win.content_rect
+        o3d_win.set_on_layout(_on_layout)
+
+        scene = scene_widget.scene
+        scene.set_background([0.06, 0.06, 0.10, 1.0])
+
+        mat_unlit = rendering.MaterialRecord()
+        mat_unlit.shader = "defaultUnlit"
+        mat_line = rendering.MaterialRecord()
+        mat_line.shader     = "unlitLine"
+        mat_line.line_width = 2.0
+
+        # World origin
+        scene.add_geometry("world_frame",
+            o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.15),
+            mat_unlit)
+        # Pegboard marker axes
+        scene.add_geometry("peg_axes",
+            make_axes_lineset(self.T_world_peg, PEG_MARKER_SIZE * 0.9),
+            mat_line)
+        # Pegboard outline rectangle
+        scene.add_geometry("peg_outline",
+            make_pegboard_lineset(self.T_world_peg),
+            mat_line)
+        # PLY scan mesh
+        mesh_path = self._LAYOUT_DIR / "pegboard_scan.ply"
+        if mesh_path.exists():
+            mesh = o3d.io.read_triangle_mesh(str(mesh_path))
+            mesh.compute_vertex_normals()
+            mat_mesh = rendering.MaterialRecord()
+            mat_mesh.shader = "defaultLit"
+            scene.add_geometry("ply_mesh", mesh, mat_mesh)
+            print(f"[Annotate] Loaded mesh from {mesh_path}")
+        else:
+            print(f"[Annotate] No PLY mesh found at {mesh_path}")
+
+        # Initial box wireframes
+        self._refresh_boxes()
+
+        # Camera: look at pegboard centre
+        cx = (PEG_X_MIN + PEG_X_MAX) / 2.0
+        cy = (PEG_Y_MIN + PEG_Y_MAX) / 2.0
+        look_at = (self.T_world_peg @ np.array([cx, cy, 0.0, 1.0]))[:3]
+        eye     = look_at + self._plane_n * 1.2
+        up      = self.T_world_peg[:3, 1]
+        scene_widget.look_at(look_at, eye, up)
+
+        # Mouse callback — active only in pick mode.
+        # IMPORTANT: must not call scene.add/remove_geometry here (segfault).
+        # Instead mutate self._boxes and set _pending_refresh; the main loop
+        # drains the flag before the next Open3D tick.
+        def _on_mouse(event):
+            if not self._pick_mode:
+                return gui.SceneWidget.EventCallbackResult.IGNORED
+            if (event.type == gui.MouseEvent.Type.BUTTON_DOWN
+                    and event.is_button_down(gui.MouseButton.LEFT)):
+                x = float(event.x - scene_widget.frame.x)
+                y = float(event.y - scene_widget.frame.y)
+                w = float(scene_widget.frame.width)
+                h = float(scene_widget.frame.height)
+                # Reject clicks outside the widget
+                if w <= 0 or h <= 0 or x < 0 or y < 0 or x >= w or y >= h:
+                    return gui.SceneWidget.EventCallbackResult.HANDLED
+                cam = scene_widget.scene.camera
+                # Camera position from inverse view matrix (avoids infinite far plane)
+                view_m  = np.array(cam.get_view_matrix(), dtype=float)
+                cam_pos = np.linalg.inv(view_m)[:3, 3]
+                near_pt = np.array(cam.unproject(x, y, 0.0, w, h), dtype=float).flatten()
+                if not np.all(np.isfinite(cam_pos)) or not np.all(np.isfinite(near_pt)):
+                    return gui.SceneWidget.EventCallbackResult.HANDLED
+                ray_d   = near_pt - cam_pos
+                rd_norm = np.linalg.norm(ray_d)
+                if not np.isfinite(rd_norm) or rd_norm < 1e-9:
+                    return gui.SceneWidget.EventCallbackResult.HANDLED
+                ray_d  /= rd_norm
+
+                t, hit = ray_plane_intersect(cam_pos, ray_d,
+                                             self._plane_pt, self._plane_n)
+                if hit is not None and not np.any(np.isnan(hit)):
+                    local = (self._T_inv_peg @ np.append(hit, 1.0))[:3]
+                    if np.any(np.isnan(local)):
+                        return gui.SceneWidget.EventCallbackResult.HANDLED
+
+                    # Show a small sphere at the hit point, removed on next tick
+                    hit_pt = hit.copy()
+                    def _place_sphere():
+                        s = o3d.geometry.TriangleMesh.create_sphere(radius=0.010)
+                        s.translate(hit_pt)
+                        s.paint_uniform_color([1.0, 0.6, 0.1])
+                        s.compute_vertex_normals()
+                        mat_s = rendering.MaterialRecord()
+                        mat_s.shader = "defaultLit"
+                        scene_widget.scene.remove_geometry("__hit_sphere")
+                        scene_widget.scene.add_geometry("__hit_sphere", s, mat_s)
+                        scene_widget.force_redraw()
+                    gui.Application.instance.post_to_main_thread(o3d_win, _place_sphere)
+
+                    # Move selected box, or create a new one if nothing is selected
+                    print(f"[pick] selected_idx={self._selected_idx}  n_boxes={len(self._boxes)}")
+                    if 0 <= self._selected_idx < len(self._boxes):
+                        self._boxes[self._selected_idx]["pegboard_pos"] = [
+                            round(float(local[0]), 4),
+                            round(float(local[1]), 4),
+                        ]
+                    else:
+                        self._boxes.append({
+                            "id":           self._next_id,
+                            "name":         "new_tool",
+                            "category":     "tool",
+                            "pegboard_pos": [round(float(local[0]), 4),
+                                             round(float(local[1]), 4)],
+                            "size":         [0.10, 0.10, 0.025],
+                            "rotation_deg": [0.0, 0.0, 0.0],
+                        })
+                        self._next_id     += 1
+                        self._selected_idx = len(self._boxes) - 1
+                    self._pick_mode = False
+                    self._refresh_boxes()
+                    self._sync_list()
+                    self._sync_edit()
+                    dpg.set_value(self._TAG_STATUS,
+                                  f"Moved to peg ({local[0]:.3f}, {local[1]:.3f})")
+                return gui.SceneWidget.EventCallbackResult.HANDLED
+            return gui.SceneWidget.EventCallbackResult.IGNORED
+
+        scene_widget.set_on_mouse(_on_mouse)
+
+        # ── DearPyGUI panel ────────────────────────────────────────────
+        dpg.create_context()
+        dpg.create_viewport(title="Annotator Controls",
+                            width=450, height=1100, x_pos=1110, y_pos=0)
+        dpg.setup_dearpygui()
+        dpg.show_viewport()
+
+        # ── Button colour themes ────────────────────────────────────────
+        with dpg.theme() as self._theme_green:
+            with dpg.theme_component(dpg.mvButton):
+                dpg.add_theme_color(dpg.mvThemeCol_Button,        (30, 140, 60))
+                dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered,  (40, 170, 75))
+                dpg.add_theme_color(dpg.mvThemeCol_ButtonActive,   (20, 110, 45))
+        with dpg.theme() as self._theme_red:
+            with dpg.theme_component(dpg.mvButton):
+                dpg.add_theme_color(dpg.mvThemeCol_Button,        (160, 40, 40))
+                dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered,  (190, 55, 55))
+                dpg.add_theme_color(dpg.mvThemeCol_ButtonActive,   (130, 30, 30))
+
+        with dpg.window(label="Tool Annotator", tag="main_win",
+                        no_close=True, no_move=True, no_resize=True,
+                        width=445, height=1100, pos=[0, 0]):
+
+            # ── Robot ──────────────────────────────────────────────────
+            dpg.add_button(label="Move Robot to Viewing Pose (50 cm from board)",
+                           callback=lambda: self._move_robot_to_view(), width=-1)
+            dpg.add_separator()
+
+            # ── Box list ───────────────────────────────────────────────
+            dpg.add_text("Boxes")
+            dpg.add_listbox(items=[], tag=self._TAG_LIST,
+                            num_items=7, width=-1,
+                            callback=lambda s, a: self._on_list_select(a))
+
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Add",   width=70,
+                               callback=lambda: self._on_add())
+                dpg.add_button(label="Place on Pointcloud", width=175,
+                               callback=lambda: self._on_place_mode())
+                dpg.add_button(label="Remove", width=-1,
+                               callback=lambda: self._on_remove())
+
+            dpg.add_separator()
+
+            # ── Edit panel ─────────────────────────────────────────────
+            dpg.add_text("Edit Selected Box")
+
+            with dpg.table(header_row=False, policy=dpg.mvTable_SizingFixedFit,
+                           borders_innerV=False, pad_outerX=True):
+                dpg.add_table_column(init_width_or_weight=90)
+                dpg.add_table_column(width_stretch=True, init_width_or_weight=1.0)
+
+                def _row(label, widget_fn):
+                    with dpg.table_row():
+                        dpg.add_text(label)
+                        widget_fn()
+
+                def _live():
+                    self._read_edit_into_box()
+                    self._refresh_boxes(selected_only=True)
+
+                def _live_meta():
+                    self._read_edit_into_box()
+                    self._sync_list()
+
+                _row("Name",      lambda: dpg.add_input_text(
+                    tag=self._TAG_NAME, default_value="", width=-1,
+                    callback=lambda: _live_meta(), on_enter=False))
+                _row("Category",  lambda: dpg.add_combo(
+                    ["tool", "part"], tag=self._TAG_CAT,
+                    default_value="tool", width=-1,
+                    callback=lambda: _live_meta()))
+                _row("Pos X (m)", lambda: dpg.add_slider_float(
+                    tag=self._TAG_POSX, default_value=0.0, width=-1,
+                    min_value=PEG_X_MIN, max_value=PEG_X_MAX,
+                    format="%.4f", callback=lambda: _live()))
+                _row("Pos Y (m)", lambda: dpg.add_slider_float(
+                    tag=self._TAG_POSY, default_value=0.0, width=-1,
+                    min_value=PEG_Y_MIN, max_value=PEG_Y_MAX,
+                    format="%.4f", callback=lambda: _live()))
+                _row("Width (m)", lambda: dpg.add_slider_float(
+                    tag=self._TAG_SIZEW, default_value=0.10, width=-1,
+                    min_value=0.01, max_value=0.60,
+                    format="%.3f", callback=lambda: _live()))
+                _row("Depth (m)", lambda: dpg.add_slider_float(
+                    tag=self._TAG_SIZED, default_value=0.10, width=-1,
+                    min_value=0.01, max_value=0.60,
+                    format="%.3f", callback=lambda: _live()))
+                _row("Height(m)", lambda: dpg.add_slider_float(
+                    tag=self._TAG_SIZEH, default_value=0.025, width=-1,
+                    min_value=0.005, max_value=0.40,
+                    format="%.3f", callback=lambda: _live()))
+                _row("Rot Z (°)", lambda: dpg.add_slider_float(
+                    tag=self._TAG_ROTZ, default_value=0.0, width=-1,
+                    min_value=-180.0, max_value=180.0,
+                    format="%.1f", callback=lambda: _live()))
+
+            dpg.add_separator()
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Apply",     width=-110,
+                               callback=lambda: self._on_apply())
+                dpg.add_button(label="Save JSON", width=-1,
+                               callback=lambda: self._on_save())
+
+            dpg.add_separator()
+            dpg.add_text("", tag=self._TAG_STATUS, wrap=440)
+
+            # ── Robot Control ─────────────────────────────────────────
+            dpg.add_separator()
+            dpg.add_text("Robot Control")
+
+            with dpg.group(horizontal=True):
+                dpg.add_combo(list(self._FREEDRIVE_MODES.keys()),
+                              tag=self._TAG_FD_MODE,
+                              default_value="All 6DOF", width=160)
+                dpg.add_button(tag=self._TAG_FD_BTN, width=-1,
+                               label="🔴  FREE DRIVE: OFF",
+                               callback=lambda: self._on_freedrive_toggle())
+                dpg.bind_item_theme(self._TAG_FD_BTN, self._theme_red)
+
+            dpg.add_button(label="⚠  EMERGENCY STOP", width=-1,
+                           callback=lambda: self._on_estop())
+            with dpg.theme() as _theme_orange:
+                with dpg.theme_component(dpg.mvButton):
+                    dpg.add_theme_color(dpg.mvThemeCol_Button,        (180, 90, 0))
+                    dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered,  (210, 110, 0))
+                    dpg.add_theme_color(dpg.mvThemeCol_ButtonActive,   (150, 70, 0))
+            dpg.bind_item_theme(dpg.last_item(), _theme_orange)
+
+            dpg.add_separator()
+            dpg.add_text("TCP Jog — pegboard frame")
+            with dpg.table(header_row=False, policy=dpg.mvTable_SizingFixedFit,
+                           borders_innerV=False, pad_outerX=True):
+                dpg.add_table_column(init_width_or_weight=75)
+                dpg.add_table_column(width_stretch=True, init_width_or_weight=1.0)
+
+                def _jrow(label, widget_fn):
+                    with dpg.table_row():
+                        dpg.add_text(label)
+                        widget_fn()
+
+                _jrow("X (m)", lambda: dpg.add_slider_float(
+                    tag=self._TAG_JOG_X, default_value=0.0, width=-1,
+                    min_value=PEG_X_MIN, max_value=PEG_X_MAX,
+                    format="%.3f", callback=lambda: self._jog_send()))
+                _jrow("Y (m)", lambda: dpg.add_slider_float(
+                    tag=self._TAG_JOG_Y, default_value=0.0, width=-1,
+                    min_value=PEG_Y_MIN, max_value=PEG_Y_MAX,
+                    format="%.3f", callback=lambda: self._jog_send()))
+                _jrow("Dist (m)", lambda: dpg.add_slider_float(
+                    tag=self._TAG_JOG_Z, default_value=0.40, width=-1,
+                    min_value=0.10, max_value=0.70,
+                    format="%.3f", callback=lambda: self._jog_send()))
+
+            dpg.add_separator()
+            dpg.add_button(tag=self._TAG_GRIP_BTN, width=-1,
+                           label="🟢  GRIPPER: OPEN  (click to close)",
+                           callback=lambda: self._on_gripper_toggle())
+            dpg.bind_item_theme(self._TAG_GRIP_BTN, self._theme_green)
+
+            dpg.add_separator()
+            dpg.add_text("Joint Angles")
+            dpg.add_text("J: —  —  —  —  —  —", tag=self._TAG_JOINT_TXT)
+            dpg.add_text("TCP world: —", tag=self._TAG_TCP_TXT)
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Save Grasp Pose", width=-1,
+                               callback=lambda: self._on_save_grasp())
+            dpg.add_button(label="▶  Test Approach → Grasp → Open → Retract", width=-1,
+                           callback=lambda: self._on_test_grasp())
+
+        dpg.set_primary_window("main_win", True)
+
+        # Load gripper mesh template (once — deepcopy per frame for transform)
+        gripper_obj = self._LAYOUT_DIR / "gripperWtihAdapters.obj"
+        if gripper_obj.exists():
+            self._gripper_mesh_raw = o3d.io.read_triangle_mesh(str(gripper_obj))
+            self._gripper_mesh_raw.compute_vertex_normals()
+            print(f"[Annotate] Gripper mesh loaded ({len(self._gripper_mesh_raw.vertices)} verts)")
+        else:
+            print(f"[Annotate] Gripper mesh not found at {gripper_obj}")
+
+        # Initial population
+        self._sync_list()
+        if self._boxes:
+            self._selected_idx = 0
+            self._sync_edit()
+        self._do_refresh_boxes()  # direct call is safe here (not inside a callback)
+        self._start_robot_poll()
+
+        # ── Main loop ──────────────────────────────────────────────────
+        # All scene updates go through _refresh_boxes() → post_to_main_thread,
+        # so they execute inside run_one_tick() at a renderer-safe point.
+        while True:
+            if not dpg.is_dearpygui_running():
+                break
+            dpg.render_dearpygui_frame()
+            if not app.run_one_tick():
+                break
+
+        dpg.destroy_context()
+
+    # ── DearPyGUI callbacks ───────────────────────────────────────────────
+
+    def _on_list_select(self, value: str):
+        items = dpg.get_item_configuration(self._TAG_LIST)["items"]
+        try:
+            self._selected_idx = items.index(value)
+        except ValueError:
+            return
+        self._refresh_boxes()
+        self._sync_edit()
+
+    def _on_add(self):
+        self._boxes.append({
+            "id":           self._next_id,
+            "name":         "new_tool",
+            "category":     "tool",
+            "pegboard_pos": [round((PEG_X_MIN + PEG_X_MAX) / 2, 3),
+                             round((PEG_Y_MIN + PEG_Y_MAX) / 2, 3)],
+            "size":         [0.10, 0.10, 0.025],
+            "rotation_deg": [0.0, 0.0, 0.0],
+        })
+        self._next_id     += 1
+        self._selected_idx = len(self._boxes) - 1
+        self._refresh_boxes()
+        self._sync_list()
+        self._sync_edit()
+        dpg.set_value(self._TAG_STATUS, "New box added at board centre.")
+
+    def _on_place_mode(self):
+        self._pick_mode = True
+        dpg.set_value(self._TAG_STATUS,
+                      "PICK MODE — click on the pegboard to move the selected box there.")
+
+    def _on_remove(self):
+        if not (0 <= self._selected_idx < len(self._boxes)):
+            return
+        removed = self._boxes.pop(self._selected_idx)
+        self._selected_idx = max(0, self._selected_idx - 1) \
+                             if self._boxes else -1
+        self._refresh_boxes()
+        self._sync_list()
+        self._sync_edit()
+        dpg.set_value(self._TAG_STATUS,
+                      f"Removed box [{removed['id']}] '{removed['name']}'.")
+
+    def _on_apply(self):
+        self._read_edit_into_box()
+        self._refresh_boxes()
+        self._sync_list()
+        dpg.set_value(self._TAG_STATUS, "Applied — box updated in 3D view.")
+
+    def _on_save(self):
+        self._read_edit_into_box()
+        self._save()
+        dpg.set_value(self._TAG_STATUS,
+                      f"Saved {len(self._boxes)} boxes to tool_layout2.json")
+
+
+# ---------------------------------------------------------------------------
+
+def fuse_offline(scan_dir: Path, voxel_length: float = 0.004,
+                 depth_trunc: float = 3.0):
+    """Offline TSDF fusion from a directory saved by PreScanApp."""
+    meta = json.loads((scan_dir / "meta.json").read_text())
+    poses = np.load(str(scan_dir / "poses.npy"))
+    Ks    = np.load(str(scan_dir / "intrinsics.npy"))  # (N, 3, 3)
+
+    color_files = sorted((scan_dir / "color").glob("*.jpg"))
+    depth_files = sorted((scan_dir / "depth").glob("*.npy"))
+
+    if len(color_files) != len(depth_files) or len(color_files) != len(poses):
+        raise ValueError(
+            f"Frame count mismatch: {len(color_files)} color, "
+            f"{len(depth_files)} depth, {len(poses)} poses")
+
+    tsdf = o3d.pipelines.integration.ScalableTSDFVolume(
+        voxel_length=voxel_length,
+        sdf_trunc=voxel_length * 30,
+        color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8)
+
+    n = len(color_files)
+    print(f"[fuse] Integrating {n} frames  (voxel={voxel_length*100:.1f} cm)…")
+    for i, (c_file, d_file, extrinsic) in enumerate(
+            zip(color_files, depth_files, poses)):
+        K = Ks[i]
+        intrinsic = o3d.camera.PinholeCameraIntrinsic(
+            width=meta["width"], height=meta["height"],
+            fx=K[0,0], fy=K[1,1], cx=K[0,2], cy=K[1,2])
+        color     = o3d.io.read_image(str(c_file))
+        depth_arr = np.load(str(d_file)).astype(np.float32)
+        depth_img = o3d.geometry.Image(depth_arr)
+        rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
+            color, depth_img,
+            depth_scale=1.0, depth_trunc=depth_trunc,
+            convert_rgb_to_intensity=False)
+        tsdf.integrate(rgbd, intrinsic, extrinsic)
+        if (i + 1) % 100 == 0 or i == n - 1:
+            print(f"  {i+1}/{n}")
+
+    print("[fuse] Extracting mesh…")
+    mesh = tsdf.extract_triangle_mesh()
+    mesh.compute_vertex_normals()
+
+    out = SCENE_LAYOUT_DIR / "pegboard_scan.ply"
+    SCENE_LAYOUT_DIR.mkdir(parents=True, exist_ok=True)
+    o3d.io.write_triangle_mesh(str(out), mesh)
+    print(f"[fuse] Saved → {out}")
+    o3d.visualization.draw_geometries([mesh], window_name="TSDF Reconstruction")
+
+
+# ---------------------------------------------------------------------------
 
 def main():
     parser = argparse.ArgumentParser(
@@ -640,19 +1726,40 @@ def main():
     )
     parser.add_argument('--device',        type=int, default=0,
                         help='Record3D device index (default: 0)')
-    parser.add_argument('--tsdf-interval', type=int, default=TSDF_MESH_INTERVAL,
-                        help='Refresh live TSDF mesh every N fused frames '
-                             f'(default: {TSDF_MESH_INTERVAL})')
     parser.add_argument('--visualize',     action='store_true',
                         help='Open a static viewer for the saved scene_layout/ '
                              'files (no device needed)')
+    parser.add_argument('--annotate',      action='store_true',
+                        help='Open the tool-box annotator GUI (no device needed)')
+    parser.add_argument('--robot-ip',      default='192.168.50.70',
+                        help='UR10e IP for the annotate robot-move button '
+                             '(default: 192.168.50.70)')
+    parser.add_argument('--scan-mode',     choices=['board', 'plane', 'all'], default='board',
+                        help='Frame-save trigger: "board" saves only when ray hits '
+                             'the pegboard rectangle (default); "plane" saves whenever '
+                             'the ray hits the infinite plane the board lies on; '
+                             '"all" saves every frame unconditionally')
+    parser.add_argument('--fuse',          type=Path, metavar='SCAN_DIR',
+                        help='Offline TSDF fusion of a saved scan directory')
+    parser.add_argument('--voxel',         type=float, default=0.0025,
+                        help='Voxel size in metres for --fuse (default: 0.004)')
+    parser.add_argument('--depth-trunc',   type=float, default=2.0,
+                        help='Depth truncation in metres for --fuse (default: 3.0)')
     args = parser.parse_args()
 
     if args.visualize:
         visualize_scene()
         return
 
-    app = PreScanApp(device_idx=args.device, tsdf_interval=args.tsdf_interval)
+    if args.annotate:
+        AnnotateApp(robot_ip=args.robot_ip).run()
+        return
+
+    if args.fuse:
+        fuse_offline(args.fuse, voxel_length=args.voxel, depth_trunc=args.depth_trunc)
+        return
+
+    app = PreScanApp(device_idx=args.device, scan_mode=args.scan_mode)
     app.connect_to_device(dev_idx=args.device)
     app.start_processing_stream()
 
