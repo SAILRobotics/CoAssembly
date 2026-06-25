@@ -243,4 +243,4 @@ class IKScene:
 # ===========================================================================
 # Robot controller — re-exported here for convenience
 # ===========================================================================
-from pybullet_scene import RobotController  # noqa: E402 — keep original intact
+from pybullet_scene import RobotController, HandTrackController  # noqa: E402 — keep original intact
