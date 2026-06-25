@@ -3,3 +3,4 @@ __pycache__/
 ip_setting.py
 
 scene_layout/rgbd*
+scene_layout/pegboard_scan.ply
