@@ -1859,11 +1859,13 @@ class MainScene:
                         print("[TCP click] Hand tracking cancelled")
                     elif (not self._ctrl_active and self.pb_scene is not None):
                         clicking_hand = self.tools.active_hand
-                        if clicking_hand in ("left", "right"):
+                        opposite_hand = {"left": "right", "right": "left"}.get(clicking_hand)
+                        if opposite_hand in ("left", "right"):
                             self._tracking_hand    = True
-                            self._tracking_hand_id = clicking_hand
+                            self._tracking_hand_id = opposite_hand
                             self._track_hits       = 0
-                            print(f"[TCP click] Tracking {clicking_hand} hand palm")
+                            print(f"[TCP click] Tracking {opposite_hand} hand palm "
+                                  f"(opposite of {clicking_hand} click)")
                         else:
                             print(f"[TCP click] Unknown hand '{clicking_hand}' — ignoring click.")
                     self.tools.deselect(self._TCP_TOOL_ID)
