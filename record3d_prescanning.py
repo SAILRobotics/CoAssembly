@@ -714,6 +714,7 @@ class AnnotateApp:
         self._selected_idx = -1
         self._next_id      = 0
         self._pick_mode    = False
+        self._undo_stack: list[tuple[list, int]] = []  # (boxes_snapshot, selected_idx)
 
         # Scene layout
         npz_path = self._LAYOUT_DIR / "T_world10_pegboard101.npz"
@@ -756,7 +757,7 @@ class AnnotateApp:
             print(f"[Annotate] PyBullet IK unavailable, falling back to servoL: {e}")
 
         # Pre-load existing tool_layout.json if present
-        tl_path = self._LAYOUT_DIR / "tool_layout.json"
+        tl_path = self._LAYOUT_DIR / "tool_layout2.json"
         if tl_path.exists():
             raw = json.loads(tl_path.read_text())
             for t in raw.get("tools", []):
@@ -764,7 +765,8 @@ class AnnotateApp:
                     "id":           int(t["id"]),
                     "name":         str(t.get("type", "tool")),
                     "category":     str(t.get("category", "tool")),
-                    "pegboard_pos": list(t.get("pegboard_pos", [0.0, 0.0])),
+                    "planar":       bool(t.get("planar", True)),
+                    "world_pos":    list(t.get("world_pos", [0.0, 0.0, 0.0])),
                     "size":         list(t.get("size",         [0.10, 0.10, 0.025])),
                     "rotation_deg": list(t.get("rotation_deg", [0.0,  0.0,  0.0])),
                 }
@@ -785,8 +787,14 @@ class AnnotateApp:
         self._TAG_LIST    = "box_listbox"
         self._TAG_NAME    = "edit_name"
         self._TAG_CAT     = "edit_cat"
-        self._TAG_POSX    = "edit_posX"
-        self._TAG_POSY    = "edit_posY"
+        self._TAG_PLANAR   = "edit_planar"
+        self._TAG_POSX     = "edit_posX";   self._TAG_POSX_IN  = "edit_posX_in"
+        self._TAG_POSY     = "edit_posY";   self._TAG_POSY_IN  = "edit_posY_in"
+        self._TAG_POSZ     = "edit_posZ";   self._TAG_POSZ_IN  = "edit_posZ_in"
+        self._TAG_SIZEW_IN = "edit_sizeW_in"
+        self._TAG_SIZED_IN = "edit_sizeD_in"
+        self._TAG_SIZEH_IN = "edit_sizeH_in"
+        self._TAG_ROTZ_IN  = "edit_rotZ_in"
         self._TAG_SIZEW   = "edit_sizeW"
         self._TAG_SIZED   = "edit_sizeD"
         self._TAG_SIZEH   = "edit_sizeH"
@@ -814,6 +822,7 @@ class AnnotateApp:
         self._jog_target_pose  = None   # updated by slider; consumed by servo loop
         self._jog_servo_active = False  # True while servo loop thread is running
         self._gripper_mesh_raw = None   # loaded once in run(); template at OBJ origin
+        self._ray_scene        = None   # o3d raycasting scene built from scan mesh
 
     # ── Robot ─────────────────────────────────────────────────────────────
 
@@ -1261,17 +1270,15 @@ class AnnotateApp:
 
     def _box_world_corners(self, box: dict) -> np.ndarray:
         """8 world-space corners of a tool box."""
-        px, py = box["pegboard_pos"]
         w, d, h = (box["size"][0]/2, box["size"][1]/2, box["size"][2])
         local = np.array([
             [-w, -d, 0], [w, -d, 0], [w, d, 0], [-w, d, 0],
             [-w, -d, h], [w, -d, h], [w, d, h], [-w, d, h],
         ])
-        R_local = self._ScipyR.from_euler(
-            'xyz', box["rotation_deg"], degrees=True).as_matrix()
-        peg_pts = (R_local @ local.T).T + np.array([px, py, 0.0])
-        peg_h   = np.hstack([peg_pts, np.ones((8, 1))])
-        return (self.T_world_peg @ peg_h.T).T[:, :3]
+        R = self._ScipyR.from_euler('z', float(box["rotation_deg"][2]),
+                                    degrees=True).as_matrix()
+        wx, wy, wz = box["world_pos"]
+        return (R @ local.T).T + np.array([wx, wy, wz])
 
     def _make_box_lineset(self, box: dict, selected: bool) -> o3d.geometry.LineSet:
         corners = self._box_world_corners(box)
@@ -1342,14 +1349,21 @@ class AnnotateApp:
         if not (0 <= self._selected_idx < len(self._boxes)):
             return
         box = self._boxes[self._selected_idx]
-        dpg.set_value(self._TAG_NAME,  box["name"])
-        dpg.set_value(self._TAG_CAT,   box["category"])
-        dpg.set_value(self._TAG_POSX,  float(box["pegboard_pos"][0]))
-        dpg.set_value(self._TAG_POSY,  float(box["pegboard_pos"][1]))
-        dpg.set_value(self._TAG_SIZEW, float(box["size"][0]))
-        dpg.set_value(self._TAG_SIZED, float(box["size"][1]))
-        dpg.set_value(self._TAG_SIZEH, float(box["size"][2]))
-        dpg.set_value(self._TAG_ROTZ,  float(box["rotation_deg"][2]))
+        wp  = box["world_pos"]
+        dpg.set_value(self._TAG_NAME,   box["name"])
+        dpg.set_value(self._TAG_CAT,    box["category"])
+        dpg.set_value(self._TAG_PLANAR, box.get("planar", True))
+        for tag, in_tag, v in [
+            (self._TAG_POSX,  self._TAG_POSX_IN,  wp[0]),
+            (self._TAG_POSY,  self._TAG_POSY_IN,  wp[1]),
+            (self._TAG_POSZ,  self._TAG_POSZ_IN,  wp[2]),
+            (self._TAG_SIZEW, self._TAG_SIZEW_IN, box["size"][0]),
+            (self._TAG_SIZED, self._TAG_SIZED_IN, box["size"][1]),
+            (self._TAG_SIZEH, self._TAG_SIZEH_IN, box["size"][2]),
+            (self._TAG_ROTZ,  self._TAG_ROTZ_IN,  box["rotation_deg"][2]),
+        ]:
+            dpg.set_value(tag,    float(v))
+            dpg.set_value(in_tag, float(v))
 
     def _read_edit_into_box(self):
         """Flush DearPyGUI field values into the selected box dict."""
@@ -1358,8 +1372,10 @@ class AnnotateApp:
         box = self._boxes[self._selected_idx]
         box["name"]         = dpg.get_value(self._TAG_NAME)
         box["category"]     = dpg.get_value(self._TAG_CAT)
-        box["pegboard_pos"] = [round(dpg.get_value(self._TAG_POSX), 4),
-                               round(dpg.get_value(self._TAG_POSY), 4)]
+        box["planar"]       = dpg.get_value(self._TAG_PLANAR)
+        box["world_pos"]    = [round(dpg.get_value(self._TAG_POSX), 4),
+                               round(dpg.get_value(self._TAG_POSY), 4),
+                               round(dpg.get_value(self._TAG_POSZ), 4)]
         box["size"]         = [round(dpg.get_value(self._TAG_SIZEW), 4),
                                round(dpg.get_value(self._TAG_SIZED), 4),
                                round(dpg.get_value(self._TAG_SIZEH), 4)]
@@ -1374,7 +1390,8 @@ class AnnotateApp:
                 "id":           b["id"],
                 "type":         b["name"],
                 "category":     b["category"],
-                "pegboard_pos": b["pegboard_pos"],
+                "planar":       b.get("planar", True),
+                "world_pos":    b["world_pos"],
                 "size":         b["size"],
                 "rotation_deg": b["rotation_deg"],
             }
@@ -1439,6 +1456,12 @@ class AnnotateApp:
             mat_mesh = rendering.MaterialRecord()
             mat_mesh.shader = "defaultLit"
             scene.add_geometry("ply_mesh", mesh, mat_mesh)
+            try:
+                mesh_t = o3d.t.geometry.TriangleMesh.from_legacy(mesh)
+                self._ray_scene = o3d.t.geometry.RaycastingScene()
+                self._ray_scene.add_triangles(mesh_t)
+            except Exception as e:
+                print(f"[Annotate] Raycasting scene unavailable: {e}")
             print(f"[Annotate] Loaded mesh from {mesh_path}")
         else:
             print(f"[Annotate] No PLY mesh found at {mesh_path}")
@@ -1483,14 +1506,25 @@ class AnnotateApp:
                     return gui.SceneWidget.EventCallbackResult.HANDLED
                 ray_d  /= rd_norm
 
-                t, hit = ray_plane_intersect(cam_pos, ray_d,
-                                             self._plane_pt, self._plane_n)
-                if hit is not None and not np.any(np.isnan(hit)):
-                    local = (self._T_inv_peg @ np.append(hit, 1.0))[:3]
-                    if np.any(np.isnan(local)):
-                        return gui.SceneWidget.EventCallbackResult.HANDLED
+                # Determine if the selected box is planar or non-planar
+                sel_planar = True
+                if 0 <= self._selected_idx < len(self._boxes):
+                    sel_planar = self._boxes[self._selected_idx].get("planar", True)
 
-                    # Show a small sphere at the hit point, removed on next tick
+                hit = None
+                if sel_planar:
+                    _, hit = ray_plane_intersect(cam_pos, ray_d,
+                                                 self._plane_pt, self._plane_n)
+                elif self._ray_scene is not None:
+                    ray_t = o3d.core.Tensor(
+                        [[*cam_pos.tolist(), *ray_d.tolist()]],
+                        dtype=o3d.core.Dtype.Float32)
+                    res   = self._ray_scene.cast_rays(ray_t)
+                    t_hit = float(res["t_hit"][0].item())
+                    if np.isfinite(t_hit):
+                        hit = cam_pos + t_hit * ray_d
+
+                if hit is not None and not np.any(np.isnan(hit)):
                     hit_pt = hit.copy()
                     def _place_sphere():
                         s = o3d.geometry.TriangleMesh.create_sphere(radius=0.010)
@@ -1504,20 +1538,19 @@ class AnnotateApp:
                         scene_widget.force_redraw()
                     gui.Application.instance.post_to_main_thread(o3d_win, _place_sphere)
 
-                    # Move selected box, or create a new one if nothing is selected
-                    print(f"[pick] selected_idx={self._selected_idx}  n_boxes={len(self._boxes)}")
+                    world_pos = [round(float(hit[0]), 4),
+                                 round(float(hit[1]), 4),
+                                 round(float(hit[2]), 4)]
+                    self._push_undo()
                     if 0 <= self._selected_idx < len(self._boxes):
-                        self._boxes[self._selected_idx]["pegboard_pos"] = [
-                            round(float(local[0]), 4),
-                            round(float(local[1]), 4),
-                        ]
+                        self._boxes[self._selected_idx]["world_pos"] = world_pos
                     else:
                         self._boxes.append({
                             "id":           self._next_id,
                             "name":         "new_tool",
                             "category":     "tool",
-                            "pegboard_pos": [round(float(local[0]), 4),
-                                             round(float(local[1]), 4)],
+                            "planar":       sel_planar,
+                            "world_pos":    world_pos,
                             "size":         [0.10, 0.10, 0.025],
                             "rotation_deg": [0.0, 0.0, 0.0],
                         })
@@ -1528,7 +1561,7 @@ class AnnotateApp:
                     self._sync_list()
                     self._sync_edit()
                     dpg.set_value(self._TAG_STATUS,
-                                  f"Moved to peg ({local[0]:.3f}, {local[1]:.3f})")
+                                  f"Placed at world ({hit[0]:.3f}, {hit[1]:.3f}, {hit[2]:.3f})")
                 return gui.SceneWidget.EventCallbackResult.HANDLED
             return gui.SceneWidget.EventCallbackResult.IGNORED
 
@@ -1569,9 +1602,11 @@ class AnnotateApp:
                             callback=lambda s, a: self._on_list_select(a))
 
             with dpg.group(horizontal=True):
-                dpg.add_button(label="Add",   width=70,
+                dpg.add_button(label="Add",       width=60,
                                callback=lambda: self._on_add())
-                dpg.add_button(label="Place on Pointcloud", width=175,
+                dpg.add_button(label="Duplicate", width=90,
+                               callback=lambda: self._on_duplicate())
+                dpg.add_button(label="Place on Pointcloud", width=165,
                                callback=lambda: self._on_place_mode())
                 dpg.add_button(label="Remove", width=-1,
                                callback=lambda: self._on_remove())
@@ -1583,13 +1618,9 @@ class AnnotateApp:
 
             with dpg.table(header_row=False, policy=dpg.mvTable_SizingFixedFit,
                            borders_innerV=False, pad_outerX=True):
-                dpg.add_table_column(init_width_or_weight=90)
+                dpg.add_table_column(init_width_or_weight=75)
                 dpg.add_table_column(width_stretch=True, init_width_or_weight=1.0)
-
-                def _row(label, widget_fn):
-                    with dpg.table_row():
-                        dpg.add_text(label)
-                        widget_fn()
+                dpg.add_table_column(init_width_or_weight=72)
 
                 def _live():
                     self._read_edit_into_box()
@@ -1599,42 +1630,64 @@ class AnnotateApp:
                     self._read_edit_into_box()
                     self._sync_list()
 
-                _row("Name",      lambda: dpg.add_input_text(
+                def _row(label, widget_fn):
+                    with dpg.table_row():
+                        dpg.add_text(label)
+                        with dpg.table_cell():
+                            widget_fn()
+                        dpg.add_text("")  # empty third cell
+
+                # slider + synced input_float helper
+                def _row_si(label, sl_tag, in_tag, default, lo, hi, fmt):
+                    def _on_slider():
+                        dpg.set_value(in_tag, dpg.get_value(sl_tag))
+                        _live()
+                    def _on_input():
+                        v = max(lo, min(hi, dpg.get_value(in_tag)))
+                        dpg.set_value(sl_tag, v)
+                        dpg.set_value(in_tag, v)
+                        _live()
+                    with dpg.table_row():
+                        dpg.add_text(label)
+                        dpg.add_slider_float(tag=sl_tag, default_value=default,
+                                             min_value=lo, max_value=hi,
+                                             format=fmt, width=-1,
+                                             callback=lambda: _on_slider())
+                        dpg.add_input_float(tag=in_tag, default_value=default,
+                                            width=72, format=fmt, step=0,
+                                            callback=lambda: _on_input())
+
+                _row("Name",     lambda: dpg.add_input_text(
                     tag=self._TAG_NAME, default_value="", width=-1,
                     callback=lambda: _live_meta(), on_enter=False))
-                _row("Category",  lambda: dpg.add_combo(
+                _row("Category", lambda: dpg.add_combo(
                     ["tool", "part"], tag=self._TAG_CAT,
                     default_value="tool", width=-1,
                     callback=lambda: _live_meta()))
-                _row("Pos X (m)", lambda: dpg.add_slider_float(
-                    tag=self._TAG_POSX, default_value=0.0, width=-1,
-                    min_value=PEG_X_MIN, max_value=PEG_X_MAX,
-                    format="%.4f", callback=lambda: _live()))
-                _row("Pos Y (m)", lambda: dpg.add_slider_float(
-                    tag=self._TAG_POSY, default_value=0.0, width=-1,
-                    min_value=PEG_Y_MIN, max_value=PEG_Y_MAX,
-                    format="%.4f", callback=lambda: _live()))
-                _row("Width (m)", lambda: dpg.add_slider_float(
-                    tag=self._TAG_SIZEW, default_value=0.10, width=-1,
-                    min_value=0.01, max_value=0.60,
-                    format="%.3f", callback=lambda: _live()))
-                _row("Depth (m)", lambda: dpg.add_slider_float(
-                    tag=self._TAG_SIZED, default_value=0.10, width=-1,
-                    min_value=0.01, max_value=0.60,
-                    format="%.3f", callback=lambda: _live()))
-                _row("Height(m)", lambda: dpg.add_slider_float(
-                    tag=self._TAG_SIZEH, default_value=0.025, width=-1,
-                    min_value=0.005, max_value=0.40,
-                    format="%.3f", callback=lambda: _live()))
-                _row("Rot Z (°)", lambda: dpg.add_slider_float(
-                    tag=self._TAG_ROTZ, default_value=0.0, width=-1,
-                    min_value=-180.0, max_value=180.0,
-                    format="%.1f", callback=lambda: _live()))
+                _row("Planar",   lambda: dpg.add_checkbox(
+                    tag=self._TAG_PLANAR, default_value=True,
+                    callback=lambda: _live()))
+                _row_si("Pos X (m)", self._TAG_POSX, self._TAG_POSX_IN,
+                        0.0, -3.0, 3.0, "%.4f")
+                _row_si("Pos Y (m)", self._TAG_POSY, self._TAG_POSY_IN,
+                        0.0, -3.0, 3.0, "%.4f")
+                _row_si("Pos Z (m)", self._TAG_POSZ, self._TAG_POSZ_IN,
+                        0.0, -1.0, 3.0, "%.4f")
+                _row_si("Width (m)", self._TAG_SIZEW, self._TAG_SIZEW_IN,
+                        0.10, 0.01, 0.60, "%.3f")
+                _row_si("Depth (m)", self._TAG_SIZED, self._TAG_SIZED_IN,
+                        0.10, 0.01, 0.60, "%.3f")
+                _row_si("Height(m)", self._TAG_SIZEH, self._TAG_SIZEH_IN,
+                        0.025, 0.005, 0.40, "%.3f")
+                _row_si("Rot Z (°)", self._TAG_ROTZ, self._TAG_ROTZ_IN,
+                        0.0, -180.0, 180.0, "%.1f")
 
             dpg.add_separator()
             with dpg.group(horizontal=True):
-                dpg.add_button(label="Apply",     width=-110,
+                dpg.add_button(label="Apply",     width=-160,
                                callback=lambda: self._on_apply())
+                dpg.add_button(label="Revert",    width=-85,
+                               callback=lambda: self._on_revert())
                 dpg.add_button(label="Save JSON", width=-1,
                                callback=lambda: self._on_save())
 
@@ -1750,12 +1803,16 @@ class AnnotateApp:
         self._sync_edit()
 
     def _on_add(self):
+        self._push_undo()
+        centre_peg = np.array([(PEG_X_MIN + PEG_X_MAX) / 2,
+                               (PEG_Y_MIN + PEG_Y_MAX) / 2, 0.0, 1.0])
+        centre_world = (self.T_world_peg @ centre_peg)[:3].tolist()
         self._boxes.append({
             "id":           self._next_id,
             "name":         "new_tool",
             "category":     "tool",
-            "pegboard_pos": [round((PEG_X_MIN + PEG_X_MAX) / 2, 3),
-                             round((PEG_Y_MIN + PEG_Y_MAX) / 2, 3)],
+            "planar":       True,
+            "world_pos":    [round(v, 4) for v in centre_world],
             "size":         [0.10, 0.10, 0.025],
             "rotation_deg": [0.0, 0.0, 0.0],
         })
@@ -1766,6 +1823,40 @@ class AnnotateApp:
         self._sync_edit()
         dpg.set_value(self._TAG_STATUS, "New box added at board centre.")
 
+    def _push_undo(self):
+        self._undo_stack.append((copy.deepcopy(self._boxes), self._selected_idx))
+        if len(self._undo_stack) > 50:
+            self._undo_stack.pop(0)
+
+    def _on_revert(self):
+        if not self._undo_stack:
+            dpg.set_value(self._TAG_STATUS, "Nothing to undo.")
+            return
+        self._boxes, self._selected_idx = self._undo_stack.pop()
+        self._refresh_boxes()
+        self._sync_list()
+        self._sync_edit()
+        dpg.set_value(self._TAG_STATUS,
+                      f"Reverted. ({len(self._undo_stack)} step(s) remaining)")
+
+    def _on_duplicate(self):
+        if not (0 <= self._selected_idx < len(self._boxes)):
+            dpg.set_value(self._TAG_STATUS, "Select a box first.")
+            return
+        self._push_undo()
+        new_box = copy.deepcopy(self._boxes[self._selected_idx])
+        new_box["id"] = self._next_id
+        new_box["world_pos"] = [round(v + 0.02, 4) for v in new_box["world_pos"]]
+        for k in ("grasp_joints", "grasp_tcp_world", "approach_tcp_world"):
+            new_box.pop(k, None)
+        self._next_id += 1
+        self._boxes.append(new_box)
+        self._selected_idx = len(self._boxes) - 1
+        self._refresh_boxes()
+        self._sync_list()
+        self._sync_edit()
+        dpg.set_value(self._TAG_STATUS, f"Duplicated → '{new_box['name']}'.")
+
     def _on_place_mode(self):
         self._pick_mode = True
         dpg.set_value(self._TAG_STATUS,
@@ -1774,6 +1865,7 @@ class AnnotateApp:
     def _on_remove(self):
         if not (0 <= self._selected_idx < len(self._boxes)):
             return
+        self._push_undo()
         removed = self._boxes.pop(self._selected_idx)
         self._selected_idx = max(0, self._selected_idx - 1) \
                              if self._boxes else -1
@@ -1784,6 +1876,7 @@ class AnnotateApp:
                       f"Removed box [{removed['id']}] '{removed['name']}'.")
 
     def _on_apply(self):
+        self._push_undo()
         self._read_edit_into_box()
         self._refresh_boxes()
         self._sync_list()
