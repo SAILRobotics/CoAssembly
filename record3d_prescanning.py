@@ -28,8 +28,11 @@ Controls (OpenCV window)
 """
 
 import argparse
+import copy
 import json
+import sys
 import threading
+import time
 from pathlib import Path
 from threading import Event
 
@@ -46,6 +49,30 @@ try:
     _DPG_AVAILABLE = True
 except ImportError:
     _DPG_AVAILABLE = False
+
+try:
+    from pybullet_ik import IKScene
+    _PYBULLET_IK_AVAILABLE = True
+except ImportError:
+    IKScene = None
+    _PYBULLET_IK_AVAILABLE = False
+
+try:
+    from rtde_control import RTDEControlInterface
+    from rtde_receive import RTDEReceiveInterface
+    _RTDE_AVAILABLE = True
+except ImportError:
+    RTDEControlInterface = None
+    RTDEReceiveInterface = None
+    _RTDE_AVAILABLE = False
+
+sys.path.insert(0, str(Path(__file__).parent / "robot_controller"))
+try:
+    from robotiq_gripper import RobotiqGripper
+    _ROBOTIQ_AVAILABLE = True
+except ImportError:
+    RobotiqGripper = None
+    _ROBOTIQ_AVAILABLE = False
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -442,9 +469,8 @@ class PreScanApp:
                 self.T_world10_peg = self.T_world10_world @ T_arkit_peg
                 phase = 'scanning'
                 # Create output directories for this scan session
-                import time as _time
                 self._scan_dir = (SCENE_LAYOUT_DIR
-                                  / f"rgbd_scan_{_time.strftime('%Y%m%d_%H%M%S')}")
+                                  / f"rgbd_scan_{time.strftime('%Y%m%d_%H%M%S')}")
                 (self._scan_dir / "color").mkdir(parents=True)
                 (self._scan_dir / "depth").mkdir(parents=True)
                 (self._scan_dir / "confidence").mkdir(parents=True)
@@ -581,9 +607,8 @@ class PreScanApp:
         cv2.destroyAllWindows()
         if self.fusion_count > 0 and self._scan_dir is not None:
             h, w = self._saved_hw
-            import json as _json
             meta = {"width": w, "height": h}
-            (self._scan_dir / "meta.json").write_text(_json.dumps(meta, indent=2))
+            (self._scan_dir / "meta.json").write_text(json.dumps(meta, indent=2))
             np.save(str(self._scan_dir / "poses.npy"),
                     np.stack(self._saved_poses).astype(np.float64))
             np.save(str(self._scan_dir / "intrinsics.npy"),
@@ -719,9 +744,13 @@ class AnnotateApp:
         # PyBullet IK (headless) — servo loop uses servoJ instead of servoL
         self._pb_scene = None
         try:
-            from pybullet_ik import IKScene
             self._pb_scene = IKScene(T_world_base=self.T_world_base)
             self._pb_scene.build()
+            self._pb_scene.set_joint_limits(
+                lower=[-170.80, -108.07, -44.04 , -140.02, -124.86, -206.99],
+                upper=[ -78.53,    26.07, 163.78,  40.02,  130.50,  6.67],
+                degrees=True,
+            )
             print("[Annotate] PyBullet IK ready — servo loop will use servoJ.")
         except Exception as e:
             print(f"[Annotate] PyBullet IK unavailable, falling back to servoL: {e}")
@@ -813,7 +842,7 @@ class AnnotateApp:
         y_tcp  = np.cross(z_tcp, x_tcp)
 
         T_tcp_world = np.eye(4)
-        T_tcp_world[:3, :3] = np.column_stack([x_tcp, y_tcp, z_tcp])
+        T_tcp_world[:3, :3] = np.column_stack([-x_tcp, -y_tcp, z_tcp])
         T_tcp_world[:3, 3]  = tcp_pos_world
 
         T_base_tcp = np.linalg.inv(self.T_world_base) @ T_tcp_world
@@ -822,16 +851,47 @@ class AnnotateApp:
         return pos + rot_vec
 
     def _move_robot_to_view(self):
-        """Send moveL to the viewing pose in a background thread."""
+        """Solve IK for the viewing pose and moveJ in a background thread."""
         def _worker():
             try:
-                from rtde_control import RTDEControlInterface
+                recv = self._get_rtde_recv()
+                current_q = np.array(recv.getActualQ(), dtype=np.float64)
+
+                # _compute_robot_view_pose already has the 180° Z flip baked in.
                 pose = self._compute_robot_view_pose()
-                print(f"[Robot] Connecting to {self.robot_ip}…")
-                ctrl = RTDEControlInterface(self.robot_ip)
-                print(f"[Robot] Moving to view pose: "
-                      f"{[round(v, 3) for v in pose]}")
-                ctrl.moveL(pose, speed=0.08, acceleration=0.2)
+                T_base = np.eye(4)
+                T_base[:3, 3]  = pose[:3]
+                T_base[:3, :3] = ScipyR.from_rotvec(pose[3:]).as_matrix()
+                T_world  = self.T_world_base @ T_base
+                pos_w    = T_world[:3, 3].tolist()
+                quat_w   = ScipyR.from_matrix(T_world[:3, :3]).as_quat().tolist()
+                self._print_pose_wrt_peg("View pose", T_world)
+
+                # Converge IK offline the same way as the servo loop:
+                # repeatedly call step_ik (large dt = no effective rate limit)
+                # until FK matches the target.
+                self._pb_scene.update_robot(current_q)
+                q = current_q.copy()
+                for _ in range(200):
+                    q = self._pb_scene.step_ik(q, pos_w, quat_w, dt=1.0)
+                    T_fk = self._pb_scene.update_tcp_bodies()
+                    if (T_fk is not None and
+                            np.linalg.norm(T_fk[:3, 3] - np.array(pos_w)) < 0.005):
+                        break
+                target_q = q
+                T_fk = self._pb_scene.update_tcp_bodies()
+                if T_fk is not None:
+                    fk_err = np.linalg.norm(T_fk[:3, 3] - np.array(pos_w))
+                    if fk_err > 0.005:
+                        print(f"[IK] WARNING: did not converge — pos error {fk_err*1000:.1f} mm")
+                    else:
+                        print(f"[IK] Converged  pos error {fk_err*1000:.1f} mm")
+                    self._print_pose_wrt_peg("View pose FK", T_fk)
+                print(f"[Robot] View pose joints (deg): "
+                      f"{[round(np.degrees(v), 1) for v in target_q]}")
+
+                ctrl = self._new_rtde_ctrl()
+                ctrl.moveJ(target_q.tolist(), speed=0.5, acceleration=0.5)
                 ctrl.disconnect()
                 print("[Robot] Reached view pose.")
             except Exception as exc:
@@ -841,7 +901,6 @@ class AnnotateApp:
     def _get_rtde_ctrl(self):
         """Persistent RTDE connection — kept alive for freedrive."""
         if self._rtde_ctrl is None:
-            from rtde_control import RTDEControlInterface
             print(f"[Robot] Connecting RTDE control → {self.robot_ip}")
             self._rtde_ctrl = RTDEControlInterface(self.robot_ip)
         return self._rtde_ctrl
@@ -851,20 +910,15 @@ class AnnotateApp:
         The RTDE control script times out between uses, so stale cached
         connections raise 'control script is not running'. A fresh connect
         always works."""
-        from rtde_control import RTDEControlInterface
         return RTDEControlInterface(self.robot_ip)
 
     def _get_rtde_recv(self):
         if self._rtde_recv is None:
-            from rtde_receive import RTDEReceiveInterface
             self._rtde_recv = RTDEReceiveInterface(self.robot_ip)
         return self._rtde_recv
 
     def _get_gripper(self):
         if self._gripper is None:
-            import sys
-            sys.path.insert(0, str(Path(__file__).parent / "robot_controller"))
-            from robotiq_gripper import RobotiqGripper
             print(f"[Gripper] Connecting → {self.robot_ip}:63352")
             g = RobotiqGripper()
             g.connect(self.robot_ip, 63352)
@@ -872,6 +926,14 @@ class AnnotateApp:
             self._gripper = g
             print("[Gripper] Ready.")
         return self._gripper
+
+    def _print_pose_wrt_peg(self, label: str, T_world: np.ndarray):
+        T_peg = self._T_inv_peg @ T_world
+        pos   = T_peg[:3, 3] * 1000          # metres → mm
+        rpy   = ScipyR.from_matrix(T_peg[:3, :3]).as_euler('xyz', degrees=True)
+        print(f"[{label}] wrt peg  "
+              f"pos=({pos[0]:.1f}, {pos[1]:.1f}, {pos[2]:.1f}) mm  "
+              f"rpy=({rpy[0]:.1f}, {rpy[1]:.1f}, {rpy[2]:.1f}) deg")
 
     def _compute_tcp_from_peg(self, peg_x: float, peg_y: float,
                                dist: float) -> list[float]:
@@ -931,6 +993,30 @@ class AnnotateApp:
                 print(f"[Freedrive] {e}")
         threading.Thread(target=_worker, daemon=True).start()
 
+    def _on_recover(self):
+        """Recover from protective stop or e-stop via UR Dashboard Server (port 29999)."""
+        def _worker():
+            try:
+                import socket
+                dash = socket.create_connection((self.robot_ip, 29999), timeout=5)
+                def _send(cmd):
+                    dash.sendall((cmd + "\n").encode())
+                    return dash.recv(4096).decode().strip()
+                print(f"[Recover] robot mode: {_send('robotmode')}")
+                print(f"[Recover] close safety popup: {_send('close safety popup')}")
+                print(f"[Recover] power on: {_send('power on')}")
+                time.sleep(2.0)
+                print(f"[Recover] brake release: {_send('brake release')}")
+                time.sleep(2.0)
+                print(f"[Recover] play: {_send('play')}")
+                dash.close()
+                self._rtde_ctrl = None
+                self._rtde_recv = None
+                print("[Recover] Done — RTDE connections reset.")
+            except Exception as e:
+                print(f"[Recover] Failed: {e}")
+        threading.Thread(target=_worker, daemon=True).start()
+
     def _on_estop(self):
         def _worker():
             try:
@@ -951,10 +1037,9 @@ class AnnotateApp:
         """Stop the servoL loop and return the persistent ctrl connection.
         Call this from any worker that needs to issue moveL/stopL while the
         servo loop may be running — UR allows only one RTDE control session."""
-        import time as _t
         self._jog_servo_active = False
         self._jog_target_pose  = None
-        _t.sleep(0.05)          # let the servo loop exit its current iteration
+        time.sleep(0.05)        # let the servo loop exit its current iteration
         ctrl = self._get_rtde_ctrl()
         try:
             ctrl.servoStop()    # exit servo mode so moveL is accepted
@@ -980,6 +1065,13 @@ class AnnotateApp:
             return
         grasp_base    = self._world_pose_to_base(box["grasp_tcp_world"])
         approach_base = self._world_pose_to_base(box["approach_tcp_world"])
+        def _as_T(pose_world):
+            T = np.eye(4)
+            T[:3, :3] = ScipyR.from_rotvec(pose_world[3:]).as_matrix()
+            T[:3, 3]  = pose_world[:3]
+            return T
+        self._print_pose_wrt_peg("Approach", _as_T(box["approach_tcp_world"]))
+        self._print_pose_wrt_peg("Grasp",    _as_T(box["grasp_tcp_world"]))
         def _worker():
             try:
                 ctrl = self._stop_servo_and_get_ctrl()
@@ -992,7 +1084,7 @@ class AnnotateApp:
                 ctrl.moveL(grasp_base, speed=0.02, acceleration=0.1)
                 dpg.set_value(self._TAG_STATUS, "Closing gripper…")
                 g.move_and_wait_for_pos(g.get_closed_position(), 255, 100)
-                import time as _t; _t.sleep(0.5)
+                time.sleep(0.5)
                 dpg.set_value(self._TAG_STATUS, "Opening gripper…")
                 g.move_and_wait_for_pos(g.get_open_position(), 255, 10)
                 dpg.set_value(self._TAG_STATUS, "Retracting to approach pose…")
@@ -1013,28 +1105,34 @@ class AnnotateApp:
         peg_y = dpg.get_value(self._TAG_JOG_Y)
         dist  = dpg.get_value(self._TAG_JOG_Z)
         self._jog_target_pose = self._compute_tcp_from_peg(peg_x, peg_y, dist)
+        T_base_mat = np.eye(4)
+        T_base_mat[:3, 3]  = self._jog_target_pose[:3]
+        T_base_mat[:3, :3] = ScipyR.from_rotvec(self._jog_target_pose[3:]).as_matrix()
+        self._print_pose_wrt_peg("Jog target", self.T_world_base @ T_base_mat)
         if not self._jog_servo_active:
             self._jog_servo_active = True
             threading.Thread(target=self._servo_loop, daemon=True).start()
 
     def _servo_loop(self):
         """Background thread: streams servoJ (via PyBullet IK) or servoL at ~125 Hz."""
-        import time as _t
         _DT = 0.008
         try:
             ctrl = self._get_rtde_ctrl()
             recv = self._get_rtde_recv()
             while self._jog_servo_active:
                 if self._freedrive or self._jog_target_pose is None:
-                    _t.sleep(0.05)
+                    time.sleep(0.05)
                     continue
                 try:
                     if self._pb_scene is not None:
-                        # Reconstruct world-frame TCP from base-frame [x,y,z,rx,ry,rz]
+                        # Reconstruct world-frame TCP from base-frame [x,y,z,rx,ry,rz],
+                        # with 180° flip around TCP Z so the physical tool axis matches.
                         pose = self._jog_target_pose
                         T_base = np.eye(4)
                         T_base[:3, 3]  = pose[:3]
-                        T_base[:3, :3] = ScipyR.from_rotvec(pose[3:]).as_matrix()
+                        T_base[:3, :3] = (ScipyR.from_rotvec(pose[3:])
+                                          * ScipyR.from_euler('z', 180, degrees=True)
+                                          ).as_matrix()
                         T_world = self.T_world_base @ T_base
                         pos_w   = T_world[:3, 3].tolist()
                         quat_w  = ScipyR.from_matrix(T_world[:3, :3]).as_quat().tolist()
@@ -1047,7 +1145,7 @@ class AnnotateApp:
                 except Exception as e:
                     print(f"[Servo] {e}")
                     break
-                _t.sleep(_DT)
+                time.sleep(_DT)
         finally:
             try:
                 self._get_rtde_ctrl().servoStop()
@@ -1125,12 +1223,11 @@ class AnnotateApp:
                             self._win, self._do_update_tcp_viz)
                 except Exception:
                     pass
-                import time as _t; _t.sleep(0.2)
+                time.sleep(0.2)
         threading.Thread(target=_poll, daemon=True).start()
 
     def _do_update_tcp_viz(self):
         """Called on the Open3D main thread: refresh gripper mesh + TCP frame."""
-        import copy
         scene = self._scene_widget.scene
         T = self._tcp_world_T.copy()
 
@@ -1558,8 +1655,11 @@ class AnnotateApp:
                                callback=lambda: self._on_freedrive_toggle())
                 dpg.bind_item_theme(self._TAG_FD_BTN, self._theme_red)
 
-            dpg.add_button(label="⚠  EMERGENCY STOP", width=-1,
-                           callback=lambda: self._on_estop())
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="⚠  EMERGENCY STOP", width=-200,
+                               callback=lambda: self._on_estop())
+                dpg.add_button(label="Recover", width=-1,
+                               callback=lambda: self._on_recover())
             with dpg.theme() as _theme_orange:
                 with dpg.theme_component(dpg.mvButton):
                     dpg.add_theme_color(dpg.mvThemeCol_Button,        (180, 90, 0))
