@@ -316,21 +316,31 @@ class PreScanApp:
         print(f'[Scene] Saved → {path}')
 
     def _save_frame(self, rgb: np.ndarray, depth: np.ndarray,
-                    K: np.ndarray, T_w10_cam: np.ndarray):
+                    K: np.ndarray, T_w10_cam: np.ndarray,
+                    confidence: np.ndarray | None = None):
         if depth is None:
             return
-        h, w = rgb.shape[:2]
-        if depth.shape[:2] != (h, w):
-            depth = cv2.resize(depth, (w, h), interpolation=cv2.INTER_NEAREST)
+        h_d, w_d = depth.shape[:2]
+        h_rgb, w_rgb = rgb.shape[:2]
+        if (h_rgb, w_rgb) != (h_d, w_d):
+            rgb = cv2.resize(rgb, (w_d, h_d), interpolation=cv2.INTER_AREA)
+            scale_x = w_d / w_rgb
+            scale_y = h_d / h_rgb
+            K = K.copy()
+            K[0] *= scale_x   # fx, cx
+            K[1] *= scale_y   # fy, cy
 
         idx = self.fusion_count
         cv2.imwrite(str(self._scan_dir / "color" / f"{idx:06d}.jpg"), rgb[:, :, ::-1],
                     [cv2.IMWRITE_JPEG_QUALITY, 95])
         np.save(str(self._scan_dir / "depth" / f"{idx:06d}.npy"),
                 depth.astype(np.float32))
+        if confidence is not None and confidence.size > 0:
+            np.save(str(self._scan_dir / "confidence" / f"{idx:06d}.npy"),
+                    confidence.astype(np.uint8))
         self._saved_poses.append(_ARKIT_TO_CV_4x4 @ np.linalg.inv(T_w10_cam))
         self._saved_Ks.append(K.copy())
-        self._saved_hw = (h, w)
+        self._saved_hw = (h_d, w_d)
         self.fusion_count += 1
 
     # ------------------------------------------------------------------
@@ -384,9 +394,10 @@ class PreScanApp:
 
         while True:
             self.event.wait()
-            rgb   = self.session.get_rgb_frame()
-            depth = self.session.get_depth_frame()
-            K     = self._intrinsic_matrix()
+            rgb        = self.session.get_rgb_frame()
+            depth      = self.session.get_depth_frame()
+            confidence = self.session.get_confidence_frame()
+            K          = self._intrinsic_matrix()
             T_wc  = self._T_world_cam()
             self.event.clear()
 
@@ -436,6 +447,7 @@ class PreScanApp:
                                   / f"rgbd_scan_{_time.strftime('%Y%m%d_%H%M%S')}")
                 (self._scan_dir / "color").mkdir(parents=True)
                 (self._scan_dir / "depth").mkdir(parents=True)
+                (self._scan_dir / "confidence").mkdir(parents=True)
                 print(f'[Phase 2 ✓] Marker {PEG_MARKER_ID} locked.'
                       f' Saving frames to {self._scan_dir}')
 
@@ -556,10 +568,10 @@ class PreScanApp:
                                    or (self.scan_mode == 'plane')
                                    or (self.scan_mode == 'board' and on_board))
                     if should_save:
-                        self._save_frame(rgb, depth, K, T_w10_cam)
+                        self._save_frame(rgb, depth, K, T_w10_cam, confidence)
 
                 elif self.scan_mode == 'all':
-                    self._save_frame(rgb, depth, K, T_w10_cam)
+                    self._save_frame(rgb, depth, K, T_w10_cam, confidence)
 
             vis.poll_events()
             vis.update_renderer()
@@ -703,6 +715,16 @@ class AnnotateApp:
         else:
             self.T_world_base = np.eye(4)
             print("[Annotate] No calibration found — robot move pose may be wrong.")
+
+        # PyBullet IK (headless) — servo loop uses servoJ instead of servoL
+        self._pb_scene = None
+        try:
+            from pybullet_ik import IKScene
+            self._pb_scene = IKScene(T_world_base=self.T_world_base)
+            self._pb_scene.build()
+            print("[Annotate] PyBullet IK ready — servo loop will use servoJ.")
+        except Exception as e:
+            print(f"[Annotate] PyBullet IK unavailable, falling back to servoL: {e}")
 
         # Pre-load existing tool_layout.json if present
         tl_path = self._LAYOUT_DIR / "tool_layout.json"
@@ -996,27 +1018,36 @@ class AnnotateApp:
             threading.Thread(target=self._servo_loop, daemon=True).start()
 
     def _servo_loop(self):
-        """Background thread: streams servoL at ~125 Hz so the robot follows
-        slider values continuously. Pauses automatically during freedrive."""
+        """Background thread: streams servoJ (via PyBullet IK) or servoL at ~125 Hz."""
         import time as _t
+        _DT = 0.008
         try:
             ctrl = self._get_rtde_ctrl()
+            recv = self._get_rtde_recv()
             while self._jog_servo_active:
                 if self._freedrive or self._jog_target_pose is None:
                     _t.sleep(0.05)
                     continue
                 try:
-                    ctrl.servoL(
-                        self._jog_target_pose,
-                        0.5, 0.5,   # speed, acceleration (unused by servoL)
-                        0.008,      # time: control period 8 ms
-                        0.1,        # lookahead_time: smoothing horizon
-                        300,        # gain
-                    )
+                    if self._pb_scene is not None:
+                        # Reconstruct world-frame TCP from base-frame [x,y,z,rx,ry,rz]
+                        pose = self._jog_target_pose
+                        T_base = np.eye(4)
+                        T_base[:3, 3]  = pose[:3]
+                        T_base[:3, :3] = ScipyR.from_rotvec(pose[3:]).as_matrix()
+                        T_world = self.T_world_base @ T_base
+                        pos_w   = T_world[:3, 3].tolist()
+                        quat_w  = ScipyR.from_matrix(T_world[:3, :3]).as_quat().tolist()
+                        current_q = np.array(recv.getActualQ(), dtype=np.float64)
+                        self._pb_scene.update_robot(current_q)
+                        new_q = self._pb_scene.step_ik(current_q, pos_w, quat_w, _DT)
+                        ctrl.servoJ(new_q.tolist(), 0.5, 0.5, _DT, 0.1, 300)
+                    else:
+                        ctrl.servoL(self._jog_target_pose, 0.5, 0.5, _DT, 0.1, 300)
                 except Exception as e:
-                    print(f"[ServoL] {e}")
+                    print(f"[Servo] {e}")
                     break
-                _t.sleep(0.008)
+                _t.sleep(_DT)
         finally:
             try:
                 self._get_rtde_ctrl().servoStop()
@@ -1669,7 +1700,7 @@ class AnnotateApp:
 # ---------------------------------------------------------------------------
 
 def fuse_offline(scan_dir: Path, voxel_length: float = 0.004,
-                 depth_trunc: float = 3.0):
+                 depth_trunc: float = 3.0, min_conf: int = 0):
     """Offline TSDF fusion from a directory saved by PreScanApp."""
     meta = json.loads((scan_dir / "meta.json").read_text())
     poses = np.load(str(scan_dir / "poses.npy"))
@@ -1685,7 +1716,7 @@ def fuse_offline(scan_dir: Path, voxel_length: float = 0.004,
 
     tsdf = o3d.pipelines.integration.ScalableTSDFVolume(
         voxel_length=voxel_length,
-        sdf_trunc=voxel_length * 30,
+        sdf_trunc=voxel_length * 5,
         color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8)
 
     n = len(color_files)
@@ -1698,6 +1729,10 @@ def fuse_offline(scan_dir: Path, voxel_length: float = 0.004,
             fx=K[0,0], fy=K[1,1], cx=K[0,2], cy=K[1,2])
         color     = o3d.io.read_image(str(c_file))
         depth_arr = np.load(str(d_file)).astype(np.float32)
+        conf_file = d_file.parent.parent / "confidence" / (d_file.stem + ".npy")
+        if conf_file.exists():
+            conf = np.load(str(conf_file))
+            depth_arr[conf < min_conf] = 0.0
         depth_img = o3d.geometry.Image(depth_arr)
         rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
             color, depth_img,
@@ -1744,7 +1779,10 @@ def main():
     parser.add_argument('--voxel',         type=float, default=0.0025,
                         help='Voxel size in metres for --fuse (default: 0.004)')
     parser.add_argument('--depth-trunc',   type=float, default=2.0,
-                        help='Depth truncation in metres for --fuse (default: 3.0)')
+                        help='Depth truncation in metres for --fuse (default: 2.0)')
+    parser.add_argument('--min-conf',      type=int, default=2, choices=[0, 1, 2],
+                        help='Minimum LiDAR confidence level to keep (0=all, 1=medium+high, '
+                             '2=high only; default: 0)')
     args = parser.parse_args()
 
     if args.visualize:
@@ -1756,7 +1794,8 @@ def main():
         return
 
     if args.fuse:
-        fuse_offline(args.fuse, voxel_length=args.voxel, depth_trunc=args.depth_trunc)
+        fuse_offline(args.fuse, voxel_length=args.voxel, depth_trunc=args.depth_trunc,
+                     min_conf=args.min_conf)
         return
 
     app = PreScanApp(device_idx=args.device, scan_mode=args.scan_mode)

@@ -1532,10 +1532,6 @@ class MainScene:
                 else:
                     print(f"[MainScene] Calibration dir not found: {_calib_dir}")
 
-        self._hand_tracker: "HandTrackController | None" = (
-            HandTrackController(self.pb_scene.robot_id, self.pb_scene.tool0_link_idx,
-                                self.pb_scene.arm_indices)
-            if self.pb_scene is not None else None)
 
         # ── Receivers / publishers ────────────────────────────────────────────
         self.cam          = _CamFeedReceiver(quest_ip)
@@ -1774,8 +1770,7 @@ class MainScene:
                         self._tracking_hand_id = None
                         self._track_hits       = 0
                         print("[TCP click] Hand tracking cancelled")
-                    elif (not self._ctrl_active and self.pb_scene is not None
-                          and self._hand_tracker is not None):
+                    elif (not self._ctrl_active and self.pb_scene is not None):
                         clicking_hand = self.tools.active_hand
                         if clicking_hand in ("left", "right"):
                             self._tracking_hand    = True
@@ -1845,7 +1840,7 @@ class MainScene:
                         if self._tracking_hand:
                             target_pts = (left_pts if self._tracking_hand_id == "left"
                                          else right_pts)
-                            if target_pts is not None and self._hand_tracker is not None:
+                            if target_pts is not None and self.pb_scene is not None:
                                 target_is_left = (self._tracking_hand_id == "left")
                                 target_quat    = _palm_quat(target_pts, is_left=target_is_left)
                                 _gripper_z     = ScipyR.from_quat(target_quat).apply(
@@ -1862,9 +1857,9 @@ class MainScene:
                                 _track_dt  = (min(_track_now - self._last_hand_track_t, 0.1)
                                               if self._last_hand_track_t is not None else 1.0 / 30.0)
                                 self._last_hand_track_t = _track_now
-                                self._hand_tracker.step(self.pb_scene.current_q,
-                                                        target_pos.tolist(), target_quat,
-                                                        _track_dt)
+                                self.pb_scene.step_ik(self.pb_scene.current_q,
+                                                      target_pos.tolist(), target_quat,
+                                                      _track_dt)
                             # else: hand lost this frame — hold last commanded pose
                         elif self._ctrl_active and self._ctrl is not None and not self._ctrl.done:
                             self._ctrl.update(self.pb_scene.robot_id,

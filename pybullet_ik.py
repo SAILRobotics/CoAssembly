@@ -9,9 +9,12 @@ Public API
     scene = IKScene.from_calibration("calibration_data/results")
     scene.build()
 
-    scene.update_robot(q_rad)                   # set joint angles
-    T_tool0 = scene.update_tcp_bodies()          # read TCP world pose
-    poses   = scene.get_arm_link_world_poses()   # for Open3D robot mesh
+    scene.update_robot(q_rad)                        # set joint angles
+    T_tool0 = scene.update_tcp_bodies()              # read TCP world pose
+    poses   = scene.get_arm_link_world_poses()       # for Open3D robot mesh
+
+    # Rate-limited IK step (use in servo loop instead of servoL):
+    new_q = scene.step_ik(current_q, target_pos, target_quat_xyzw, dt)
 """
 
 from pathlib import Path
@@ -29,6 +32,9 @@ _ARM_JOINT_NAMES = [
     b"wrist_1_joint",      b"wrist_2_joint",       b"wrist_3_joint",
 ]
 
+_MAX_JOINT_SPEED = np.deg2rad(45.0)   # rad/s — used by step_ik
+_IK_ITER         = 200
+
 
 class IKScene:
     """Headless PyBullet scene: UR10e robot at calibrated world pose."""
@@ -42,6 +48,13 @@ class IKScene:
         self._jmap_robot:    dict       = {}
         self.tool0_link_idx: int        = -1
         self.connected = False
+
+        # Cached joint-limit data (populated by _load_robot, used by step_ik
+        # and check_reachability so we don't rebuild them every call)
+        self._movable:      list = []
+        self._lower_limits: list = []
+        self._upper_limits: list = []
+        self._joint_ranges: list = []
 
     @classmethod
     def from_calibration(
@@ -88,6 +101,18 @@ class IKScene:
         return np.array([p.getJointState(self.robot_id, idx)[0]
                          for idx in self.arm_indices], dtype=np.float64)
 
+    def set_joint_limits(self, lower: list[float], upper: list[float]):
+        """Override the URDF joint limits used by step_ik and check_reachability.
+        Both lists must have one value per movable joint (6 for UR10e).
+        Call after build()."""
+        if len(lower) != len(self._movable) or len(upper) != len(self._movable):
+            raise ValueError(
+                f"Expected {len(self._movable)} values, "
+                f"got lower={len(lower)} upper={len(upper)}")
+        self._lower_limits = [float(v) for v in lower]
+        self._upper_limits = [float(v) for v in upper]
+        self._joint_ranges = [u - l for l, u in zip(self._lower_limits, self._upper_limits)]
+
     def update_robot(self, q_rad: np.ndarray):
         for idx, q in zip(self.arm_indices, q_rad):
             p.resetJointState(self.robot_id, idx, float(q))
@@ -102,6 +127,31 @@ class IKScene:
             return self._pb_to_mat(s[4], s[5])
         except RuntimeError:
             return None
+
+    def step_ik(self, current_q: np.ndarray, target_pos, target_quat_xyzw,
+                dt: float) -> np.ndarray:
+        """Solve IK for target_pos/quat and return new joint angles after one
+        rate-limited step.
+
+        restPoses=current_q biases the solution toward the current configuration,
+        preventing joint wraparound and unexpected configuration flips.
+        The joint delta is clamped to _MAX_JOINT_SPEED * dt so slider jitter or
+        a sudden target change never snaps the arm.
+        """
+        arm_q_map  = dict(zip(self.arm_indices, current_q))
+        rest_poses = [float(arm_q_map.get(j, 0.0)) for j in self._movable]
+        joint_q = p.calculateInverseKinematics(
+            self.robot_id, self.tool0_link_idx, target_pos,
+            targetOrientation=target_quat_xyzw,
+            lowerLimits=self._lower_limits, upperLimits=self._upper_limits,
+            jointRanges=self._joint_ranges, restPoses=rest_poses,
+            maxNumIterations=_IK_ITER, residualThreshold=1e-5)
+        target_q = np.array(joint_q[:len(self.arm_indices)], dtype=np.float64)
+        max_step  = _MAX_JOINT_SPEED * dt
+        new_q     = current_q + np.clip(target_q - current_q, -max_step, max_step)
+        for idx, qi in zip(self.arm_indices, new_q):
+            p.resetJointState(self.robot_id, idx, float(qi))
+        return new_q
 
     def get_arm_link_world_poses(self) -> list[np.ndarray]:
         """7 world-space 4×4 transforms for [base, shoulder, upper_arm, forearm,
@@ -145,24 +195,10 @@ class IKScene:
             R_target = np.column_stack([x_axis, y_axis, approach])
             target_quat_xyzw = ScipyR.from_matrix(R_target).as_quat()
 
-        T_peg  = np.array(T_pegboard_world, dtype=float)
+        T_peg   = np.array(T_pegboard_world, dtype=float)
         saved_q = self.current_q.copy()
-
-        n_joints = p.getNumJoints(self.robot_id)
-        movable  = [j for j in range(n_joints)
-                    if p.getJointInfo(self.robot_id, j)[2] != p.JOINT_FIXED]
-        lower_limits, upper_limits, joint_ranges = [], [], []
-        arm_q_map = dict(zip(self.arm_indices, saved_q))
-        rest_poses = []
-        for j in movable:
-            info = p.getJointInfo(self.robot_id, j)
-            ll, ul = float(info[8]), float(info[9])
-            if ul <= ll:
-                ll, ul = -np.pi, np.pi
-            lower_limits.append(ll)
-            upper_limits.append(ul)
-            joint_ranges.append(ul - ll)
-            rest_poses.append(float(arm_q_map.get(j, 0.0)))
+        arm_q_map  = dict(zip(self.arm_indices, saved_q))
+        rest_poses = [float(arm_q_map.get(j, 0.0)) for j in self._movable]
 
         points_world: list  = []
         reach_flags:  list  = []
@@ -173,9 +209,9 @@ class IKScene:
                 joint_q = p.calculateInverseKinematics(
                     self.robot_id, self.tool0_link_idx, p_world.tolist(),
                     targetOrientation=target_quat_xyzw,
-                    lowerLimits=lower_limits, upperLimits=upper_limits,
-                    jointRanges=joint_ranges, restPoses=rest_poses,
-                    maxNumIterations=200, residualThreshold=1e-5)
+                    lowerLimits=self._lower_limits, upperLimits=self._upper_limits,
+                    jointRanges=self._joint_ranges, restPoses=rest_poses,
+                    maxNumIterations=_IK_ITER, residualThreshold=1e-5)
                 for idx, q in zip(self.arm_indices, joint_q[:len(self.arm_indices)]):
                     p.resetJointState(self.robot_id, idx, float(q))
                 fk = p.getLinkState(self.robot_id, self.tool0_link_idx,
@@ -236,6 +272,20 @@ class IKScene:
         self._jmap_robot    = self._get_joint_map(self.robot_id)
         self.arm_indices    = [self._jmap_robot[n] for n in _ARM_JOINT_NAMES]
         self.tool0_link_idx = self._find_link_index(self.robot_id, b"tool0")
+
+        # Cache joint limits for step_ik and check_reachability
+        n_joints = p.getNumJoints(self.robot_id)
+        self._movable = [j for j in range(n_joints)
+                         if p.getJointInfo(self.robot_id, j)[2] != p.JOINT_FIXED]
+        for j in self._movable:
+            info = p.getJointInfo(self.robot_id, j)
+            ll, ul = float(info[8]), float(info[9])
+            if ul <= ll:
+                ll, ul = -np.pi, np.pi
+            self._lower_limits.append(ll)
+            self._upper_limits.append(ul)
+            self._joint_ranges.append(ul - ll)
+
         print(f"[IKScene] Robot loaded (id={self.robot_id}, "
               f"tool0_link={self.tool0_link_idx})")
 
