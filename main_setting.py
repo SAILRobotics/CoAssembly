@@ -30,6 +30,8 @@ TOOL_COLOR_PORT    = 5010   # per-tool highlight colour
 TOOL_LAYOUT_PORT   = 5011   # full tool layout (positions + sizes)
 GRIP_STATE_PORT    = 5012   # grip state + gripper box pose
 BOARD_ROOT_PORT    = 5014   # tracked board root transform
+ROBOT_BASE_PORT    = 5000   # robot base initial pose (matches RobotBaseInitialPoseReceiverNetMQ)
+ROBOT_JOINT_PORT   = 5001   # live arm joint angles, radians (matches RobotJointNetMQReceiver)
 
 # ── ArUco marker IDs ──────────────────────────────────────────────────────────
 ANCHOR_MARKER_ID   = 100   # world frame + PyBullet scene origin
