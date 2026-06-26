@@ -3661,7 +3661,7 @@ MeshCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 5
-  m_Convex: 1
+  m_Convex: 0
   m_CookingOptions: 30
   m_Mesh: {fileID: 4300000, guid: afe7a3d9d16a1ba4a8b54eca6a69e587, type: 2}
 --- !u!1 &279575436
@@ -3814,7 +3814,6 @@ GameObject:
   m_Component:
   - component: {fileID: 293328202}
   - component: {fileID: 293328204}
-  - component: {fileID: 293328203}
   m_Layer: 0
   m_Name: robotiq_85_2f
   m_TagString: robot
@@ -3839,28 +3838,6 @@ Transform:
   - {fileID: 1023545627}
   m_Father: {fileID: 794530460}
   m_LocalEulerAnglesHint: {x: 0, y: 180, z: 0}
---- !u!114 &293328203
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 293328201}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: d607ea46a579d44c4b19a6322ce4b9b2, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Unity.Robotics.UrdfImporter::Unity.Robotics.UrdfImporter.Control.Controller
-  selectedJoint: 
-  selectedIndex: 0
-  control: 0
-  stiffness: 0
-  damping: 0
-  forceLimit: 0
-  speed: 5
-  torque: 100
-  acceleration: 5
-  highLightColor: {r: 1, g: 0, b: 0, a: 1}
 --- !u!114 &293328204
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -6532,7 +6509,7 @@ MeshCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 5
-  m_Convex: 1
+  m_Convex: 0
   m_CookingOptions: 30
   m_Mesh: {fileID: 4300000, guid: b49ea7b49cea5614da9b16a9ae6d7c8f, type: 2}
 --- !u!1 &514030612
@@ -7636,7 +7613,7 @@ MeshCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 5
-  m_Convex: 1
+  m_Convex: 0
   m_CookingOptions: 30
   m_Mesh: {fileID: 4300000, guid: 5cf89c8b7ca383544ad823bf3a13cdc6, type: 2}
 --- !u!1 &595426241
@@ -7832,7 +7809,7 @@ MeshCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 5
-  m_Convex: 1
+  m_Convex: 0
   m_CookingOptions: 30
   m_Mesh: {fileID: 4300000, guid: 857149f033a9eaa489a7d3df8c8ffbd3, type: 2}
 --- !u!1001 &621783483
@@ -10077,7 +10054,7 @@ MeshCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 5
-  m_Convex: 1
+  m_Convex: 0
   m_CookingOptions: 30
   m_Mesh: {fileID: 4300000, guid: e8630b22f936ab649a850e5ddeae4650, type: 2}
 --- !u!1 &777013599
@@ -11901,7 +11878,7 @@ MeshCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 5
-  m_Convex: 1
+  m_Convex: 0
   m_CookingOptions: 30
   m_Mesh: {fileID: 4300000, guid: dc399175526d59e4491b669bb36cf126, type: 2}
 --- !u!1 &920194849
@@ -18613,7 +18590,7 @@ MeshCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 5
-  m_Convex: 1
+  m_Convex: 0
   m_CookingOptions: 30
   m_Mesh: {fileID: 4300000, guid: 6aef7acca6edd3d4eb2683dccb4ed38f, type: 2}
 --- !u!1 &1487967360
@@ -19764,7 +19741,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: fba5fd74d37a6cf4284698624eb8f6aa, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Unity.Robotics.UrdfImporter::Unity.Robotics.UrdfImporter.UrdfLink
-  IsBaseLink: 0
+  IsBaseLink: 1
 --- !u!1 &1581346247
 GameObject:
   m_ObjectHideFlags: 0
@@ -22926,7 +22903,7 @@ MeshCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 5
-  m_Convex: 1
+  m_Convex: 0
   m_CookingOptions: 30
   m_Mesh: {fileID: 4300000, guid: b1d5c7cffb5a89a48bf120b1efbf0593, type: 2}
 --- !u!1 &1835922807
@@ -25228,7 +25205,7 @@ MeshCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 5
-  m_Convex: 1
+  m_Convex: 0
   m_CookingOptions: 30
   m_Mesh: {fileID: 4300000, guid: caeff4886802b974483fb1474ac3821a, type: 2}
 --- !u!1 &2136181765
