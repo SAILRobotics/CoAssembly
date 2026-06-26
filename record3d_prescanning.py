@@ -890,9 +890,8 @@ class AnnotateApp:
                 print(f"[Robot] View pose joints (deg): "
                       f"{[round(np.degrees(v), 1) for v in target_q]}")
 
-                ctrl = self._new_rtde_ctrl()
+                ctrl = self._stop_servo_and_get_ctrl()
                 ctrl.moveJ(target_q.tolist(), speed=0.5, acceleration=0.5)
-                ctrl.disconnect()
                 print("[Robot] Reached view pose.")
             except Exception as exc:
                 print(f"[Robot] Move failed: {exc}")
