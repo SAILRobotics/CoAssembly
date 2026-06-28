@@ -770,7 +770,7 @@ class AnnotateApp:
                     "size":         list(t.get("size",         [0.10, 0.10, 0.025])),
                     "rotation_deg": list(t.get("rotation_deg", [0.0,  0.0,  0.0])),
                 }
-                for gk in ("grasp_joints", "grasp_tcp_world", "approach_tcp_world"):
+                for gk in ("grasp_joints",):
                     if gk in t:
                         entry[gk] = t[gk]
                 self._boxes.append(entry)
@@ -807,8 +807,9 @@ class AnnotateApp:
         self._TAG_JOG_Y    = "jog_y"
         self._TAG_JOG_Z    = "jog_z"
         self._TAG_GRIP_BTN = "gripper_btn"
-        self._TAG_JOINT_TXT= "joint_txt"
-        self._TAG_TCP_TXT  = "tcp_txt"
+        self._TAG_JOINT_TXT    = "joint_txt"
+        self._TAG_TCP_TXT      = "tcp_txt"
+        self._TAG_GRASP_STATUS = "grasp_status_txt"
 
         # robot runtime state
         self._rtde_ctrl       = None
@@ -858,6 +859,65 @@ class AnnotateApp:
         pos     = T_base_tcp[:3, 3].tolist()
         rot_vec = self._ScipyR.from_matrix(T_base_tcp[:3, :3]).as_rotvec().tolist()
         return pos + rot_vec
+
+    def _compute_object_hover_T_world(self, box: dict, standoff: float = 0.25) -> np.ndarray:
+        """World-frame TCP pose hovering `standoff` metres above the box centroid.
+        Uses the exact same orientation as the viewing pose (pegboard Y as reference)."""
+        world_pos = np.array(box["world_pos"])
+        normal    = self._plane_n / (np.linalg.norm(self._plane_n) + 1e-9)
+        tcp_pos   = world_pos + standoff * normal
+
+        z_tcp = -normal
+        y_tmp = self.T_world_peg[:3, 1]
+        y_tcp = y_tmp - np.dot(y_tmp, z_tcp) * z_tcp
+        if np.linalg.norm(y_tcp) < 1e-6:
+            y_tcp = np.array([0.0, 0.0, 1.0])
+        y_tcp /= np.linalg.norm(y_tcp)
+        x_tcp  = np.cross(y_tcp, z_tcp)
+        x_tcp /= np.linalg.norm(x_tcp)
+        y_tcp  = np.cross(z_tcp, x_tcp)
+
+        T = np.eye(4)
+        T[:3, :3] = np.column_stack([-x_tcp, -y_tcp, z_tcp])
+        T[:3, 3]  = tcp_pos
+        return T
+
+    def _move_to_object(self, standoff: float = 0.25):
+        """MoveJ to hover above the selected box centroid."""
+        if not (0 <= self._selected_idx < len(self._boxes)):
+            print("[Robot] No box selected.")
+            return
+        box = self._boxes[self._selected_idx]
+        def _worker():
+            try:
+                recv     = self._get_rtde_recv()
+                current_q = np.array(recv.getActualQ(), dtype=np.float64)
+
+                T_world  = self._compute_object_hover_T_world(box, standoff)
+                pos_w    = T_world[:3, 3].tolist()
+                quat_w   = ScipyR.from_matrix(T_world[:3, :3]).as_quat().tolist()
+                self._print_pose_wrt_peg(f"Object hover ({box['name']})", T_world)
+
+                self._pb_scene.update_robot(current_q)
+                q = current_q.copy()
+                for _ in range(200):
+                    q = self._pb_scene.step_ik(q, pos_w, quat_w, dt=1.0)
+                    T_fk = self._pb_scene.update_tcp_bodies()
+                    if (T_fk is not None and
+                            np.linalg.norm(T_fk[:3, 3] - np.array(pos_w)) < 0.005):
+                        break
+                T_fk = self._pb_scene.update_tcp_bodies()
+                if T_fk is not None:
+                    err = np.linalg.norm(T_fk[:3, 3] - np.array(pos_w))
+                    print(f"[IK] {'Converged' if err < 0.005 else 'WARNING: did not converge'}"
+                          f"  pos error {err*1000:.1f} mm")
+
+                ctrl = self._stop_servo_and_get_ctrl()
+                ctrl.moveJ(q.tolist(), speed=0.5, acceleration=0.5)
+                print(f"[Robot] Reached hover above '{box['name']}'.")
+            except Exception as exc:
+                print(f"[Robot] Move to object failed: {exc}")
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _move_robot_to_view(self):
         """Solve IK for the viewing pose and moveJ in a background thread."""
@@ -1068,35 +1128,119 @@ class AnnotateApp:
             dpg.set_value(self._TAG_STATUS, "Select a box first.")
             return
         box = self._boxes[self._selected_idx]
-        if "grasp_tcp_world" not in box:
+        if "grasp_joints" not in box:
             dpg.set_value(self._TAG_STATUS, "No grasp pose saved for this box.")
             return
-        grasp_base    = self._world_pose_to_base(box["grasp_tcp_world"])
-        approach_base = self._world_pose_to_base(box["approach_tcp_world"])
-        def _as_T(pose_world):
-            T = np.eye(4)
-            T[:3, :3] = ScipyR.from_rotvec(pose_world[3:]).as_matrix()
-            T[:3, 3]  = pose_world[:3]
-            return T
-        self._print_pose_wrt_peg("Approach", _as_T(box["approach_tcp_world"]))
-        self._print_pose_wrt_peg("Grasp",    _as_T(box["grasp_tcp_world"]))
+
+
+        # Pre-compute all waypoints from FK of grasp_joints before any motion
+        grasp_q = np.array(box["grasp_joints"], dtype=np.float64)
+        self._pb_scene.update_robot(grasp_q)
+        T_grasp_w   = self._pb_scene.update_tcp_bodies()
+        self._print_pose_wrt_peg("Grasp (FK)", T_grasp_w)
+        normal      = self._plane_n / (np.linalg.norm(self._plane_n) + 1e-9)
+        pos_grasp   = T_grasp_w[:3, 3]
+        quat_grasp  = ScipyR.from_matrix(T_grasp_w[:3, :3]).as_quat().tolist()
+        is_part     = box.get("category", "tool") == "part"
+
+        def _solve_ik(label, pos_w, seed_q):
+            pos_w = list(pos_w)
+            self._pb_scene.update_robot(seed_q)
+            q = seed_q.copy()
+            for _ in range(200):
+                q = self._pb_scene.step_ik(q, pos_w, quat_grasp, dt=1.0)
+                T_fk = self._pb_scene.update_tcp_bodies()
+                if (T_fk is not None and
+                        np.linalg.norm(T_fk[:3, 3] - np.array(pos_w)) < 0.005):
+                    break
+            T_fk = self._pb_scene.update_tcp_bodies()
+            if T_fk is not None:
+                err = np.linalg.norm(T_fk[:3, 3] - np.array(pos_w))
+                print(f"[IK {label}] {'Converged' if err < 0.005 else 'WARNING'}"
+                      f"  err {err*1000:.1f} mm")
+            return q
+
+        recv_pre    = self._get_rtde_recv()
+        current_q   = np.array(recv_pre.getActualQ(), dtype=np.float64)
+
+        if is_part:
+            pos_above    = pos_grasp + np.array([0.0, 0.0, 0.05])
+            pos_approach = pos_above  + 0.10 * normal
+            q_approach   = _solve_ik("approach", pos_approach, current_q)
+            q_above      = _solve_ik("above",    pos_above,    q_approach)
+        else:
+            pos_approach = pos_grasp + 0.10 * normal
+            q_approach   = _solve_ik("approach", pos_approach, current_q)
+
         def _worker():
             try:
                 ctrl = self._stop_servo_and_get_ctrl()
+                recv = self._get_rtde_recv()
                 g    = self._get_gripper()
+
+                # 0. Move to viewing pose first (safe neutral standoff)
+                dpg.set_value(self._TAG_STATUS, "Moving to viewing pose…")
+                view_pose = self._compute_robot_view_pose()
+                T_view = np.eye(4)
+                T_view[:3, 3]  = view_pose[:3]
+                T_view[:3, :3] = ScipyR.from_rotvec(view_pose[3:]).as_matrix()
+                T_view_w  = self.T_world_base @ T_view
+                pos_vw    = T_view_w[:3, 3].tolist()
+                quat_vw   = ScipyR.from_matrix(T_view_w[:3, :3]).as_quat().tolist()
+                current_q = np.array(recv.getActualQ(), dtype=np.float64)
+                self._pb_scene.update_robot(current_q)
+                q_view = current_q.copy()
+                for _ in range(200):
+                    q_view = self._pb_scene.step_ik(q_view, pos_vw, quat_vw, dt=1.0)
+                    T_fk   = self._pb_scene.update_tcp_bodies()
+                    if (T_fk is not None and
+                            np.linalg.norm(T_fk[:3, 3] - np.array(pos_vw)) < 0.005):
+                        break
+                ctrl.moveJ(q_view.tolist(), speed=0.5, acceleration=0.5)
+
+                # 1. Open gripper
                 dpg.set_value(self._TAG_STATUS, "Opening gripper…")
                 g.move_and_wait_for_pos(g.get_open_position(), 255, 10)
-                dpg.set_value(self._TAG_STATUS, "Moving to approach pose…")
-                ctrl.moveL(approach_base, speed=0.05, acceleration=0.2)
+
+                # 2. Approach
+                dpg.set_value(self._TAG_STATUS, "Moving to approach…")
+                ctrl.moveJ(q_approach.tolist(), speed=0.5, acceleration=0.5)
+
+                if is_part:
+                    # 3p. Move in along normal to directly above grasp
+                    dpg.set_value(self._TAG_STATUS, "Moving in along normal…")
+                    ctrl.moveJ(q_above.tolist(), speed=0.3, acceleration=0.3)
+
+                # 4. Descend to grasp pose
                 dpg.set_value(self._TAG_STATUS, "Moving to grasp pose…")
-                ctrl.moveL(grasp_base, speed=0.02, acceleration=0.1)
+                ctrl.moveJ(box["grasp_joints"], speed=0.2, acceleration=0.2)
+
                 dpg.set_value(self._TAG_STATUS, "Closing gripper…")
                 g.move_and_wait_for_pos(g.get_closed_position(), 255, 100)
-                time.sleep(0.5)
-                dpg.set_value(self._TAG_STATUS, "Opening gripper…")
+                time.sleep(0.3)
+
+                # Retract (reverse of approach)
+                if is_part:
+                    dpg.set_value(self._TAG_STATUS, "Lifting to above…")
+                    ctrl.moveJ(q_above.tolist(), speed=0.2, acceleration=0.2)
+                    dpg.set_value(self._TAG_STATUS, "Pulling out to approach…")
+                    ctrl.moveJ(q_approach.tolist(), speed=0.3, acceleration=0.3)
+
+                    # Put back: reverse of pick
+                    dpg.set_value(self._TAG_STATUS, "Returning — moving in along normal…")
+                    ctrl.moveJ(q_above.tolist(), speed=0.3, acceleration=0.3)
+                    dpg.set_value(self._TAG_STATUS, "Lowering to grasp pose…")
+                    ctrl.moveJ(box["grasp_joints"], speed=0.2, acceleration=0.2)
+                else:
+                    dpg.set_value(self._TAG_STATUS, "Pulling back to approach…")
+                    ctrl.moveJ(q_approach.tolist(), speed=0.5, acceleration=0.5)
+                    dpg.set_value(self._TAG_STATUS, "Returning to grasp pose…")
+                    ctrl.moveJ(box["grasp_joints"], speed=0.3, acceleration=0.3)
+
+                # Release
+                dpg.set_value(self._TAG_STATUS, "Releasing gripper…")
                 g.move_and_wait_for_pos(g.get_open_position(), 255, 10)
-                dpg.set_value(self._TAG_STATUS, "Retracting to approach pose…")
-                ctrl.moveL(approach_base, speed=0.05, acceleration=0.2)
+
                 dpg.set_value(self._TAG_STATUS, "✅ Test grasp complete.")
             except Exception as e:
                 print(f"[TestGrasp] {e}")
@@ -1181,27 +1325,36 @@ class AnnotateApp:
                 print(f"[Gripper] {e}")
         threading.Thread(target=_worker, daemon=True).start()
 
+    def _refresh_grasp_status(self, box: dict):
+        if "grasp_joints" in box:
+            dpg.set_value(self._TAG_GRASP_STATUS, "Grasp: SAVED")
+            dpg.configure_item(self._TAG_GRASP_STATUS, color=(80, 200, 80))
+        else:
+            dpg.set_value(self._TAG_GRASP_STATUS, "Grasp: not saved")
+            dpg.configure_item(self._TAG_GRASP_STATUS, color=(200, 80, 80))
+
     def _on_save_grasp(self):
         if not (0 <= self._selected_idx < len(self._boxes)):
             dpg.set_value(self._TAG_STATUS, "Select a box first before saving a grasp.")
             return
-        q   = list(self._joint_q)
-        T_g = self._tcp_world_T.copy()
-        normal = self._plane_n / (np.linalg.norm(self._plane_n) + 1e-9)
-        T_a    = T_g.copy()
-        T_a[:3, 3] = T_g[:3, 3] + 0.10 * normal   # 10 cm approach offset
-
-        def _T_to_list(T):
-            return (T[:3, 3].tolist()
-                    + ScipyR.from_matrix(T[:3, :3]).as_rotvec().tolist())
-
         box = self._boxes[self._selected_idx]
-        box["grasp_joints"]       = [round(v, 6) for v in q]
-        box["grasp_tcp_world"]    = _T_to_list(T_g)
-        box["approach_tcp_world"] = _T_to_list(T_a)
+        box["grasp_joints"] = [round(v, 6) for v in list(self._joint_q)]
         name = box.get("name", "?")
+        self._refresh_grasp_status(box)
+        self._sync_list()
         dpg.set_value(self._TAG_STATUS,
                       f"Grasp saved for '{name}' — click Save JSON to persist.")
+
+    def _on_reset_grasp(self):
+        if not (0 <= self._selected_idx < len(self._boxes)):
+            dpg.set_value(self._TAG_STATUS, "Select a box first.")
+            return
+        box = self._boxes[self._selected_idx]
+        box.pop("grasp_joints", None)
+        self._refresh_grasp_status(box)
+        self._sync_list()
+        dpg.set_value(self._TAG_STATUS,
+                      f"Grasp reset for '{box.get('name', '?')}' — click Save JSON to persist.")
 
     def _start_robot_poll(self):
         """Background thread: update joint angles + TCP display every 200 ms."""
@@ -1340,6 +1493,7 @@ class AnnotateApp:
 
     def _sync_list(self):
         items = [f"[{b['id']}]  {b['name']}  ({b['category']})"
+                 + ("  [G]" if "grasp_joints" in b else "")
                  for b in self._boxes]
         dpg.configure_item(self._TAG_LIST, items=items)
         if 0 <= self._selected_idx < len(items):
@@ -1364,6 +1518,7 @@ class AnnotateApp:
         ]:
             dpg.set_value(tag,    float(v))
             dpg.set_value(in_tag, float(v))
+        self._refresh_grasp_status(box)
 
     def _read_edit_into_box(self):
         """Flush DearPyGUI field values into the selected box dict."""
@@ -1396,9 +1551,7 @@ class AnnotateApp:
                 "rotation_deg": b["rotation_deg"],
             }
             if "grasp_joints" in b:
-                e["grasp_joints"]       = b["grasp_joints"]
-                e["grasp_tcp_world"]    = b["grasp_tcp_world"]
-                e["approach_tcp_world"] = b["approach_tcp_world"]
+                e["grasp_joints"] = b["grasp_joints"]
             return e
 
         payload = {"tools": [_entry(b) for b in self._boxes]}
@@ -1593,6 +1746,16 @@ class AnnotateApp:
             # ── Robot ──────────────────────────────────────────────────
             dpg.add_button(label="Move Robot to Viewing Pose (50 cm from board)",
                            callback=lambda: self._move_robot_to_view(), width=-1)
+
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Go to Object", width=130,
+                               callback=lambda: self._move_to_object(
+                                   standoff=dpg.get_value("_obj_standoff")))
+                dpg.add_text("Standoff (m):")
+                dpg.add_slider_float(tag="_obj_standoff", default_value=0.25,
+                                     min_value=0.05, max_value=0.60,
+                                     format="%.2f", width=-1)
+
             dpg.add_separator()
 
             # ── Box list ───────────────────────────────────────────────
@@ -1755,8 +1918,12 @@ class AnnotateApp:
             dpg.add_text("J: —  —  —  —  —  —", tag=self._TAG_JOINT_TXT)
             dpg.add_text("TCP world: —", tag=self._TAG_TCP_TXT)
             with dpg.group(horizontal=True):
-                dpg.add_button(label="Save Grasp Pose", width=-1,
+                dpg.add_button(label="Save Grasp Pose", width=-130,
                                callback=lambda: self._on_save_grasp())
+                dpg.add_button(label="Reset Grasp", width=-1,
+                               callback=lambda: self._on_reset_grasp())
+            dpg.add_text("Grasp: not saved", tag=self._TAG_GRASP_STATUS,
+                         color=(200, 80, 80))
             dpg.add_button(label="▶  Test Approach → Grasp → Open → Retract", width=-1,
                            callback=lambda: self._on_test_grasp())
 
@@ -1847,7 +2014,7 @@ class AnnotateApp:
         new_box = copy.deepcopy(self._boxes[self._selected_idx])
         new_box["id"] = self._next_id
         new_box["world_pos"] = [round(v + 0.02, 4) for v in new_box["world_pos"]]
-        for k in ("grasp_joints", "grasp_tcp_world", "approach_tcp_world"):
+        for k in ("grasp_joints",):
             new_box.pop(k, None)
         self._next_id += 1
         self._boxes.append(new_box)
