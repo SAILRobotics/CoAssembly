@@ -684,17 +684,15 @@ class _ToolLayoutManager:
     def _publish(self, T: np.ndarray) -> None:
         out = []
         for t in self._tools:
-            px, py = t.get("pegboard_pos", [0.0, 0.0])
-            sz     = t.get("size", [0.05, 0.05, 0.05])
-            rot    = t.get("rotation_deg", [0.0, 0.0, 0.0])
+            sz   = t.get("size", [0.05, 0.05, 0.05])
+            rot  = t.get("rotation_deg", [0.0, 0.0, 0.0])
 
-            # Centre of bounding box: sits on board surface (z = half depth)
-            p_local = np.array([px, py, sz[2] / 2.0, 1.0])
-            pos_w   = (T @ p_local)[:3]
-
-            # Orientation: pegboard-local Euler → world rotation
-            R_local = ScipyR.from_euler('xyz', rot, degrees=True).as_matrix()
-            R_world = T[:3, :3] @ R_local
+            # world_pos is the base (bottom-centre) of the box; rotation is a
+            # world-space Z-only rotation, matching _box_world_corners in the annotator.
+            R_world = ScipyR.from_euler('z', float(rot[2]), degrees=True).as_matrix()
+            base_w  = np.array(t.get("world_pos", [0.0, 0.0, 0.0]))
+            # Unity prefabs are centred at their local origin → send centroid
+            pos_w   = base_w + R_world @ np.array([0.0, 0.0, sz[2] / 2.0])
             q_xyzw  = ScipyR.from_matrix(R_world).as_quat()
 
             pos_u  = open3d_to_unity_vector(pos_w)
@@ -718,32 +716,31 @@ class _ToolLayoutManager:
     # ── PyBullet data ────────────────────────────────────────────────────────
 
     def world_boxes(self, T: np.ndarray) -> list:
-        """Return list of (pos_world, R_world, size) for PyBullet drawing."""
+        """Return list of (centroid_world, R_world, size) for PyBullet drawing."""
         boxes = []
         for t in self._tools:
-            px, py = t.get("pegboard_pos", [0.0, 0.0])
-            sz     = t.get("size", [0.05, 0.05, 0.05])
-            rot    = t.get("rotation_deg", [0.0, 0.0, 0.0])
-            p_local = np.array([px, py, sz[2] / 2.0, 1.0])
-            pos_w   = (T @ p_local)[:3]
-            R_local = ScipyR.from_euler('xyz', rot, degrees=True).as_matrix()
-            R_world = T[:3, :3] @ R_local
-            boxes.append((pos_w, R_world, sz))
+            sz      = t.get("size", [0.05, 0.05, 0.05])
+            rot     = t.get("rotation_deg", [0.0, 0.0, 0.0])
+            R_world = ScipyR.from_euler('z', float(rot[2]), degrees=True).as_matrix()
+            base_w  = np.array(t.get("world_pos", [0.0, 0.0, 0.0]))
+            # make_box_lineset draws ±h/2 around pos; pass centroid, not base
+            centroid = base_w + R_world @ np.array([0.0, 0.0, sz[2] / 2.0])
+            boxes.append((centroid, R_world, sz))
         return boxes
 
     def get_world_data(self, tool_id: int,
                        T: np.ndarray) -> "tuple | None":
-        """Return (pos_world, R_world, size) for tool_id, or None if not found."""
+        """Return (centroid_world, R_world, size) for tool_id, or None if not found."""
         for t in self._tools:
             if t["id"] == tool_id:
-                px, py = t.get("pegboard_pos", [0.0, 0.0])
-                sz     = t.get("size", [0.05, 0.05, 0.05])
-                rot    = t.get("rotation_deg", [0.0, 0.0, 0.0])
-                p_local = np.array([px, py, sz[2] / 2.0, 1.0])
-                pos_w   = (T @ p_local)[:3]
+                sz      = t.get("size", [0.05, 0.05, 0.05])
+                rot     = t.get("rotation_deg", [0.0, 0.0, 0.0])
                 R_local = ScipyR.from_euler('xyz', rot, degrees=True).as_matrix()
                 R_world = T[:3, :3] @ R_local
-                return pos_w, R_world, sz
+                base_w  = np.array(t.get("world_pos", [0.0, 0.0, 0.0]))
+                # world_pos is the base (bottom face); return centroid for IK
+                centroid = base_w + R_local @ np.array([0.0, 0.0, sz[2] / 2.0])
+                return centroid, R_world, sz
         return None
 
     def close(self) -> None:
@@ -1227,6 +1224,10 @@ class _SceneVis:
         self.vis.add_geometry(self._pegboard_sphere)
         self._pegboard_lineset = o3d.geometry.LineSet()
         self.vis.add_geometry(self._pegboard_lineset)
+        self._pegboard_box_lineset = o3d.geometry.LineSet()
+        self.vis.add_geometry(self._pegboard_box_lineset)
+        self._peg_box_center_local: np.ndarray | None = None
+        self._peg_box_size: list | None = None
         self._pegboard_T = self._hidden_T()
 
         # Reachability arrows (shown for 5 s after pressing R, then hidden)
@@ -1398,6 +1399,14 @@ class _SceneVis:
             [[0, 1], [1, 2], [2, 3], [3, 0]])
         self._pegboard_lineset.colors = o3d.utility.Vector3dVector(
             [[0.1, 0.6, 1.0]] * 4)
+        # Board box: thickness 2 cm behind the marker plane (−Z direction)
+        _thickness = 0.02
+        self._peg_box_center_local = np.array([
+            offset_x - width  / 2.0,
+            offset_y - height / 2.0,
+            -_thickness / 2.0,
+        ])
+        self._peg_box_size = [width, height, _thickness]
 
     def update_pegboard(self, T: np.ndarray | None):
         T_new = T if T is not None else self._hidden_T()
@@ -1413,6 +1422,15 @@ class _SceneVis:
             pts = (T_new @ corners_h.T).T[:, :3]
             self._pegboard_lineset.points = o3d.utility.Vector3dVector(pts)
             self.vis.update_geometry(self._pegboard_lineset)
+        if self._peg_box_center_local is not None and self._peg_box_size is not None:
+            centre_w = (T_new @ np.append(self._peg_box_center_local, 1.0))[:3]
+            R_w = T_new[:3, :3]
+            new_ls = self.make_box_lineset(centre_w, R_w, self._peg_box_size,
+                                           color=(0.45, 0.45, 0.45))
+            self._pegboard_box_lineset.points = new_ls.points
+            self._pegboard_box_lineset.lines  = new_ls.lines
+            self._pegboard_box_lineset.colors = new_ls.colors
+            self.vis.update_geometry(self._pegboard_box_lineset)
 
     def update_tracking(self, T: np.ndarray | None):
         T_new = T if T is not None else self._hidden_T()
@@ -1636,7 +1654,7 @@ class MainScene:
         self.tuner       = _OffsetTuner()
         self.synth       = _SyntheticObjectPublisher(quest_ip)
         self.tool_layout = _ToolLayoutManager(
-                               cfg.SCENE_LAYOUT_DIR / "tool_layout.json", quest_ip)
+                               cfg.SCENE_LAYOUT_DIR / "tool_layout1.json", quest_ip)
         self.grip_pub    = _GripStatePublisher(quest_ip)
         self.target_recv = _TargetPoseReceiver(quest_ip)
         self.robot_base_pub  = _RobotBasePublisher(quest_ip)

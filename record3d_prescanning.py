@@ -1540,6 +1540,12 @@ class AnnotateApp:
     # ── Save ──────────────────────────────────────────────────────────────
 
     def _save(self):
+        # Reassign sequential IDs 0..N-1 so the JSON is always clean
+        for i, b in enumerate(self._boxes):
+            b["id"] = i
+        self._next_id = len(self._boxes)
+        self._sync_list()
+
         def _entry(b):
             e = {
                 "id":           b["id"],
