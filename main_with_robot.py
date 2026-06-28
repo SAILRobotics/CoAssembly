@@ -47,6 +47,22 @@ except ImportError:
     _PYBULLET_AVAILABLE = False
     print("[main_with_robot] pybullet_ik import failed — IK/FK disabled.")
 
+try:
+    from rtde_control import RTDEControlInterface
+    _RTDE_CONTROL_AVAILABLE = True
+except ImportError:
+    _RTDE_CONTROL_AVAILABLE = False
+
+try:
+    _CBF_DIR = Path(__file__).resolve().parent / "cbf"
+    if str(_CBF_DIR) not in sys.path:
+        sys.path.insert(0, str(_CBF_DIR))
+    from oscbf_controller import OSCBFController
+    _OSCBF_AVAILABLE = True
+except Exception as _e:
+    _OSCBF_AVAILABLE = False
+    print(f"[main_with_robot] OSCBFController not available: {_e}")
+
 _FILE_DIR = Path(__file__).resolve().parent
 if str(_FILE_DIR) not in sys.path:
     sys.path.insert(0, str(_FILE_DIR))
@@ -1072,6 +1088,56 @@ class _UrRtdeReceiver:
             self._rtde = None
 
 
+class _UrRtdeController:
+    """Thin wrapper around RTDEControlInterface for servoJ + servoStop."""
+
+    def __init__(self, robot_ip: str,
+                 servo_speed: float = 1.0, servo_accel: float = 1.0,
+                 servo_lookahead: float = 0.1, servo_gain: int = 300):
+        self._ctrl = None
+        self._servo_speed    = servo_speed
+        self._servo_accel    = servo_accel
+        self._servo_lookahead = servo_lookahead
+        self._servo_gain     = servo_gain
+        self._in_servo       = False
+        if not _RTDE_CONTROL_AVAILABLE:
+            print("[RtdeCtrl] rtde_control not installed — servoJ disabled.")
+            return
+        try:
+            self._ctrl = RTDEControlInterface(robot_ip)
+            print(f"[RtdeCtrl] Connected to {robot_ip}")
+        except Exception as e:
+            print(f"[RtdeCtrl] Could not connect to {robot_ip}: {e}")
+
+    @property
+    def connected(self) -> bool:
+        return self._ctrl is not None
+
+    def servoJ(self, q: list, dt: float) -> None:
+        if self._ctrl is None:
+            return
+        self._ctrl.servoJ(q, self._servo_speed, self._servo_accel,
+                          dt, self._servo_lookahead, self._servo_gain)
+        self._in_servo = True
+
+    def servoStop(self) -> None:
+        if self._ctrl is not None and self._in_servo:
+            try:
+                self._ctrl.servoStop()
+            except Exception:
+                pass
+            self._in_servo = False
+
+    def close(self) -> None:
+        self.servoStop()
+        if self._ctrl is not None:
+            try:
+                self._ctrl.disconnect()
+            except Exception:
+                pass
+            self._ctrl = None
+
+
 # =============================================================================
 # Robot base pose + joint angle publishers — drive the "ur" GameObject's
 # RobotBaseInitialPoseReceiverNetMQ (:5000) and RobotJointNetMQReceiver (:5001)
@@ -1631,6 +1697,22 @@ class MainScene:
                     print(f"[MainScene] Calibration dir not found: {_calib_dir}")
 
 
+        # ── OSC-CBF controller ────────────────────────────────────────────────
+        self.oscbf: "OSCBFController | None" = None
+        if _OSCBF_AVAILABLE and self.pb_scene is not None:
+            _urdf = Path(__file__).resolve().parent / "robot_assets" / "ur10e.urdf"
+            try:
+                self.oscbf = OSCBFController(self.pb_scene.T_world_base, _urdf)
+                # Build with empty obstacles for now; call rebuild_cbf() after tool layout loads
+                self.oscbf.build(
+                    obstacle_boxes = [],
+                    workspace_box  = [-2.0, -2.0, -0.05, 2.0, 2.0, 2.0],
+                )
+                print("[OSCBFController] Ready.")
+            except Exception as _e:
+                print(f"[OSCBFController] Build failed: {_e}")
+                self.oscbf = None
+
         # ── Receivers / publishers ────────────────────────────────────────────
         self.cam          = _CamFeedReceiver(quest_ip)
         self.aruco        = _ArucoPoseEstimator(
@@ -1643,6 +1725,8 @@ class MainScene:
         self.aruco_worker = _ArUcoWorker(self.cam, self.aruco)
         self.hands        = _HandDataReceiver(quest_ip, hand_port)
         self.rtde         = _UrRtdeReceiver(robot_ip) if (robot_ip and not simulation) else None
+        self.rtde_ctrl    = (_UrRtdeController(robot_ip)
+                             if (robot_ip and not simulation) else None)
 
         if simulation:
             print(f"[Robot] Simulation mode — using fixed joint angles {self._SIM_Q_DEG} deg")
@@ -1874,6 +1958,8 @@ class MainScene:
                         self._tracking_hand    = False
                         self._tracking_hand_id = None
                         self._track_hits       = 0
+                        if self.rtde_ctrl is not None:
+                            self.rtde_ctrl.servoStop()
                         print("[TCP click] Hand tracking cancelled")
                     elif (not self._ctrl_active and self.pb_scene is not None):
                         clicking_hand = self.tools.active_hand
@@ -1943,11 +2029,11 @@ class MainScene:
 
                 # ── PyBullet scene update ─────────────────────────────────────
                 if self.pb_scene is not None:
-                    if self.simulation:
+                    if self.simulation or self._tracking_hand:
                         if self._tracking_hand:
                             target_pts = (left_pts if self._tracking_hand_id == "left"
                                          else right_pts)
-                            if target_pts is not None and self.pb_scene is not None:
+                            if target_pts is not None:
                                 target_is_left = (self._tracking_hand_id == "left")
                                 target_quat    = _palm_quat(target_pts, is_left=target_is_left)
                                 _gripper_z     = ScipyR.from_quat(target_quat).apply(
@@ -1964,10 +2050,36 @@ class MainScene:
                                 _track_dt  = (min(_track_now - self._last_hand_track_t, 0.1)
                                               if self._last_hand_track_t is not None else 1.0 / 30.0)
                                 self._last_hand_track_t = _track_now
-                                self.pb_scene.step_ik(self.pb_scene.current_q,
-                                                      target_pos.tolist(), target_quat,
-                                                      _track_dt)
-                            # else: hand lost this frame — hold last commanded pose
+
+                                if (self.oscbf is not None
+                                        and self.rtde_ctrl is not None
+                                        and self.rtde_ctrl.connected
+                                        and self.rtde is not None):
+                                    # Real robot: PyBullet IK nominal → CBF safety filter → servoJ
+                                    q_real = self.rtde.poll()
+                                    if q_real is None:
+                                        q_real = self.pb_scene.current_q.copy()
+                                    # PyBullet IK from current real-robot q
+                                    self.pb_scene.step_ik(q_real,
+                                                          target_pos.tolist(), target_quat,
+                                                          _track_dt)
+                                    q_target     = self.pb_scene.current_q.copy()
+                                    qdot_nominal = (q_target - q_real) / _track_dt
+                                    qdot_safe    = self.oscbf.filter_qdot(q_real, qdot_nominal)
+                                    q_next       = q_real + qdot_safe * _track_dt
+                                    self.rtde_ctrl.servoJ(q_next.tolist(), _track_dt)
+                                    self.pb_scene.update_robot(q_next)
+                                else:
+                                    # Simulation: PyBullet IK only
+                                    self.pb_scene.step_ik(self.pb_scene.current_q,
+                                                          target_pos.tolist(), target_quat,
+                                                          _track_dt)
+                            else:
+                                # Hand lost this frame — hold pose; stop servo if on real robot
+                                if (self.rtde_ctrl is not None
+                                        and self.rtde_ctrl.connected
+                                        and self.rtde_ctrl._in_servo):
+                                    self.rtde_ctrl.servoStop()
                         elif self._ctrl_active and self._ctrl is not None and not self._ctrl.done:
                             self._ctrl.update(self.pb_scene.robot_id,
                                               self.pb_scene.arm_indices)
@@ -2029,6 +2141,8 @@ class MainScene:
                                 self._tracking_hand      = False
                                 self._tracking_hand_id   = None
                                 self._track_hits         = 0
+                                if self.rtde_ctrl is not None:
+                                    self.rtde_ctrl.servoStop()
                                 self._track_target_pos   = None
                                 self._grip_state         = 'grabbed'
                                 print(f"[TCP track] Reached {tracked_hand} palm — "
@@ -2231,6 +2345,8 @@ class MainScene:
         self.tools.close()
         if self.rtde is not None:
             self.rtde.close()
+        if self.rtde_ctrl is not None:
+            self.rtde_ctrl.close()
         print("[Done]")
 
 
