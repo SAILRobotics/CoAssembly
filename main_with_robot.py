@@ -687,10 +687,12 @@ class _ToolLayoutManager:
             sz   = t.get("size", [0.05, 0.05, 0.05])
             rot  = t.get("rotation_deg", [0.0, 0.0, 0.0])
 
-            # world_pos is the base (bottom-centre) of the box; rotation is a
-            # world-space Z-only rotation, matching _box_world_corners in the annotator.
+            # peg_pos is the base in pegboard frame (new format); fall back to world_pos.
             R_world = ScipyR.from_euler('z', float(rot[2]), degrees=True).as_matrix()
-            base_w  = np.array(t.get("world_pos", [0.0, 0.0, 0.0]))
+            if "peg_pos" in t:
+                base_w = (T @ np.append(t["peg_pos"], 1.0))[:3]
+            else:
+                base_w = np.array(t.get("world_pos", [0.0, 0.0, 0.0]))
             # Unity prefabs are centred at their local origin → send centroid
             pos_w   = base_w + R_world @ np.array([0.0, 0.0, sz[2] / 2.0])
             q_xyzw  = ScipyR.from_matrix(R_world).as_quat()
@@ -722,8 +724,10 @@ class _ToolLayoutManager:
             sz      = t.get("size", [0.05, 0.05, 0.05])
             rot     = t.get("rotation_deg", [0.0, 0.0, 0.0])
             R_world = ScipyR.from_euler('z', float(rot[2]), degrees=True).as_matrix()
-            base_w  = np.array(t.get("world_pos", [0.0, 0.0, 0.0]))
-            # make_box_lineset draws ±h/2 around pos; pass centroid, not base
+            if "peg_pos" in t:
+                base_w = (T @ np.append(t["peg_pos"], 1.0))[:3]
+            else:
+                base_w = np.array(t.get("world_pos", [0.0, 0.0, 0.0]))
             centroid = base_w + R_world @ np.array([0.0, 0.0, sz[2] / 2.0])
             boxes.append((centroid, R_world, sz))
         return boxes
@@ -737,8 +741,11 @@ class _ToolLayoutManager:
                 rot     = t.get("rotation_deg", [0.0, 0.0, 0.0])
                 R_local = ScipyR.from_euler('xyz', rot, degrees=True).as_matrix()
                 R_world = T[:3, :3] @ R_local
-                base_w  = np.array(t.get("world_pos", [0.0, 0.0, 0.0]))
-                # world_pos is the base (bottom face); return centroid for IK
+                if "peg_pos" in t:
+                    base_w = (T @ np.append(t["peg_pos"], 1.0))[:3]
+                else:
+                    base_w = np.array(t.get("world_pos", [0.0, 0.0, 0.0]))
+                # peg_pos/world_pos is the base (bottom face); return centroid for IK
                 centroid = base_w + R_local @ np.array([0.0, 0.0, sz[2] / 2.0])
                 return centroid, R_world, sz
         return None

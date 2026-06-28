@@ -1276,7 +1276,7 @@ def _build_calibrator():
 
     return HandEyeCalibrator(
         robot_ip           = "192.168.50.70",
-        save_dir           = "main_logic/initialization/hand_eye_data",
+        save_dir           = "calibration_data",
         world_marker_id    = 10,                   # defines world origin
         marker_sizes       = {10: 0.090, 51: 0.040},  # world + object markers
         charuco_squares_x  = 4,

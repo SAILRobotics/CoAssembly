@@ -240,9 +240,11 @@ class PreScanApp:
 
     def __init__(self, device_idx: int = 0,
                  aruco_dict_id: int = cv2.aruco.DICT_6X6_1000,
-                 scan_mode: str = 'board'):
+                 scan_mode: str = 'board',
+                 min_conf: int = 2):
         self.device_idx    = device_idx
-        self.scan_mode     = scan_mode   # 'board': bounded rect; 'plane': infinite plane
+        self.scan_mode     = scan_mode   # 'board' / 'plane' / 'all' / 'oneshot'
+        self._min_conf     = min_conf
         self.event         = Event()
         self.session       = None
 
@@ -417,7 +419,8 @@ class PreScanApp:
         traj_ls            = None
         first_pose_added   = False
 
-        phase = 'await_world'   # → 'await_peg' → 'scanning'
+        phase = 'await_world'   # → 'await_peg' → 'scanning' | 'oneshot_ready'
+        oneshot_pcds: list = []  # accumulated pointclouds for oneshot mode
 
         while True:
             self.event.wait()
@@ -467,29 +470,61 @@ class PreScanApp:
                     and PEG_MARKER_ID in detections):
                 T_arkit_peg = T_wc @ _ARKIT_TO_CV_4x4 @ detections[PEG_MARKER_ID]
                 self.T_world10_peg = self.T_world10_world @ T_arkit_peg
-                phase = 'scanning'
-                # Create output directories for this scan session
-                self._scan_dir = (SCENE_LAYOUT_DIR
-                                  / f"rgbd_scan_{time.strftime('%Y%m%d_%H%M%S')}")
-                (self._scan_dir / "color").mkdir(parents=True)
-                (self._scan_dir / "depth").mkdir(parents=True)
-                (self._scan_dir / "confidence").mkdir(parents=True)
-                print(f'[Phase 2 ✓] Marker {PEG_MARKER_ID} locked.'
-                      f' Saving frames to {self._scan_dir}')
 
                 # Replace live preview with locked geometry.
                 self._remove(vis, live_axes)
                 self._remove(vis, live_surface)
                 live_axes = live_surface = None
-
                 vis.add_geometry(make_axes_lineset(self.T_world10_peg,
                                                    PEG_MARKER_SIZE * 0.9))
                 vis.add_geometry(make_flat_square(self.T_world10_peg,
                                                   PEG_MARKER_SIZE,
                                                   color=(1.0, 0.85, 0.0)))
                 vis.add_geometry(make_pegboard_lineset(self.T_world10_peg))
-
                 self._save_scene_layout()
+
+                if self.scan_mode == 'oneshot':
+                    phase = 'oneshot_ready'
+                    print(f'[Phase 2 ✓] Marker {PEG_MARKER_ID} locked.'
+                          f' Aim at the pegboard and press ENTER to capture pointcloud.')
+                else:
+                    phase = 'scanning'
+                    self._scan_dir = (SCENE_LAYOUT_DIR
+                                      / f"rgbd_scan_{time.strftime('%Y%m%d_%H%M%S')}")
+                    (self._scan_dir / "color").mkdir(parents=True)
+                    (self._scan_dir / "depth").mkdir(parents=True)
+                    (self._scan_dir / "confidence").mkdir(parents=True)
+                    print(f'[Phase 2 ✓] Marker {PEG_MARKER_ID} locked.'
+                          f' Saving frames to {self._scan_dir}')
+
+            # ── Oneshot: ENTER captures a confidence-filtered pointcloud ───
+            if (phase == 'oneshot_ready' and enter_pressed
+                    and T_w10_cam is not None and depth is not None):
+                h_d, w_d = depth.shape[:2]
+                h_rgb, w_rgb = rgb.shape[:2]
+                _rgb = rgb
+                _K   = K.copy()
+                if (h_rgb, w_rgb) != (h_d, w_d):
+                    _rgb = cv2.resize(rgb, (w_d, h_d), interpolation=cv2.INTER_AREA)
+                    _K[0] *= w_d / w_rgb
+                    _K[1] *= h_d / h_rgb
+                depth_arr = depth.astype(np.float32).copy()
+                if confidence is not None and confidence.size > 0:
+                    conf = confidence.reshape(h_d, w_d)
+                    depth_arr[conf < self._min_conf] = 0.0
+                rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
+                    o3d.geometry.Image(_rgb.astype(np.uint8)),
+                    o3d.geometry.Image(depth_arr),
+                    depth_scale=1.0, depth_trunc=3.0, convert_rgb_to_intensity=False)
+                intrinsic = o3d.camera.PinholeCameraIntrinsic(
+                    width=w_d, height=h_d,
+                    fx=_K[0,0], fy=_K[1,1], cx=_K[0,2], cy=_K[1,2])
+                extrinsic = _ARKIT_TO_CV_4x4 @ np.linalg.inv(T_w10_cam)
+                pcd = o3d.geometry.PointCloud.create_from_rgbd_image(
+                    rgbd, intrinsic, extrinsic)
+                oneshot_pcds.append(pcd)
+                print(f'[OneShot] Frame {len(oneshot_pcds)} captured'
+                      f' ({len(pcd.points)} pts) — ENTER=add more  Q=save & quit')
 
             # ── Camera pose in world-10 frame ───────────────────────────
             T_w10_cam: np.ndarray | None = None
@@ -527,6 +562,10 @@ class PreScanApp:
                 else:
                     status = (f'Phase 2  Aim at marker {PEG_MARKER_ID}'
                               f' ({PEG_MARKER_SIZE*100:.0f} cm)')
+            elif phase == 'oneshot_ready':
+                n = len(oneshot_pcds)
+                status = (f'OneShot: {n} frame{"s" if n != 1 else ""} captured'
+                          f'  ENTER=capture  Q=save & quit')
             else:
                 status = (f'Scanning  {self.fusion_count} frames fused'
                           f'  [Q to finish]')
@@ -601,6 +640,17 @@ class PreScanApp:
 
             vis.poll_events()
             vis.update_renderer()
+
+        # ── Save oneshot pointcloud on quit ──────────────────────────────
+        if oneshot_pcds:
+            combined = oneshot_pcds[0]
+            for _p in oneshot_pcds[1:]:
+                combined += _p
+            out = SCENE_LAYOUT_DIR / 'pegboard_oneshot.ply'
+            SCENE_LAYOUT_DIR.mkdir(parents=True, exist_ok=True)
+            o3d.io.write_point_cloud(str(out), combined)
+            print(f'[OneShot] {len(oneshot_pcds)} frames merged'
+                  f' → {len(combined.points)} points → {out}')
 
         # ── Save metadata on quit ────────────────────────────────────────
         vis.destroy_window()
@@ -707,8 +757,11 @@ class AnnotateApp:
 
     # ── init ──────────────────────────────────────────────────────────────
 
-    def __init__(self, robot_ip: str = "192.168.50.70"):
+    def __init__(self, robot_ip: str = "192.168.50.70",
+                 ply_path: "Path | None" = None):
         self.robot_ip  = robot_ip
+        self._ply_path = (Path(ply_path) if ply_path is not None
+                          else self._LAYOUT_DIR / "pegboard_scan.ply")
         self._ScipyR   = ScipyR
         self._boxes: list[dict] = []
         self._selected_idx = -1
@@ -757,16 +810,21 @@ class AnnotateApp:
             print(f"[Annotate] PyBullet IK unavailable, falling back to servoL: {e}")
 
         # Pre-load existing tool_layout.json if present
-        tl_path = self._LAYOUT_DIR / "tool_layout2.json"
+        tl_path = self._LAYOUT_DIR / "tool_layout1.json"
         if tl_path.exists():
             raw = json.loads(tl_path.read_text())
             for t in raw.get("tools", []):
+                if "peg_pos" in t:
+                    _world_pos = (self.T_world_peg
+                                  @ np.append(t["peg_pos"], 1.0))[:3].tolist()
+                else:
+                    _world_pos = list(t.get("world_pos", [0.0, 0.0, 0.0]))
                 entry = {
                     "id":           int(t["id"]),
                     "name":         str(t.get("type", "tool")),
                     "category":     str(t.get("category", "tool")),
                     "planar":       bool(t.get("planar", True)),
-                    "world_pos":    list(t.get("world_pos", [0.0, 0.0, 0.0])),
+                    "world_pos":    _world_pos,
                     "size":         list(t.get("size",         [0.10, 0.10, 0.025])),
                     "rotation_deg": list(t.get("rotation_deg", [0.0,  0.0,  0.0])),
                 }
@@ -1547,12 +1605,14 @@ class AnnotateApp:
         self._sync_list()
 
         def _entry(b):
+            peg_pos = (self._T_inv_peg
+                       @ np.append(b["world_pos"], 1.0))[:3].tolist()
             e = {
                 "id":           b["id"],
                 "type":         b["name"],
                 "category":     b["category"],
                 "planar":       b.get("planar", True),
-                "world_pos":    b["world_pos"],
+                "peg_pos":      [round(v, 4) for v in peg_pos],
                 "size":         b["size"],
                 "rotation_deg": b["rotation_deg"],
             }
@@ -1561,7 +1621,7 @@ class AnnotateApp:
             return e
 
         payload = {"tools": [_entry(b) for b in self._boxes]}
-        out = self._LAYOUT_DIR / "tool_layout2.json"
+        out = self._LAYOUT_DIR / "tool_layout1.json"
         out.write_text(json.dumps(payload, indent=2))
         print(f"[Annotate] Saved {len(self._boxes)} boxes → {out}")
 
@@ -1607,23 +1667,33 @@ class AnnotateApp:
         scene.add_geometry("peg_outline",
             make_pegboard_lineset(self.T_world_peg),
             mat_line)
-        # PLY scan mesh
-        mesh_path = self._LAYOUT_DIR / "pegboard_scan.ply"
+        # PLY scan mesh or point cloud
+        mesh_path = self._ply_path
         if mesh_path.exists():
-            mesh = o3d.io.read_triangle_mesh(str(mesh_path))
-            mesh.compute_vertex_normals()
-            mat_mesh = rendering.MaterialRecord()
-            mat_mesh.shader = "defaultLit"
-            scene.add_geometry("ply_mesh", mesh, mat_mesh)
-            try:
-                mesh_t = o3d.t.geometry.TriangleMesh.from_legacy(mesh)
-                self._ray_scene = o3d.t.geometry.RaycastingScene()
-                self._ray_scene.add_triangles(mesh_t)
-            except Exception as e:
-                print(f"[Annotate] Raycasting scene unavailable: {e}")
-            print(f"[Annotate] Loaded mesh from {mesh_path}")
+            _try_mesh = o3d.io.read_triangle_mesh(str(mesh_path))
+            if len(_try_mesh.triangles) > 0:
+                _try_mesh.compute_vertex_normals()
+                mat_mesh = rendering.MaterialRecord()
+                mat_mesh.shader = "defaultLit"
+                scene.add_geometry("ply_mesh", _try_mesh, mat_mesh)
+                try:
+                    mesh_t = o3d.t.geometry.TriangleMesh.from_legacy(_try_mesh)
+                    self._ray_scene = o3d.t.geometry.RaycastingScene()
+                    self._ray_scene.add_triangles(mesh_t)
+                except Exception as e:
+                    print(f"[Annotate] Raycasting unavailable: {e}")
+                print(f"[Annotate] Loaded mesh ({len(_try_mesh.triangles)} tris)"
+                      f" from {mesh_path}")
+            else:
+                pcd = o3d.io.read_point_cloud(str(mesh_path))
+                mat_pcd = rendering.MaterialRecord()
+                mat_pcd.shader = "defaultUnlit"
+                mat_pcd.point_size = 2.0
+                scene.add_geometry("ply_mesh", pcd, mat_pcd)
+                print(f"[Annotate] Loaded point cloud ({len(pcd.points)} pts)"
+                      f" from {mesh_path} — click-to-place unavailable for point clouds")
         else:
-            print(f"[Annotate] No PLY mesh found at {mesh_path}")
+            print(f"[Annotate] No PLY found at {mesh_path}")
 
         # Initial box wireframes
         self._refresh_boxes()
@@ -2131,14 +2201,18 @@ def main():
                              'files (no device needed)')
     parser.add_argument('--annotate',      action='store_true',
                         help='Open the tool-box annotator GUI (no device needed)')
+    parser.add_argument('--ply',           type=Path, default=None, metavar='PLY_PATH',
+                        help='PLY file to load in the annotator '
+                             '(default: scene_layout/pegboard_scan.ply)')
     parser.add_argument('--robot-ip',      default='192.168.50.70',
                         help='UR10e IP for the annotate robot-move button '
                              '(default: 192.168.50.70)')
-    parser.add_argument('--scan-mode',     choices=['board', 'plane', 'all'], default='board',
+    parser.add_argument('--scan-mode',     choices=['board', 'plane', 'all', 'oneshot'], default='board',
                         help='Frame-save trigger: "board" saves only when ray hits '
                              'the pegboard rectangle (default); "plane" saves whenever '
                              'the ray hits the infinite plane the board lies on; '
-                             '"all" saves every frame unconditionally')
+                             '"all" saves every frame unconditionally; '
+                             '"oneshot" captures one confidence-filtered pointcloud on ENTER')
     parser.add_argument('--fuse',          type=Path, metavar='SCAN_DIR',
                         help='Offline TSDF fusion of a saved scan directory')
     parser.add_argument('--voxel',         type=float, default=0.0025,
@@ -2155,7 +2229,7 @@ def main():
         return
 
     if args.annotate:
-        AnnotateApp(robot_ip=args.robot_ip).run()
+        AnnotateApp(robot_ip=args.robot_ip, ply_path=args.ply).run()
         return
 
     if args.fuse:
@@ -2163,7 +2237,8 @@ def main():
                      min_conf=args.min_conf)
         return
 
-    app = PreScanApp(device_idx=args.device, scan_mode=args.scan_mode)
+    app = PreScanApp(device_idx=args.device, scan_mode=args.scan_mode,
+                     min_conf=args.min_conf)
     app.connect_to_device(dev_idx=args.device)
     app.start_processing_stream()
 

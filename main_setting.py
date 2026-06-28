@@ -12,7 +12,7 @@ _HERE = Path(__file__).resolve().parent
 SCENE_LAYOUT_DIR = _HERE / "scene_layout"
 
 # ── Machine IPs ───────────────────────────────────────────────────────────────
-UNITY_IP   = "192.168.50.201"   # Quest / Windows machine running Unity
+UNITY_IP   = "192.168.50.103"   # Quest / Windows machine running Unity
 ROBOT_IP   = "192.168.50.70"    # UR10e robot controller
 
 # ── Ports (Unity → Python) ────────────────────────────────────────────────────
@@ -56,7 +56,7 @@ USE_CALIBRATED_ROBOT_BASE_POSE = True
 # If True, automatically load the pegboard pose from
 # scene_layout/T_world10_pegboard101.npz the moment marker 10 is locked,
 # so you don't need to show marker 101 separately.
-LOAD_PEGBOARD_FROM_FILE = True
+LOAD_PEGBOARD_FROM_FILE = False
 
 # ── Helpers (kept for compatibility with code that calls cfg.to_unity() etc.) ─
 def to_unity(port: int) -> str:
