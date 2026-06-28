@@ -10,6 +10,7 @@
     "com.unity.inputsystem": "1.19.0",
     "com.unity.multiplayer.center": "1.0.1",
     "com.unity.render-pipelines.universal": "17.2.0",
+    "com.unity.robotics.urdf-importer": "https://github.com/Unity-Technologies/URDF-Importer.git?path=/com.unity.robotics.urdf-importer#v0.5.2",
     "com.unity.test-framework": "1.6.0",
     "com.unity.timeline": "1.8.11",
     "com.unity.ugui": "2.0.0",
