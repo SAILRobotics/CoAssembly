@@ -223,7 +223,10 @@ class RobotController:
             self._pb_scene.step_ik(
                 self._pb_scene.current_q, list(target_pos), list(target_quat), dt)
         else:
-            q = self.solve_ik(np.array(target_pos), list(target_quat), self._last_q)
+            try:
+                q = self.solve_ik(np.array(target_pos), list(target_quat), self._last_q)
+            except RuntimeError:
+                return
             self.servoJ(q, dt)
 
     # ── Simulation per-frame tick ─────────────────────────────────────────────

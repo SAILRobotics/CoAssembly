@@ -1123,9 +1123,10 @@ class _SceneVis:
         self.vis = o3d.visualization.Visualizer()
         self.vis.create_window(title, width=width, height=height)
         ro = self.vis.get_render_option()
-        ro.background_color = np.array([0.08, 0.08, 0.10])
-        ro.point_size = 7.0
-        ro.line_width = 2.0
+        ro.background_color    = np.array([0.08, 0.08, 0.10])
+        ro.point_size          = 7.0
+        ro.line_width          = 2.0
+        ro.mesh_show_back_face = True
 
         world_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.3)
         self.vis.add_geometry(world_frame)
@@ -1168,17 +1169,45 @@ class _SceneVis:
         self.vis.add_geometry(self._tracking_sphere)
         self._tracking_T = self._hidden_T()
 
-        # Tracked board (coordinate frame + bounding box)
+        # Tracked board (coordinate frame + baseboard mesh)
         self._board_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.10)
         self._board_frame.transform(self._hidden_T())
         self.vis.add_geometry(self._board_frame)
-        self._board_box = o3d.geometry.TriangleMesh.create_box(*BOARD_SIZE)
-        self._board_box.translate(-np.array(BOARD_SIZE) / 2.0)  # centre on origin
-        self._board_box.paint_uniform_color([1.0, 0.9, 0.2])
-        self._board_box.compute_vertex_normals()
-        self._board_box.transform(self._hidden_T())
-        self.vis.add_geometry(self._board_box)
-        self._board_T = self._hidden_T()
+        self._board_mesh       = None
+        self._board_manip_mesh = None
+        _baseboard_path = cfg.SCENE_LAYOUT_DIR.parent / "robot_assets" / "baseboard.obj"
+        if _baseboard_path.exists():
+            # Mesh raw: X=201mm, Y=250mm, Z=25mm(face normal), geometric centre at [0,0,-11.5mm].
+            # _board_mesh      (ArUco):  Rz(+90°) — swaps X↔Y so board X=250mm; face normal stays Z.
+            # _board_manip_mesh (AR box): Ry(-90°) after Rz(+90°) — rotates face-normal (Z) to X
+            #   so that board X (250mm) aligns with grip_z (TCP approach direction from the edge).
+            _RAW_CENTER = np.array([0.0, 0.0, -0.0115])  # mesh geometric centre before any rotation
+
+            def _T_fix(euler_seq: str, *deg_angles) -> np.ndarray:
+                R = ScipyR.from_euler(euler_seq, list(deg_angles), degrees=True).as_matrix()
+                # auto-centre: translate so rotated mesh centre lands at origin
+                centre_after = R @ _RAW_CENTER
+                T = np.eye(4, dtype=np.float64)
+                T[:3, :3] = R
+                T[:3, 3]  = -centre_after
+                return T
+
+            def _load_baseboard(color, euler_seq, *deg_angles):
+                _bm = o3d.io.read_triangle_mesh(str(_baseboard_path))
+                _bm.compute_vertex_normals()
+                _bm.paint_uniform_color(color)
+                _bm.transform(_T_fix(euler_seq, *deg_angles))
+                _bm.transform(self._hidden_T())
+                self.vis.add_geometry(_bm)
+                return _bm
+
+            self._board_mesh       = _load_baseboard([0.9, 0.75, 0.5], 'z',  90.0)        # warm tan  — ArUco
+            self._board_manip_mesh = _load_baseboard([0.5, 0.75, 0.9], 'zy', 90.0, -90.0) # steel blue — AR box
+            print(f"[SceneVis] baseboard.obj loaded ({len(self._board_mesh.vertices)} verts)")
+        else:
+            print(f"[SceneVis] baseboard.obj not found at {_baseboard_path}")
+        self._board_T       = self._hidden_T()
+        self._board_manip_T = self._hidden_T()
 
         # Gripper mesh — loaded once, placed at TCP pose each frame via delta
         # transforms. OBJ tool axis is mesh-Y; Rx(+90°) is baked into vertices
@@ -1231,6 +1260,20 @@ class _SceneVis:
 
         self._pcd_l, self._lines_l = self._make_hand([0.3, 0.6, 1.0])
         self._pcd_r, self._lines_r = self._make_hand([1.0, 0.55, 0.1])
+
+        # Quat debug overlays (LineSets, updated each frame during tracking / on grasp click)
+        self._qd_palm_tri    = o3d.geometry.LineSet()  # palm triangle edges — gold
+        self._qd_palm_normal = o3d.geometry.LineSet()  # TCP Z arrow at palm — yellow
+        self._qd_palm_frame  = o3d.geometry.LineSet()  # TCP axes at palm — RGB
+        self._qd_tool_face   = o3d.geometry.LineSet()  # tool front-face outline — orange
+        self._qd_tool_normal = o3d.geometry.LineSet()  # board outward normal + arrowhead — yellow
+        self._qd_tool_frame  = o3d.geometry.LineSet()  # TCP axes at approach standoff — RGB
+        self._qd_box_grip_z  = o3d.geometry.LineSet()  # grip-Z arrow at AR box centre — yellow
+        self._qd_box_tcp     = o3d.geometry.LineSet()  # TCP target frame axes — RGB
+        for _ls in [self._qd_palm_tri, self._qd_palm_normal, self._qd_palm_frame,
+                    self._qd_tool_face, self._qd_tool_normal, self._qd_tool_frame,
+                    self._qd_box_grip_z, self._qd_box_tcp]:
+            self.vis.add_geometry(_ls)
 
         ctr = self.vis.get_view_control()
         ctr.set_lookat([0., 0., 0.])
@@ -1368,10 +1411,14 @@ class _SceneVis:
         T_new = T if T is not None else self._hidden_T()
         delta = T_new @ np.linalg.inv(self._board_T)
         self._board_frame.transform(delta)
-        self._board_box.transform(delta)
-        self._board_T = T_new
         self.vis.update_geometry(self._board_frame)
-        self.vis.update_geometry(self._board_box)
+        if self._board_mesh is not None:
+            self._board_mesh.transform(delta)
+            self.vis.update_geometry(self._board_mesh)
+        if T is not None and not np.allclose(T, self._board_T):
+            p = T[:3, 3]
+            print(f"[SceneVis] board → ({p[0]:+.3f}, {p[1]:+.3f}, {p[2]:+.3f})")
+        self._board_T = T_new
 
     def update_tcp(self, T: np.ndarray | None):
         """Update the TCP axes lineset and gripper mesh to pose T."""
@@ -1425,6 +1472,148 @@ class _SceneVis:
             mesh.transform(delta)
             self.vis.update_geometry(mesh)
             self._robot_mesh_Ts[i] = T_new
+
+    # ── Quat debug overlays ───────────────────────────────────────────────────
+
+    @staticmethod
+    def _arrow_ls_data(origin, direction, length, color):
+        """Return (pts, lines, colors) for a shaft + V arrowhead LineSet."""
+        d    = np.array(direction, dtype=float)
+        d    = d / (np.linalg.norm(d) + 1e-9)
+        tip  = origin + d * length
+        perp = np.cross(d, [0., 1., 0.])
+        if np.linalg.norm(perp) < 0.1:
+            perp = np.cross(d, [1., 0., 0.])
+        perp = perp / (np.linalg.norm(perp) + 1e-9) * length * 0.12
+        base = tip - d * length * 0.22
+        pts  = np.array([origin, tip, base + perp, base - perp])
+        lines  = [[0, 1], [1, 2], [1, 3]]
+        colors = [list(color)] * 3
+        return pts, lines, colors
+
+    def _update_arrow_ls(self, ls, origin, direction, length, color):
+        pts, lines, colors = self._arrow_ls_data(origin, direction, length, color)
+        ls.points = o3d.utility.Vector3dVector(pts)
+        ls.lines  = o3d.utility.Vector2iVector(lines)
+        ls.colors = o3d.utility.Vector3dVector(colors)
+        self.vis.update_geometry(ls)
+
+    def _clear_ls(self, *lsets):
+        empty_pts = o3d.utility.Vector3dVector(np.zeros((0, 3)))
+        empty_ln  = o3d.utility.Vector2iVector(np.zeros((0, 2), dtype=int))
+        empty_cl  = o3d.utility.Vector3dVector(np.zeros((0, 3)))
+        for ls in lsets:
+            ls.points = empty_pts; ls.lines = empty_ln; ls.colors = empty_cl
+            self.vis.update_geometry(ls)
+
+    def update_palm_quat_debug(self, pts: np.ndarray, is_left: bool = False):
+        """Overlay _palm_quat geometry on the live hand.
+
+        Shows:
+          Gold  — triangle connecting ThumbMCP (pts[3]), Palm (pts[1]), IndexMCP (pts[6])
+          Yellow — palm inward normal (pre TCP-offset z axis)
+          RGB   — final TCP frame axes at the palm centre
+        """
+        if pts is None or len(pts) <= 6:
+            self._clear_ls(self._qd_palm_tri, self._qd_palm_normal, self._qd_palm_frame)
+            return
+
+        p_thumb = pts[3]; p_palm = pts[1]; p_index = pts[6]
+
+        # Gold triangle (3 edges)
+        self._qd_palm_tri.points = o3d.utility.Vector3dVector([p_thumb, p_palm, p_index])
+        self._qd_palm_tri.lines  = o3d.utility.Vector2iVector([[0, 1], [1, 2], [2, 0]])
+        self._qd_palm_tri.colors = o3d.utility.Vector3dVector([[0.9, 0.75, 0.1]] * 3)
+        self.vis.update_geometry(self._qd_palm_tri)
+
+        # Final TCP frame from _palm_quat — RGB axes at palm centre
+        q_tcp = _palm_quat(pts, is_left=is_left)
+        R_tcp = ScipyR.from_quat(q_tcp).as_matrix()
+        T_tcp = np.eye(4); T_tcp[:3, :3] = R_tcp; T_tcp[:3, 3] = p_palm
+        fl = self.make_axes_lineset(T_tcp, size=0.07)
+        self._qd_palm_frame.points = fl.points
+        self._qd_palm_frame.lines  = fl.lines
+        self._qd_palm_frame.colors = fl.colors
+        self.vis.update_geometry(self._qd_palm_frame)
+
+        # Yellow arrow = -TCP Z = direction FROM palm TOWARD robot standoff
+        # (flipped from blue axis so it reads as "robot is coming from this side")
+        self._update_arrow_ls(self._qd_palm_normal, p_palm, -R_tcp[:, 2], 0.10, (1., 1., 0.))
+
+    def clear_palm_quat_debug(self):
+        self._clear_ls(self._qd_palm_tri, self._qd_palm_normal, self._qd_palm_frame)
+
+    def update_tool_quat_debug(self, centroid: np.ndarray, R_world: np.ndarray,
+                                size: list, approach_dist: float = 0.10):
+        """Overlay _tool_grasp_quat geometry on the selected tool.
+
+        Shows:
+          Orange — outline of the tool's front face (the pegboard-facing rectangle)
+          Yellow — board outward normal (R_world[:,2]) with arrowhead
+          RGB   — final TCP frame axes at the approach standoff
+        """
+        sx, sy = size[0] / 2, size[1] / 2
+        face_ctr = centroid + R_world[:, 2] * (size[2] / 2)
+        face_local = np.array([[-sx, -sy, 0], [sx, -sy, 0],
+                                [sx,  sy, 0], [-sx,  sy, 0]])
+        face_pts = (face_local @ R_world.T) + face_ctr
+        self._qd_tool_face.points = o3d.utility.Vector3dVector(face_pts)
+        self._qd_tool_face.lines  = o3d.utility.Vector2iVector([[0,1],[1,2],[2,3],[3,0]])
+        self._qd_tool_face.colors = o3d.utility.Vector3dVector([[1., 0.5, 0.]] * 4)
+        self.vis.update_geometry(self._qd_tool_face)
+
+        # Yellow board outward normal arrow
+        self._update_arrow_ls(self._qd_tool_normal, centroid, R_world[:, 2], 0.09, (1., 1., 0.))
+
+        # RGB TCP frame at approach standoff
+        q_tcp    = _tool_grasp_quat(R_world)
+        R_tcp    = ScipyR.from_quat(q_tcp).as_matrix()
+        standoff = centroid + R_world[:, 2] * approach_dist
+        T_tcp    = np.eye(4); T_tcp[:3, :3] = R_tcp; T_tcp[:3, 3] = standoff
+        fl = self.make_axes_lineset(T_tcp, size=0.07)
+        self._qd_tool_frame.points = fl.points
+        self._qd_tool_frame.lines  = fl.lines
+        self._qd_tool_frame.colors = fl.colors
+        self.vis.update_geometry(self._qd_tool_frame)
+
+    def clear_tool_quat_debug(self):
+        self._clear_ls(self._qd_tool_face, self._qd_tool_normal, self._qd_tool_frame)
+
+    def update_board_manip_debug(self, T_target: np.ndarray) -> None:
+        """Show AR board manipulation → robot target overlay.
+
+        T_target : 4×4 world transform of the manipulated box (from _TargetPoseReceiver).
+          Yellow arrow — box Z axis (_grip_z), the direction the gripper holds the box.
+          RGB axes    — TCP target frame, placed _BOX_FORWARD_OFFSET behind box along grip_z.
+        """
+        grip_z  = T_target[:3, 2]                                   # box Z = gripper approach axis
+        tcp_pos = T_target[:3, 3] - _BOX_FORWARD_OFFSET * grip_z   # robot TCP position
+
+        # Move AR-controlled baseboard mesh to T_target
+        if self._board_manip_mesh is not None:
+            delta = T_target @ np.linalg.inv(self._board_manip_T)
+            self._board_manip_mesh.transform(delta)
+            self.vis.update_geometry(self._board_manip_mesh)
+            self._board_manip_T = T_target
+
+        # Yellow: grip-Z arrow from box centre (direction box Z axis points)
+        self._update_arrow_ls(self._qd_box_grip_z, T_target[:3, 3], grip_z, 0.10, (1., 1., 0.))
+
+        # RGB: TCP frame at the computed robot target position
+        T_tcp = np.eye(4); T_tcp[:3, :3] = T_target[:3, :3]; T_tcp[:3, 3] = tcp_pos
+        fl = self.make_axes_lineset(T_tcp, size=0.07)
+        self._qd_box_tcp.points = fl.points
+        self._qd_box_tcp.lines  = fl.lines
+        self._qd_box_tcp.colors = fl.colors
+        self.vis.update_geometry(self._qd_box_tcp)
+
+    def clear_board_manip_debug(self):
+        self._clear_ls(self._qd_box_grip_z, self._qd_box_tcp)
+        if self._board_manip_mesh is not None:
+            delta = self._hidden_T() @ np.linalg.inv(self._board_manip_T)
+            self._board_manip_mesh.transform(delta)
+            self.vis.update_geometry(self._board_manip_mesh)
+            self._board_manip_T = self._hidden_T()
 
     def update_reachability_arrows(self, points: np.ndarray, flags: np.ndarray,
                                     board_normal: np.ndarray, arrow_len: float = 0.04):
@@ -1618,6 +1807,7 @@ class MainScene:
         self._reach_until           = 0.0
         self._T_tool0: "np.ndarray | None"         = None
         self._grip_state: "str | None"             = None
+        self._last_T_target: "np.ndarray | None"   = None
         self._grasp_tool_id: "int | None"          = None
         self._tracking_hand                        = False
         self._tracking_hand_id: "str | None"       = None
@@ -1786,6 +1976,8 @@ class MainScene:
                         and self.anchor.T_pegboard_in_world is not None):
                     if self._grip_state is not None:
                         self._grip_state = None
+                        self._last_T_target = None
+                        self.vis.clear_board_manip_debug()
                         if self.robot is not None:
                             self.robot.cancel_grasp()
                         self.grip_pub.publish(
@@ -1824,12 +2016,15 @@ class MainScene:
                     if tool_data is not None:
                         _grasp_tid = _tid
                         self._grasp_tool_id = _tid
+                        _centroid, _R_world, _sz = tool_data
+                        self.vis.update_tool_quat_debug(_centroid, _R_world, _sz)
                         self.robot.execute_grasp(
                             tool_data,
                             grasp_joints = self.tool_layout.get_grasp_joints(_tid),
                             category     = self.tool_layout.get_category(_tid),
                             on_complete  = lambda ok, tid=_grasp_tid: (
                                 self.tools.send_color(tid, _ToolSelectionManager.RESET_COLOR),
+                                self.vis.clear_tool_quat_debug(),
                                 print(f"[ToolGrasp] id={tid} — {'OK' if ok else 'FAILED'}"),
                             ),
                         )
@@ -1850,6 +2045,14 @@ class MainScene:
                 self.vis.update_tracking(T_wt)
                 self.vis.update_head(T_world_center)
                 self.vis.update_hands(left_pts, right_pts)
+                # Palm quat debug — always visible; prefer right hand, fall back to left
+                if self._tracking_hand:
+                    _dbg_pts  = left_pts  if self._tracking_hand_id == "left"  else right_pts
+                    _dbg_left = self._tracking_hand_id == "left"
+                else:
+                    _dbg_pts  = right_pts if right_pts is not None else left_pts
+                    _dbg_left = (right_pts is None and left_pts is not None)
+                self.vis.update_palm_quat_debug(_dbg_pts, is_left=_dbg_left)
                 self.vis.tick()
 
                 # ── PyBullet scene update ─────────────────────────────────────
@@ -1919,6 +2122,7 @@ class MainScene:
                     if self._grip_state == 'grabbed':
                         T_target = self.target_recv.poll()
                         if T_target is not None:
+                            self._last_T_target = T_target
                             _grip_z  = T_target[:3, :3] @ np.array([0., 0., 1.])
                             _tcp_pos = T_target[:3, 3] - _BOX_FORWARD_OFFSET * _grip_z
                             self.robot.move_tcp(
@@ -1929,6 +2133,8 @@ class MainScene:
                             )
                             self._grip_state = 'moving_to_pose'
                             print("[Grip] Target pose received — moving robot")
+                        if self._last_T_target is not None:
+                            self.vis.update_board_manip_debug(self._last_T_target)
 
                 # ── OpenCV display ────────────────────────────────────────────
                 disp = cv.resize(
@@ -2104,7 +2310,7 @@ class MainScene:
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Quest passthrough hand tracking — marker 100 as world+scene origin",
+        description="Human Robot Coassembly",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     ap.add_argument("--quest-ip",             default=cfg.UNITY_IP)
     ap.add_argument("--anchor-marker",        type=int,   default=cfg.ANCHOR_MARKER_ID,
