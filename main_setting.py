@@ -56,7 +56,7 @@ USE_CALIBRATED_ROBOT_BASE_POSE = True
 # If True, automatically load the pegboard pose from
 # scene_layout/T_world10_pegboard101.npz the moment marker 10 is locked,
 # so you don't need to show marker 101 separately.
-LOAD_PEGBOARD_FROM_FILE = False
+LOAD_PEGBOARD_FROM_FILE = True
 
 # ── Helpers (kept for compatibility with code that calls cfg.to_unity() etc.) ─
 def to_unity(port: int) -> str:

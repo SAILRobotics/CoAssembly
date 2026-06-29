@@ -41,7 +41,7 @@ import zmq
 from scipy.spatial.transform import Rotation as ScipyR
 
 try:
-    from pybullet_ik import IKScene as PyBulletScene, RobotController, HandTrackController
+    from pybullet_ik import IKScene as PyBulletScene
     _PYBULLET_AVAILABLE = True
 except ImportError:
     _PYBULLET_AVAILABLE = False
@@ -65,6 +65,12 @@ from utils.pose_helpers import (
 )
 import main_setting as cfg
 
+try:
+    from robot_controller import RobotController as _RobotController
+    _ROBOT_CTRL_AVAILABLE = True
+except ImportError as _e:
+    _ROBOT_CTRL_AVAILABLE = False
+    print(f"[main_with_robot] RobotController not available: {_e}")
 
 
 # =============================================================================
@@ -295,10 +301,20 @@ class _HandDataReceiver:
                     rot.get("z", 0.0), rot.get("w", 1.0)]
         return _unity_pose_to_T(pos_xyz, rot_xyzw)
 
+    _MAX_HAND_HEAD_DIST = 1.0   # metres — reject hands further than this from head
+
     def world_joints(self, T_world_tracking: np.ndarray):
         if self.data is None:
             return None, None
         hands = self.data.get("hands") or {}
+
+        # Head position in world frame for proximity filtering
+        head_world = None
+        ce = (self.data.get("head") or {}).get("CenterEye")
+        if ce is not None and T_world_tracking is not None:
+            p = ce.get("position") or {}
+            p_unity = np.array([[p.get("x", 0.0), p.get("y", 0.0), p.get("z", 0.0)]])
+            head_world = _to_world(p_unity, T_world_tracking)[0]
 
         def _resolve(real_key, synth_key):
             j = _extract_joints(hands.get(real_key))
@@ -306,9 +322,12 @@ class _HandDataReceiver:
                 j = _extract_joints(hands.get(synth_key))
             if j is None:
                 return None
-            if T_world_tracking is None:
-                return _unity_to_o3d(j)
-            return _to_world(j, T_world_tracking)
+            pts = (_to_world(j, T_world_tracking) if T_world_tracking is not None
+                   else _unity_to_o3d(j))
+            if (head_world is not None
+                    and np.linalg.norm(pts[1] - head_world) > self._MAX_HAND_HEAD_DIST):
+                return None
+            return pts
 
         return _resolve("LeftHand", "LeftHandSynth"), _resolve("RightHand", "RightHandSynth")
 
@@ -750,6 +769,20 @@ class _ToolLayoutManager:
                 return centroid, R_world, sz
         return None
 
+    def get_grasp_joints(self, tool_id: int) -> "list | None":
+        """Return pre-recorded grasp_joints for tool_id, or None."""
+        for t in self._tools:
+            if t["id"] == tool_id:
+                return t.get("grasp_joints")
+        return None
+
+    def get_category(self, tool_id: int) -> str:
+        """Return the category string ("tool" or "part") for tool_id."""
+        for t in self._tools:
+            if t["id"] == tool_id:
+                return t.get("category", "tool")
+        return "tool"
+
     def close(self) -> None:
         try:
             self._pub.close(0)
@@ -1041,123 +1074,6 @@ class _OffsetTuner:
             cv.destroyWindow(self.WIN)
         except Exception:
             pass
-
-# =============================================================================
-# UR RTDE receiver
-# =============================================================================
-
-class _UrRtdeReceiver:
-    def __init__(self, robot_ip: str):
-        self._rtde = None
-        self._q: np.ndarray | None = None
-        try:
-            from rtde_receive import RTDEReceiveInterface
-            self._rtde = RTDEReceiveInterface(robot_ip)
-            print(f"[RTDE] Connected to {robot_ip}")
-        except Exception as e:
-            print(f"[RTDE] Could not connect to {robot_ip}: {e}")
-
-    def poll(self) -> "np.ndarray | None":
-        if self._rtde is None:
-            return None
-        try:
-            self._q = np.array(self._rtde.getActualQ(), dtype=float)
-            return self._q
-        except Exception:
-            return None
-
-    @property
-    def q(self) -> "np.ndarray | None":
-        return self._q
-
-    def close(self):
-        if self._rtde is not None:
-            try:
-                self._rtde.disconnect()
-            except Exception:
-                pass
-            self._rtde = None
-
-
-# =============================================================================
-# Robot base pose + joint angle publishers — drive the "ur" GameObject's
-# RobotBaseInitialPoseReceiverNetMQ (:5000) and RobotJointNetMQReceiver (:5001)
-# =============================================================================
-
-class _RobotBasePublisher:
-    """Publishes the robot base pose (already in world/anchor frame) to Unity
-    on port 5000 (PUB). Mirrors _WorldAnchor.publish_pegboard()'s matrix-building —
-    T_world_base needs no tracking-space inversion, unlike _WorldAnchor.publish().
-
-    Unity's imported URDF ("ur" GameObject) and PyBullet's own URDF loader
-    don't share the same base-yaw convention — PyBullet applies its own
-    180°-Z correction internally (see _load_robot()/set_scene_origin() in
-    pybullet_ik.py / pybullet_scene.py) purely for its IK robot, which is
-    unrelated to what Unity's separately-imported URDF asset expects. This
-    class applies its own correction, tuned by eye against the Unity render.
-    """
-
-    _BASE_YAW_CORRECTION_DEG = -90.0   # tune against the Unity render if still off
-
-    def __init__(self, quest_ip: str, port: int = cfg.ROBOT_BASE_PORT):
-        ctx = zmq.Context.instance()
-        self._pub = ctx.socket(zmq.PUB)
-        self._pub.connect(f"tcp://{quest_ip}:{port}")
-
-    def publish(self, T_world_base: np.ndarray) -> bool:
-        R_o3d = T_world_base[:3, :3] @ ScipyR.from_euler(
-            'z', self._BASE_YAW_CORRECTION_DEG, degrees=True).as_matrix()
-        t_o3d = T_world_base[:3, 3]
-        q_xyzw   = ScipyR.from_matrix(R_o3d).as_quat()
-        q_wxyz   = [q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]]
-        q_u_wxyz = open3d_to_unity_quaternion(q_wxyz)
-        t_unity  = open3d_to_unity_vector(t_o3d)
-        q_unity_xyzw = [float(q_u_wxyz[1]), float(q_u_wxyz[2]),
-                        float(q_u_wxyz[3]), float(q_u_wxyz[0])]
-        R_unity = ScipyR.from_quat(q_unity_xyzw).as_matrix()
-        T_unity = np.eye(4, dtype=np.float64)
-        T_unity[:3, :3] = R_unity
-        T_unity[:3, 3]  = t_unity
-        msg = {"robot_matrix": T_unity.T.flatten().tolist()}
-        try:
-            self._pub.send_string(json.dumps(msg))
-            return True
-        except Exception as e:
-            print(f"[RobotBase] Publish error: {e}")
-            return False
-
-    def close(self) -> None:
-        try:
-            self._pub.close(0)
-        except Exception:
-            pass
-
-
-class _RobotJointPublisher:
-    """Publishes live arm joint angles (radians, UR standard order) to Unity
-    on port 5001 (PUB). No coordinate conversion needed — joint-space values,
-    not Cartesian/rotation data."""
-
-    def __init__(self, quest_ip: str, port: int = cfg.ROBOT_JOINT_PORT):
-        ctx = zmq.Context.instance()
-        self._pub = ctx.socket(zmq.PUB)
-        self._pub.connect(f"tcp://{quest_ip}:{port}")
-
-    def publish(self, q: np.ndarray) -> bool:
-        msg = {"joint_values": [float(v) for v in q]}
-        try:
-            self._pub.send_string(json.dumps(msg))
-            return True
-        except Exception as e:
-            print(f"[RobotJoints] Publish error: {e}")
-            return False
-
-    def close(self) -> None:
-        try:
-            self._pub.close(0)
-        except Exception:
-            pass
-
 
 # =============================================================================
 # Open3D scene visualizer
@@ -1649,12 +1565,19 @@ class MainScene:
                                 board_marker_size_m    = board_marker_size_m)
         self.aruco_worker = _ArUcoWorker(self.cam, self.aruco)
         self.hands        = _HandDataReceiver(quest_ip, hand_port)
-        self.rtde         = _UrRtdeReceiver(robot_ip) if (robot_ip and not simulation) else None
+        self.robot: "_RobotController | None" = None
+        if _ROBOT_CTRL_AVAILABLE and self.pb_scene is not None:
+            self.robot = _RobotController(
+                unity_ip      = quest_ip,
+                pb_scene      = self.pb_scene,
+                T_world_base  = self.pb_scene.T_world_base,
+                robot_ip      = robot_ip if not simulation else None,
+            )
 
         if simulation:
-            print(f"[Robot] Simulation mode — using fixed joint angles {self._SIM_Q_DEG} deg")
-        elif self.rtde is not None:
-            print(f"[Robot] Live RTDE mode — connected to {robot_ip}")
+            print(f"[Robot] Simulation mode — RobotController ready (no hardware)")
+        elif self.robot is not None:
+            print(f"[Robot] Live mode — RobotController ready ({robot_ip})")
 
         self.anchor      = _WorldAnchor(quest_ip)
         self.tools       = _ToolSelectionManager(quest_ip)
@@ -1664,8 +1587,6 @@ class MainScene:
                                cfg.SCENE_LAYOUT_DIR / "tool_layout1.json", quest_ip)
         self.grip_pub    = _GripStatePublisher(quest_ip)
         self.target_recv = _TargetPoseReceiver(quest_ip)
-        self.robot_base_pub  = _RobotBasePublisher(quest_ip)
-        self.robot_joint_pub = _RobotJointPublisher(quest_ip)
 
         # Cubes around the anchor marker (world origin) — ids 0, 1, 2
         self.synth.add([ 0.10, 0.00, 0.05], width=0.06, depth=0.06, height=0.10,
@@ -1695,15 +1616,9 @@ class MainScene:
         self._green_until           = 0.0
         self._last_proximity_relock = 0.0
         self._reach_until           = 0.0
-        self._ctrl_active           = False
-        self._ctrl: "RobotController | None"       = None
         self._T_tool0: "np.ndarray | None"         = None
-        self._grasp_state: "str | None"            = None
-        self._grasp_tcp_final: "np.ndarray | None" = None
-        self._grasp_tcp_approach: "np.ndarray | None" = None
-        self._grasp_quat: "np.ndarray | None"      = None
-        self._grasp_tool_id: "int | None"          = None
         self._grip_state: "str | None"             = None
+        self._grasp_tool_id: "int | None"          = None
         self._tracking_hand                        = False
         self._tracking_hand_id: "str | None"       = None
         self._track_hits                           = 0
@@ -1713,8 +1628,6 @@ class MainScene:
         self._pegboard_cube_start: "int | None"    = None
         self._loop_t0         = time.perf_counter()
         self._loop_count      = 0
-        self._ctrl_step_sum   = 0
-        self._ctrl_step_count = 0
 
         print(f"\n[Running]  quest_ip={quest_ip}  "
               f"anchor_marker=#{anchor_marker_id}  "
@@ -1796,14 +1709,16 @@ class MainScene:
                     self.anchor.publish_pegboard()
                     self.anchor.publish_board()
                     if self.pb_scene is not None:
-                        self.robot_base_pub.publish(self.pb_scene.T_world_base)
+                        if self.robot is not None:
+                            self.robot.publish_base(self.pb_scene.T_world_base)
                     _now = time.time()
                     if _now - self._last_synth_pub >= self._SYNTH_INTERVAL:
                         self.synth.publish()
                         self._last_synth_pub = _now
 
                 if self.pb_scene is not None:
-                    self.robot_joint_pub.publish(self.pb_scene.current_q)
+                    if self.robot is not None:
+                        self.robot.publish_joints(self.pb_scene.current_q)
 
                 T_wt            = self.anchor.T_world_tracking
                 T_world_camleft = (self.anchor.world_T(self.cam.camera_T)
@@ -1866,13 +1781,13 @@ class MainScene:
                 self.tools.deselect(self.anchor_marker_id)
 
                 # ── TCP click → toggle continuous hand tracking ────────────────
-                if (self.simulation
-                        and self.tools.active_tool_id == self._TCP_TOOL_ID
+                if (self.tools.active_tool_id == self._TCP_TOOL_ID
                         and self.anchor.locked
                         and self.anchor.T_pegboard_in_world is not None):
                     if self._grip_state is not None:
-                        self._grip_state  = None
-                        self._ctrl_active = False
+                        self._grip_state = None
+                        if self.robot is not None:
+                            self.robot.cancel_grasp()
                         self.grip_pub.publish(
                             'idle',
                             self._T_tool0 if self._T_tool0 is not None else np.eye(4))
@@ -1882,7 +1797,8 @@ class MainScene:
                         self._tracking_hand_id = None
                         self._track_hits       = 0
                         print("[TCP click] Hand tracking cancelled")
-                    elif (not self._ctrl_active and self.pb_scene is not None):
+                    elif (not (self.robot is not None and self.robot.grasp_running)
+                          and self.pb_scene is not None):
                         clicking_hand = self.tools.active_hand
                         opposite_hand = {"left": "right", "right": "left"}.get(clicking_hand)
                         if opposite_hand in ("left", "right"):
@@ -1895,41 +1811,29 @@ class MainScene:
                             print(f"[TCP click] Unknown hand '{clicking_hand}' — ignoring click.")
                     self.tools.deselect(self._TCP_TOOL_ID)
 
-                # ── Tool click → grasp pegboard tool ──────────────────────────
+                # ── Tool click → grasp ────────────────────────────────────────
                 _tid = self.tools.active_tool_id
-                if (self.simulation
-                        and (not self._ctrl_active
-                             or (self._ctrl is not None and self._ctrl.done))
-                        and _tid is not None
+                if (_tid is not None
                         and _tid != self._TCP_TOOL_ID
                         and self.anchor.locked
                         and self.anchor.T_pegboard_in_world is not None
-                        and self.pb_scene is not None):
+                        and self.robot is not None
+                        and not self.robot.grasp_running):
                     tool_data = self.tool_layout.get_world_data(
                         _tid, self.anchor.T_pegboard_in_world)
                     if tool_data is not None:
-                        pos_w, R_world, _sz = tool_data
-                        board_out    = R_world[:, 2]
-                        grasp_quat   = _tool_grasp_quat(R_world)
-                        tcp_final    = pos_w + self._TCP_OFFSET * board_out
-                        tcp_approach = pos_w + (self._TCP_OFFSET + self._APPROACH_DIST) * board_out
-                        try:
-                            self._ctrl = RobotController(
-                                self.pb_scene.robot_id, self.pb_scene.tool0_link_idx,
-                                self.pb_scene.current_q, self.pb_scene.arm_indices,
-                                tcp_approach.tolist(), target_quat_xyzw=grasp_quat)
-                            self._ctrl_active        = True
-                            self._grasp_state        = 'approach'
-                            self._grasp_tcp_final    = tcp_final
-                            self._grasp_tcp_approach = tcp_approach
-                            self._grasp_quat         = grasp_quat
-                            self._grasp_tool_id      = _tid
-                            print(f"[ToolGrasp] id={_tid} — approach "
-                                  f"{[round(v,3) for v in tcp_approach.tolist()]}")
-                        except Exception as e:
-                            import traceback
-                            print(f"[ToolGrasp] RobotController failed: {e}")
-                            traceback.print_exc()
+                        _grasp_tid = _tid
+                        self._grasp_tool_id = _tid
+                        self.robot.execute_grasp(
+                            tool_data,
+                            grasp_joints = self.tool_layout.get_grasp_joints(_tid),
+                            category     = self.tool_layout.get_category(_tid),
+                            on_complete  = lambda ok, tid=_grasp_tid: (
+                                self.tools.send_color(tid, _ToolSelectionManager.RESET_COLOR),
+                                print(f"[ToolGrasp] id={tid} — {'OK' if ok else 'FAILED'}"),
+                            ),
+                        )
+                        print(f"[ToolGrasp] id={_tid} — sequence started")
                     self.tools.deselect(_tid)
 
                 # ── Update Open3D visualizer ───────────────────────────────────
@@ -1949,122 +1853,82 @@ class MainScene:
                 self.vis.tick()
 
                 # ── PyBullet scene update ─────────────────────────────────────
-                if self.pb_scene is not None:
-                    if self.simulation:
-                        if self._tracking_hand:
-                            target_pts = (left_pts if self._tracking_hand_id == "left"
-                                         else right_pts)
-                            if target_pts is not None and self.pb_scene is not None:
-                                target_is_left = (self._tracking_hand_id == "left")
-                                target_quat    = _palm_quat(target_pts, is_left=target_is_left)
-                                _gripper_z     = ScipyR.from_quat(target_quat).apply(
-                                    [0., 0., 1.])
-                                target_pos     = target_pts[1] - _gripper_z * 0.30
-                                _tool_y_world  = ScipyR.from_quat(target_quat).apply(
-                                    [0., 1., 0.])
-                                if _tool_y_world[2] > 0:
-                                    target_quat = (ScipyR.from_quat(target_quat)
-                                                   * ScipyR.from_euler('z', 180, degrees=True)
-                                                   ).as_quat()
-                                self._track_target_pos = target_pos
-                                _track_now = time.perf_counter()
-                                _track_dt  = (min(_track_now - self._last_hand_track_t, 0.1)
-                                              if self._last_hand_track_t is not None else 1.0 / 30.0)
-                                self._last_hand_track_t = _track_now
-                                self.pb_scene.step_ik(self.pb_scene.current_q,
-                                                      target_pos.tolist(), target_quat,
-                                                      _track_dt)
-                            # else: hand lost this frame — hold last commanded pose
-                        elif self._ctrl_active and self._ctrl is not None and not self._ctrl.done:
-                            self._ctrl.update(self.pb_scene.robot_id,
-                                              self.pb_scene.arm_indices)
-                            self._ctrl_step_sum   += 1
-                            self._ctrl_step_count += 1
-                        elif self._ctrl_active and self._ctrl is not None and self._ctrl.done:
-                            if self._grasp_state == 'approach':
-                                try:
-                                    self._ctrl = RobotController(
-                                        self.pb_scene.robot_id,
-                                        self.pb_scene.tool0_link_idx,
-                                        self.pb_scene.current_q,
-                                        self.pb_scene.arm_indices,
-                                        self._grasp_tcp_final.tolist(),
-                                        target_quat_xyzw=self._grasp_quat,
-                                        straight_line=True,
-                                        straight_line_start=self._grasp_tcp_approach.tolist())
-                                    self._grasp_state = 'final'
-                                    print(f"[ToolGrasp] approach done — moving to final "
-                                          f"{[round(v,3) for v in self._grasp_tcp_final.tolist()]}")
-                                except Exception as e:
-                                    print(f"[ToolGrasp] final RobotController failed: {e}")
-                                    self._ctrl_active = False
-                                    self._grasp_state = None
-                            elif self._grasp_state == 'final':
-                                self._ctrl_active        = False
-                                self._grasp_state        = None
-                                self._grasp_tcp_final    = None
-                                self._grasp_tcp_approach = None
-                                self._grasp_quat         = None
-                                if self._grasp_tool_id is not None:
-                                    self.tools.send_color(self._grasp_tool_id,
-                                                          _ToolSelectionManager.RESET_COLOR)
-                                self._grasp_tool_id = None
-                                print("[ToolGrasp] grasp complete")
-                            elif self._grasp_state is None and self._grip_state is None:
-                                self._grip_state = 'grabbed'
-                                print("[Grip] Robot at hand — grip_state = 'grabbed'")
-                            elif self._grasp_state is None and self._grip_state == 'moving_to_pose':
-                                self._grip_state = 'grabbed'
-                                print("[Grip] Move complete — back to 'grabbed'")
-                        self._T_tool0 = self.pb_scene.update_tcp_bodies()
-                        if self._T_tool0 is not None:
-                            self.vis.update_tcp(self._T_tool0)
-                        self.vis.update_robot(self.pb_scene.get_arm_link_world_poses())
-                        if self._T_tool0 is not None and self._tcp_synth is not None:
-                            self._tcp_synth.centroid = self._T_tool0[:3, 3]
-                            self._tcp_synth.R_o3d    = self._T_tool0[:3, :3]
-                        if (self._tracking_hand and self._T_tool0 is not None
-                                and self._track_target_pos is not None):
-                            dist = float(np.linalg.norm(
-                                self._T_tool0[:3, 3] - self._track_target_pos))
-                            if dist < self._TRACK_DIST_THRESHOLD:
-                                self._track_hits += 1
-                            else:
-                                self._track_hits = 0
-                            if self._track_hits >= self._TRACK_HOLD_FRAMES:
-                                tracked_hand            = self._tracking_hand_id
-                                self._tracking_hand      = False
-                                self._tracking_hand_id   = None
-                                self._track_hits         = 0
-                                self._track_target_pos   = None
-                                self._grip_state         = 'grabbed'
-                                print(f"[TCP track] Reached {tracked_hand} palm — "
-                                      f"grip_state='grabbed'")
-                        if self._grip_state is not None and self._T_tool0 is not None:
-                            self.grip_pub.publish(self._grip_state, self._T_tool0)
-                        if self._grip_state == 'grabbed':
-                            T_target = self.target_recv.poll()
-                            if T_target is not None:
-                                try:
-                                    _grip_z  = T_target[:3, :3] @ np.array([0., 0., 1.])
-                                    _tcp_pos = T_target[:3, 3] - _BOX_FORWARD_OFFSET * _grip_z
-                                    self._ctrl = RobotController(
-                                        self.pb_scene.robot_id,
-                                        self.pb_scene.tool0_link_idx,
-                                        self.pb_scene.current_q,
-                                        self.pb_scene.arm_indices,
-                                        _tcp_pos.tolist(),
-                                        target_quat_xyzw=ScipyR.from_matrix(
-                                            T_target[:3, :3]).as_quat())
-                                    self._ctrl_active = True
-                                    self._grip_state  = 'moving_to_pose'
-                                    print("[Grip] Target pose received — moving robot")
-                                except Exception as e:
-                                    print(f"[Grip] RobotController failed: {e}")
-                    elif self.rtde is not None:
-                        q = self.rtde.poll()
-                        if q is not None:
-                            self.pb_scene.update_robot(q)
+                if self.robot is not None:
+                    if self._tracking_hand:
+                        target_pts = (left_pts if self._tracking_hand_id == "left"
+                                      else right_pts)
+                        if target_pts is not None:
+                            target_is_left = (self._tracking_hand_id == "left")
+                            target_quat    = _palm_quat(target_pts, is_left=target_is_left)
+                            _gripper_z     = ScipyR.from_quat(target_quat).apply([0., 0., 1.])
+                            target_pos     = target_pts[1] - _gripper_z * 0.30
+                            if ScipyR.from_quat(target_quat).apply([0., 1., 0.])[2] > 0:
+                                target_quat = (ScipyR.from_quat(target_quat)
+                                               * ScipyR.from_euler('z', 180, degrees=True)
+                                               ).as_quat()
+                            self._track_target_pos = target_pos
+                            _track_now = time.perf_counter()
+                            _track_dt  = (min(_track_now - self._last_hand_track_t, 0.1)
+                                          if self._last_hand_track_t is not None
+                                          else 1.0 / 30.0)
+                            self._last_hand_track_t = _track_now
+                            self.robot.step_hand_track(target_pos.tolist(), target_quat,
+                                                       _track_dt)
+                        # else: hand lost this frame — hold last commanded pose
+                    else:
+                        if self.simulation:
+                            self.robot.tick()
+                        else:
+                            q = self.robot.poll_q()
+                            if q is not None:
+                                self.pb_scene.update_robot(q)
+
+                    # ── Visualizer update ─────────────────────────────────────
+                    self._T_tool0 = self.robot.tcp_pose
+                    if self._T_tool0 is not None:
+                        self.vis.update_tcp(self._T_tool0)
+                    _link_poses = self.robot.arm_link_poses()
+                    if _link_poses is not None:
+                        self.vis.update_robot(_link_poses)
+                    if self._T_tool0 is not None and self._tcp_synth is not None:
+                        self._tcp_synth.centroid = self._T_tool0[:3, 3]
+                        self._tcp_synth.R_o3d    = self._T_tool0[:3, :3]
+
+                    # ── Hand-track proximity check ────────────────────────────
+                    if (self._tracking_hand and self._T_tool0 is not None
+                            and self._track_target_pos is not None):
+                        dist = float(np.linalg.norm(
+                            self._T_tool0[:3, 3] - self._track_target_pos))
+                        if dist < self._TRACK_DIST_THRESHOLD:
+                            self._track_hits += 1
+                        else:
+                            self._track_hits = 0
+                        if self._track_hits >= self._TRACK_HOLD_FRAMES:
+                            _tracked = self._tracking_hand_id
+                            self._tracking_hand    = False
+                            self._tracking_hand_id = None
+                            self._track_hits       = 0
+                            self._track_target_pos = None
+                            self._grip_state       = 'grabbed'
+                            print(f"[TCP track] Reached {_tracked} palm — "
+                                  f"grip_state='grabbed'")
+
+                    # ── Grip-state publishing + target-pose move ──────────────
+                    if self._grip_state is not None and self._T_tool0 is not None:
+                        self.grip_pub.publish(self._grip_state, self._T_tool0)
+                    if self._grip_state == 'grabbed':
+                        T_target = self.target_recv.poll()
+                        if T_target is not None:
+                            _grip_z  = T_target[:3, :3] @ np.array([0., 0., 1.])
+                            _tcp_pos = T_target[:3, 3] - _BOX_FORWARD_OFFSET * _grip_z
+                            self.robot.move_tcp(
+                                _tcp_pos.tolist(),
+                                ScipyR.from_matrix(T_target[:3, :3]).as_quat(),
+                                on_complete=lambda ok: setattr(
+                                    self, '_grip_state', 'grabbed'),
+                            )
+                            self._grip_state = 'moving_to_pose'
+                            print("[Grip] Target pose received — moving robot")
 
                 # ── OpenCV display ────────────────────────────────────────────
                 disp = cv.resize(
@@ -2202,15 +2066,10 @@ class MainScene:
                 _iter_ms = (time.perf_counter() - _iter_t0) * 1000.0
                 _elapsed  = time.perf_counter() - self._loop_t0
                 if _elapsed >= 2.0:
-                    _avg_hz  = self._loop_count / _elapsed
-                    _ctrl_hz = (self._ctrl_step_sum / _elapsed
-                                if self._ctrl_step_count else 0.0)
-                    print(f"[perf] loop {_avg_hz:.1f} Hz | last iter {_iter_ms:.1f} ms"
-                          f" | ctrl steps {_ctrl_hz:.1f} Hz")
-                    self._loop_t0         = time.perf_counter()
-                    self._loop_count      = 0
-                    self._ctrl_step_sum   = 0
-                    self._ctrl_step_count = 0
+                    _avg_hz = self._loop_count / _elapsed
+                    print(f"[perf] loop {_avg_hz:.1f} Hz | last iter {_iter_ms:.1f} ms")
+                    self._loop_t0    = time.perf_counter()
+                    self._loop_count = 0
 
                 time.sleep(0.001)
 
@@ -2231,13 +2090,11 @@ class MainScene:
         self.tool_layout.close()
         self.grip_pub.close()
         self.target_recv.close()
-        self.robot_base_pub.close()
-        self.robot_joint_pub.close()
         self.hands.close()
         self.cam.close()
         self.tools.close()
-        if self.rtde is not None:
-            self.rtde.close()
+        if self.robot is not None:
+            self.robot.close()
         print("[Done]")
 
 
