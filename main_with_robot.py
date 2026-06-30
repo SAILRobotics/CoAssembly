@@ -1102,6 +1102,8 @@ class _OffsetTuner:
 class _SceneVis:
     FRUSTUM_SCALE = 0.2
 
+    _WORKSPACE_COLOR = np.array([0.4, 0.7, 1.0])  # light blue — workspace boundary box
+
     # ── Static geometry helpers ───────────────────────────────────────────────
 
     @staticmethod
@@ -1173,6 +1175,10 @@ class _SceneVis:
         self._peg_box_center_local: np.ndarray | None = None
         self._peg_box_size: list | None = None
         self._pegboard_T = self._hidden_T()
+
+        # Robot workspace boundary — fades in as the head/hands approach/exit
+        self._workspace_box_lineset = o3d.geometry.LineSet()
+        self.vis.add_geometry(self._workspace_box_lineset)
 
         # Reachability arrows (shown for 5 s after pressing R, then hidden)
         self._reach_lineset = o3d.geometry.LineSet()
@@ -1417,6 +1423,20 @@ class _SceneVis:
             self._pegboard_box_lineset.lines  = new_ls.lines
             self._pegboard_box_lineset.colors = new_ls.colors
             self.vis.update_geometry(self._pegboard_box_lineset)
+
+    def update_workspace_bound(self, lo: "np.ndarray | None", hi: "np.ndarray | None") -> None:
+        """Axis-aligned wireframe box from lo/hi (world frame). Always drawn
+        solid here (no fade) — the fade-on-approach behavior is Unity-only,
+        this is just a constant reference for the operator's monitor view."""
+        if lo is None or hi is None:
+            return
+        pos  = (np.asarray(lo) + np.asarray(hi)) / 2.0
+        size = np.asarray(hi) - np.asarray(lo)
+        new_ls = self.make_box_lineset(pos, np.eye(3), size, color=self._WORKSPACE_COLOR)
+        self._workspace_box_lineset.points = new_ls.points
+        self._workspace_box_lineset.lines  = new_ls.lines
+        self._workspace_box_lineset.colors = new_ls.colors
+        self.vis.update_geometry(self._workspace_box_lineset)
 
     def update_tracking(self, T: np.ndarray | None):
         T_new = T if T is not None else self._hidden_T()
@@ -1983,6 +2003,8 @@ class MainScene:
                     )
                     self.workspace_bound_pub.publish(
                         self.WORKSPACE_BOUNDS_LO, self.WORKSPACE_BOUNDS_HI, _dist_out)
+                    self.vis.update_workspace_bound(
+                        self.WORKSPACE_BOUNDS_LO, self.WORKSPACE_BOUNDS_HI)
 
                 # ── Reachability arrow expiry ─────────────────────────────────
                 _now = time.time()
