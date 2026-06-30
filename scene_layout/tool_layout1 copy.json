@@ -1,7 +1,7 @@
 {
   "tools": [
     {
-      "id": 6,
+      "id": 0,
       "type": "wrench_10",
       "category": "tool",
       "planar": true,
@@ -30,7 +30,7 @@
       ]
     },
     {
-      "id": 7,
+      "id": 1,
       "type": "wrench_12",
       "category": "tool",
       "planar": true,
@@ -59,7 +59,7 @@
       ]
     },
     {
-      "id": 8,
+      "id": 2,
       "type": "wrench_13",
       "category": "tool",
       "planar": true,
@@ -88,7 +88,7 @@
       ]
     },
     {
-      "id": 9,
+      "id": 3,
       "type": "wrench_14",
       "category": "tool",
       "planar": true,
@@ -117,7 +117,7 @@
       ]
     },
     {
-      "id": 10,
+      "id": 4,
       "type": "wrench_15",
       "category": "tool",
       "planar": true,
@@ -146,7 +146,7 @@
       ]
     },
     {
-      "id": 11,
+      "id": 5,
       "type": "caliper",
       "category": "tool",
       "planar": true,
@@ -175,7 +175,7 @@
       ]
     },
     {
-      "id": 13,
+      "id": 6,
       "type": "thread_checker",
       "category": "tool",
       "planar": true,
@@ -204,7 +204,7 @@
       ]
     },
     {
-      "id": 14,
+      "id": 7,
       "type": "bit_screwdriver",
       "category": "tool",
       "planar": true,
@@ -233,7 +233,7 @@
       ]
     },
     {
-      "id": 15,
+      "id": 8,
       "type": "box_cutter",
       "category": "tool",
       "planar": true,
@@ -262,7 +262,7 @@
       ]
     },
     {
-      "id": 16,
+      "id": 9,
       "type": "bit_wrench",
       "category": "tool",
       "planar": true,
@@ -291,7 +291,7 @@
       ]
     },
     {
-      "id": 17,
+      "id": 10,
       "type": "philips_screwdriver",
       "category": "tool",
       "planar": true,
@@ -320,7 +320,7 @@
       ]
     },
     {
-      "id": 18,
+      "id": 11,
       "type": "flathead_screwdriver",
       "category": "tool",
       "planar": true,
@@ -349,7 +349,7 @@
       ]
     },
     {
-      "id": 19,
+      "id": 12,
       "type": "sander",
       "category": "tool",
       "planar": true,
@@ -378,7 +378,7 @@
       ]
     },
     {
-      "id": 20,
+      "id": 13,
       "type": "magnet_pole_checker",
       "category": "tool",
       "planar": true,
@@ -407,7 +407,7 @@
       ]
     },
     {
-      "id": 22,
+      "id": 14,
       "type": "hammer",
       "category": "tool",
       "planar": true,
@@ -436,7 +436,7 @@
       ]
     },
     {
-      "id": 23,
+      "id": 15,
       "type": "gear_stand_1",
       "category": "part",
       "planar": true,
@@ -457,7 +457,7 @@
       ]
     },
     {
-      "id": 24,
+      "id": 16,
       "type": "gear_stand_2",
       "category": "part",
       "planar": true,
@@ -478,7 +478,7 @@
       ]
     },
     {
-      "id": 25,
+      "id": 17,
       "type": "gear_stand_3",
       "category": "part",
       "planar": true,
@@ -507,7 +507,7 @@
       ]
     },
     {
-      "id": 26,
+      "id": 18,
       "type": "gear_stand_4",
       "category": "part",
       "planar": true,
@@ -536,7 +536,7 @@
       ]
     },
     {
-      "id": 27,
+      "id": 19,
       "type": "box_1",
       "category": "part",
       "planar": true,
@@ -565,7 +565,7 @@
       ]
     },
     {
-      "id": 28,
+      "id": 20,
       "type": "box_2",
       "category": "part",
       "planar": true,
@@ -594,7 +594,7 @@
       ]
     },
     {
-      "id": 29,
+      "id": 21,
       "type": "box_3",
       "category": "part",
       "planar": true,
@@ -623,7 +623,7 @@
       ]
     },
     {
-      "id": 30,
+      "id": 22,
       "type": "box_4",
       "category": "part",
       "planar": true,
@@ -652,7 +652,7 @@
       ]
     },
     {
-      "id": 31,
+      "id": 23,
       "type": "small_gear_1",
       "category": "part",
       "planar": true,
@@ -681,7 +681,7 @@
       ]
     },
     {
-      "id": 32,
+      "id": 24,
       "type": "small_gear_2",
       "category": "part",
       "planar": true,
@@ -710,7 +710,7 @@
       ]
     },
     {
-      "id": 33,
+      "id": 25,
       "type": "large_gear",
       "category": "part",
       "planar": true,
@@ -739,7 +739,7 @@
       ]
     },
     {
-      "id": 34,
+      "id": 26,
       "type": "rod_1",
       "category": "part",
       "planar": true,
@@ -768,7 +768,7 @@
       ]
     },
     {
-      "id": 35,
+      "id": 27,
       "type": "rod_2",
       "category": "part",
       "planar": true,
