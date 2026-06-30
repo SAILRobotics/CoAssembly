@@ -692,6 +692,7 @@ class _ToolLayoutManager:
             out.append({
                 "id":            int(t["id"]),
                 "type":          t.get("type", "unknown"),
+                "category":      t.get("category", "tool"),
                 "position":      pos_u.tolist(),
                 "rotation_xyzw": [float(q_u[1]), float(q_u[2]),
                                    float(q_u[3]), float(q_u[0])],
@@ -762,9 +763,11 @@ class _ToolLayoutManager:
 # =============================================================================
 
 class _ToolSelectionManager:
-    SELECTED_COLOR = [0.0, 1.0, 0.0, 0.5]
-    HOVER_COLOR    = [1.0, 0.5, 0.0, 0.5]
-    RESET_COLOR    = [-1.0, -1.0, -1.0, -1.0]
+    SELECTED_COLOR = [0.0, 1.0, 0.0, 0.25]
+    HOVER_COLOR    = [1.0, 0.5, 0.0, 0.25]
+    RESET_COLOR    = [-1.0, -1.0, -1.0, -1.0]   # sentinel → restores to resting color
+    TOOL_COLOR     = [0.80, 0.88, 1.0,  0.05]    # light blue for "tool" category
+    PART_COLOR     = [1.0,  0.78, 0.78, 0.05]    # light red  for "part" category
 
     def __init__(self, quest_ip: str, click_port: int = cfg.TOOL_CLICK_PORT, color_port: int = cfg.TOOL_COLOR_PORT):
         ctx = zmq.Context.instance()
@@ -777,6 +780,7 @@ class _ToolSelectionManager:
         self._active_tool_id: int | None  = None
         self._hovered_tool_id: int | None = None
         self._active_hand: str | None     = None
+        self._resting_colors: dict[int, list[float]] = {}
 
     def poll(self, timeout_ms: int = 0) -> bool:
         poller = zmq.Poller()
@@ -842,7 +846,16 @@ class _ToolSelectionManager:
             return
         self.send_color(tool_id, self.RESET_COLOR)
 
+    def set_resting_color(self, tool_id: int, color: list[float]) -> None:
+        """Register the default (resting) color for a tool id.
+        When RESET_COLOR is sent for this id it resolves to this color instead
+        of the ToolColorReceiver sentinel, keeping the category tint alive
+        after hover / select cycles."""
+        self._resting_colors[tool_id] = list(color)
+
     def send_color(self, tool_id: int, color: list[float]):
+        if color is self.RESET_COLOR or color == self.RESET_COLOR:
+            color = self._resting_colors.get(tool_id, self.RESET_COLOR)
         msg = {"tool_id": int(tool_id), "color": [float(c) for c in color]}
         try:
             self._pub.send_string(json.dumps(msg))
@@ -1629,7 +1642,8 @@ class MainScene:
     _TCP_TOOL_ID     = 200    # must match ToolClickPublisher tool_id in Unity
     _SYNTH_INTERVAL  = 1.0 / 30.0
     _RELOCK_COOLDOWN = 2.0
-    _AUTO_LOCK_MAX_DIST = 0.5      # metres — auto-lock-on-sight only within this range
+    _AUTO_LOCK_MAX_DIST     = 0.5    # metres — auto-lock-on-sight only within this range
+    _AUTO_LOCK_MAX_TILT_DEG = 20.0   # degrees — max tilt from vertical to auto-lock
     _TRACK_DIST_THRESHOLD = 0.02   # metres — TCP-to-target distance considered "arrived"
     _TRACK_HOLD_FRAMES    = 15     # consecutive frames under threshold before locking grip
 
@@ -1819,9 +1833,21 @@ class MainScene:
         T_wp = self.anchor.T_pegboard_in_world
         if T_wp is not None:
             self.tool_layout.publish(T_wp)
+            self._apply_tool_category_colors()
             boxes = self.tool_layout.world_boxes(T_wp)
             self.vis.update_tool_boxes(boxes)
         return True
+
+    def _apply_tool_category_colors(self) -> None:
+        """Send each tool's category color via ToolColorReceiver (port 5010)
+        and register it as the resting color so hover/reset cycles preserve it."""
+        for t in self.tool_layout._tools:
+            tid  = int(t["id"])
+            cat  = t.get("category", "tool")
+            col  = (_ToolSelectionManager.PART_COLOR if cat == "part"
+                    else _ToolSelectionManager.TOOL_COLOR)
+            self.tools.set_resting_color(tid, col)
+            self.tools.send_color(tid, col)
 
     def _lock_anchor_initial(self, T_cam_anchor: np.ndarray,
                              center_T: "np.ndarray | None") -> None:
@@ -1909,14 +1935,25 @@ class MainScene:
                 # Only fires before the very first lock — once self.anchor.locked
                 # is True this is permanently skipped, and all later (re)locks
                 # go back to requiring ENTER or the proximity relock cube.
-                # Gated on proximity (<0.5m) so it doesn't fire from across the room.
+                # Gated on proximity (<0.5m) AND view angle (<30° from vertical):
+                # T_cam_anchor[:3, 3] is the marker position in camera frame, so
+                # its Z component divided by the distance gives cos(tilt from camera
+                # optical axis).  When looking nearly straight down at a flat table
+                # marker the marker sits almost dead-ahead along the camera Z → cosine
+                # near 1.  If the view is too oblique this stays < cos(30°) and the
+                # auto-lock is suppressed until the user is more overhead.
+                _cos_tilt = (T_cam_anchor[2, 3] / dist_to_anchor
+                             if anchor_ok and dist_to_anchor > 1e-6 else 0.0)
+                _min_cos  = np.cos(np.deg2rad(self._AUTO_LOCK_MAX_TILT_DEG))
                 if (not self.anchor.locked and anchor_ok
                         and self.cam.camera_T is not None
-                        and dist_to_anchor < self._AUTO_LOCK_MAX_DIST):
+                        and dist_to_anchor < self._AUTO_LOCK_MAX_DIST
+                        and _cos_tilt > _min_cos):
                     self._lock_anchor_initial(T_cam_anchor, _center_T)
+                    tilt_deg = float(np.degrees(np.arccos(np.clip(_cos_tilt, -1, 1))))
                     print(f"[AutoLock] Locked world to marker "
                           f"#{self.anchor_marker_id} on sight "
-                          f"({dist_to_anchor:.2f} m away)")
+                          f"({dist_to_anchor:.2f} m, {tilt_deg:.1f}° tilt)")
 
                 # ── Anchor marker proximity relock ────────────────────────────
                 _relock_available = (self.anchor.locked and anchor_ok
@@ -1957,6 +1994,7 @@ class MainScene:
                     self._last_proximity_relock_time = _now
                     if self.anchor.T_pegboard_in_world is not None:
                         self.tool_layout.publish(self.anchor.T_pegboard_in_world)
+                        self._apply_tool_category_colors()
                         _boxes = self.tool_layout.world_boxes(self.anchor.T_pegboard_in_world)
                         self.vis.update_tool_boxes(_boxes)
                     print("[AutoRelock] Relocked via proximity click")
@@ -2254,6 +2292,7 @@ class MainScene:
                                           f" pegboard cubes at marker "
                                           f"#{self.pegboard_marker_id}")
                                 self.tool_layout.publish(T_wp)
+                                self._apply_tool_category_colors()
                                 _boxes = self.tool_layout.world_boxes(T_wp)
                                 self.vis.update_tool_boxes(_boxes)
                         elif pegboard_ok and not self.anchor.locked:

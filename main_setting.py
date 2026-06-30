@@ -34,7 +34,7 @@ ROBOT_BASE_PORT    = 5000   # robot base initial pose (matches RobotBaseInitialP
 ROBOT_JOINT_PORT   = 5001   # live arm joint angles, radians (matches RobotJointNetMQReceiver)
 
 # ── ArUco marker IDs ──────────────────────────────────────────────────────────
-ANCHOR_MARKER_ID   = 10   # world frame + PyBullet scene origin
+ANCHOR_MARKER_ID   = 100   # world frame + PyBullet scene origin
 PEGBOARD_MARKER_ID = 101   # pegboard origin (top-right corner)
 BOARD_MARKER_A_ID  = 102   # one large face of the tracked board
 BOARD_MARKER_B_ID  = 103   # opposite large face of the tracked board

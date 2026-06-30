@@ -7659,6 +7659,10 @@ PrefabInstance:
       propertyPath: m_Name
       value: Pegboard
       objectReference: {fileID: 0}
+    - target: {fileID: -661090569542734054, guid: 3c74bfdbdcd88174ea845e02e806c435, type: 3}
+      propertyPath: m_IsActive
+      value: 0
+      objectReference: {fileID: 0}
     - target: {fileID: 452328020845392735, guid: 3c74bfdbdcd88174ea845e02e806c435, type: 3}
       propertyPath: m_LocalPosition.x
       value: -0.5521
@@ -10759,6 +10763,10 @@ PrefabInstance:
       propertyPath: m_Name
       value: Pegboard (2)
       objectReference: {fileID: 0}
+    - target: {fileID: -661090569542734054, guid: 3c74bfdbdcd88174ea845e02e806c435, type: 3}
+      propertyPath: m_IsActive
+      value: 0
+      objectReference: {fileID: 0}
     - target: {fileID: 452328020845392735, guid: 3c74bfdbdcd88174ea845e02e806c435, type: 3}
       propertyPath: m_LocalPosition.x
       value: -0.2473
@@ -10868,6 +10876,10 @@ PrefabInstance:
     - target: {fileID: -661090569542734054, guid: 3c74bfdbdcd88174ea845e02e806c435, type: 3}
       propertyPath: m_Name
       value: Pegboard (3)
+      objectReference: {fileID: 0}
+    - target: {fileID: -661090569542734054, guid: 3c74bfdbdcd88174ea845e02e806c435, type: 3}
+      propertyPath: m_IsActive
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 452328020845392735, guid: 3c74bfdbdcd88174ea845e02e806c435, type: 3}
       propertyPath: m_LocalPosition.x
@@ -16147,6 +16159,96 @@ MonoBehaviour:
   - id: 9
     type: 
     prefab: {fileID: 1378334300415827735, guid: 6c9e54f7886795e40af25f4c247408eb, type: 3}
+  - id: 10
+    type: 
+    prefab: {fileID: 1378334300415827735, guid: 6c9e54f7886795e40af25f4c247408eb, type: 3}
+  - id: 11
+    type: 
+    prefab: {fileID: 1378334300415827735, guid: 6c9e54f7886795e40af25f4c247408eb, type: 3}
+  - id: 12
+    type: 
+    prefab: {fileID: 1378334300415827735, guid: 6c9e54f7886795e40af25f4c247408eb, type: 3}
+  - id: 13
+    type: 
+    prefab: {fileID: 1378334300415827735, guid: 6c9e54f7886795e40af25f4c247408eb, type: 3}
+  - id: 14
+    type: 
+    prefab: {fileID: 1378334300415827735, guid: 6c9e54f7886795e40af25f4c247408eb, type: 3}
+  - id: 15
+    type: 
+    prefab: {fileID: 1378334300415827735, guid: 6c9e54f7886795e40af25f4c247408eb, type: 3}
+  - id: 16
+    type: 
+    prefab: {fileID: 1378334300415827735, guid: 6c9e54f7886795e40af25f4c247408eb, type: 3}
+  - id: 17
+    type: 
+    prefab: {fileID: 1378334300415827735, guid: 6c9e54f7886795e40af25f4c247408eb, type: 3}
+  - id: 18
+    type: 
+    prefab: {fileID: 1378334300415827735, guid: 6c9e54f7886795e40af25f4c247408eb, type: 3}
+  - id: 19
+    type: 
+    prefab: {fileID: 1378334300415827735, guid: 6c9e54f7886795e40af25f4c247408eb, type: 3}
+  - id: 20
+    type: 
+    prefab: {fileID: 1378334300415827735, guid: 6c9e54f7886795e40af25f4c247408eb, type: 3}
+  - id: 21
+    type: 
+    prefab: {fileID: 1378334300415827735, guid: 6c9e54f7886795e40af25f4c247408eb, type: 3}
+  - id: 22
+    type: 
+    prefab: {fileID: 1378334300415827735, guid: 6c9e54f7886795e40af25f4c247408eb, type: 3}
+  - id: 23
+    type: 
+    prefab: {fileID: 1378334300415827735, guid: 6c9e54f7886795e40af25f4c247408eb, type: 3}
+  - id: 24
+    type: 
+    prefab: {fileID: 1378334300415827735, guid: 6c9e54f7886795e40af25f4c247408eb, type: 3}
+  - id: 25
+    type: 
+    prefab: {fileID: 1378334300415827735, guid: 6c9e54f7886795e40af25f4c247408eb, type: 3}
+  - id: 26
+    type: 
+    prefab: {fileID: 1378334300415827735, guid: 6c9e54f7886795e40af25f4c247408eb, type: 3}
+  - id: 27
+    type: 
+    prefab: {fileID: 1378334300415827735, guid: 6c9e54f7886795e40af25f4c247408eb, type: 3}
+  - id: 28
+    type: 
+    prefab: {fileID: 1378334300415827735, guid: 6c9e54f7886795e40af25f4c247408eb, type: 3}
+  - id: 29
+    type: 
+    prefab: {fileID: 1378334300415827735, guid: 6c9e54f7886795e40af25f4c247408eb, type: 3}
+  - id: 30
+    type: 
+    prefab: {fileID: 1378334300415827735, guid: 6c9e54f7886795e40af25f4c247408eb, type: 3}
+  - id: 31
+    type: 
+    prefab: {fileID: 1378334300415827735, guid: 6c9e54f7886795e40af25f4c247408eb, type: 3}
+  - id: 32
+    type: 
+    prefab: {fileID: 1378334300415827735, guid: 6c9e54f7886795e40af25f4c247408eb, type: 3}
+  - id: 33
+    type: 
+    prefab: {fileID: 1378334300415827735, guid: 6c9e54f7886795e40af25f4c247408eb, type: 3}
+  - id: 34
+    type: 
+    prefab: {fileID: 1378334300415827735, guid: 6c9e54f7886795e40af25f4c247408eb, type: 3}
+  - id: 35
+    type: 
+    prefab: {fileID: 1378334300415827735, guid: 6c9e54f7886795e40af25f4c247408eb, type: 3}
+  - id: 36
+    type: 
+    prefab: {fileID: 1378334300415827735, guid: 6c9e54f7886795e40af25f4c247408eb, type: 3}
+  - id: 37
+    type: 
+    prefab: {fileID: 1378334300415827735, guid: 6c9e54f7886795e40af25f4c247408eb, type: 3}
+  - id: 38
+    type: 
+    prefab: {fileID: 1378334300415827735, guid: 6c9e54f7886795e40af25f4c247408eb, type: 3}
+  - id: 39
+    type: 
+    prefab: {fileID: 1378334300415827735, guid: 6c9e54f7886795e40af25f4c247408eb, type: 3}
   worldRoot: {fileID: 1683168509}
   leftRayInteractor: {fileID: 210610087}
   rightRayInteractor: {fileID: 542522394}
@@ -19322,6 +19424,10 @@ PrefabInstance:
     - target: {fileID: -661090569542734054, guid: 3c74bfdbdcd88174ea845e02e806c435, type: 3}
       propertyPath: m_Name
       value: Pegboard (1)
+      objectReference: {fileID: 0}
+    - target: {fileID: -661090569542734054, guid: 3c74bfdbdcd88174ea845e02e806c435, type: 3}
+      propertyPath: m_IsActive
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 452328020845392735, guid: 3c74bfdbdcd88174ea845e02e806c435, type: 3}
       propertyPath: m_LocalPosition.x
