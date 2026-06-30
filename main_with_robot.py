@@ -1758,22 +1758,21 @@ class MainScene:
         cv.resizeWindow(self._win, 960, 540)
 
         # ── Per-iteration state ───────────────────────────────────────────────
-        self._last_synth_pub_time        = 0.0   # timestamp of last synth-object publish; throttled to _SYNTH_INTERVAL
         self._prev_relock_available = False  # previous relock-available flag; drives anchor-marker color change
         self._anchor_highlight_until           = 0.0   # time until anchor marker highlight reverts to normal color
         self._last_proximity_relock_time = 0.0   # timestamp of last auto-relock; enforces _RELOCK_COOLDOWN between relocks
-        self._reachability_arrows_hide_at           = 0.0   # time until reachability arrows auto-hide (set on grasp complete)
+        self._reachability_arrows_hide_at           = 0.0   # timestamp after which reachability arrows are hidden; set to now+5s on R keypress
         self._T_world_tcp: "np.ndarray | None"          = None   # current TCP pose in world; polled each frame from robot
-        self._grip_state: "str | None"              = None   # None | 'moving_to_pose' | 'grabbed'; drives board-manip path
+        self._grip_state: "str | None"              = None   # None | 'moving_to_hand' | 'grabbed' | 'moving_to_pose'
         self._last_ar_board_T: "np.ndarray | None"    = None   # last AR box pose from _TargetPoseReceiver; persists between polls
         self._pending_grasp_tool_id: "int | None"           = None   # tool ID being grasped (set on click, not yet read back)
-        self._hand_tracking_active                         = False  # True while robot TCP is following a hand palm
         self._tracked_hand_side: "str | None"        = None   # which hand is being tracked: 'left' or 'right'
         self._track_proximity_frames                            = 0      # consecutive frames TCP has been within _TRACK_DIST_THRESHOLD
         self._track_palm_target_pos: "np.ndarray | None" = None   # world position of the palm being tracked toward
         self._last_hand_track_time: "float | None"     = None   # timestamp of last hand-track servoJ command; used to compute dt
-        self._synth_cubes_added                  = False  # True once synthetic cubes have been pushed into synth._objects
-        self._synth_cube_start_idx: "int | None"     = None   # index into synth._objects where the pegboard cubes begin
+        self._synth_cubes_added                  = False  # True once PEGBOARD_CUBES have been added to synth._objects
+        self._synth_cube_start_idx: "int | None"     = None   # index into synth._objects where the PEGBOARD_CUBES entries begin
+        self._last_synth_pub_time        = 0.0   # timestamp of last synth-object publish; throttled to _SYNTH_INTERVAL
         self._fps_ref_time         = time.perf_counter()  # reference time for FPS averaging
         self._fps_frame_count      = 0                    # frame counter since last FPS print
 
@@ -1933,29 +1932,27 @@ class MainScene:
                         and self.anchor.locked
                         and self.anchor.T_pegboard_in_world is not None):
                     if self._grip_state is not None:
+                        prev_state = self._grip_state
                         self._grip_state = None
                         self._last_ar_board_T = None
+                        self._tracked_hand_side = None
+                        self._track_proximity_frames = 0
                         self.vis.clear_board_manip_debug()
                         if self.robot is not None:
-                            self.robot.cancel_grasp()
+                            self.robot.cancel_motion()
                         self.grip_pub.publish(
                             'idle',
                             self._T_world_tcp if self._T_world_tcp is not None else np.eye(4))
-                        print("[TCP click] Grip mode cancelled — returning to normal")
-                    elif self._hand_tracking_active:
-                        self._hand_tracking_active    = False
-                        self._tracked_hand_side = None
-                        self._track_proximity_frames       = 0
-                        print("[TCP click] Hand tracking cancelled")
-                    elif (not (self.robot is not None and self.robot.grasp_running)
+                        print(f"[TCP click] Cancelled from '{prev_state}' — returning to normal")
+                    elif (not (self.robot is not None and self.robot.tool_grasp_running)
                           and self.pb_scene is not None):
                         clicking_hand = self.tools.active_hand
                         opposite_hand = {"left": "right", "right": "left"}.get(clicking_hand)
                         if opposite_hand in ("left", "right"):
-                            self._hand_tracking_active    = True
+                            self._grip_state = 'moving_to_hand'
                             self._tracked_hand_side = opposite_hand
-                            self._track_proximity_frames       = 0
-                            print(f"[TCP click] Tracking {opposite_hand} hand palm "
+                            self._track_proximity_frames = 0
+                            print(f"[TCP click] Moving to {opposite_hand} hand palm "
                                   f"(opposite of {clicking_hand} click)")
                         else:
                             print(f"[TCP click] Unknown hand '{clicking_hand}' — ignoring click.")
@@ -1968,7 +1965,7 @@ class MainScene:
                         and self.anchor.locked
                         and self.anchor.T_pegboard_in_world is not None
                         and self.robot is not None
-                        and not self.robot.grasp_running):
+                        and not self.robot.tool_grasp_running):
                     tool_data = self.tool_layout.get_world_data(
                         _tid, self.anchor.T_pegboard_in_world)
                     if tool_data is not None:
@@ -1989,33 +1986,9 @@ class MainScene:
                         print(f"[ToolGrasp] id={_tid} — sequence started")
                     self.tools.deselect(_tid)
 
-                # ── Update Open3D visualizer ───────────────────────────────────
-                if self.cam.fx is not None:
-                    fx, fy, cx, cy = _adapt_cx_cy(
-                        self.cam.fx, self.cam.fy, self.cam.cx, self.cam.cy,
-                        self.cam.sensor_width, self.cam.sensor_height,
-                        self.cam.width, self.cam.height)
-                    self.vis.update_cam_frustum(T_world_camleft,
-                                                self.cam.width, self.cam.height,
-                                                fx, fy, cx, cy)
-                self.vis.update_pegboard(self.anchor.T_pegboard_in_world)
-                self.vis.update_board(self.anchor.T_board_in_world)
-                self.vis.update_tracking(T_wt)
-                self.vis.update_head(T_world_center)
-                self.vis.update_hands(left_pts, right_pts)
-                # Palm quat debug — always visible; prefer right hand, fall back to left
-                if self._hand_tracking_active:
-                    _dbg_pts  = left_pts  if self._tracked_hand_side == "left"  else right_pts
-                    _dbg_left = self._tracked_hand_side == "left"
-                else:
-                    _dbg_pts  = right_pts if right_pts is not None else left_pts
-                    _dbg_left = (right_pts is None and left_pts is not None)
-                self.vis.update_palm_quat_debug(_dbg_pts, is_left=_dbg_left)
-                self.vis.tick()
-
                 # ── PyBullet scene update ─────────────────────────────────────
                 if self.robot is not None:
-                    if self._hand_tracking_active:
+                    if self._grip_state == 'moving_to_hand':
                         target_pts = (left_pts if self._tracked_hand_side == "left"
                                       else right_pts)
                         if target_pts is not None:
@@ -2044,19 +2017,12 @@ class MainScene:
                             if q is not None:
                                 self.pb_scene.update_robot(q)
 
-                    # ── Visualizer update ─────────────────────────────────────
+                    # ── Robot state poll ───────────────────────────────────────
                     self._T_world_tcp = self.robot.tcp_pose
-                    if self._T_world_tcp is not None:
-                        self.vis.update_tcp(self._T_world_tcp)
                     _link_poses = self.robot.arm_link_poses()
-                    if _link_poses is not None:
-                        self.vis.update_robot(_link_poses)
-                    if self._T_world_tcp is not None and self._tcp_synth is not None:
-                        self._tcp_synth.centroid = self._T_world_tcp[:3, 3]
-                        self._tcp_synth.R_o3d    = self._T_world_tcp[:3, :3]
 
                     # ── Hand-track proximity check ────────────────────────────
-                    if (self._hand_tracking_active and self._T_world_tcp is not None
+                    if (self._grip_state == 'moving_to_hand' and self._T_world_tcp is not None
                             and self._track_palm_target_pos is not None):
                         dist = float(np.linalg.norm(
                             self._T_world_tcp[:3, 3] - self._track_palm_target_pos))
@@ -2066,11 +2032,9 @@ class MainScene:
                             self._track_proximity_frames = 0
                         if self._track_proximity_frames >= self._TRACK_HOLD_FRAMES:
                             _tracked = self._tracked_hand_side
-                            self._hand_tracking_active    = False
-                            self._tracked_hand_side = None
-                            self._track_proximity_frames       = 0
+                            self._track_proximity_frames = 0
                             self._track_palm_target_pos = None
-                            self._grip_state       = 'grabbed'
+                            self._grip_state = 'grabbed'
                             print(f"[TCP track] Reached {_tracked} palm — "
                                   f"grip_state='grabbed'")
 
@@ -2091,8 +2055,41 @@ class MainScene:
                             )
                             self._grip_state = 'moving_to_pose'
                             print("[Grip] Target pose received — moving robot")
-                        if self._last_ar_board_T is not None:
-                            self.vis.update_board_manip_debug(self._last_ar_board_T)
+
+                    # ── Visualizer update ─────────────────────────────────────
+                    if self._T_world_tcp is not None:
+                        self.vis.update_tcp(self._T_world_tcp)
+                    if _link_poses is not None:
+                        self.vis.update_robot(_link_poses)
+                    if self._T_world_tcp is not None and self._tcp_synth is not None:
+                        self._tcp_synth.centroid = self._T_world_tcp[:3, 3]
+                        self._tcp_synth.R_o3d    = self._T_world_tcp[:3, :3]
+                    if self._last_ar_board_T is not None:
+                        self.vis.update_board_manip_debug(self._last_ar_board_T)
+
+                # ── Update Open3D visualizer ───────────────────────────────────
+                if self.cam.fx is not None:
+                    fx, fy, cx, cy = _adapt_cx_cy(
+                        self.cam.fx, self.cam.fy, self.cam.cx, self.cam.cy,
+                        self.cam.sensor_width, self.cam.sensor_height,
+                        self.cam.width, self.cam.height)
+                    self.vis.update_cam_frustum(T_world_camleft,
+                                                self.cam.width, self.cam.height,
+                                                fx, fy, cx, cy)
+                self.vis.update_pegboard(self.anchor.T_pegboard_in_world)
+                self.vis.update_board(self.anchor.T_board_in_world)
+                self.vis.update_tracking(T_wt)
+                self.vis.update_head(T_world_center)
+                self.vis.update_hands(left_pts, right_pts)
+                # Palm quat debug — always visible; prefer right hand, fall back to left
+                if self._grip_state == 'moving_to_hand':
+                    _dbg_pts  = left_pts  if self._tracked_hand_side == "left"  else right_pts
+                    _dbg_left = self._tracked_hand_side == "left"
+                else:
+                    _dbg_pts  = right_pts if right_pts is not None else left_pts
+                    _dbg_left = (right_pts is None and left_pts is not None)
+                self.vis.update_palm_quat_debug(_dbg_pts, is_left=_dbg_left)
+                self.vis.tick()
 
                 # ── OpenCV display ────────────────────────────────────────────
                 disp = cv.resize(

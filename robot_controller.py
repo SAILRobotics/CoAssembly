@@ -373,7 +373,7 @@ class RobotController:
     # ── Grasp sequence (both modes) ───────────────────────────────────────────
 
     @property
-    def grasp_running(self) -> bool:
+    def tool_grasp_running(self) -> bool:
         if self.simulation:
             return self._sim_phase is not None
         return self._grasp_thread is not None and self._grasp_thread.is_alive()
@@ -401,7 +401,7 @@ class RobotController:
         category     : "tool" or "part" (affects retract direction for real).
         on_complete  : Called with success bool when the sequence finishes.
         """
-        if self.grasp_running:
+        if self.tool_grasp_running:
             print("[Robot] Grasp already running — cancel first.")
             return
         if self.simulation:
@@ -418,8 +418,8 @@ class RobotController:
             )
             self._grasp_thread.start()
 
-    def cancel_grasp(self) -> None:
-        """Abort any running grasp."""
+    def cancel_motion(self) -> None:
+        """Abort any running grasp and stop the arm."""
         if self.simulation:
             self._finish_sim(False)
         else:
@@ -460,7 +460,7 @@ class RobotController:
     # ── Cleanup ───────────────────────────────────────────────────────────────
 
     def close(self) -> None:
-        self.cancel_grasp()
+        self.cancel_motion()
         if not self.simulation:
             self.servoStop()
             for attr in ("_recv", "_rtde_ctrl"):
