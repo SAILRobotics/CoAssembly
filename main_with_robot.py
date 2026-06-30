@@ -930,6 +930,48 @@ class _GripStatePublisher:
             pass
 
 
+class _WorkspaceBoundPublisher:
+    """Publishes the robot workspace boundary box to Unity on port 5015 (PUB).
+    bounds_lo/bounds_hi are sent once (constant in world frame); dist_outside
+    is sent every frame and drives the wireframe's fade-in opacity in Unity —
+    0 when the user's head/hands are all inside the box, positive and growing
+    the further outside any of them is.
+    """
+
+    def __init__(self, quest_ip: str, port: int = cfg.WORKSPACE_BOUND_PORT):
+        ctx = zmq.Context.instance()
+        self._pub = ctx.socket(zmq.PUB)
+        self._pub.connect(f"tcp://{quest_ip}:{port}")
+
+    @staticmethod
+    def dist_outside(pos: "np.ndarray | None", lo: np.ndarray, hi: np.ndarray) -> float:
+        """0.0 if pos is inside [lo, hi] (or untracked), else distance to the
+        nearest face of the box."""
+        if pos is None:
+            return 0.0
+        d = np.maximum(np.maximum(lo - pos, pos - hi), 0.0)
+        return float(np.linalg.norm(d))
+
+    def publish(self, lo: np.ndarray, hi: np.ndarray, dist_outside: float) -> None:
+        lo_u = open3d_to_unity_vector(lo)
+        hi_u = open3d_to_unity_vector(hi)
+        msg = {
+            "bounds_lo":    lo_u.tolist(),
+            "bounds_hi":    hi_u.tolist(),
+            "dist_outside": float(dist_outside),
+        }
+        try:
+            self._pub.send_string(json.dumps(msg))
+        except Exception:
+            pass
+
+    def close(self) -> None:
+        try:
+            self._pub.close(0)
+        except Exception:
+            pass
+
+
 class _TargetPoseReceiver:
     """Receives the manipulated TCP target pose from Unity on port 5013 (SUB).
     Unity PUB binds; Python SUB connects to Quest IP (same pattern as all other Unity→Python channels).
@@ -1647,6 +1689,10 @@ class MainScene:
     _TRACK_DIST_THRESHOLD = 0.02   # metres — TCP-to-target distance considered "arrived"
     _TRACK_HOLD_FRAMES    = 15     # consecutive frames under threshold before locking grip
 
+    # Robot workspace boundary, relative to the anchor ArUco marker (world frame).
+    WORKSPACE_BOUNDS_LO = np.array([-1.0474, -0.3082, 0.05])
+    WORKSPACE_BOUNDS_HI = np.array([ 0.7942,  0.4220, 0.50])
+
     PEGBOARD_CUBES = [
         {"offset": [ 0.10, 0.00, 0.05], "color": [1.0, 0.6, 0.2], "name": "pegboard_cube_0"},
         {"offset": [ 0.00, 0.10, 0.05], "color": [0.8, 0.2, 0.8], "name": "pegboard_cube_1"},
@@ -1754,6 +1800,7 @@ class MainScene:
                                cfg.SCENE_LAYOUT_DIR / "tool_layout1.json", quest_ip)
         self.grip_pub    = _GripStatePublisher(quest_ip)
         self.target_recv = _TargetPoseReceiver(quest_ip)
+        self.workspace_bound_pub = _WorkspaceBoundPublisher(quest_ip)
 
         # Cubes around the anchor marker (world origin) — ids 0, 1, 2
         self.synth.add([ 0.10, 0.00, 0.05], width=0.06, depth=0.06, height=0.10,
@@ -1920,6 +1967,22 @@ class MainScene:
                 T_world_center  = (self.anchor.world_T(_center_T)
                                    if _center_T is not None else None)
                 left_pts, right_pts = self.hands.world_joints(T_wt)
+
+                # ── Workspace boundary (fades in as head/hands approach/exit) ──
+                if self.anchor.locked:
+                    _head_pos  = T_world_center[:3, 3] if T_world_center is not None else None
+                    _left_pos  = left_pts[1]  if left_pts  is not None else None
+                    _right_pos = right_pts[1] if right_pts is not None else None
+                    _dist_out = max(
+                        _WorkspaceBoundPublisher.dist_outside(
+                            _head_pos, self.WORKSPACE_BOUNDS_LO, self.WORKSPACE_BOUNDS_HI),
+                        _WorkspaceBoundPublisher.dist_outside(
+                            _left_pos, self.WORKSPACE_BOUNDS_LO, self.WORKSPACE_BOUNDS_HI),
+                        _WorkspaceBoundPublisher.dist_outside(
+                            _right_pos, self.WORKSPACE_BOUNDS_LO, self.WORKSPACE_BOUNDS_HI),
+                    )
+                    self.workspace_bound_pub.publish(
+                        self.WORKSPACE_BOUNDS_LO, self.WORKSPACE_BOUNDS_HI, _dist_out)
 
                 # ── Reachability arrow expiry ─────────────────────────────────
                 _now = time.time()
@@ -2328,6 +2391,7 @@ class MainScene:
         self.tool_layout.close()
         self.grip_pub.close()
         self.target_recv.close()
+        self.workspace_bound_pub.close()
         self.hands.close()
         self.cam.close()
         self.tools.close()
