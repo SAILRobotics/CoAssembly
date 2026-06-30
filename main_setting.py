@@ -12,7 +12,7 @@ _HERE = Path(__file__).resolve().parent
 SCENE_LAYOUT_DIR = _HERE / "scene_layout"
 
 # ── Machine IPs ───────────────────────────────────────────────────────────────
-UNITY_IP   = "192.168.50.103"   # Quest / Windows machine running Unity
+UNITY_IP   = "192.168.50.167"   # Quest / Windows machine running Unity
 ROBOT_IP   = "192.168.50.70"    # UR10e robot controller
 
 # ── Ports (Unity → Python) ────────────────────────────────────────────────────
@@ -32,6 +32,7 @@ GRIP_STATE_PORT    = 5012   # grip state + gripper box pose
 BOARD_ROOT_PORT    = 5014   # tracked board root transform
 ROBOT_BASE_PORT    = 5000   # robot base initial pose (matches RobotBaseInitialPoseReceiverNetMQ)
 ROBOT_JOINT_PORT   = 5001   # live arm joint angles, radians (matches RobotJointNetMQReceiver)
+WORKSPACE_BOUND_PORT = 5015 # robot workspace boundary wireframe (bounds + proximity)
 
 # ── ArUco marker IDs ──────────────────────────────────────────────────────────
 ANCHOR_MARKER_ID   = 100   # world frame + PyBullet scene origin
@@ -40,7 +41,7 @@ BOARD_MARKER_A_ID  = 102   # one large face of the tracked board
 BOARD_MARKER_B_ID  = 103   # opposite large face of the tracked board
 
 # ── ArUco marker sizes (metres) ───────────────────────────────────────────────
-ANCHOR_MARKER_SIZE   = 0.100   # marker 10:  9 cm
+ANCHOR_MARKER_SIZE   = 0.100   # marker 100:  10 cm
 PEGBOARD_MARKER_SIZE = 0.100   # marker 101: 10 cm
 BOARD_MARKER_SIZE    = 0.100   # markers 102/103: 10 cm
 
@@ -54,7 +55,7 @@ SIMULATION = True   # True → fixed joint angles; False → live RTDE
 USE_CALIBRATED_ROBOT_BASE_POSE = True
 
 # If True, automatically load the pegboard pose from
-# scene_layout/T_world10_pegboard101.npz the moment marker 10 is locked,
+# scene_layout/T_world100_pegboard101.npz the moment marker 100 is locked,
 # so you don't need to show marker 101 separately.
 LOAD_PEGBOARD_FROM_FILE = True
 

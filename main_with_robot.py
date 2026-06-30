@@ -4,11 +4,16 @@ world-frame anchor AND PyBullet scene origin.
 
 Workflow
 --------
-  1. Hold marker 100 visible → press ENTER to lock the world frame.
+  1. Hold marker 100 visible within 0.5m — the world frame locks
+     automatically the first time it's seen that close (no ENTER needed),
+     or press ENTER while it's visible from any distance.
      PyBullet scene is placed at the locked pose immediately.
   2. Hold marker 101 visible → press ENTER to lock the pegboard pose.
      Marker 100 does NOT need to be visible at this step.
-  3. Press ENTER again at any time to re-lock either (whichever marker is visible).
+  3. Once locked, all later re-locks require an explicit trigger — press
+     ENTER again (whichever marker is visible), or click the anchor-marker
+     proximity relock cube. Auto-lock-on-sight only ever fires once, before
+     the first lock.
   4. The tracked 250x200x25mm board (markers 102/103, one on each large
      face) is tracked cont+inuously once the world frame is locked — no
      ENTER press required. Either marker being visible is enough; its pose
@@ -687,6 +692,7 @@ class _ToolLayoutManager:
             out.append({
                 "id":            int(t["id"]),
                 "type":          t.get("type", "unknown"),
+                "category":      t.get("category", "tool"),
                 "position":      pos_u.tolist(),
                 "rotation_xyzw": [float(q_u[1]), float(q_u[2]),
                                    float(q_u[3]), float(q_u[0])],
@@ -757,9 +763,11 @@ class _ToolLayoutManager:
 # =============================================================================
 
 class _ToolSelectionManager:
-    SELECTED_COLOR = [0.0, 1.0, 0.0, 0.5]
-    HOVER_COLOR    = [1.0, 0.5, 0.0, 0.5]
-    RESET_COLOR    = [-1.0, -1.0, -1.0, -1.0]
+    SELECTED_COLOR = [0.0, 1.0, 0.0, 0.25]
+    HOVER_COLOR    = [1.0, 0.5, 0.0, 0.25]
+    RESET_COLOR    = [-1.0, -1.0, -1.0, -1.0]   # sentinel → restores to resting color
+    TOOL_COLOR     = [0.80, 0.88, 1.0,  0.05]    # light blue for "tool" category
+    PART_COLOR     = [1.0,  0.78, 0.78, 0.05]    # light red  for "part" category
 
     def __init__(self, quest_ip: str, click_port: int = cfg.TOOL_CLICK_PORT, color_port: int = cfg.TOOL_COLOR_PORT):
         ctx = zmq.Context.instance()
@@ -772,6 +780,7 @@ class _ToolSelectionManager:
         self._active_tool_id: int | None  = None
         self._hovered_tool_id: int | None = None
         self._active_hand: str | None     = None
+        self._resting_colors: dict[int, list[float]] = {}
 
     def poll(self, timeout_ms: int = 0) -> bool:
         poller = zmq.Poller()
@@ -837,7 +846,16 @@ class _ToolSelectionManager:
             return
         self.send_color(tool_id, self.RESET_COLOR)
 
+    def set_resting_color(self, tool_id: int, color: list[float]) -> None:
+        """Register the default (resting) color for a tool id.
+        When RESET_COLOR is sent for this id it resolves to this color instead
+        of the ToolColorReceiver sentinel, keeping the category tint alive
+        after hover / select cycles."""
+        self._resting_colors[tool_id] = list(color)
+
     def send_color(self, tool_id: int, color: list[float]):
+        if color is self.RESET_COLOR or color == self.RESET_COLOR:
+            color = self._resting_colors.get(tool_id, self.RESET_COLOR)
         msg = {"tool_id": int(tool_id), "color": [float(c) for c in color]}
         try:
             self._pub.send_string(json.dumps(msg))
@@ -899,6 +917,48 @@ class _GripStatePublisher:
             "box_rot_xyzw":  [float(q_u[1]), float(q_u[2]),
                                float(q_u[3]), float(q_u[0])],
             "box_size":      sz_u.tolist(),
+        }
+        try:
+            self._pub.send_string(json.dumps(msg))
+        except Exception:
+            pass
+
+    def close(self) -> None:
+        try:
+            self._pub.close(0)
+        except Exception:
+            pass
+
+
+class _WorkspaceBoundPublisher:
+    """Publishes the robot workspace boundary box to Unity on port 5015 (PUB).
+    bounds_lo/bounds_hi are sent once (constant in world frame); dist_outside
+    is sent every frame and drives the wireframe's fade-in opacity in Unity —
+    0 when the user's head/hands are all inside the box, positive and growing
+    the further outside any of them is.
+    """
+
+    def __init__(self, quest_ip: str, port: int = cfg.WORKSPACE_BOUND_PORT):
+        ctx = zmq.Context.instance()
+        self._pub = ctx.socket(zmq.PUB)
+        self._pub.connect(f"tcp://{quest_ip}:{port}")
+
+    @staticmethod
+    def dist_outside(pos: "np.ndarray | None", lo: np.ndarray, hi: np.ndarray) -> float:
+        """0.0 if pos is inside [lo, hi] (or untracked), else distance to the
+        nearest face of the box."""
+        if pos is None:
+            return 0.0
+        d = np.maximum(np.maximum(lo - pos, pos - hi), 0.0)
+        return float(np.linalg.norm(d))
+
+    def publish(self, lo: np.ndarray, hi: np.ndarray, dist_outside: float) -> None:
+        lo_u = open3d_to_unity_vector(lo)
+        hi_u = open3d_to_unity_vector(hi)
+        msg = {
+            "bounds_lo":    lo_u.tolist(),
+            "bounds_hi":    hi_u.tolist(),
+            "dist_outside": float(dist_outside),
         }
         try:
             self._pub.send_string(json.dumps(msg))
@@ -1042,6 +1102,8 @@ class _OffsetTuner:
 class _SceneVis:
     FRUSTUM_SCALE = 0.2
 
+    _WORKSPACE_COLOR = np.array([0.4, 0.7, 1.0])  # light blue — workspace boundary box
+
     # ── Static geometry helpers ───────────────────────────────────────────────
 
     @staticmethod
@@ -1113,6 +1175,10 @@ class _SceneVis:
         self._peg_box_center_local: np.ndarray | None = None
         self._peg_box_size: list | None = None
         self._pegboard_T = self._hidden_T()
+
+        # Robot workspace boundary — fades in as the head/hands approach/exit
+        self._workspace_box_lineset = o3d.geometry.LineSet()
+        self.vis.add_geometry(self._workspace_box_lineset)
 
         # Reachability arrows (shown for 5 s after pressing R, then hidden)
         self._reach_lineset = o3d.geometry.LineSet()
@@ -1357,6 +1423,20 @@ class _SceneVis:
             self._pegboard_box_lineset.lines  = new_ls.lines
             self._pegboard_box_lineset.colors = new_ls.colors
             self.vis.update_geometry(self._pegboard_box_lineset)
+
+    def update_workspace_bound(self, lo: "np.ndarray | None", hi: "np.ndarray | None") -> None:
+        """Axis-aligned wireframe box from lo/hi (world frame). Always drawn
+        solid here (no fade) — the fade-on-approach behavior is Unity-only,
+        this is just a constant reference for the operator's monitor view."""
+        if lo is None or hi is None:
+            return
+        pos  = (np.asarray(lo) + np.asarray(hi)) / 2.0
+        size = np.asarray(hi) - np.asarray(lo)
+        new_ls = self.make_box_lineset(pos, np.eye(3), size, color=self._WORKSPACE_COLOR)
+        self._workspace_box_lineset.points = new_ls.points
+        self._workspace_box_lineset.lines  = new_ls.lines
+        self._workspace_box_lineset.colors = new_ls.colors
+        self.vis.update_geometry(self._workspace_box_lineset)
 
     def update_tracking(self, T: np.ndarray | None):
         T_new = T if T is not None else self._hidden_T()
@@ -1624,8 +1704,14 @@ class MainScene:
     _TCP_TOOL_ID     = 200    # must match ToolClickPublisher tool_id in Unity
     _SYNTH_INTERVAL  = 1.0 / 30.0
     _RELOCK_COOLDOWN = 2.0
+    _AUTO_LOCK_MAX_DIST     = 0.5    # metres — auto-lock-on-sight only within this range
+    _AUTO_LOCK_MAX_TILT_DEG = 20.0   # degrees — max tilt from vertical to auto-lock
     _TRACK_DIST_THRESHOLD = 0.02   # metres — TCP-to-target distance considered "arrived"
     _TRACK_HOLD_FRAMES    = 15     # consecutive frames under threshold before locking grip
+
+    # Robot workspace boundary, relative to the anchor ArUco marker (world frame).
+    WORKSPACE_BOUNDS_LO = np.array([-1.0474, -0.3082, 0.05])
+    WORKSPACE_BOUNDS_HI = np.array([ 0.7942,  0.4220, 0.50])
 
     PEGBOARD_CUBES = [
         {"offset": [ 0.10, 0.00, 0.05], "color": [1.0, 0.6, 0.2], "name": "pegboard_cube_0"},
@@ -1734,6 +1820,7 @@ class MainScene:
                                cfg.SCENE_LAYOUT_DIR / "tool_layout1.json", quest_ip)
         self.grip_pub    = _GripStatePublisher(quest_ip)
         self.target_recv = _TargetPoseReceiver(quest_ip)
+        self.workspace_bound_pub = _WorkspaceBoundPublisher(quest_ip)
 
         # Cubes around the anchor marker (world origin) — ids 0, 1, 2
         self.synth.add([ 0.10, 0.00, 0.05], width=0.06, depth=0.06, height=0.10,
@@ -1780,7 +1867,9 @@ class MainScene:
               f"anchor_marker=#{anchor_marker_id}  "
               f"pegboard_marker=#{pegboard_marker_id}  "
               f"hand_port={hand_port}")
-        print(f"  ENTER with marker #{anchor_marker_id} visible → lock world + scene")
+        print(f"  Marker #{anchor_marker_id} auto-locks world + scene on first sight "
+              f"within {self._AUTO_LOCK_MAX_DIST:.1f}m (or press ENTER from any "
+              f"distance) — later re-locks need ENTER or the relock cube")
         print(f"  ENTER with marker #{pegboard_marker_id} visible (after locking)"
               f" → lock pegboard")
         print("  ESC = quit\n")
@@ -1810,9 +1899,33 @@ class MainScene:
         T_wp = self.anchor.T_pegboard_in_world
         if T_wp is not None:
             self.tool_layout.publish(T_wp)
+            self._apply_tool_category_colors()
             boxes = self.tool_layout.world_boxes(T_wp)
             self.vis.update_tool_boxes(boxes)
         return True
+
+    def _apply_tool_category_colors(self) -> None:
+        """Send each tool's category color via ToolColorReceiver (port 5010)
+        and register it as the resting color so hover/reset cycles preserve it."""
+        for t in self.tool_layout._tools:
+            tid  = int(t["id"])
+            cat  = t.get("category", "tool")
+            col  = (_ToolSelectionManager.PART_COLOR if cat == "part"
+                    else _ToolSelectionManager.TOOL_COLOR)
+            self.tools.set_resting_color(tid, col)
+            self.tools.send_color(tid, col)
+
+    def _lock_anchor_initial(self, T_cam_anchor: np.ndarray,
+                             center_T: "np.ndarray | None") -> None:
+        """First-time anchor lock + the same follow-up steps ENTER/relock run
+        (scene origin reset, pegboard-from-file load). Used both by the
+        ENTER handler and by the auto-lock-on-sight check in run()."""
+        self.anchor.lock(T_cam_anchor, self.cam.camera_T, center_T=center_T)
+        self._last_proximity_relock_time = time.time()
+        if self.pb_scene is not None:
+            self.pb_scene.set_scene_origin(np.eye(4))
+        if self._load_pegboard_from_file:
+            self._try_load_pegboard_from_file()
 
     # ── Main loop ─────────────────────────────────────────────────────────────
 
@@ -1874,16 +1987,59 @@ class MainScene:
                                    if _center_T is not None else None)
                 left_pts, right_pts = self.hands.world_joints(T_wt)
 
+                # ── Workspace boundary (fades in as head/hands approach/exit) ──
+                if self.anchor.locked:
+                    _head_pos  = T_world_center[:3, 3] if T_world_center is not None else None
+                    _left_pos  = left_pts[1]  if left_pts  is not None else None
+                    _right_pos = right_pts[1] if right_pts is not None else None
+                    _dist_out = max(
+                        _WorkspaceBoundPublisher.dist_outside(
+                            _head_pos, self.WORKSPACE_BOUNDS_LO, self.WORKSPACE_BOUNDS_HI),
+                        _WorkspaceBoundPublisher.dist_outside(
+                            _left_pos, self.WORKSPACE_BOUNDS_LO, self.WORKSPACE_BOUNDS_HI),
+                        _WorkspaceBoundPublisher.dist_outside(
+                            _right_pos, self.WORKSPACE_BOUNDS_LO, self.WORKSPACE_BOUNDS_HI),
+                    )
+                    self.workspace_bound_pub.publish(
+                        self.WORKSPACE_BOUNDS_LO, self.WORKSPACE_BOUNDS_HI, _dist_out)
+                    self.vis.update_workspace_bound(
+                        self.WORKSPACE_BOUNDS_LO, self.WORKSPACE_BOUNDS_HI)
+
                 # ── Reachability arrow expiry ─────────────────────────────────
                 _now = time.time()
                 if self._reachability_arrows_hide_at > 0.0 and _now >= self._reachability_arrows_hide_at:
                     self.vis.hide_reachability_arrows()
                     self._reachability_arrows_hide_at = 0.0
 
-                # ── Anchor marker proximity relock ────────────────────────────
                 dist_to_anchor = (
-                    float(np.linalg.norm(T_cam_anchor[:3, 3])) 
+                    float(np.linalg.norm(T_cam_anchor[:3, 3]))
                     if anchor_ok and self.cam.camera_T is not None else float('inf'))
+
+                # ── Auto-lock anchor on first sight ───────────────────────────
+                # Only fires before the very first lock — once self.anchor.locked
+                # is True this is permanently skipped, and all later (re)locks
+                # go back to requiring ENTER or the proximity relock cube.
+                # Gated on proximity (<0.5m) AND view angle (<30° from vertical):
+                # T_cam_anchor[:3, 3] is the marker position in camera frame, so
+                # its Z component divided by the distance gives cos(tilt from camera
+                # optical axis).  When looking nearly straight down at a flat table
+                # marker the marker sits almost dead-ahead along the camera Z → cosine
+                # near 1.  If the view is too oblique this stays < cos(30°) and the
+                # auto-lock is suppressed until the user is more overhead.
+                _cos_tilt = (T_cam_anchor[2, 3] / dist_to_anchor
+                             if anchor_ok and dist_to_anchor > 1e-6 else 0.0)
+                _min_cos  = np.cos(np.deg2rad(self._AUTO_LOCK_MAX_TILT_DEG))
+                if (not self.anchor.locked and anchor_ok
+                        and self.cam.camera_T is not None
+                        and dist_to_anchor < self._AUTO_LOCK_MAX_DIST
+                        and _cos_tilt > _min_cos):
+                    self._lock_anchor_initial(T_cam_anchor, _center_T)
+                    tilt_deg = float(np.degrees(np.arccos(np.clip(_cos_tilt, -1, 1))))
+                    print(f"[AutoLock] Locked world to marker "
+                          f"#{self.anchor_marker_id} on sight "
+                          f"({dist_to_anchor:.2f} m, {tilt_deg:.1f}° tilt)")
+
+                # ── Anchor marker proximity relock ────────────────────────────
                 _relock_available = (self.anchor.locked and anchor_ok
                                      and self.cam.camera_T is not None
                                      and dist_to_anchor < 1.0)
@@ -1922,6 +2078,7 @@ class MainScene:
                     self._last_proximity_relock_time = _now
                     if self.anchor.T_pegboard_in_world is not None:
                         self.tool_layout.publish(self.anchor.T_pegboard_in_world)
+                        self._apply_tool_category_colors()
                         _boxes = self.tool_layout.world_boxes(self.anchor.T_pegboard_in_world)
                         self.vis.update_tool_boxes(_boxes)
                     print("[AutoRelock] Relocked via proximity click")
@@ -2178,14 +2335,15 @@ class MainScene:
                                 self.anchor.relock(T_cam_anchor, self.cam.camera_T, _center_T)
                                 print(f"[ENTER] Relocked world to marker "
                                       f"#{self.anchor_marker_id}")
+                                self._last_proximity_relock_time = _now
+                                if self.pb_scene is not None:
+                                    self.pb_scene.set_scene_origin(np.eye(4))
+                                if self._load_pegboard_from_file:
+                                    self._try_load_pegboard_from_file()
                             else:
-                                self.anchor.lock(T_cam_anchor, self.cam.camera_T,
-                                                 center_T=_center_T)
-                            self._last_proximity_relock_time = _now
-                            if self.pb_scene is not None:
-                                self.pb_scene.set_scene_origin(np.eye(4))
-                            if self._load_pegboard_from_file:
-                                self._try_load_pegboard_from_file()
+                                self._lock_anchor_initial(T_cam_anchor, _center_T)
+                                print(f"[ENTER] Locked world to marker "
+                                      f"#{self.anchor_marker_id}")
                         elif not self.anchor.locked:
                             print(f"[ENTER] Marker #{self.anchor_marker_id}"
                                   f" not visible — cannot lock.")
@@ -2216,6 +2374,7 @@ class MainScene:
                                           f" pegboard cubes at marker "
                                           f"#{self.pegboard_marker_id}")
                                 self.tool_layout.publish(T_wp)
+                                self._apply_tool_category_colors()
                                 _boxes = self.tool_layout.world_boxes(T_wp)
                                 self.vis.update_tool_boxes(_boxes)
                         elif pegboard_ok and not self.anchor.locked:
@@ -2251,6 +2410,7 @@ class MainScene:
         self.tool_layout.close()
         self.grip_pub.close()
         self.target_recv.close()
+        self.workspace_bound_pub.close()
         self.hands.close()
         self.cam.close()
         self.tools.close()

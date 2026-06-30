@@ -48,6 +48,7 @@ public class ToolSpawner : MonoBehaviour
     {
         public int     id;
         public string  type;
+        public string  category;   // "tool" or "part" (informational, colour applied by Python)
         public float[] position;
         public float[] rotation_xyzw;
         public float[] size;
