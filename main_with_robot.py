@@ -4,11 +4,16 @@ world-frame anchor AND PyBullet scene origin.
 
 Workflow
 --------
-  1. Hold marker 100 visible → press ENTER to lock the world frame.
+  1. Hold marker 100 visible within 0.5m — the world frame locks
+     automatically the first time it's seen that close (no ENTER needed),
+     or press ENTER while it's visible from any distance.
      PyBullet scene is placed at the locked pose immediately.
   2. Hold marker 101 visible → press ENTER to lock the pegboard pose.
      Marker 100 does NOT need to be visible at this step.
-  3. Press ENTER again at any time to re-lock either (whichever marker is visible).
+  3. Once locked, all later re-locks require an explicit trigger — press
+     ENTER again (whichever marker is visible), or click the anchor-marker
+     proximity relock cube. Auto-lock-on-sight only ever fires once, before
+     the first lock.
   4. The tracked 250x200x25mm board (markers 102/103, one on each large
      face) is tracked cont+inuously once the world frame is locked — no
      ENTER press required. Either marker being visible is enough; its pose
@@ -1624,6 +1629,7 @@ class MainScene:
     _TCP_TOOL_ID     = 200    # must match ToolClickPublisher tool_id in Unity
     _SYNTH_INTERVAL  = 1.0 / 30.0
     _RELOCK_COOLDOWN = 2.0
+    _AUTO_LOCK_MAX_DIST = 0.5      # metres — auto-lock-on-sight only within this range
     _TRACK_DIST_THRESHOLD = 0.02   # metres — TCP-to-target distance considered "arrived"
     _TRACK_HOLD_FRAMES    = 15     # consecutive frames under threshold before locking grip
 
@@ -1781,7 +1787,9 @@ class MainScene:
               f"anchor_marker=#{anchor_marker_id}  "
               f"pegboard_marker=#{pegboard_marker_id}  "
               f"hand_port={hand_port}")
-        print(f"  ENTER with marker #{anchor_marker_id} visible → lock world + scene")
+        print(f"  Marker #{anchor_marker_id} auto-locks world + scene on first sight "
+              f"within {self._AUTO_LOCK_MAX_DIST:.1f}m (or press ENTER from any "
+              f"distance) — later re-locks need ENTER or the relock cube")
         print(f"  ENTER with marker #{pegboard_marker_id} visible (after locking)"
               f" → lock pegboard")
         print("  ESC = quit\n")
@@ -1814,6 +1822,18 @@ class MainScene:
             boxes = self.tool_layout.world_boxes(T_wp)
             self.vis.update_tool_boxes(boxes)
         return True
+
+    def _lock_anchor_initial(self, T_cam_anchor: np.ndarray,
+                             center_T: "np.ndarray | None") -> None:
+        """First-time anchor lock + the same follow-up steps ENTER/relock run
+        (scene origin reset, pegboard-from-file load). Used both by the
+        ENTER handler and by the auto-lock-on-sight check in run()."""
+        self.anchor.lock(T_cam_anchor, self.cam.camera_T, center_T=center_T)
+        self._last_proximity_relock_time = time.time()
+        if self.pb_scene is not None:
+            self.pb_scene.set_scene_origin(np.eye(4))
+        if self._load_pegboard_from_file:
+            self._try_load_pegboard_from_file()
 
     # ── Main loop ─────────────────────────────────────────────────────────────
 
@@ -1881,10 +1901,24 @@ class MainScene:
                     self.vis.hide_reachability_arrows()
                     self._reachability_arrows_hide_at = 0.0
 
-                # ── Anchor marker proximity relock ────────────────────────────
                 dist_to_anchor = (
-                    float(np.linalg.norm(T_cam_anchor[:3, 3])) 
+                    float(np.linalg.norm(T_cam_anchor[:3, 3]))
                     if anchor_ok and self.cam.camera_T is not None else float('inf'))
+
+                # ── Auto-lock anchor on first sight ───────────────────────────
+                # Only fires before the very first lock — once self.anchor.locked
+                # is True this is permanently skipped, and all later (re)locks
+                # go back to requiring ENTER or the proximity relock cube.
+                # Gated on proximity (<0.5m) so it doesn't fire from across the room.
+                if (not self.anchor.locked and anchor_ok
+                        and self.cam.camera_T is not None
+                        and dist_to_anchor < self._AUTO_LOCK_MAX_DIST):
+                    self._lock_anchor_initial(T_cam_anchor, _center_T)
+                    print(f"[AutoLock] Locked world to marker "
+                          f"#{self.anchor_marker_id} on sight "
+                          f"({dist_to_anchor:.2f} m away)")
+
+                # ── Anchor marker proximity relock ────────────────────────────
                 _relock_available = (self.anchor.locked and anchor_ok
                                      and self.cam.camera_T is not None
                                      and dist_to_anchor < 1.0)
@@ -2181,14 +2215,15 @@ class MainScene:
                                 self.anchor.relock(T_cam_anchor, self.cam.camera_T, _center_T)
                                 print(f"[ENTER] Relocked world to marker "
                                       f"#{self.anchor_marker_id}")
+                                self._last_proximity_relock_time = _now
+                                if self.pb_scene is not None:
+                                    self.pb_scene.set_scene_origin(np.eye(4))
+                                if self._load_pegboard_from_file:
+                                    self._try_load_pegboard_from_file()
                             else:
-                                self.anchor.lock(T_cam_anchor, self.cam.camera_T,
-                                                 center_T=_center_T)
-                            self._last_proximity_relock_time = _now
-                            if self.pb_scene is not None:
-                                self.pb_scene.set_scene_origin(np.eye(4))
-                            if self._load_pegboard_from_file:
-                                self._try_load_pegboard_from_file()
+                                self._lock_anchor_initial(T_cam_anchor, _center_T)
+                                print(f"[ENTER] Locked world to marker "
+                                      f"#{self.anchor_marker_id}")
                         elif not self.anchor.locked:
                             print(f"[ENTER] Marker #{self.anchor_marker_id}"
                                   f" not visible — cannot lock.")
