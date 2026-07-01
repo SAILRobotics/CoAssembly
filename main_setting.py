@@ -12,7 +12,7 @@ _HERE = Path(__file__).resolve().parent
 SCENE_LAYOUT_DIR = _HERE / "scene_layout"
 
 # ── Machine IPs ───────────────────────────────────────────────────────────────
-UNITY_IP   = "192.168.50.167"   # Quest / Windows machine running Unity
+UNITY_IP   = "192.168.50.103"   # Quest / Windows machine running Unity
 ROBOT_IP   = "192.168.50.70"    # UR10e robot controller
 
 # ── Ports (Unity → Python) ────────────────────────────────────────────────────
@@ -44,6 +44,18 @@ BOARD_MARKER_B_ID  = 103   # opposite large face of the tracked board
 ANCHOR_MARKER_SIZE   = 0.100   # marker 100:  10 cm
 PEGBOARD_MARKER_SIZE = 0.100   # marker 101: 10 cm
 BOARD_MARKER_SIZE    = 0.100   # markers 102/103: 10 cm
+
+# ── Robot workspace boundary (world frame, metres) ────────────────────────────
+# Used by the SceneVis boundary box, Unity workspace publisher, and frax CBF.
+WORKSPACE_LO = [-1.0474, -0.3082, 0.05]   # [x_min, y_min, z_min]
+WORKSPACE_HI = [ 0.7942,  0.4220, 0.50]   # [x_max, y_max, z_max]
+
+# ── Conservative UR10e joint limits (degrees) ─────────────────────────────────
+# Applied to both PyBullet IK and the frax CBF safety filter.
+# Adjust to match your actual robot range / mounting pose.
+#            J1      J2     J3     J4      J5      J6
+JOINT_MIN_DEG = [-360, -360,   -360,  -360,  -360,  -360]
+JOINT_MAX_DEG = [ 360,    360, 360,   360,   360,   360]
 
 # ── Runtime defaults ──────────────────────────────────────────────────────────
 SIMULATION = True   # True → fixed joint angles; False → live RTDE

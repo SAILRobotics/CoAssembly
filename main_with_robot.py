@@ -1121,6 +1121,34 @@ class _SceneVis:
         return ls
 
     @staticmethod
+    def make_sphere_wireframe(centers: np.ndarray, radii: np.ndarray,
+                              n_pts: int = 16,
+                              color=(0.3, 1.0, 0.3)) -> o3d.geometry.LineSet:
+        """LineSet of 3 great-circles (XY/XZ/YZ) per sphere — lightweight wireframe."""
+        theta = np.linspace(0, 2 * np.pi, n_pts, endpoint=False)
+        cos_t, sin_t = np.cos(theta), np.sin(theta)
+        zeros = np.zeros(n_pts)
+        all_pts, all_lines = [], []
+        offset = 0
+        for center, r in zip(centers, radii):
+            for c1, c2, c3 in [(cos_t, sin_t, zeros),   # XY
+                                (cos_t, zeros, sin_t),   # XZ
+                                (zeros, cos_t, sin_t)]:  # YZ
+                pts = np.column_stack([c1 * r, c2 * r, c3 * r]) + center
+                all_pts.append(pts)
+                base = offset
+                for i in range(n_pts):
+                    all_lines.append([base + i, base + (i + 1) % n_pts])
+                offset += n_pts
+        if not all_pts:
+            return o3d.geometry.LineSet()
+        ls = o3d.geometry.LineSet()
+        ls.points = o3d.utility.Vector3dVector(np.vstack(all_pts))
+        ls.lines  = o3d.utility.Vector2iVector(all_lines)
+        ls.colors = o3d.utility.Vector3dVector([list(color)] * len(all_lines))
+        return ls
+
+    @staticmethod
     def make_box_lineset(pos: np.ndarray, R: np.ndarray,
                          size, color=(0.2, 0.9, 1.0)) -> o3d.geometry.LineSet:
         """12-edge wireframe box. pos = centre, R = rotation, size = [w, d, h]."""
@@ -1157,6 +1185,11 @@ class _SceneVis:
         self._head_frustum  = None
         self._tcp_axes      = None          # lazy — added on first update_tcp() call
         self._tool_box_linesets: list = []  # lazy — grows to match number of tool boxes
+
+        # Collision sphere wireframe (toggle with show_collision_spheres)
+        self.show_collision_spheres = True
+        self._collision_sphere_ls = o3d.geometry.LineSet()
+        self.vis.add_geometry(self._collision_sphere_ls)
         self._pegboard_corners_local: np.ndarray | None = None
 
         # Pegboard (coordinate frame + sphere + rectangle outline)
@@ -1457,7 +1490,7 @@ class _SceneVis:
             self.vis.update_geometry(self._board_mesh)
         if T is not None and not np.allclose(T, self._board_T):
             p = T[:3, 3]
-            print(f"[SceneVis] board → ({p[0]:+.3f}, {p[1]:+.3f}, {p[2]:+.3f})")
+            # print(f"[SceneVis] board → ({p[0]:+.3f}, {p[1]:+.3f}, {p[2]:+.3f})")
         self._board_T = T_new
 
     def update_tcp(self, T: np.ndarray | None):
@@ -1512,6 +1545,24 @@ class _SceneVis:
             mesh.transform(delta)
             self.vis.update_geometry(mesh)
             self._robot_mesh_Ts[i] = T_new
+
+    def update_collision_spheres(self, positions: "np.ndarray | None",
+                                 radii: "np.ndarray | None") -> None:
+        """Draw collision-sphere wireframes. Hidden when show_collision_spheres=False."""
+        empty = o3d.utility.Vector3dVector(np.zeros((0, 3)))
+        positions_ok = (positions is not None and len(positions) > 0
+                        and not np.any(np.isnan(positions))
+                        and not np.any(np.isinf(positions)))
+        if not self.show_collision_spheres or not positions_ok:
+            self._collision_sphere_ls.points = empty
+            self._collision_sphere_ls.lines  = o3d.utility.Vector2iVector(np.zeros((0, 2), int))
+            self._collision_sphere_ls.colors = empty
+        else:
+            new_ls = self.make_sphere_wireframe(positions, radii)
+            self._collision_sphere_ls.points = new_ls.points
+            self._collision_sphere_ls.lines  = new_ls.lines
+            self._collision_sphere_ls.colors = new_ls.colors
+        self.vis.update_geometry(self._collision_sphere_ls)
 
     # ── Quat debug overlays ───────────────────────────────────────────────────
 
@@ -1710,8 +1761,8 @@ class MainScene:
     _TRACK_HOLD_FRAMES    = 15     # consecutive frames under threshold before locking grip
 
     # Robot workspace boundary, relative to the anchor ArUco marker (world frame).
-    WORKSPACE_BOUNDS_LO = np.array([-1.0474, -0.3082, 0.05])
-    WORKSPACE_BOUNDS_HI = np.array([ 0.7942,  0.4220, 0.50])
+    WORKSPACE_BOUNDS_LO = np.array(cfg.WORKSPACE_LO)
+    WORKSPACE_BOUNDS_HI = np.array(cfg.WORKSPACE_HI)
 
     PEGBOARD_CUBES = [
         {"offset": [ 0.10, 0.00, 0.05], "color": [1.0, 0.6, 0.2], "name": "pegboard_cube_0"},
@@ -1800,11 +1851,20 @@ class MainScene:
         self.hands        = _HandDataReceiver(quest_ip, hand_port)
         self.robot: "_RobotController | None" = None
         if _ROBOT_CTRL_AVAILABLE and self.pb_scene is not None:
+            # Apply conservative joint limits to PyBullet IK
+            self.pb_scene.set_joint_limits(
+                cfg.JOINT_MIN_DEG, cfg.JOINT_MAX_DEG, degrees=True)
+            _urdf = cfg.SCENE_LAYOUT_DIR.parent / "robot_assets" / "ur10e.urdf"
             self.robot = _RobotController(
                 unity_ip      = quest_ip,
                 pb_scene      = self.pb_scene,
                 T_world_base  = self.pb_scene.T_world_base,
                 robot_ip      = robot_ip if not simulation else None,
+                urdf_path     = str(_urdf) if _urdf.exists() else None,
+                frax_q_min    = list(np.deg2rad(cfg.JOINT_MIN_DEG)),
+                frax_q_max    = list(np.deg2rad(cfg.JOINT_MAX_DEG)),
+                frax_ws_lo    = cfg.WORKSPACE_LO,
+                frax_ws_hi    = cfg.WORKSPACE_HI,
             )
 
         if simulation:
@@ -2145,6 +2205,13 @@ class MainScene:
 
                 # ── PyBullet scene update ─────────────────────────────────────
                 if self.robot is not None:
+                    # Real robot: poll fresh joint state every frame so frax OSC always
+                    # has an accurate q_current (not just the state from when tracking started).
+                    if not self.simulation:
+                        _q_fresh = self.robot.poll_q()
+                        if _q_fresh is not None:
+                            self.pb_scene.update_robot(_q_fresh)
+
                     if self._grip_state == 'moving_to_hand':
                         target_pts = (left_pts if self._tracked_hand_side == "left"
                                       else right_pts)
@@ -2169,10 +2236,7 @@ class MainScene:
                     else:
                         if self.simulation:
                             self.robot.tick()
-                        else:
-                            q = self.robot.poll_q()
-                            if q is not None:
-                                self.pb_scene.update_robot(q)
+                        # Real robot: poll already done above
 
                     # ── Robot state poll ───────────────────────────────────────
                     self._T_world_tcp = self.robot.tcp_pose
@@ -2218,6 +2282,17 @@ class MainScene:
                         self.vis.update_tcp(self._T_world_tcp)
                     if _link_poses is not None:
                         self.vis.update_robot(_link_poses)
+                    _frax = getattr(self.robot, '_frax', None)
+                    _q_snap = self.robot.q if self.robot is not None else None
+                    if (_frax is not None and _q_snap is not None
+                            and not np.any(np.isnan(_q_snap))):
+                        try:
+                            _sp, _sr = _frax.link_spheres_world(_q_snap)
+                            self.vis.update_collision_spheres(_sp, _sr)
+                        except Exception:
+                            self.vis.update_collision_spheres(None, None)
+                    else:
+                        self.vis.update_collision_spheres(None, None)
                     if self._T_world_tcp is not None and self._tcp_synth is not None:
                         self._tcp_synth.centroid = self._T_world_tcp[:3, 3]
                         self._tcp_synth.R_o3d    = self._T_world_tcp[:3, :3]

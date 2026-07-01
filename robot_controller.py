@@ -74,6 +74,33 @@ except ImportError:
     _PbWaypointRunner = None      # type: ignore[assignment,misc]
     _PB_RUNNER_AVAILABLE = False
 
+
+class _PbJointRunner:
+    """Direct joint-space linear interpolation — sim equivalent of moveJ.
+
+    No IK. Interpolates start_q → target_q in _INTERP_STEPS equal steps,
+    calling resetJointState each frame so the PyBullet scene reflects the motion.
+    """
+    _INTERP_STEPS = 60
+
+    def __init__(self, start_q: np.ndarray, target_q: np.ndarray):
+        self.start_q  = np.asarray(start_q, dtype=float)
+        self.target_q = np.asarray(target_q, dtype=float)
+        self._step    = 0
+        self.done     = False
+
+    def update(self, robot_id: int, arm_indices: "list[int]") -> None:
+        if self.done:
+            return
+        import pybullet as p
+        self._step += 1
+        t = min(self._step / self._INTERP_STEPS, 1.0)
+        q = self.start_q + t * (self.target_q - self.start_q)
+        for j_idx, q_j in zip(arm_indices, q):
+            p.resetJointState(robot_id, j_idx, float(q_j))
+        if self._step >= self._INTERP_STEPS:
+            self.done = True
+
 # ── Grasp orientation helper ────────────────────────────────────────────────────
 
 try:
@@ -91,6 +118,307 @@ except ImportError:
         return np.array([v[0], v[2], v[1]], dtype=float)
     def open3d_to_unity_quaternion(q):   # type: ignore[misc]
         return np.array([q[0], q[2], q[1], -q[3]], dtype=float)
+
+# ── UR10e collision sphere model ───────────────────────────────────────────────
+
+try:
+    from ur_collision_model import (
+        positions_list as _UR_POSITIONS,
+        radii_list     as _UR_RADII,
+        pairs_sc       as _UR_SC_PAIRS,
+        base_position  as _UR_BASE_POS,
+        base_radius    as _UR_BASE_RADIUS,
+        base_sc_idxs   as _UR_BASE_SC_IDXS,
+    )
+    _UR_COLLISION_AVAILABLE = True
+except ImportError:
+    _UR_COLLISION_AVAILABLE = False
+
+# ── frax / CBF (optional) ─────────────────────────────────────────────────────
+
+try:
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).parent / "frax"))
+    _sys.path.insert(0, str(Path(__file__).parent / "frax" / "examples"))
+    import jax
+    import jax.numpy as jnp
+    jax.config.update("jax_enable_x64", True)
+    jax.config.update("jax_platforms", "cpu")
+    from frax.robots.ur10e import load_ur10e
+    from frax.utils.rotation_utils import orientation_error_3D
+    from cbf_utils import OSCBFVelocityConfig
+    from cbfpy import CBF
+    _FRAX_AVAILABLE = True
+except Exception:
+    jnp = None                           # type: ignore[assignment]
+    _FRAX_AVAILABLE = False
+
+# Build frax-format collision dict from the UR10e model when both are available
+if _FRAX_AVAILABLE and _UR_COLLISION_AVAILABLE:
+    _UR_FRAX_COLLISION: "dict | None" = {
+        "positions":      _UR_POSITIONS,
+        "radii":          _UR_RADII,
+        "root_positions": (_UR_BASE_POS,),
+        "root_radii":     (_UR_BASE_RADIUS,),
+        "root_sc_pairs":  tuple((0, idx) for idx in _UR_BASE_SC_IDXS),
+        "root_sc_tols":   tuple(0.0 for _ in _UR_BASE_SC_IDXS),
+        "body_sc_pairs":  _UR_SC_PAIRS,
+        "body_sc_tols":   tuple(0.0 for _ in _UR_SC_PAIRS),
+    }
+else:
+    _UR_FRAX_COLLISION = None
+
+if _FRAX_AVAILABLE:
+    class _RcCbfConfig(OSCBFVelocityConfig):
+        """Velocity-control CBF: joint limits + floor + workspace + obstacle + self-collision.
+
+        Uses per-link collision spheres from ur_collision_model when available, giving
+        accurate floor clearance, per-link obstacle avoidance, and self-collision barriers.
+        Falls back to EE-only checks when the collision model is not loaded.
+        """
+        def __init__(self, robot, base_pos, base_R_flat,
+                     q_min, q_max, z_min, ws_lo, ws_hi,
+                     obs_centers, obs_halves, obs_R_bw, alpha,
+                     sc_pairs=()):
+            self.base_pos    = base_pos
+            self.base_R_flat = base_R_flat
+            self.q_min_t     = q_min
+            self.q_max_t     = q_max
+            self.z_min       = z_min
+            self.ws_lo       = ws_lo
+            self.ws_hi       = ws_hi
+            self.obs_centers = obs_centers
+            self.obs_halves  = obs_halves
+            self.obs_R_bw    = obs_R_bw
+            self._alpha      = alpha
+            self.sc_pairs_i  = tuple(int(i) for i, j in sc_pairs)
+            self.sc_pairs_j  = tuple(int(j) for i, j in sc_pairs)
+            self._has_links  = _UR_COLLISION_AVAILABLE
+            super().__init__(robot)
+
+        def h_1(self, z):
+            q      = z
+            h_jlo  = q - jnp.asarray(self.q_min_t)
+            h_jhi  = jnp.asarray(self.q_max_t) - q
+            base_R = jnp.asarray(self.base_R_flat).reshape(3, 3)
+            base_p = jnp.asarray(self.base_pos)
+
+            if self._has_links:
+                # Per-link sphere positions in world frame
+                link_pos_b, link_r = self.robot.link_collision_data(q)
+                link_r     = jnp.asarray(link_r)   # radii are numpy constants — must be JAX for traced indexing
+                link_pos_w = link_pos_b @ base_R.T + base_p
+
+                # Floor clearance: every sphere must clear z_min
+                h_floor = link_pos_w[:, 2] - link_r - self.z_min
+                parts   = [h_jlo, h_jhi, h_floor]
+
+                # Obstacle avoidance: all link spheres vs all obstacle boxes
+                if self.obs_centers:
+                    obs_c   = jnp.asarray(self.obs_centers)
+                    obs_h   = jnp.asarray(self.obs_halves)
+                    R_bw    = jnp.asarray(self.obs_R_bw).reshape(-1, 3, 3)
+                    d_world = link_pos_w[:, None, :] - obs_c[None, :, :]
+                    d_box   = jnp.einsum("oij,soj->soi", R_bw, d_world)
+                    inside  = jnp.abs(d_box) - obs_h[None, :, :]
+                    sdf     = jnp.linalg.norm(jnp.maximum(inside, 0.0), axis=2)
+                    parts.append((sdf - link_r[:, None]).reshape(-1))
+
+                # Workspace bounds on EE
+                ee_t   = self.robot.ee_transform(q)
+                ee_pos = base_R @ ee_t[:3, 3] + base_p
+                parts.append(jnp.concatenate([
+                    ee_pos - jnp.asarray(self.ws_lo),
+                    jnp.asarray(self.ws_hi) - ee_pos,
+                ]))
+
+                # Self-collision: sphere pairs must keep a positive margin
+                if self.sc_pairs_i:
+                    sc_i = jnp.asarray(self.sc_pairs_i)
+                    sc_j = jnp.asarray(self.sc_pairs_j)
+                    dist = jnp.linalg.norm(link_pos_w[sc_i] - link_pos_w[sc_j], axis=1)
+                    parts.append(dist - link_r[sc_i] - link_r[sc_j])
+            else:
+                # Fallback: EE-only constraints (no collision model loaded)
+                ee_t   = self.robot.ee_transform(q)
+                ee_pos = base_R @ ee_t[:3, 3] + base_p
+                h_floor = jnp.array([ee_pos[2] - self.z_min])
+                parts   = [h_jlo, h_jhi, h_floor, jnp.concatenate([
+                    ee_pos - jnp.asarray(self.ws_lo),
+                    jnp.asarray(self.ws_hi) - ee_pos,
+                ])]
+                if self.obs_centers:
+                    obs_c   = jnp.asarray(self.obs_centers)
+                    obs_h   = jnp.asarray(self.obs_halves)
+                    R_bw    = jnp.asarray(self.obs_R_bw).reshape(-1, 3, 3)
+                    d_world = ee_pos[None, :] - obs_c
+                    d_box   = jnp.einsum("oij,oj->oi", R_bw, d_world)
+                    inside  = jnp.abs(d_box) - obs_h
+                    sdf     = jnp.linalg.norm(jnp.maximum(inside, 0.0), axis=1)
+                    parts.append(sdf - 0.05)
+
+            return jnp.concatenate(parts)
+
+        def alpha(self, h):
+            return self._alpha * h
+
+
+# =============================================================================
+# _FraxController — standalone frax OSC+CBF wrapper
+# =============================================================================
+
+if _FRAX_AVAILABLE:
+    class _FraxController:
+        """Self-contained OSC+CBF velocity controller for the UR10e.
+
+        All frax and CBF parameters live here; RobotController only holds a
+        reference to an instance and calls ``servo_step`` / ``ee_world_pos``.
+        """
+
+        def __init__(
+            self,
+            urdf_path:      str,
+            T_world_base:   np.ndarray,
+            kp_pos:         float = 100.0,
+            kp_ori:         float = 50.0,
+            qdot_max:       float = 1.5,
+            q_min:          "list | None" = None,
+            q_max:          "list | None" = None,
+            cbf_alpha:      float = 10.0,
+            z_min:          float = -0.05,
+            ws_lo:          "list | None" = None,
+            ws_hi:          "list | None" = None,
+            obstacle_boxes: "list | None" = None,
+        ) -> None:
+            self._qdot_max = float(qdot_max)
+
+            # Base frame: frax URDF convention has a Rz(180°) offset
+            _Rz180       = ScipyR.from_euler('z', np.pi).as_matrix()
+            self._base_pos = np.array(T_world_base[:3, 3], float)
+            self._base_R   = np.array(T_world_base[:3, :3], float) @ _Rz180
+
+            # Load robot model with collision spheres when available
+            self.robot = load_ur10e(str(urdf_path),
+                                    collision_data=_UR_FRAX_COLLISION)
+            _col_status = "with collision model" if _UR_COLLISION_AVAILABLE else "EE-only"
+            print(f"[FraxController] Loaded UR10e: {self.robot.num_joints} joints ({_col_status})")
+
+            # JIT-compile nominal OSC
+            kp_task = jnp.array([float(kp_pos)] * 3 + [float(kp_ori)] * 3)
+
+            @jax.jit
+            def _osc(ee_pos, ee_rot, des_pos, des_rot,
+                     des_vel, des_omega, J, M_inv):
+                task_inertia_inv = J @ M_inv @ J.T
+                task_inertia     = jnp.linalg.inv(task_inertia_inv)
+                J_bar    = M_inv @ J.T @ task_inertia
+                task_err = jnp.concatenate([
+                    ee_pos - des_pos,
+                    orientation_error_3D(ee_rot, des_rot),
+                ])
+                return J_bar @ (jnp.concatenate([des_vel, des_omega]) - kp_task * task_err)
+
+            self._osc = _osc
+
+            # Warm-up (triggers JIT compilation once at startup)
+            _q0 = jnp.zeros(self.robot.num_joints)
+            _Mi, _J, _et = self.robot.dynamically_consistent_velocity_control_matrices(_q0)
+            _ = _osc(_et[:3, 3], _et[:3, :3],
+                     _et[:3, 3], _et[:3, :3],
+                     jnp.zeros(3), jnp.zeros(3), _J, _Mi)
+            print("[FraxController] OSC JIT compiled.")
+
+            # Joint limits and workspace bounds
+            _q_min = (np.asarray(q_min, float) if q_min is not None
+                      else np.full(self.robot.num_joints, -2 * np.pi))
+            _q_max = (np.asarray(q_max, float) if q_max is not None
+                      else np.full(self.robot.num_joints,  2 * np.pi))
+            _ws_lo = (np.asarray(ws_lo, float) if ws_lo is not None
+                      else np.array([-1.2, -1.2, -0.05]))
+            _ws_hi = (np.asarray(ws_hi, float) if ws_hi is not None
+                      else np.array([ 1.2,  1.2,  1.50]))
+
+            # Obstacle boxes → tuples (CBF config is immutable once built)
+            obs_c, obs_h, obs_R = [], [], []
+            for obs in (obstacle_boxes or []):
+                if isinstance(obs, dict):
+                    c, h, y = obs['center'], obs['half'], obs.get('yaw_deg', 0.0)
+                elif len(obs) == 3:
+                    c, h, y = obs
+                else:
+                    c, h = obs; y = 0.0
+                obs_c.append(np.asarray(c, float))
+                obs_h.append(np.asarray(h, float))
+                obs_R.append(ScipyR.from_euler('z', float(y), degrees=True).as_matrix().T)
+
+            _cbf_cfg = _RcCbfConfig(
+                self.robot,
+                tuple(float(v) for v in self._base_pos),
+                tuple(float(v) for v in self._base_R.ravel()),
+                tuple(float(v) for v in _q_min),
+                tuple(float(v) for v in _q_max),
+                float(z_min),
+                tuple(float(v) for v in _ws_lo),
+                tuple(float(v) for v in _ws_hi),
+                tuple(map(tuple, obs_c)) if obs_c else (),
+                tuple(map(tuple, obs_h)) if obs_h else (),
+                tuple(tuple(float(v) for v in R.ravel()) for R in obs_R) if obs_R else (),
+                float(cbf_alpha),
+                sc_pairs=_UR_SC_PAIRS if _UR_COLLISION_AVAILABLE else (),
+            )
+            self._cbf_cfg = _cbf_cfg
+            self._cbf = CBF.from_config(_cbf_cfg)
+            _sc_msg = f"{len(_UR_SC_PAIRS)} self-collision pairs" if _UR_COLLISION_AVAILABLE else "no self-collision"
+            print(f"[FraxController] CBF built — {len(obs_c)} obstacle(s), {_sc_msg}.")
+
+        # ── Public API ────────────────────────────────────────────────────────
+
+        def servo_step(self,
+                       target_pos_world: np.ndarray,
+                       target_rot_world: np.ndarray,
+                       q_current:        np.ndarray,
+                       dt:               float) -> np.ndarray:
+            """Compute q_target for one servoJ step via OSC+CBF."""
+            q       = jnp.array(q_current)
+            des_pos = jnp.array(self._base_R.T @ (target_pos_world - self._base_pos))
+            des_rot = jnp.array(self._base_R.T @ target_rot_world)
+
+            M_inv, J, ee_t = self.robot.dynamically_consistent_velocity_control_matrices(q)
+            qdot      = self._osc(ee_t[:3, 3], ee_t[:3, :3],
+                                  des_pos, des_rot,
+                                  jnp.zeros(3), jnp.zeros(3), J, M_inv)
+            qdot_safe = np.asarray(self._cbf.safety_filter(q, qdot))
+            qdot_np   = np.clip(qdot_safe, -self._qdot_max, self._qdot_max)
+            return q_current + qdot_np * dt
+
+        def ee_world_pos(self, q_current: np.ndarray) -> np.ndarray:
+            """End-effector position in world frame."""
+            q = jnp.array(q_current)
+            _, _, ee_t = self.robot.dynamically_consistent_velocity_control_matrices(q)
+            return self._base_R @ np.asarray(ee_t[:3, 3]) + self._base_pos
+
+        def link_spheres_world(self, q_current: np.ndarray):
+            """Return (positions, radii) of all collision spheres in world frame.
+
+            Returns (None, None) when the UR collision model is not loaded.
+            positions: np.ndarray (N, 3);  radii: np.ndarray (N,)
+            """
+            if not _UR_COLLISION_AVAILABLE:
+                return None, None
+            q = jnp.array(q_current)
+            pos_b, radii = self.robot.link_collision_data(q)
+            pos_w = np.asarray(pos_b) @ self._base_R.T + self._base_pos
+            return pos_w, np.asarray(radii)
+
+        def h_barriers(self, q_current: np.ndarray) -> np.ndarray:
+            """Evaluate all CBF barrier values h(q).  h > 0 means safe."""
+            return np.asarray(self._cbf_cfg.h_1(jnp.array(q_current)))
+
+        def rebuild_cbf(self, new_alpha: float) -> None:
+            """Rebuild the CBF QP with a new alpha value (triggers re-JIT, ~1-2 s)."""
+            self._cbf_cfg._alpha = float(new_alpha)
+            self._cbf = CBF.from_config(self._cbf_cfg)
+            print(f"[FraxController] CBF rebuilt with alpha={new_alpha:.2f}")
 
 
 # =============================================================================
@@ -115,10 +443,6 @@ class RobotController:
     # -90° yaw between the PyBullet URDF convention and Unity's URDF asset.
     _BASE_YAW_CORRECTION_DEG = -90.0
 
-    # Simulation-mode grasp geometry (matches MainScene constants).
-    _SIM_TCP_OFFSET    = 0.17   # tool0-to-gripper-tip offset along board normal
-    _SIM_APPROACH_DIST = 0.30   # standoff added beyond the grasp point
-
     def __init__(
         self,
         unity_ip:       str,
@@ -130,6 +454,11 @@ class RobotController:
         approach_dist:  float = 0.10,
         speed:          float = 0.15,
         accel:          float = 0.10,
+        urdf_path:      "str | None" = None,   # enables frax OSC+CBF (real robot only)
+        frax_q_min:     "list | None" = None,  # joint lower limits (rad) for CBF
+        frax_q_max:     "list | None" = None,  # joint upper limits (rad) for CBF
+        frax_ws_lo:     "list | None" = None,  # workspace lower corner [x,y,z] (world)
+        frax_ws_hi:     "list | None" = None,  # workspace upper corner [x,y,z] (world)
     ) -> None:
         self.simulation    = (robot_ip is None)
         self._robot_ip     = robot_ip
@@ -149,15 +478,26 @@ class RobotController:
         # Real-robot grasp thread
         self._grasp_thread: "threading.Thread | None" = None
         self._grasp_cancel  = threading.Event()
-        self._grasp_status: str = "idle"
 
         # Simulation motion state machine
-        self._sim_runner  = None          # _PbWaypointRunner instance
-        self._sim_phase: "str | None" = None  # 'approach' | 'final' | 'move_tcp'
-        self._sim_on_complete: "Callable | None" = None
-        self._sim_approach_pos: "np.ndarray | None" = None
-        self._sim_grasp_pos:    "np.ndarray | None" = None
-        self._sim_grasp_quat:   "np.ndarray | None" = None
+        self._sim_runner:       None                  = None
+        self._sim_phase:        "str | None"          = None
+        self._sim_on_complete:  "Callable | None"     = None
+        self._sim_grasp_joints: "np.ndarray | None"   = None
+
+        # frax OSC+CBF (real robot + simulation; None if unavailable or no urdf_path given)
+        self._frax: "None" = None
+        if _FRAX_AVAILABLE and urdf_path is not None:
+            try:
+                self._frax = _FraxController(
+                    urdf_path, self._T_world_base,
+                    q_min  = frax_q_min,
+                    q_max  = frax_q_max,
+                    ws_lo  = frax_ws_lo,
+                    ws_hi  = frax_ws_hi,
+                )
+            except Exception as exc:
+                print(f"[Robot] frax init failed: {exc} — falling back to IK.")
 
         # ZMQ publishers (Unity)
         _ctx = zmq.Context.instance()
@@ -215,13 +555,18 @@ class RobotController:
         """Drive TCP toward a target this frame.
 
         Simulation : calls pb_scene.step_ik (updates pb_scene.current_q).
-        Real robot : solves IK then sends a servoJ command.
+        Real robot : OSC+CBF via frax if available, else IK → servoJ.
         """
         if self._pb_scene is None:
             return
         if self.simulation:
             self._pb_scene.step_ik(
                 self._pb_scene.current_q, list(target_pos), list(target_quat), dt)
+        elif self._frax is not None and self._last_q is not None:
+            target_rot = ScipyR.from_quat(list(target_quat)).as_matrix()
+            q_target = self._frax.servo_step(
+                np.array(target_pos), target_rot, self._last_q, dt)
+            self.servoJ(q_target, dt)
         else:
             try:
                 q = self.solve_ik(np.array(target_pos), list(target_quat), self._last_q)
@@ -232,18 +577,23 @@ class RobotController:
     # ── Simulation per-frame tick ─────────────────────────────────────────────
 
     def tick(self) -> None:
-        """Advance the simulation waypoint runner one frame.
-
-        Call this every loop iteration regardless of whether a grasp or
-        move_tcp is active — it is a no-op when nothing is running.
-        """
+        """Advance the simulation runner one frame; call on_complete when done."""
         if not self.simulation or self._sim_runner is None:
             return
         if not self._sim_runner.done:
             self._sim_runner.update(self._pb_scene.robot_id,
                                     self._pb_scene.arm_indices)
             return
-        self._on_sim_phase_done()
+        cb = self._sim_on_complete
+        self._sim_runner       = None
+        self._sim_phase        = None
+        self._sim_on_complete  = None
+        self._sim_grasp_joints = None
+        if cb is not None:
+            try:
+                cb(True)
+            except Exception:
+                pass
 
     # ── Single TCP-pose move ──────────────────────────────────────────────────
 
@@ -271,6 +621,35 @@ class RobotController:
                 self._sim_on_complete = on_complete
             except Exception as e:
                 print(f"[Robot sim] move_tcp failed: {e}")
+        elif self._frax is not None:
+            target_pos = np.array(pos, float)
+            target_rot = ScipyR.from_quat(list(quat)).as_matrix()
+            def _frax_loop():
+                dt      = 0.008   # ~125 Hz
+                timeout = 30.0
+                t0      = time.time()
+                self._grasp_cancel.clear()
+                while not self._grasp_cancel.is_set():
+                    if time.time() - t0 > timeout:
+                        print("[Robot] frax move_tcp: timeout.")
+                        if on_complete:
+                            on_complete(False)
+                        return
+                    q_cur = self._last_q
+                    if q_cur is None:
+                        time.sleep(dt)
+                        continue
+                    ee_pos = self._frax.ee_world_pos(q_cur)
+                    if np.linalg.norm(ee_pos - target_pos) < 0.005:
+                        self.servoStop()
+                        if on_complete:
+                            on_complete(True)
+                        return
+                    q_target = self._frax.servo_step(target_pos, target_rot, q_cur, dt)
+                    self.servoJ(q_target, dt)
+                    time.sleep(dt)
+                self.servoStop()
+            threading.Thread(target=_frax_loop, daemon=True).start()
         else:
             def _move():
                 try:
@@ -378,42 +757,37 @@ class RobotController:
             return self._sim_phase is not None
         return self._grasp_thread is not None and self._grasp_thread.is_alive()
 
-    @property
-    def grasp_status(self) -> str:
-        if self.simulation:
-            return self._sim_phase or "idle"
-        return self._grasp_status
-
     def execute_grasp(
         self,
-        tool_data:    tuple,
-        grasp_joints: "list | None"                   = None,
-        category:     str                             = "tool",
+        grasp_joints: "list | np.ndarray",
         on_complete:  "Callable[[bool], None] | None" = None,
     ) -> None:
-        """Approach → grasp in both simulation and real-robot modes.
-
-        Parameters
-        ----------
-        tool_data    : (centroid_world, R_world, size) from get_world_data().
-        grasp_joints : Pre-recorded joint angles [6 floats, rad].  Sim mode
-                       ignores this and uses IK.
-        category     : "tool" or "part" (affects retract direction for real).
-        on_complete  : Called with success bool when the sequence finishes.
-        """
+        """moveJ directly to grasp_joints in both simulation and real-robot modes."""
         if self.tool_grasp_running:
             print("[Robot] Grasp already running — cancel first.")
             return
         if self.simulation:
-            self._start_sim_grasp(tool_data, on_complete)
+            if self._pb_scene is None:
+                if on_complete:
+                    on_complete(False)
+                return
+            self._sim_on_complete  = on_complete
+            self._sim_grasp_joints = np.array(grasp_joints, dtype=float)
+            self._sim_runner = _PbJointRunner(
+                self._pb_scene.current_q.copy(),
+                self._sim_grasp_joints,
+            )
+            self._sim_phase = 'grasp'
+            print("[Robot sim] moveJ → grasp_joints")
         else:
             if not _RTDE_AVAILABLE:
                 print("[Robot] rtde_control not installed.")
                 return
             self._grasp_cancel.clear()
+            gj = np.array(grasp_joints, dtype=float)
             self._grasp_thread = threading.Thread(
                 target=self._grasp_sequence,
-                args=(tool_data, grasp_joints, category, on_complete),
+                args=(gj, on_complete),
                 daemon=True,
             )
             self._grasp_thread.start()
@@ -421,7 +795,16 @@ class RobotController:
     def cancel_motion(self) -> None:
         """Abort any running grasp and stop the arm."""
         if self.simulation:
-            self._finish_sim(False)
+            cb = self._sim_on_complete
+            self._sim_runner       = None
+            self._sim_phase        = None
+            self._sim_on_complete  = None
+            self._sim_grasp_joints = None
+            if cb is not None:
+                try:
+                    cb(False)
+                except Exception:
+                    pass
         else:
             self._grasp_cancel.set()
             self.stopJ()
@@ -512,188 +895,23 @@ class RobotController:
             print("[Robot] Gripper ready.")
         return self._gripper
 
-    # ── Internal: simulation grasp state machine ──────────────────────────────
-
-    def _start_sim_grasp(self, tool_data, on_complete):
-        if self._pb_scene is None or not _PB_RUNNER_AVAILABLE:
-            if on_complete:
-                on_complete(False)
-            return
-        centroid, R_world, _sz = tool_data
-        board_out  = R_world[:, 2]
-        board_out  = board_out / (np.linalg.norm(board_out) + 1e-9)
-        grasp_quat = _tool_grasp_quat(R_world)
-
-        tcp_grasp    = centroid + self._SIM_TCP_OFFSET * board_out
-        tcp_approach = centroid + (self._SIM_TCP_OFFSET + self._SIM_APPROACH_DIST) * board_out
-
-        self._sim_grasp_pos    = tcp_grasp
-        self._sim_approach_pos = tcp_approach
-        self._sim_grasp_quat   = grasp_quat
-        self._sim_on_complete  = on_complete
-
-        try:
-            self._sim_runner = _PbWaypointRunner(
-                self._pb_scene.robot_id,
-                self._pb_scene.tool0_link_idx,
-                self._pb_scene.current_q.copy(),
-                self._pb_scene.arm_indices,
-                tcp_approach.tolist(),
-                target_quat_xyzw=grasp_quat,
-            )
-            self._sim_phase = 'approach'
-            print(f"[Robot sim] Grasp approach → {np.round(tcp_approach, 3).tolist()}")
-        except Exception as e:
-            print(f"[Robot sim] Grasp start failed: {e}")
-            self._finish_sim(False)
-
-    def _on_sim_phase_done(self):
-        if self._sim_phase == 'approach':
-            try:
-                self._sim_runner = _PbWaypointRunner(
-                    self._pb_scene.robot_id,
-                    self._pb_scene.tool0_link_idx,
-                    self._pb_scene.current_q.copy(),
-                    self._pb_scene.arm_indices,
-                    self._sim_grasp_pos.tolist(),
-                    target_quat_xyzw=self._sim_grasp_quat,
-                    straight_line=True,
-                    straight_line_start=self._sim_approach_pos.tolist(),
-                )
-                self._sim_phase = 'final'
-                print(f"[Robot sim] Grasp final → {np.round(self._sim_grasp_pos, 3).tolist()}")
-            except Exception as e:
-                print(f"[Robot sim] Grasp final failed: {e}")
-                self._finish_sim(False)
-        else:
-            self._finish_sim(True)
-
-    def _finish_sim(self, success: bool) -> None:
-        cb = self._sim_on_complete
-        self._sim_runner       = None
-        self._sim_phase        = None
-        self._sim_on_complete  = None
-        self._sim_approach_pos = None
-        self._sim_grasp_pos    = None
-        self._sim_grasp_quat   = None
-        if cb is not None:
-            try:
-                cb(success)
-            except Exception:
-                pass
-
     # ── Internal: real-robot grasp sequence ───────────────────────────────────
 
-    def _check_cancel(self) -> None:
-        if self._grasp_cancel.is_set():
-            raise InterruptedError("Grasp cancelled.")
-
-    def _grasp_sequence(self, tool_data, grasp_joints, category, on_complete):
-        if grasp_joints is None:
-            print("[Robot] No grasp_joints recorded — cannot execute grasp.")
-            if on_complete:
-                on_complete(False)
-            return
-
-        centroid, R_world, _sz = tool_data
-        # R_world[:, 2] is the pegboard outward normal (same as _plane_n in annotator)
-        normal  = R_world[:, 2]
-        normal  = normal / (np.linalg.norm(normal) + 1e-9)
-        is_part = (category == "part")
+    def _grasp_sequence(self, grasp_joints: np.ndarray,
+                        on_complete: "Callable[[bool], None] | None") -> None:
         success = False
-
         try:
             self.servoStop()
-            time.sleep(0.05)
-
-            current_q = self.poll_q()
-            if current_q is None:
-                raise RuntimeError("Could not read joint angles from robot.")
-            self._check_cancel()
-
-            # 1. FK of grasp_joints → TCP pose at grasp
-            q_grasp = np.array(grasp_joints, dtype=float)
-            self._pb_scene.update_robot(q_grasp)
-            T_grasp = self._pb_scene.update_tcp_bodies()
-            if T_grasp is None:
-                raise RuntimeError("FK failed for grasp_joints.")
-            pos_grasp  = T_grasp[:3, 3]
-            quat_grasp = ScipyR.from_matrix(T_grasp[:3, :3]).as_quat().tolist()
-
-            # 2. Compute approach standoff along pegboard outward normal
-            if is_part:
-                pos_above    = pos_grasp + np.array([0.0, 0.0, 0.05])
-                pos_approach = pos_above + self._approach_dist * normal
-                q_approach   = self.solve_ik(pos_approach, quat_grasp, current_q)
-                q_above      = self.solve_ik(pos_above,    quat_grasp, q_approach)
-            else:
-                pos_approach = pos_grasp + self._approach_dist * normal
-                q_approach   = self.solve_ik(pos_approach, quat_grasp, current_q)
-
-            self._check_cancel()
-
-            # 3. Open gripper
-            self._set_status("Opening gripper")
-            self.open_gripper()
-            self._check_cancel()
-
-            # 4. servoJ to approach standoff (smooth streaming, interruptible)
-            self._set_status("Streaming to approach")
-            self._servo_to(current_q, q_approach)
-            self._check_cancel()
-
-            if is_part:
-                self._set_status("Moving above grasp")
-                self._servo_to(q_approach, q_above)
-                self._check_cancel()
-
-            # 5. Final approach with exact pre-recorded joints (slow moveJ)
-            self._set_status("Moving to grasp pose")
-            self.moveJ(grasp_joints, speed=self._speed * 0.5, accel=self._accel * 0.5)
-            self._check_cancel()
-
-            # 6. Close gripper
-            self._set_status("Closing gripper")
-            self.close_gripper()
-            time.sleep(0.3)
-            self._check_cancel()
-
-            # 7. Retract
-            if is_part:
-                self._set_status("Lifting")
-                self.moveJ(q_above.tolist(), speed=self._speed * 0.5, accel=self._accel * 0.5)
-            self._set_status("Retracting to approach")
-            self.moveJ(q_approach.tolist())
-
-            self._set_status("Done")
+            if self._grasp_cancel.is_set():
+                raise InterruptedError("Grasp cancelled.")
+            self.moveJ(grasp_joints)
             success = True
-
         except InterruptedError:
-            self._set_status("Cancelled")
+            print("[Robot] Grasp cancelled.")
         except Exception as e:
-            self._set_status(f"Error: {e}")
             print(f"[Robot] Grasp error: {e}")
-
         if on_complete is not None:
             try:
                 on_complete(success)
             except Exception:
                 pass
-
-    def _servo_to(self, q_start: np.ndarray, q_end: np.ndarray,
-                  duration: float = 3.0, dt: float = 0.02) -> None:
-        """Stream servoJ commands interpolating from q_start to q_end."""
-        steps = max(1, int(duration / dt))
-        for i in range(steps):
-            if self._grasp_cancel.is_set():
-                raise InterruptedError("Grasp cancelled.")
-            alpha = (i + 1) / steps
-            q_cmd = q_start + alpha * (q_end - q_start)
-            self.servoJ(q_cmd, dt)
-            time.sleep(dt)
-        self.servoStop()
-        time.sleep(0.1)
-
-    def _set_status(self, msg: str) -> None:
-        self._grasp_status = msg
-        print(f"[Robot] {msg}")
