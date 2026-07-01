@@ -82,7 +82,7 @@ class _State:
         self._lock        = threading.Lock()
         # Target
         self.target_pos   = _WS_CTR.copy()
-        self.target_euler = np.array([180.0, 0.0, 0.0])  # pointing down (ZYX deg)
+        self.target_euler = np.array([180.0, -180.0, 0.0])  # pointing down (ZYX deg)
         # Mode
         self.mode         = "hold"   # "hold" | "cbf" | "ik"
         self.prev_mode    = "cbf"    # restored on RESUME
