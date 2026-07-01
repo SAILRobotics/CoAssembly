@@ -1707,7 +1707,7 @@ class MainScene:
     _AUTO_LOCK_MAX_DIST     = 0.5    # metres — auto-lock-on-sight only within this range
     _AUTO_LOCK_MAX_TILT_DEG = 20.0   # degrees — max tilt from vertical to auto-lock
     _TRACK_DIST_THRESHOLD = 0.02   # metres — TCP-to-target distance considered "arrived"
-    _TRACK_HOLD_FRAMES    = 15     # consecutive frames under threshold before locking grip
+    _TRACK_HOLD_SECS      = 0.5   # seconds continuously under threshold before locking grip
 
     # Robot workspace boundary, relative to the anchor ArUco marker (world frame).
     WORKSPACE_BOUNDS_LO = np.array([-1.0474, -0.3082, 0.05])
@@ -1854,7 +1854,7 @@ class MainScene:
         self._last_ar_board_T: "np.ndarray | None"    = None   # last AR box pose from _TargetPoseReceiver; persists between polls
         self._pending_grasp_tool_id: "int | None"           = None   # tool ID being grasped (set on click, not yet read back)
         self._tracked_hand_side: "str | None"        = None   # which hand is being tracked: 'left' or 'right'
-        self._track_proximity_frames                            = 0      # consecutive frames TCP has been within _TRACK_DIST_THRESHOLD
+        self._track_proximity_enter_t: "float | None"           = None   # perf_counter time when TCP first entered _TRACK_DIST_THRESHOLD
         self._track_palm_target_pos: "np.ndarray | None" = None   # world position of the palm being tracked toward
         self._last_hand_track_time: "float | None"     = None   # timestamp of last hand-track servoJ command; used to compute dt
         self._synth_cubes_added                  = False  # True once PEGBOARD_CUBES have been added to synth._objects
@@ -2093,7 +2093,7 @@ class MainScene:
                         self._grip_state = None
                         self._last_ar_board_T = None
                         self._tracked_hand_side = None
-                        self._track_proximity_frames = 0
+                        self._track_proximity_enter_t = None
                         self.vis.clear_board_manip_debug()
                         if self.robot is not None:
                             self.robot.cancel_motion()
@@ -2108,7 +2108,7 @@ class MainScene:
                         if opposite_hand in ("left", "right"):
                             self._grip_state = 'moving_to_hand'
                             self._tracked_hand_side = opposite_hand
-                            self._track_proximity_frames = 0
+                            self._track_proximity_enter_t = None
                             print(f"[TCP click] Moving to {opposite_hand} hand palm "
                                   f"(opposite of {clicking_hand} click)")
                         else:
@@ -2184,12 +2184,15 @@ class MainScene:
                         dist = float(np.linalg.norm(
                             self._T_world_tcp[:3, 3] - self._track_palm_target_pos))
                         if dist < self._TRACK_DIST_THRESHOLD:
-                            self._track_proximity_frames += 1
+                            if self._track_proximity_enter_t is None:
+                                self._track_proximity_enter_t = time.perf_counter()
                         else:
-                            self._track_proximity_frames = 0
-                        if self._track_proximity_frames >= self._TRACK_HOLD_FRAMES:
+                            self._track_proximity_enter_t = None
+                        if (self._track_proximity_enter_t is not None
+                                and time.perf_counter() - self._track_proximity_enter_t
+                                    >= self._TRACK_HOLD_SECS):
                             _tracked = self._tracked_hand_side
-                            self._track_proximity_frames = 0
+                            self._track_proximity_enter_t = None
                             self._track_palm_target_pos = None
                             self._grip_state = 'grabbed'
                             print(f"[TCP track] Reached {_tracked} palm — "
