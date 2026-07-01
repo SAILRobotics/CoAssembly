@@ -62,6 +62,17 @@ _WS_LO  = np.array(cfg.WORKSPACE_LO, float)
 _WS_HI  = np.array(cfg.WORKSPACE_HI, float)
 _WS_CTR = (_WS_LO + _WS_HI) / 2.0
 
+# Pegboard outward normal (Z column of T_world_peg) — used for approach direction.
+_PEG_NPZ = cfg.SCENE_LAYOUT_DIR / "T_world10_pegboard101.npz"
+try:
+    _peg = np.load(str(_PEG_NPZ))
+    _BOARD_NORMAL = _peg["T_world10_pegboard"][:3, 2].astype(float)
+    _BOARD_NORMAL /= np.linalg.norm(_BOARD_NORMAL)
+except Exception:
+    _BOARD_NORMAL = np.array([1.0, 0.0, 0.0])  # fallback: world +X
+
+_APPROACH_DIST = 0.3   # metres standoff along board normal
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Shared state (lock-protected)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -96,7 +107,8 @@ class _State:
         self.trigger_cbf_rebuild  = False  # rebuild CBF QP (alpha changed)
         self.trigger_freedrive = False  # toggle freedrive (real robot)
         self.freedrive_on      = False
-        self.grasp_tcp_T = None  # 4×4 FK at grasp_joints; shown while grasp runs
+        self.grasp_tcp_T    = None  # 4×4 FK at grasp_joints; shown while grasp runs
+        self.approach_tcp_T = None  # 4×4 approach pose; shown while grasp runs
 
     # Thread-safe bulk update
     def update(self, **kwargs):
@@ -190,22 +202,70 @@ def _control_loop(robot: _RobotController, simulation: bool):
                     if gj is None:
                         _S.update(mode=_resume_mode,
                                   status=f"Tool {tid}: no grasp_joints recorded.")
+                    elif robot._pb_scene is None:
+                        _S.update(mode=_resume_mode, status="No PyBullet scene.")
                     else:
-                        # FK: show where the TCP will be at grasp_joints
-                        grasp_T = None
-                        if robot._pb_scene is not None:
-                            saved_q = robot._pb_scene.current_q.copy()
-                            robot._pb_scene.update_robot(np.array(gj, float))
+                        gj_arr   = np.array(gj, float)
+                        category = tool_entry.get("category", "tool")
+                        is_part  = (category == "part")
+                        saved_q  = robot._pb_scene.current_q.copy()
+                        try:
+                            # FK at grasp_joints → TCP pose
+                            robot._pb_scene.update_robot(gj_arr)
                             grasp_T = robot._pb_scene.update_tcp_bodies()
                             robot._pb_scene.update_robot(saved_q)
-                        _S.update(grasp_tcp_T=grasp_T)
+                            if grasp_T is None:
+                                _S.update(mode=_resume_mode, status="FK failed.")
+                                continue
+
+                            tcp_pos  = grasp_T[:3, 3]
+                            tcp_rot  = grasp_T[:3, :3]
+                            tcp_quat = ScipyR.from_matrix(tcp_rot).as_quat().tolist()
+
+                            # Tool:  approach = grasp + D * board_normal
+                            # Part:  above    = grasp + [0,0,0.05]  (lift 5 cm)
+                            #        approach = above + D * board_normal
+                            if is_part:
+                                pos_above    = tcp_pos + np.array([0.0, 0.0, 0.05])
+                                pos_approach = pos_above + _APPROACH_DIST * _BOARD_NORMAL
+                                above_T = np.eye(4)
+                                above_T[:3, :3] = tcp_rot
+                                above_T[:3, 3]  = pos_above
+                            else:
+                                pos_approach = tcp_pos + _APPROACH_DIST * _BOARD_NORMAL
+                                above_T      = None
+
+                            approach_T = np.eye(4)
+                            approach_T[:3, :3] = tcp_rot
+                            approach_T[:3, 3]  = pos_approach
+
+                            # Seed all IK from grasp_joints so the solver stays in
+                            # the same arm/wrist configuration — prevents wrist flips
+                            # during the approach→grasp linear interpolation.
+                            q_approach = robot.solve_ik(
+                                pos_approach, tcp_quat, seed_q=gj_arr)
+                            q_above = None
+                            if is_part:
+                                q_above = robot.solve_ik(
+                                    pos_above, tcp_quat, seed_q=gj_arr)
+                        except RuntimeError as e:
+                            _S.update(mode=_resume_mode,
+                                      status=f"IK failed: {e}")
+                            continue
+                        finally:
+                            robot._pb_scene.update_robot(saved_q)
+
+                        _S.update(grasp_tcp_T=grasp_T, approach_tcp_T=approach_T)
                         robot.execute_grasp(
-                            gj,
+                            gj_arr,
                             on_complete=lambda ok, _m=_resume_mode: _S.update(
                                 mode=_m,
                                 grasp_tcp_T=None,
+                                approach_tcp_T=None,
                                 status=f"Grasp {'OK' if ok else 'FAILED'}",
                             ),
+                            q_approach=q_approach,
+                            q_above=q_above,
                         )
             except Exception as e:
                 _S.update(mode=_resume_mode, status=f"Grasp error: {e}")
@@ -222,7 +282,14 @@ def _control_loop(robot: _RobotController, simulation: bool):
         # --- Advance sim grasp state machine (tick) ---
         if simulation and robot._sim_phase is not None:
             robot.tick()
-            _S.update(status='Grasping…' if robot._sim_phase == 'grasp' else 'Grasp done')
+            _PHASE_LABELS = {
+                'approach':  'Moving to approach…',
+                'above':     'Moving in to above…',
+                'grasp':     'Grasping…',
+                'ret_above': 'Lifting to above…',
+                'retract':   'Retracting to approach…',
+            }
+            _S.update(status=_PHASE_LABELS.get(robot._sim_phase or '', 'Motion done'))
 
             if robot._pb_scene is not None:
                 q_tick = robot._pb_scene.current_q.copy()
@@ -441,11 +508,17 @@ def _vis_thread(robot: _RobotController):
     _last_target_rot = np.eye(3)
 
     # ── Grasp TCP frame (FK from grasp_joints; visible while grasp runs) ─────
-    _GRASP_FRAME_HIDDEN = np.array([0.0, 0.0, 100.0])
+    _FRAME_HIDDEN = np.array([0.0, 0.0, -3.0])
     grasp_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.12)
-    grasp_frame.translate(_GRASP_FRAME_HIDDEN)
+    grasp_frame.translate(_FRAME_HIDDEN)
     vis.add_geometry(grasp_frame)
     _last_grasp_T: "np.ndarray | None" = None
+
+    # ── Approach TCP frame (same orientation as grasp, 0.3 m back along gripper) ─
+    approach_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.08)
+    approach_frame.translate(_FRAME_HIDDEN)
+    vis.add_geometry(approach_frame)
+    _last_approach_T: "np.ndarray | None" = None
 
     # ── Collision sphere wireframe ────────────────────────────────────────────
     col_ls = o3d.geometry.LineSet()
@@ -465,26 +538,27 @@ def _vis_thread(robot: _RobotController):
         q    = snap["q"]
         frax = getattr(robot, "_frax", None)
 
-        # ── Update grasp TCP frame ────────────────────────────────────────────
-        new_grasp_T = snap["grasp_tcp_T"]
-        _grasp_changed = (
-            (new_grasp_T is None) != (_last_grasp_T is None)
-            or (new_grasp_T is not None and _last_grasp_T is not None
-                and not np.allclose(new_grasp_T, _last_grasp_T))
-        )
-        if _grasp_changed:
-            if new_grasp_T is not None:
-                gf = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.12)
-                gf.transform(new_grasp_T)
-            else:
-                gf = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.12)
-                gf.translate(_GRASP_FRAME_HIDDEN)
-            grasp_frame.vertices       = gf.vertices
-            grasp_frame.triangles      = gf.triangles
-            grasp_frame.vertex_normals = gf.vertex_normals
-            grasp_frame.vertex_colors  = gf.vertex_colors
-            _last_grasp_T = new_grasp_T.copy() if new_grasp_T is not None else None
-            vis.update_geometry(grasp_frame)
+        # ── Update grasp TCP frame and approach frame ─────────────────────────
+        def _update_frame(geo, new_T, last_T, size):
+            changed = (
+                (new_T is None) != (last_T is None)
+                or (new_T is not None and last_T is not None
+                    and not np.allclose(new_T, last_T))
+            )
+            if changed:
+                f = o3d.geometry.TriangleMesh.create_coordinate_frame(size=size)
+                f.transform(new_T) if new_T is not None else f.translate(_FRAME_HIDDEN)
+                geo.vertices       = f.vertices
+                geo.triangles      = f.triangles
+                geo.vertex_normals = f.vertex_normals
+                geo.vertex_colors  = f.vertex_colors
+                vis.update_geometry(geo)
+            return new_T.copy() if new_T is not None else None
+
+        new_grasp_T    = snap["grasp_tcp_T"]
+        new_approach_T = snap["approach_tcp_T"]
+        _last_grasp_T    = _update_frame(grasp_frame,    new_grasp_T,    _last_grasp_T,    0.12)
+        _last_approach_T = _update_frame(approach_frame, new_approach_T, _last_approach_T, 0.08)
 
         # ── Move target frame ─────────────────────────────────────────────────
         new_tgt = snap["target_pos"]
@@ -566,7 +640,7 @@ def _color_for_h(h: float):
     return (255, 60, 60, 255)
 
 
-def _dpg_thread(robot: _RobotController, simulation: bool, tool_ids: list[int]):
+def _dpg_thread(robot: _RobotController, simulation: bool, tool_labels: "list[str]"):
     dpg.create_context()
 
     with dpg.font_registry():
@@ -672,19 +746,20 @@ def _dpg_thread(robot: _RobotController, simulation: bool, tool_ids: list[int]):
         # ── Grasp ─────────────────────────────────────────────────────────────
         dpg.add_text("Grasp Tool", color=(200, 200, 255))
         dpg.add_separator()
-        if tool_ids:
-            dpg.add_combo([str(t) for t in tool_ids], tag="grasp_combo",
-                          default_value=str(tool_ids[0]), width=120)
+        if tool_labels:
+            dpg.add_combo(tool_labels, tag="grasp_combo",
+                          default_value=tool_labels[0], width=260)
             with dpg.group(horizontal=True):
                 dpg.add_button(label="Execute grasp",
                                callback=lambda: _S.update(
-                                   trigger_grasp_id=int(dpg.get_value("grasp_combo"))))
+                                   trigger_grasp_id=int(
+                                       dpg.get_value("grasp_combo").split(":")[0])))
                 if not simulation:
                     dpg.add_button(
                         label="Freedrive toggle",
                         callback=lambda: _S.update(trigger_freedrive=True))
         else:
-            dpg.add_text("(no tool_layout2.json found)")
+            dpg.add_text("(no tool layout found)")
         dpg.add_spacer(height=4)
 
         # ── Robot state display ───────────────────────────────────────────────
@@ -913,14 +988,17 @@ def main():
     elif not simulation:
         print("[tester] WARNING: frax not available — IK only mode.")
 
-    # ── Load tool IDs ─────────────────────────────────────────────────────────
-    tool_ids = []
+    # ── Load tool list ────────────────────────────────────────────────────────
+    tool_labels: "list[str]" = []   # "id: type [category]"
     if _LAYOUT_DIR.exists():
         import json
         try:
             with open(_LAYOUT_DIR) as f:
                 layout = json.load(f)
-            tool_ids = [t["id"] for t in layout.get("tools", []) if "id" in t]
+            tool_labels = [
+                f"{t['id']}: {t.get('type', '?')} [{t.get('category', 'tool')}]"
+                for t in layout.get("tools", []) if "id" in t
+            ]
         except Exception:
             pass
 
@@ -939,7 +1017,7 @@ def main():
 
     if _DPG_AVAILABLE:
         dpg_t = threading.Thread(
-            target=_dpg_thread, args=(robot, simulation, tool_ids), daemon=True)
+            target=_dpg_thread, args=(robot, simulation, tool_labels), daemon=True)
         dpg_t.start()
         print("[tester] DPG panel started.")
     else:
