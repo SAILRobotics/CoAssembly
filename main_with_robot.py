@@ -1761,8 +1761,8 @@ class MainScene:
     _RELOCK_COOLDOWN = 2.0
     _AUTO_LOCK_MAX_DIST     = 0.5    # metres — auto-lock-on-sight only within this range
     _AUTO_LOCK_MAX_TILT_DEG = 20.0   # degrees — max tilt from vertical to auto-lock
-    _TRACK_DIST_THRESHOLD = 0.02   # metres — TCP-to-target distance considered "arrived"
-    _TRACK_HOLD_SECS      = 0.5   # seconds continuously under threshold before locking grip
+    _TRACK_DIST_THRESHOLD = 0.075   # metres — TCP-to-target distance considered "arrived"
+    _TRACK_HOLD_SECS      = 0.2   # seconds continuously under threshold before locking grip
 
     # Robot workspace boundary, relative to the anchor ArUco marker (world frame).
     WORKSPACE_BOUNDS_LO = np.array(cfg.WORKSPACE_LO)
@@ -1878,6 +1878,8 @@ class MainScene:
             print(f"[Robot] Simulation mode — RobotController ready (no hardware)")
         elif self.robot is not None:
             print(f"[Robot] Live mode — RobotController ready ({robot_ip})")
+            threading.Thread(target=self.robot.connect_gripper, daemon=True,
+                             name="gripper-preconnect").start()
 
         self.anchor      = _WorldAnchor(quest_ip)
         self.tools       = _ToolSelectionManager(quest_ip)
@@ -1923,6 +1925,7 @@ class MainScene:
         self._tracked_hand_side: "str | None"        = None   # which hand is being tracked: 'left' or 'right'
         self._track_proximity_enter_t: "float | None"           = None   # perf_counter time when TCP first entered _TRACK_DIST_THRESHOLD
         self._track_palm_target_pos: "np.ndarray | None" = None   # world position of the palm being tracked toward
+        self._track_frozen_target:   "np.ndarray | None" = None   # target frozen on proximity entry so hold timer isn't reset by hand drift
         self._last_hand_track_time: "float | None"     = None   # timestamp of last hand-track servoJ command; used to compute dt
         self._last_tick_time:       "float | None"     = None   # timestamp of last robot tick; used to compute dt for move_tcp
         self._pending_vis_clears:   list               = []    # (tool_id,) tuples queued from grasp thread; drained on main thread
@@ -2233,6 +2236,10 @@ class MainScene:
                         if _q_fresh is not None:
                             self.pb_scene.update_robot(_q_fresh)
 
+                    _now = time.perf_counter()
+                    _dt  = (min(_now - self._last_tick_time, 0.1)
+                            if self._last_tick_time is not None else 1.0 / 30.0)
+                    self._last_tick_time = _now
                     if self._grip_state == 'moving_to_hand':
                         target_pts = (left_pts if self._tracked_hand_side == "left"
                                       else right_pts)
@@ -2255,17 +2262,13 @@ class MainScene:
                                                        _track_dt)
                         # else: hand lost this frame — hold last commanded pose
                     else:
-                        _now = time.perf_counter()
-                        _dt  = (min(_now - self._last_tick_time, 0.1)
-                                if self._last_tick_time is not None else 1.0 / 30.0)
-                        self._last_tick_time = _now
-                        self.robot.tick(_dt)   # advances move_tcp (sim+real) and sim grasp
+                        self.robot.tick(_dt)   # force monitor + move_tcp + sim grasp
 
                     # ── Robot state poll ───────────────────────────────────────
                     self._T_world_tcp = self.robot.tcp_pose
                     _link_poses = self.robot.arm_link_poses()
 
-                    # ── Hand-track proximity check ────────────────────────────
+                    # ── Hand-track proximity check → 'reached_hand' ──────────
                     if (self._grip_state == 'moving_to_hand' and self._T_world_tcp is not None
                             and self._track_palm_target_pos is not None):
                         dist = float(np.linalg.norm(
@@ -2280,10 +2283,34 @@ class MainScene:
                                     >= self._TRACK_HOLD_SECS):
                             _tracked = self._tracked_hand_side
                             self._track_proximity_enter_t = None
-                            self._track_palm_target_pos = None
-                            self._grip_state = 'grabbed'
-                            print(f"[Robot] Reached {_tracked} palm → grip_state='grabbed' "
-                                  f"(waiting for board target from Unity)")
+                            self._track_palm_target_pos   = None
+                            if self.simulation or self.robot is None:
+                                # Sim: no gripper/force — skip reached_hand, go straight to grabbed
+                                self._grip_state = 'grabbed'
+                                print(f"[Robot] Reached {_tracked} palm → grip_state='grabbed' (sim)")
+                            else:
+                                # Real: stop hand tracking, open gripper, wait for board contact
+                                self._grip_state = 'reached_hand'
+                                self.robot.servoStop()
+                                def _on_board_release():
+                                    self.robot.cancel_motion()   # stop any move_tcp
+                                    self._last_ar_board_T = None
+                                    self._grip_state      = 'reached_hand'
+                                    print("[Robot] Board pulled → back to 'reached_hand', present board again")
+                                    self.robot.open_gripper_async(
+                                        on_done=lambda: self.robot.start_force_monitor(
+                                            'grasp', _on_board_contact))
+                                def _on_board_contact():
+                                    self._grip_state = 'grabbed'
+                                    print("[Robot] Board contact → closing gripper → grip_state='grabbed'")
+                                    self.robot.close_gripper_async(
+                                        on_done=lambda: self.robot.start_force_monitor(
+                                            'release', _on_board_release))
+                                print(f"[Robot] Reached {_tracked} palm → grip_state='reached_hand', "
+                                      f"opening gripper — present board to grasp")
+                                self.robot.open_gripper_async(
+                                    on_done=lambda: self.robot.start_force_monitor(
+                                        'grasp', _on_board_contact))
 
                     # ── Grip-state publishing + target-pose move ──────────────
                     if self._grip_state is not None and self._T_world_tcp is not None:
