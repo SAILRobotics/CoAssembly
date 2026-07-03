@@ -1735,7 +1735,11 @@ class _SceneVis:
         self._set_hand(self._pcd_l, self._lines_l, left_pts)
         self._set_hand(self._pcd_r, self._lines_r, right_pts)
 
-    def tick(self):
+    def tick(self, pending_vis_clears: list | None = None):
+        if pending_vis_clears:
+            while pending_vis_clears:
+                pending_vis_clears.pop()
+            self.clear_tool_quat_debug()
         self.vis.poll_events()
         self.vis.update_renderer()
 
@@ -1778,7 +1782,8 @@ class MainScene:
                  board_marker_b: int = cfg.BOARD_MARKER_B_ID,
                  board_marker_size_m: float | None = None,
                  use_calibrated_robot_base: bool = cfg.USE_CALIBRATED_ROBOT_BASE_POSE,
-                 load_pegboard_from_file: bool = cfg.LOAD_PEGBOARD_FROM_FILE):
+                 load_pegboard_from_file: bool = cfg.LOAD_PEGBOARD_FROM_FILE,
+                 gripper_collision: bool = False):
 
         self.quest_ip                 = quest_ip
         self.anchor_marker_id         = anchor_marker_id
@@ -1790,6 +1795,7 @@ class MainScene:
         self.board_marker_b           = board_marker_b
         self._use_calibrated_robot_base = use_calibrated_robot_base
         self._load_pegboard_from_file   = load_pegboard_from_file
+        self._gripper_collision         = gripper_collision
 
         self._T_BOARD_FROM_MARKER = {
             board_marker_a: T_BOARD_FROM_MARKER_A,
@@ -1856,15 +1862,16 @@ class MainScene:
                 cfg.JOINT_MIN_DEG, cfg.JOINT_MAX_DEG, degrees=True)
             _urdf = cfg.SCENE_LAYOUT_DIR.parent / "robot_assets" / "ur10e.urdf"
             self.robot = _RobotController(
-                unity_ip      = quest_ip,
-                pb_scene      = self.pb_scene,
-                T_world_base  = self.pb_scene.T_world_base,
-                robot_ip      = robot_ip if not simulation else None,
-                urdf_path     = str(_urdf) if _urdf.exists() else None,
-                frax_q_min    = list(np.deg2rad(cfg.JOINT_MIN_DEG)),
-                frax_q_max    = list(np.deg2rad(cfg.JOINT_MAX_DEG)),
-                frax_ws_lo    = cfg.WORKSPACE_LO,
-                frax_ws_hi    = cfg.WORKSPACE_HI,
+                unity_ip               = quest_ip,
+                pb_scene               = self.pb_scene,
+                T_world_base           = self.pb_scene.T_world_base,
+                robot_ip               = robot_ip if not simulation else None,
+                urdf_path              = str(_urdf) if _urdf.exists() else None,
+                frax_q_min             = list(np.deg2rad(cfg.JOINT_MIN_DEG)),
+                frax_q_max             = list(np.deg2rad(cfg.JOINT_MAX_DEG)),
+                frax_ws_lo             = cfg.WORKSPACE_LO,
+                frax_ws_hi             = cfg.WORKSPACE_HI,
+                frax_gripper_collision = gripper_collision,
             )
 
         if simulation:
@@ -1917,6 +1924,8 @@ class MainScene:
         self._track_proximity_frames                            = 0      # consecutive frames TCP has been within _TRACK_DIST_THRESHOLD
         self._track_palm_target_pos: "np.ndarray | None" = None   # world position of the palm being tracked toward
         self._last_hand_track_time: "float | None"     = None   # timestamp of last hand-track servoJ command; used to compute dt
+        self._last_tick_time:       "float | None"     = None   # timestamp of last robot tick; used to compute dt for move_tcp
+        self._pending_vis_clears:   list               = []    # (tool_id,) tuples queued from grasp thread; drained on main thread
         self._synth_cubes_added                  = False  # True once PEGBOARD_CUBES have been added to synth._objects
         self._synth_cube_start_idx: "int | None"     = None   # index into synth._objects where the PEGBOARD_CUBES entries begin
         self._last_synth_pub_time        = 0.0   # timestamp of last synth-object publish; throttled to _SYNTH_INTERVAL
@@ -2160,7 +2169,7 @@ class MainScene:
                         self.grip_pub.publish(
                             'idle',
                             self._T_world_tcp if self._T_world_tcp is not None else np.eye(4))
-                        print(f"[TCP click] Cancelled from '{prev_state}' — returning to normal")
+                        print(f"[User] Cancelled grip state '{prev_state}' → idle")
                     elif (not (self.robot is not None and self.robot.tool_grasp_running)
                           and self.pb_scene is not None):
                         clicking_hand = self.tools.active_hand
@@ -2169,8 +2178,11 @@ class MainScene:
                             self._grip_state = 'moving_to_hand'
                             self._tracked_hand_side = opposite_hand
                             self._track_proximity_frames = 0
-                            print(f"[TCP click] Moving to {opposite_hand} hand palm "
-                                  f"(opposite of {clicking_hand} click)")
+                            _hw = 'sim' if self.simulation else 'real'
+                            print(f"[User] TCP clicked ({clicking_hand} hand) "
+                                  f"→ tracking {opposite_hand} palm  "
+                                  f"[{_hw}] IK+CBF → "
+                                  f"{'update_robot' if self.simulation else 'servoJ'}")
                         else:
                             print(f"[TCP click] Unknown hand '{clicking_hand}' — ignoring click.")
                     self.tools.deselect(self._TCP_TOOL_ID)
@@ -2190,17 +2202,26 @@ class MainScene:
                         self._pending_grasp_tool_id = _tid
                         _centroid, _R_world, _sz = tool_data
                         self.vis.update_tool_quat_debug(_centroid, _R_world, _sz)
-                        self.robot.execute_grasp(
-                            tool_data,
-                            grasp_joints = self.tool_layout.get_grasp_joints(_tid),
-                            category     = self.tool_layout.get_category(_tid),
-                            on_complete  = lambda ok, tid=_grasp_tid: (
-                                self.tools.send_color(tid, _ToolSelectionManager.RESET_COLOR),
-                                self.vis.clear_tool_quat_debug(),
-                                print(f"[ToolGrasp] id={tid} — {'OK' if ok else 'FAILED'}"),
-                            ),
-                        )
-                        print(f"[ToolGrasp] id={_tid} — sequence started")
+                        _gj   = self.tool_layout.get_grasp_joints(_tid)
+                        _cat  = self.tool_layout.get_category(_tid)
+                        _T_wp = self.anchor.T_pegboard_in_world
+                        _hw   = 'sim' if self.simulation else 'real'
+                        _seq  = 'approach→above→grasp→retract' if _cat == 'part' else 'approach→grasp→retract'
+                        if _gj is not None:
+                            print(f"[User] Clicked {_cat} id={_tid} → grasp sequence  "
+                                  f"[{_hw}] joint-space moveJ  |  {_seq}")
+                            self.robot.execute_grasp(
+                                _gj,
+                                category     = _cat,
+                                board_normal = _T_wp[:3, 2] if _T_wp is not None else None,
+                                on_complete  = lambda ok, tid=_grasp_tid: (
+                                    self.tools.send_color(tid, _ToolSelectionManager.RESET_COLOR),
+                                    self._pending_vis_clears.append(tid),
+                                    print(f"[Robot] Grasp id={tid} — {'OK ✓' if ok else 'FAILED ✗'}"),
+                                ),
+                            )
+                        else:
+                            print(f"[User] Clicked {_cat} id={_tid} — no grasp_joints recorded, skipping")
                     self.tools.deselect(_tid)
 
                 # ── PyBullet scene update ─────────────────────────────────────
@@ -2234,9 +2255,11 @@ class MainScene:
                                                        _track_dt)
                         # else: hand lost this frame — hold last commanded pose
                     else:
-                        if self.simulation:
-                            self.robot.tick()
-                        # Real robot: poll already done above
+                        _now = time.perf_counter()
+                        _dt  = (min(_now - self._last_tick_time, 0.1)
+                                if self._last_tick_time is not None else 1.0 / 30.0)
+                        self._last_tick_time = _now
+                        self.robot.tick(_dt)   # advances move_tcp (sim+real) and sim grasp
 
                     # ── Robot state poll ───────────────────────────────────────
                     self._T_world_tcp = self.robot.tcp_pose
@@ -2256,26 +2279,33 @@ class MainScene:
                             self._track_proximity_frames = 0
                             self._track_palm_target_pos = None
                             self._grip_state = 'grabbed'
-                            print(f"[TCP track] Reached {_tracked} palm — "
-                                  f"grip_state='grabbed'")
+                            print(f"[Robot] Reached {_tracked} palm → grip_state='grabbed' "
+                                  f"(waiting for board target from Unity)")
 
                     # ── Grip-state publishing + target-pose move ──────────────
                     if self._grip_state is not None and self._T_world_tcp is not None:
                         self.grip_pub.publish(self._grip_state, self._T_world_tcp)
-                    if self._grip_state == 'grabbed':
+                    if self._grip_state in ('grabbed', 'moving_to_pose'):
                         T_target = self.target_recv.poll()
                         if T_target is not None:
                             self._last_ar_board_T = T_target
                             _grip_z  = T_target[:3, :3] @ np.array([0., 0., 1.])
                             _tcp_pos = T_target[:3, 3] - _BOX_FORWARD_OFFSET * _grip_z
+                            _hw = 'sim' if self.simulation else 'real'
+                            _has_cbf = getattr(self.robot, '_frax', None) is not None
+                            print(f"[User] Board manipulated → move_tcp  "
+                                  f"[{_hw}] {'IK+CBF' if _has_cbf else 'IK only'} → "
+                                  f"{'update_robot' if self.simulation else 'servoJ'}  "
+                                  f"target=({_tcp_pos[0]:.3f}, {_tcp_pos[1]:.3f}, {_tcp_pos[2]:.3f})")
                             self.robot.move_tcp(
                                 _tcp_pos.tolist(),
                                 ScipyR.from_matrix(T_target[:3, :3]).as_quat(),
-                                on_complete=lambda ok: setattr(
-                                    self, '_grip_state', 'grabbed'),
+                                on_complete=lambda ok: (
+                                    setattr(self, '_grip_state', 'grabbed'),
+                                    print(f"[Robot] move_tcp done → back to 'grabbed'"),
+                                ),
                             )
                             self._grip_state = 'moving_to_pose'
-                            print("[Grip] Target pose received — moving robot")
 
                     # ── Visualizer update ─────────────────────────────────────
                     if self._T_world_tcp is not None:
@@ -2321,7 +2351,7 @@ class MainScene:
                     _dbg_pts  = right_pts if right_pts is not None else left_pts
                     _dbg_left = (right_pts is None and left_pts is not None)
                 self.vis.update_palm_quat_debug(_dbg_pts, is_left=_dbg_left)
-                self.vis.tick()
+                self.vis.tick(self._pending_vis_clears)
 
                 # ── OpenCV display ────────────────────────────────────────────
                 disp = cv.resize(
@@ -2462,7 +2492,7 @@ class MainScene:
                 _elapsed  = time.perf_counter() - self._fps_ref_time
                 if _elapsed >= 2.0:
                     _avg_hz = self._fps_frame_count / _elapsed
-                    print(f"[perf] loop {_avg_hz:.1f} Hz | last iter {_iter_ms:.1f} ms")
+                    # print(f"[perf] loop {_avg_hz:.1f} Hz | last iter {_iter_ms:.1f} ms")
                     self._fps_ref_time    = time.perf_counter()
                     self._fps_frame_count = 0
 
@@ -2529,6 +2559,8 @@ def main():
                     default=cfg.LOAD_PEGBOARD_FROM_FILE,
                     help="Auto-load pegboard pose from scene_layout NPZ on anchor lock "
                          "(skips needing marker 101 visible)")
+    ap.add_argument("--gripper-collision", action=argparse.BooleanOptionalAction, default=False,
+                    help="Include gripper spheres in CBF self-collision model (--gripper-collision / --no-gripper-collision)")
     args = ap.parse_args()
     if args.anchor_marker == args.pegboard_marker:
         ap.error("--anchor-marker and --pegboard-marker must be different.")
@@ -2551,7 +2583,8 @@ def main():
         board_marker_b             = args.board_marker_b,
         board_marker_size_m        = args.board_marker_size,
         use_calibrated_robot_base  = args.calibrated_robot_base,
-        load_pegboard_from_file    = args.load_pegboard_from_file)
+        load_pegboard_from_file    = args.load_pegboard_from_file,
+        gripper_collision          = args.gripper_collision)
     scene.run()
 
 

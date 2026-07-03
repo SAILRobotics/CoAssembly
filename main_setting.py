@@ -47,15 +47,20 @@ BOARD_MARKER_SIZE    = 0.100   # markers 102/103: 10 cm
 
 # ── Robot workspace boundary (world frame, metres) ────────────────────────────
 # Used by the SceneVis boundary box, Unity workspace publisher, and frax CBF.
-WORKSPACE_LO = [-1.0474, -0.3082, 0.05]   # [x_min, y_min, z_min]
-WORKSPACE_HI = [ 0.7942,  0.4220, 0.50]   # [x_max, y_max, z_max]
+# WORKSPACE_LO = [-1.0474, -0.3082, 0.05]   # [x_min, y_min, z_min]
+WORKSPACE_LO = [-0.6000, -0.3082, 0.05]   # [x_min, y_min, z_min]
+WORKSPACE_HI = [ 0.7942,  0.4220, 0.750]   # [x_max, y_max, z_max]
 
 # ── Conservative UR10e joint limits (degrees) ─────────────────────────────────
 # Applied to both PyBullet IK and the frax CBF safety filter.
 # Adjust to match your actual robot range / mounting pose.
 #            J1      J2     J3     J4      J5      J6
-JOINT_MIN_DEG = [-360, -360,   -360,  -360,  -360,  -360]
-JOINT_MAX_DEG = [ 360,    360, 360,   360,   360,   360]
+# JOINT_MIN_DEG = [-162.00, -90,  50,  -160,  0,  0]
+# JOINT_MAX_DEG = [ -90,    -20,  150,   60,   360,   360]
+
+
+JOINT_MIN_DEG = [-162.00, -90,  50,  -360,  -360,  -360]
+JOINT_MAX_DEG = [ -90,    -20,  150,   360,   360,   360]
 
 # ── Runtime defaults ──────────────────────────────────────────────────────────
 SIMULATION = True   # True → fixed joint angles; False → live RTDE

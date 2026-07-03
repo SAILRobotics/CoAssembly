@@ -73,6 +73,17 @@ except Exception:
 
 _APPROACH_DIST = 0.3   # metres standoff along board normal
 
+
+def _wrap_nearest(q_target: np.ndarray, q_ref: np.ndarray) -> np.ndarray:
+    """Return q_target shifted by ±n·2π per joint to minimise distance from q_ref.
+
+    Prevents the robot from traversing a full circle when two equivalent joint
+    angles are 2π apart (e.g., recorded +3.1 rad vs current -3.1 rad).
+    """
+    TWO_PI = 2.0 * np.pi
+    return q_target - TWO_PI * np.round((q_target - q_ref) / TWO_PI)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Shared state (lock-protected)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -88,7 +99,7 @@ class _State:
         self.prev_mode    = "cbf"    # restored on RESUME
         self.speed_scale  = 1.0
         # Gains (read-only after init; rebuilt via signal)
-        self.kp_pos       = 80.0    # scale factor: 100 = full frax gains (kp=100)
+        self.kp_pos       = 80.0    # scale factor: 100 = full speed (180°/s)
         self.kp_ori       = 50.0
         self.cbf_alpha    = 10.0
         self.qdot_max     = 1.5
@@ -129,9 +140,12 @@ _S = _State()
 # Control loop thread
 # ─────────────────────────────────────────────────────────────────────────────
 
+_SERVO_EMA_ALPHA = 0.25   # blend toward new target: 0=frozen, 1=no filter
+
 def _control_loop(robot: _RobotController, simulation: bool):
     """Runs at ~30 Hz; drives the robot toward _S.target_pos."""
     dt = 1.0 / 30.0
+    _q_servo_smooth: "np.ndarray | None" = None   # EMA state for servoJ smoothing
 
     while True:
         t0 = time.perf_counter()
@@ -239,15 +253,36 @@ def _control_loop(robot: _RobotController, simulation: bool):
                             approach_T[:3, :3] = tcp_rot
                             approach_T[:3, 3]  = pos_approach
 
-                            # Seed all IK from grasp_joints so the solver stays in
-                            # the same arm/wrist configuration — prevents wrist flips
-                            # during the approach→grasp linear interpolation.
-                            q_approach = robot.solve_ik(
-                                pos_approach, tcp_quat, seed_q=gj_arr)
+                            # Seed IK from grasp_joints so the solver picks the
+                            # same arm/wrist configuration for every waypoint.
+                            # Then unwrap each waypoint relative to its predecessor
+                            # so no joint traverses a full circle unnecessarily.
+                            # Step from gj_arr toward approach/above incrementally
+                            # so the solver never escapes the grasp configuration.
+                            # Then wrap each waypoint to its predecessor for the
+                            # remaining 2π ambiguity.
+                            _deg = np.rad2deg
+                            print(f"\n[Grasp debug] current  q = {np.round(_deg(saved_q), 1).tolist()}")
+                            print(f"[Grasp debug] grasp_j  q = {np.round(_deg(gj_arr),   1).tolist()}")
+
+                            q_approach = robot.solve_ik_from_config(
+                                gj_arr, pos_approach, tcp_quat)
+                            q_approach = _wrap_nearest(q_approach, saved_q)
+                            print(f"[Grasp debug] approach step = {np.round(_deg(q_approach), 1).tolist()}")
+                            print(f"[Grasp debug] approach Δ from current = {np.round(_deg(q_approach - saved_q), 1).tolist()}")
+
                             q_above = None
                             if is_part:
-                                q_above = robot.solve_ik(
-                                    pos_above, tcp_quat, seed_q=gj_arr)
+                                q_above = robot.solve_ik_from_config(
+                                    gj_arr, pos_above, tcp_quat)
+                                q_above = _wrap_nearest(q_above, q_approach)
+                                gj_arr  = _wrap_nearest(gj_arr, q_above)
+                                print(f"[Grasp debug] above   step = {np.round(_deg(q_above), 1).tolist()}")
+                                print(f"[Grasp debug] grasp   wrap = {np.round(_deg(gj_arr),  1).tolist()}")
+                            else:
+                                gj_arr = _wrap_nearest(gj_arr, q_approach)
+                                print(f"[Grasp debug] grasp   wrap = {np.round(_deg(gj_arr), 1).tolist()}")
+                            print(f"[Grasp debug] grasp Δ from approach = {np.round(_deg(gj_arr - q_approach), 1).tolist()}")
                         except RuntimeError as e:
                             _S.update(mode=_resume_mode,
                                       status=f"IK failed: {e}")
@@ -308,6 +343,10 @@ def _control_loop(robot: _RobotController, simulation: bool):
                 time.sleep(rem)
             continue   # skip normal motion while grasp is running
 
+        # Reset EMA when not actively servo-ing
+        if mode != "cbf":
+            _q_servo_smooth = None
+
         # --- Move toward target ---
         if mode != "hold" and q is not None:
             target_pos   = snap["target_pos"]
@@ -316,23 +355,37 @@ def _control_loop(robot: _RobotController, simulation: bool):
             target_quat  = ScipyR.from_matrix(target_rot).as_quat()
 
             frax = getattr(robot, "_frax", None)
-            if mode == "cbf" and frax is not None:
+            if mode == "cbf":
                 try:
-                    # Use fixed dt=0.016 (sample_code rate) so kp=100 is numerically stable.
-                    # Then scale the step by kp_scale (UI slider, default 0.2 → effective kp≈20).
-                    _DT_OSC = 0.016
-                    kp_scale = snap["kp_pos"] / 100.0   # slider 0–150, default 20 → scale 0.2
-                    q_full   = frax.servo_step(target_pos, target_rot, q, _DT_OSC)
-                    q_target = q + (q_full - q) * kp_scale
-                    q_target = np.clip(q_target,
-                                       np.deg2rad(cfg.JOINT_MIN_DEG),
-                                       np.deg2rad(cfg.JOINT_MAX_DEG))
+                    import jax.numpy as jnp
+                    # Mirror step_ik's rate-limiting: same _MAX_JOINT_SPEED cap per frame,
+                    # then add CBF safety filter on top. kp_pos scales the speed.
+                    kp_scale  = snap["kp_pos"] / 100.0
+                    max_step  = np.deg2rad(180.0) * dt * kp_scale  # rad/frame (≈6° @ kp=100)
+                    q_ik      = robot.query_ik_joints(target_pos, target_quat, seed_q=q)
+                    q_limited = q + np.clip(q_ik - q, -max_step, max_step)
+                    qdot      = (q_limited - q) / max(dt, 1e-6)
+                    if frax is not None:
+                        qdot_safe = np.asarray(
+                            frax._cbf.safety_filter(jnp.array(q), jnp.array(qdot)))
+                    else:
+                        qdot_safe = qdot
+                    q_target = np.clip(
+                        q + qdot_safe * dt,
+                        np.deg2rad(cfg.JOINT_MIN_DEG),
+                        np.deg2rad(cfg.JOINT_MAX_DEG))
                     if simulation:
                         robot._pb_scene.update_robot(q_target)
                     else:
-                        robot.servoJ(q_target, dt)
-                    _S.update(q_cmd=q_target, status="CBF tracking")
+                        if _q_servo_smooth is None:
+                            _q_servo_smooth = q_target.copy()
+                        else:
+                            _q_servo_smooth = (_SERVO_EMA_ALPHA * q_target
+                                               + (1.0 - _SERVO_EMA_ALPHA) * _q_servo_smooth)
+                        robot.servoJ(_q_servo_smooth, dt, lookahead=0.15, gain=200)
+                    _S.update(q_cmd=q_target, status="IK+CBF tracking")
                 except Exception as e:
+                    _q_servo_smooth = None
                     _S.update(status=f"CBF error: {e}", mode="hold")
             elif mode == "ik":
                 try:

@@ -123,12 +123,14 @@ except ImportError:
 
 try:
     from ur_collision_model import (
-        positions_list as _UR_POSITIONS,
-        radii_list     as _UR_RADII,
-        pairs_sc       as _UR_SC_PAIRS,
-        base_position  as _UR_BASE_POS,
-        base_radius    as _UR_BASE_RADIUS,
-        base_sc_idxs   as _UR_BASE_SC_IDXS,
+        positions_list        as _UR_POSITIONS,
+        radii_list            as _UR_RADII,
+        pairs_sc              as _UR_SC_PAIRS,
+        pairs_sc_with_gripper as _UR_SC_PAIRS_WG,
+        make_collision_data   as _ur_make_collision_data,
+        base_position         as _UR_BASE_POS,
+        base_radius           as _UR_BASE_RADIUS,
+        base_sc_idxs          as _UR_BASE_SC_IDXS,
     )
     _UR_COLLISION_AVAILABLE = True
 except ImportError:
@@ -153,20 +155,26 @@ except Exception:
     jnp = None                           # type: ignore[assignment]
     _FRAX_AVAILABLE = False
 
-# Build frax-format collision dict from the UR10e model when both are available
-if _FRAX_AVAILABLE and _UR_COLLISION_AVAILABLE:
-    _UR_FRAX_COLLISION: "dict | None" = {
-        "positions":      _UR_POSITIONS,
-        "radii":          _UR_RADII,
+# Precompute both arm-only (22-sphere) and arm+gripper (30-sphere) collision dicts.
+# _FraxController selects between them via its gripper_collision parameter.
+def _build_frax_collision(with_gripper: bool) -> "dict | None":
+    if not (_FRAX_AVAILABLE and _UR_COLLISION_AVAILABLE):
+        return None
+    data     = _ur_make_collision_data(with_gripper=with_gripper)
+    sc_pairs = _UR_SC_PAIRS_WG if with_gripper else _UR_SC_PAIRS
+    return {
+        "positions":      data["positions"],
+        "radii":          data["radii"],
         "root_positions": (_UR_BASE_POS,),
         "root_radii":     (_UR_BASE_RADIUS,),
         "root_sc_pairs":  tuple((0, idx) for idx in _UR_BASE_SC_IDXS),
         "root_sc_tols":   tuple(0.0 for _ in _UR_BASE_SC_IDXS),
-        "body_sc_pairs":  _UR_SC_PAIRS,
-        "body_sc_tols":   tuple(0.0 for _ in _UR_SC_PAIRS),
+        "body_sc_pairs":  sc_pairs,
+        "body_sc_tols":   tuple(0.0 for _ in sc_pairs),
     }
-else:
-    _UR_FRAX_COLLISION = None
+
+_UR_FRAX_COLLISION_ARM = _build_frax_collision(with_gripper=False)
+_UR_FRAX_COLLISION_WG  = _build_frax_collision(with_gripper=True)
 
 if _FRAX_AVAILABLE:
     class _RcCbfConfig(OSCBFVelocityConfig):
@@ -277,18 +285,19 @@ if _FRAX_AVAILABLE:
 
         def __init__(
             self,
-            urdf_path:      str,
-            T_world_base:   np.ndarray,
-            kp_pos:         float = 100.0,
-            kp_ori:         float = 50.0,
-            qdot_max:       float = 1.5,
-            q_min:          "list | None" = None,
-            q_max:          "list | None" = None,
-            cbf_alpha:      float = 10.0,
-            z_min:          float = -0.05,
-            ws_lo:          "list | None" = None,
-            ws_hi:          "list | None" = None,
-            obstacle_boxes: "list | None" = None,
+            urdf_path:         str,
+            T_world_base:      np.ndarray,
+            kp_pos:            float = 100.0,
+            kp_ori:            float = 50.0,
+            qdot_max:          float = 1.5,
+            q_min:             "list | None" = None,
+            q_max:             "list | None" = None,
+            cbf_alpha:         float = 10.0,
+            z_min:             float = -0.05,
+            ws_lo:             "list | None" = None,
+            ws_hi:             "list | None" = None,
+            obstacle_boxes:    "list | None" = None,
+            gripper_collision: bool = False,
         ) -> None:
             self._qdot_max = float(qdot_max)
 
@@ -298,8 +307,9 @@ if _FRAX_AVAILABLE:
             self._base_R   = np.array(T_world_base[:3, :3], float) @ _Rz180
 
             # Load robot model with collision spheres when available
-            self.robot = load_ur10e(str(urdf_path),
-                                    collision_data=_UR_FRAX_COLLISION)
+            _col_data = (_UR_FRAX_COLLISION_WG if gripper_collision
+                         else _UR_FRAX_COLLISION_ARM)
+            self.robot = load_ur10e(str(urdf_path), collision_data=_col_data)
             _col_status = "with collision model" if _UR_COLLISION_AVAILABLE else "EE-only"
             print(f"[FraxController] Loaded UR10e: {self.robot.num_joints} joints ({_col_status})")
 
@@ -364,12 +374,27 @@ if _FRAX_AVAILABLE:
                 tuple(map(tuple, obs_h)) if obs_h else (),
                 tuple(tuple(float(v) for v in R.ravel()) for R in obs_R) if obs_R else (),
                 float(cbf_alpha),
-                sc_pairs=_UR_SC_PAIRS if _UR_COLLISION_AVAILABLE else (),
+                sc_pairs=((_UR_SC_PAIRS_WG if gripper_collision else _UR_SC_PAIRS)
+                          if _UR_COLLISION_AVAILABLE else ()),
             )
             self._cbf_cfg = _cbf_cfg
             self._cbf = CBF.from_config(_cbf_cfg)
-            _sc_msg = f"{len(_UR_SC_PAIRS)} self-collision pairs" if _UR_COLLISION_AVAILABLE else "no self-collision"
+            if _UR_COLLISION_AVAILABLE:
+                _sc_pairs_used = _UR_SC_PAIRS_WG if gripper_collision else _UR_SC_PAIRS
+                _sc_label = "w/ gripper" if gripper_collision else "arm only"
+                _sc_msg = f"{len(_sc_pairs_used)} self-collision pairs ({_sc_label})"
+            else:
+                _sc_msg = "no self-collision"
             print(f"[FraxController] CBF built — {len(obs_c)} obstacle(s), {_sc_msg}.")
+
+            # Warm up CBF safety_filter JIT so first real call doesn't stall
+            # (and doesn't race with the Open3D render thread on GPU/XLA init).
+            try:
+                _q0_cbf = jnp.zeros(self.robot.num_joints)
+                _ = self._cbf.safety_filter(_q0_cbf, _q0_cbf)
+                print("[FraxController] CBF JIT compiled.")
+            except Exception:
+                pass
 
         # ── Public API ────────────────────────────────────────────────────────
 
@@ -422,6 +447,12 @@ if _FRAX_AVAILABLE:
 
 
 # =============================================================================
+def _wrap_nearest(q_target: np.ndarray, q_ref: np.ndarray) -> np.ndarray:
+    """Shift q_target by ±n·2π per joint to minimise travel from q_ref."""
+    TWO_PI = 2.0 * np.pi
+    return q_target - TWO_PI * np.round((q_target - q_ref) / TWO_PI)
+
+
 # RobotController
 # =============================================================================
 
@@ -436,7 +467,7 @@ class RobotController:
     robot_ip       : UR10e IP. Pass None (default) for simulation mode.
     base_pub_port  : ZMQ PUB port for robot base pose (default 5000).
     joint_pub_port : ZMQ PUB port for joint angles (default 5001).
-    approach_dist  : Real-robot approach standoff in metres (default 0.10).
+    approach_dist  : Real-robot approach standoff in metres (default 0.30).
     speed / accel  : Default moveJ speed (rad/s) and acceleration (rad/s²).
     """
 
@@ -451,14 +482,16 @@ class RobotController:
         robot_ip:       "str | None" = None,
         base_pub_port:  int   = 5000,
         joint_pub_port: int   = 5001,
-        approach_dist:  float = 0.10,
+        approach_dist:  float = 0.30,
         speed:          float = 0.15,
         accel:          float = 0.10,
         urdf_path:      "str | None" = None,   # enables frax OSC+CBF (real robot only)
         frax_q_min:     "list | None" = None,  # joint lower limits (rad) for CBF
         frax_q_max:     "list | None" = None,  # joint upper limits (rad) for CBF
-        frax_ws_lo:     "list | None" = None,  # workspace lower corner [x,y,z] (world)
-        frax_ws_hi:     "list | None" = None,  # workspace upper corner [x,y,z] (world)
+        frax_ws_lo:            "list | None" = None,  # workspace lower corner [x,y,z] (world)
+        frax_ws_hi:            "list | None" = None,  # workspace upper corner [x,y,z] (world)
+        frax_z_min:            float = 0.15,          # floor clearance for link collision spheres (m)
+        frax_gripper_collision: bool = False,          # include gripper spheres in CBF
     ) -> None:
         self.simulation    = (robot_ip is None)
         self._robot_ip     = robot_ip
@@ -474,6 +507,7 @@ class RobotController:
         self._rtde_ctrl: "RTDEControlInterface | None" = None
         self._gripper: "RobotiqGripper | None"       = None
         self._in_servo = False
+        self._rtde_lock = threading.Lock()   # serialises all RTDE ctrl calls
 
         # Real-robot grasp thread
         self._grasp_thread: "threading.Thread | None" = None
@@ -487,16 +521,23 @@ class RobotController:
         self._sim_q_approach:   "np.ndarray | None"   = None
         self._sim_q_above:      "np.ndarray | None"   = None
 
+        # Sim move_tcp target — advanced one step per tick(), no thread needed
+        self._tracked_tcp_pos:  "np.ndarray | None" = None
+        self._tracked_tcp_quat: "np.ndarray | None" = None
+        self._tracked_tcp_cb:   "Callable | None"   = None
+
         # frax OSC+CBF (real robot + simulation; None if unavailable or no urdf_path given)
         self._frax: "None" = None
         if _FRAX_AVAILABLE and urdf_path is not None:
             try:
                 self._frax = _FraxController(
                     urdf_path, self._T_world_base,
-                    q_min  = frax_q_min,
-                    q_max  = frax_q_max,
-                    ws_lo  = frax_ws_lo,
-                    ws_hi  = frax_ws_hi,
+                    q_min              = frax_q_min,
+                    q_max              = frax_q_max,
+                    ws_lo              = frax_ws_lo,
+                    ws_hi              = frax_ws_hi,
+                    z_min              = frax_z_min,
+                    gripper_collision  = frax_gripper_collision,
                 )
             except Exception as exc:
                 print(f"[Robot] frax init failed: {exc} — falling back to IK.")
@@ -515,13 +556,19 @@ class RobotController:
         """Current TCP transform (4×4 world frame) from PyBullet FK."""
         if self._pb_scene is None:
             return None
-        return self._pb_scene.update_tcp_bodies()
+        try:
+            return self._pb_scene.update_tcp_bodies()
+        except Exception:
+            return None
 
     def arm_link_poses(self):
         """World-frame link poses for the 3D visualizer."""
         if self._pb_scene is None:
             return None
-        return self._pb_scene.get_arm_link_world_poses()
+        try:
+            return self._pb_scene.get_arm_link_world_poses()
+        except Exception:
+            return None
 
     # ── Joint state ───────────────────────────────────────────────────────────
 
@@ -553,34 +600,112 @@ class RobotController:
     # ── Hand tracking ─────────────────────────────────────────────────────────
 
     def step_hand_track(self, target_pos: "list | np.ndarray",
-                        target_quat: "list | np.ndarray", dt: float) -> None:
+                        target_quat: "list | np.ndarray", dt: float,
+                        max_joint_speed: float = np.deg2rad(180.0)) -> None:
         """Drive TCP toward a target this frame.
 
-        Simulation : calls pb_scene.step_ik (updates pb_scene.current_q).
-        Real robot : OSC+CBF via frax if available, else IK → servoJ.
+        Simulation : pb_scene.step_ik (rate-limited, updates pb_scene.current_q).
+        Real robot : PyBullet IK with the same rate-limit → servoJ.
+                     frax.servo_step is intentionally NOT used — OSC doesn't converge.
         """
         if self._pb_scene is None:
             return
-        if self.simulation:
-            self._pb_scene.step_ik(
-                self._pb_scene.current_q, list(target_pos), list(target_quat), dt)
-        elif self._frax is not None and self._last_q is not None:
-            target_rot = ScipyR.from_quat(list(target_quat)).as_matrix()
-            q_target = self._frax.servo_step(
-                np.array(target_pos), target_rot, self._last_q, dt)
-            self.servoJ(q_target, dt)
-        else:
+        q        = self._pb_scene.current_q.copy() if self.simulation else self._last_q
+        if q is None:
+            return
+        # Sim has no hardware constraint — run 4× faster so tracking feels responsive
+        max_step  = (max_joint_speed * 4.0 * dt) if self.simulation else (max_joint_speed * dt)
+        q_ik      = self.query_ik_joints(target_pos, target_quat, seed_q=q)
+        q_limited = q + np.clip(q_ik - q, -max_step, max_step)
+        if self._frax is not None:
+            qdot = (q_limited - q) / max(dt, 1e-6)
             try:
-                q = self.solve_ik(np.array(target_pos), list(target_quat), self._last_q)
-            except RuntimeError:
-                return
-            self.servoJ(q, dt)
+                qdot_safe = np.asarray(
+                    self._frax._cbf.safety_filter(jnp.array(q), jnp.array(qdot)))
+            except Exception:
+                qdot_safe = qdot
+            q_target = q + qdot_safe * dt
+        else:
+            q_target = q_limited
+        if self.simulation:
+            self._pb_scene.update_robot(q_target)
+        else:
+            self.servoJ(q_target, dt)
 
     # ── Simulation per-frame tick ─────────────────────────────────────────────
 
-    def tick(self) -> None:
-        """Advance the simulation runner one frame; call on_complete when done."""
-        if not self.simulation or self._sim_runner is None:
+    def tick(self, dt: float = 1.0 / 60.0) -> None:
+        """Advance one frame for both sim and real robot.
+
+        move_tcp: one IK+CBF step per call — sim writes pb_scene, real sends servoJ.
+        Grasp state machine (sim only): advances _PbJointRunner one step.
+        Call every frame regardless of simulation mode.
+        """
+        # move_tcp: one IK+CBF step, driven by caller's frame rate
+        if self._sim_phase == 'move_tcp':
+            tgt_pos  = self._tracked_tcp_pos
+            tgt_quat = self._tracked_tcp_quat
+            if tgt_pos is None:
+                self._sim_phase = None
+                return
+            q_cur = (self._pb_scene.current_q.copy() if self.simulation
+                     else self._last_q)
+            if q_cur is None:
+                return
+            if self.simulation:
+                max_step = np.deg2rad(720.0) * dt
+                conv_thr = 0.01
+            else:
+                max_step = np.deg2rad(180.0) * dt
+                conv_thr = 0.005
+            if self._frax is not None:
+                if np.linalg.norm(self._frax.ee_world_pos(q_cur) - tgt_pos) < conv_thr:
+                    cb = self._tracked_tcp_cb
+                    self._tracked_tcp_pos  = None
+                    self._tracked_tcp_quat = None
+                    self._tracked_tcp_cb   = None
+                    self._sim_phase        = None
+                    if not self.simulation:
+                        self.servoStop()
+                    if cb:
+                        cb(True)
+                    return
+            q_ik      = self.query_ik_joints(tgt_pos, tgt_quat, seed_q=q_cur)
+            q_limited = q_cur + np.clip(q_ik - q_cur, -max_step, max_step)
+            if self._frax is not None:
+                qdot = (q_limited - q_cur) / max(dt, 1e-6)
+                try:
+                    qdot_safe = np.asarray(
+                        self._frax._cbf.safety_filter(jnp.array(q_cur), jnp.array(qdot)))
+                except Exception:
+                    qdot_safe = qdot
+                q_target = q_cur + qdot_safe * dt
+            else:
+                q_target = q_limited
+                if np.linalg.norm(q_target - q_cur) < 1e-4:
+                    cb = self._tracked_tcp_cb
+                    self._tracked_tcp_pos = None
+                    self._sim_phase       = None
+                    if cb:
+                        cb(True)
+                    return
+            if np.any(np.isnan(q_target)):
+                return   # IK/CBF returned NaN (unreachable target) — hold current pose
+            if self.simulation:
+                self._pb_scene.update_robot(q_target)
+            else:
+                if not hasattr(self, '_move_tcp_smooth') or self._move_tcp_smooth is None:
+                    self._move_tcp_smooth = q_target.copy()
+                else:
+                    self._move_tcp_smooth = (0.25 * q_target
+                                             + 0.75 * self._move_tcp_smooth)
+                self.servoJ(self._move_tcp_smooth, dt, lookahead=0.15, gain=200)
+            return
+
+        if not self.simulation:
+            return   # grasp state machine is sim-only below
+
+        if self._sim_runner is None:
             return
         if not self._sim_runner.done:
             self._sim_runner.update(self._pb_scene.robot_id,
@@ -642,54 +767,24 @@ class RobotController:
                  on_complete: "Callable[[bool], None] | None" = None) -> None:
         """Move TCP to a Cartesian target in one motion phase.
 
-        Simulation : starts a _PbWaypointRunner, advanced by tick().
-        Real robot : solves IK and runs moveJ in a background thread.
+        Both sim and real use IK + CBF safety filter (when frax is loaded).
+        Sim updates pb_scene directly; real sends servoJ.
         """
         if self.simulation:
-            if self._pb_scene is None or not _PB_RUNNER_AVAILABLE:
+            if self._pb_scene is None:
                 return
-            try:
-                self._sim_runner = _PbWaypointRunner(
-                    self._pb_scene.robot_id,
-                    self._pb_scene.tool0_link_idx,
-                    self._pb_scene.current_q.copy(),
-                    self._pb_scene.arm_indices,
-                    list(pos),
-                    target_quat_xyzw=np.array(quat),
-                )
-                self._sim_phase = 'move_tcp'
-                self._sim_on_complete = on_complete
-            except Exception as e:
-                print(f"[Robot sim] move_tcp failed: {e}")
+            # Just store the target — tick() advances one IK+CBF step per frame
+            self._tracked_tcp_pos  = np.array(pos, float)
+            self._tracked_tcp_quat = np.array(list(quat), float)
+            self._tracked_tcp_cb   = on_complete
+            self._sim_phase        = 'move_tcp'
         elif self._frax is not None:
-            target_pos = np.array(pos, float)
-            target_rot = ScipyR.from_quat(list(quat)).as_matrix()
-            def _frax_loop():
-                dt      = 0.008   # ~125 Hz
-                timeout = 30.0
-                t0      = time.time()
-                self._grasp_cancel.clear()
-                while not self._grasp_cancel.is_set():
-                    if time.time() - t0 > timeout:
-                        print("[Robot] frax move_tcp: timeout.")
-                        if on_complete:
-                            on_complete(False)
-                        return
-                    q_cur = self._last_q
-                    if q_cur is None:
-                        time.sleep(dt)
-                        continue
-                    ee_pos = self._frax.ee_world_pos(q_cur)
-                    if np.linalg.norm(ee_pos - target_pos) < 0.005:
-                        self.servoStop()
-                        if on_complete:
-                            on_complete(True)
-                        return
-                    q_target = self._frax.servo_step(target_pos, target_rot, q_cur, dt)
-                    self.servoJ(q_target, dt)
-                    time.sleep(dt)
-                self.servoStop()
-            threading.Thread(target=_frax_loop, daemon=True).start()
+            # Store target — tick() sends servoJ each frame, no thread needed
+            self._tracked_tcp_pos  = np.array(pos, float)
+            self._tracked_tcp_quat = np.array(list(quat), float)
+            self._tracked_tcp_cb   = on_complete
+            self._move_tcp_smooth  = None   # reset EMA on new target
+            self._sim_phase        = 'move_tcp'
         else:
             def _move():
                 try:
@@ -709,23 +804,35 @@ class RobotController:
                speed: float = 1.0, accel: float = 1.0,
                lookahead: float = 0.1, gain: int = 300) -> None:
         """Stream one servoJ command to the robot."""
-        self._rtde_ctrl_conn().servoJ(list(q), speed, accel, dt, lookahead, gain)
-        self._in_servo = True
+        with self._rtde_lock:
+            self._rtde_ctrl_conn().servoJ(list(q), speed, accel, dt, lookahead, gain)
+            self._in_servo = True
 
     def servoStop(self) -> None:
         """Exit servoJ mode so moveJ can be accepted."""
-        if self._in_servo and self._rtde_ctrl is not None:
-            try:
-                self._rtde_ctrl.servoStop()
-            except Exception:
-                pass
-            self._in_servo = False
+        with self._rtde_lock:
+            if self._in_servo and self._rtde_ctrl is not None:
+                try:
+                    self._rtde_ctrl.servoStop()
+                except Exception:
+                    pass
+                self._in_servo = False
 
     def moveJ(self, q: "list | np.ndarray",
               speed: "float | None" = None,
               accel: "float | None" = None) -> None:
-        """Blocking joint-space move (real robot only)."""
-        self.servoStop()
+        """Blocking joint-space move (real robot only).
+
+        Lock only covers the servoStop transition; the blocking moveJ itself
+        runs outside the lock so stopJ / cancel_motion can still interrupt it.
+        """
+        with self._rtde_lock:
+            if self._in_servo and self._rtde_ctrl is not None:
+                try:
+                    self._rtde_ctrl.servoStop()
+                except Exception:
+                    pass
+                self._in_servo = False
         self._rtde_ctrl_conn().moveJ(
             list(q),
             speed if speed is not None else self._speed,
@@ -733,11 +840,13 @@ class RobotController:
         )
 
     def stopJ(self, decel: float = 2.0) -> None:
-        if self._rtde_ctrl is not None:
-            try:
-                self._rtde_ctrl.stopJ(decel)
-            except Exception:
-                pass
+        with self._rtde_lock:
+            if self._rtde_ctrl is not None:
+                try:
+                    self._rtde_ctrl.stopJ(decel)
+                except Exception:
+                    pass
+            self._in_servo = False
 
     # ── IK solving ────────────────────────────────────────────────────────────
 
@@ -779,6 +888,65 @@ class RobotController:
                 f"Target {np.round(pos_world, 3).tolist()} may be unreachable.")
         return q
 
+    def solve_ik_from_config(self, start_q: np.ndarray,
+                             target_pos, target_quat_xyzw,
+                             n_steps: int = 20) -> np.ndarray:
+        """IK that walks incrementally from start_q toward target_pos.
+
+        By re-seeding each sub-step from the previous result the solver stays
+        in the same arm/wrist configuration as start_q and avoids wrist flips
+        that occur when the target is far from the seed.
+        """
+        import pybullet as p
+        if self._pb_scene is None:
+            raise RuntimeError("No PyBullet scene.")
+        pb  = self._pb_scene
+        saved_q = pb.current_q.copy()
+        try:
+            pb.update_robot(start_q)
+            T0 = pb.update_tcp_bodies()
+            if T0 is None:
+                raise RuntimeError("FK failed at start_q.")
+            start_pos  = T0[:3, 3].copy()
+            target_pos = np.asarray(target_pos, float)
+            tgt_quat   = list(target_quat_xyzw)
+
+            q = np.array(start_q, float)
+            for step in range(n_steps):
+                alpha      = (step + 1) / n_steps
+                interp_pos = ((1.0 - alpha) * start_pos + alpha * target_pos).tolist()
+                arm_q_map  = dict(zip(pb.arm_indices, q))
+                rest_poses = [float(arm_q_map.get(j, 0.0)) for j in pb._movable]
+                joint_q    = p.calculateInverseKinematics(
+                    pb.robot_id, pb.tool0_link_idx,
+                    interp_pos, tgt_quat,
+                    lowerLimits=pb._lower_limits, upperLimits=pb._upper_limits,
+                    jointRanges=pb._joint_ranges, restPoses=rest_poses,
+                    maxNumIterations=200, residualThreshold=1e-5)
+                q = np.array(joint_q[:len(pb.arm_indices)], dtype=float)
+            return q
+        finally:
+            pb.update_robot(saved_q)
+
+    def query_ik_joints(self, pos_world, quat_xyzw,
+                        seed_q: "np.ndarray | None" = None) -> np.ndarray:
+        """Raw IK solution without modifying PyBullet scene state."""
+        import pybullet as p
+        if self._pb_scene is None:
+            raise RuntimeError("No PyBullet scene.")
+        pb = self._pb_scene
+        if seed_q is None:
+            seed_q = pb.current_q.copy()
+        arm_q_map  = dict(zip(pb.arm_indices, seed_q))
+        rest_poses = [float(arm_q_map.get(j, 0.0)) for j in pb._movable]
+        joint_q = p.calculateInverseKinematics(
+            pb.robot_id, pb.tool0_link_idx,
+            list(pos_world), list(quat_xyzw),
+            lowerLimits=pb._lower_limits, upperLimits=pb._upper_limits,
+            jointRanges=pb._joint_ranges, restPoses=rest_poses,
+            maxNumIterations=200, residualThreshold=1e-5)
+        return np.array(joint_q[:len(pb.arm_indices)], dtype=np.float64)
+
     # ── Gripper (real robot) ──────────────────────────────────────────────────
 
     def open_gripper(self, speed: int = 255, force: int = 10) -> None:
@@ -803,16 +971,53 @@ class RobotController:
         on_complete:  "Callable[[bool], None] | None" = None,
         q_approach:   "list | np.ndarray | None"      = None,
         q_above:      "list | np.ndarray | None"      = None,
+        category:     str                              = "tool",
+        board_normal: "list | np.ndarray | None"      = None,
     ) -> None:
         """Grasp sequence in both modes.
 
         Tool  (q_above=None): approach → grasp → retract
         Part  (q_above given): approach → above → grasp → above → retract
         Bare  (q_approach=None): direct moveJ to grasp_joints
+
+        When board_normal is supplied and q_approach is None, the method
+        auto-computes q_approach (and q_above for category="part") via FK +
+        solve_ik_from_config + _wrap_nearest — identical to robot_tester.py.
         """
         if self.tool_grasp_running:
             print("[Robot] Grasp already running — cancel first.")
             return
+
+        # Auto-compute approach/above waypoints from board_normal when not pre-supplied
+        if board_normal is not None and q_approach is None and self._pb_scene is not None:
+            gj_arr  = np.array(grasp_joints, dtype=float)
+            is_part = (category == "part")
+            saved_q = self._pb_scene.current_q.copy()
+            bn      = np.array(board_normal, float)
+            bn     /= (np.linalg.norm(bn) + 1e-9)
+            try:
+                self._pb_scene.update_robot(gj_arr)
+                grasp_T = self._pb_scene.update_tcp_bodies()
+            finally:
+                self._pb_scene.update_robot(saved_q)
+
+            if grasp_T is not None:
+                tcp_pos  = grasp_T[:3, 3]
+                tcp_quat = ScipyR.from_matrix(grasp_T[:3, :3]).as_quat().tolist()
+                if is_part:
+                    pos_above    = tcp_pos + np.array([0., 0., 0.05])
+                    pos_approach = pos_above + self._approach_dist * bn
+                else:
+                    pos_approach = tcp_pos + self._approach_dist * bn
+                q_approach = _wrap_nearest(
+                    self.solve_ik_from_config(gj_arr, pos_approach, tcp_quat), saved_q)
+                if is_part:
+                    q_above = _wrap_nearest(
+                        self.solve_ik_from_config(gj_arr, pos_above, tcp_quat), q_approach)
+                    grasp_joints = _wrap_nearest(gj_arr, q_above)
+                else:
+                    grasp_joints = _wrap_nearest(gj_arr, q_approach)
+
         if self.simulation:
             if self._pb_scene is None:
                 if on_complete:
@@ -854,21 +1059,30 @@ class RobotController:
             self._grasp_thread.start()
 
     def cancel_motion(self) -> None:
-        """Abort any running grasp and stop the arm."""
+        """Abort any running grasp/move and stop the arm."""
         if self.simulation:
+            self._grasp_cancel.set()   # stops grasp runner and move_tcp tracking thread
             cb = self._sim_on_complete
-            self._sim_runner       = None
-            self._sim_phase        = None
-            self._sim_on_complete  = None
-            self._sim_grasp_joints = None
-            self._sim_q_approach   = None
-            self._sim_q_above      = None
+            self._sim_runner          = None
+            self._sim_phase           = None
+            self._sim_on_complete     = None
+            self._sim_grasp_joints    = None
+            self._sim_q_approach      = None
+            self._sim_q_above         = None
+            self._tracked_tcp_pos  = None
+            self._tracked_tcp_quat = None
+            self._tracked_tcp_cb   = None
             if cb is not None:
                 try:
                     cb(False)
                 except Exception:
                     pass
         else:
+            self._sim_phase        = None
+            self._tracked_tcp_pos  = None
+            self._tracked_tcp_quat = None
+            self._tracked_tcp_cb   = None
+            self._move_tcp_smooth  = None
             self._grasp_cancel.set()
             self.stopJ()
 
