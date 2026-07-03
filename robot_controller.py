@@ -519,6 +519,7 @@ class RobotController:
         # Real-robot grasp thread
         self._grasp_thread: "threading.Thread | None" = None
         self._grasp_cancel  = threading.Event()
+        self._grasp_ctrl:   "RTDEControlInterface | None" = None
 
         # Simulation motion state machine
         self._sim_runner:       None                  = None
@@ -1159,6 +1160,16 @@ class RobotController:
                 print("[Robot] rtde_control not installed.")
                 return
             self._grasp_cancel.clear()
+            # Stop servo from the main thread (which owns _rtde_ctrl) before
+            # handing off — the grasp thread creates its own RTDE connection.
+            self.servoStop()
+            with self._rtde_lock:
+                if self._rtde_ctrl is not None:
+                    try:
+                        self._rtde_ctrl.disconnect()
+                    except Exception:
+                        pass
+                    self._rtde_ctrl = None
             self._grasp_thread = threading.Thread(
                 target=self._grasp_sequence,
                 args=(np.array(grasp_joints, dtype=float),
@@ -1196,7 +1207,14 @@ class RobotController:
             self._tracked_tcp_cb   = None
             self._move_tcp_smooth  = None
             self._grasp_cancel.set()
-            self.stopJ()
+            _gc = self._grasp_ctrl
+            if _gc is not None:
+                try:
+                    _gc.stopJ(2.0)
+                except Exception:
+                    pass
+            else:
+                self.stopJ()
 
     # ── Unity publishing ──────────────────────────────────────────────────────
 
@@ -1304,31 +1322,38 @@ class RobotController:
             if self._grasp_cancel.is_set():
                 raise InterruptedError("Grasp cancelled.")
         success = False
+        _ctrl = RTDEControlInterface(self._robot_ip)
+        self._grasp_ctrl = _ctrl
         try:
-            self.servoStop()
             _check()
             self.open_gripper()
             _check()
             if q_approach is not None:
-                self.moveJ(q_approach, speed=0.5, accel=0.5); _check()
+                _ctrl.moveJ(list(q_approach), 0.5, 0.5); _check()
             if q_above is not None:
-                self.moveJ(q_above, speed=0.3, accel=0.3); _check()
-            self.moveJ(grasp_joints, speed=0.2, accel=0.2); _check()
+                _ctrl.moveJ(list(q_above), 0.3, 0.3); _check()
+            _ctrl.moveJ(list(grasp_joints), 0.2, 0.2); _check()
             self.close_gripper()
             time.sleep(1.0)   # 1 s visual check — gripper opens if object resists
             self.open_gripper()
             _check()
             # Retract (reverse)
             if q_above is not None:
-                self.moveJ(q_above,    speed=0.2, accel=0.2); _check()
-                self.moveJ(q_approach, speed=0.3, accel=0.3)
+                _ctrl.moveJ(list(q_above),    0.2, 0.2); _check()
+                _ctrl.moveJ(list(q_approach), 0.3, 0.3)
             elif q_approach is not None:
-                self.moveJ(q_approach, speed=0.5, accel=0.5)
+                _ctrl.moveJ(list(q_approach), 0.5, 0.5)
             success = True
         except InterruptedError:
             print("[Robot] Grasp cancelled.")
         except Exception as e:
             print(f"[Robot] Grasp error: {e}")
+        finally:
+            self._grasp_ctrl = None
+            try:
+                _ctrl.disconnect()
+            except Exception:
+                pass
         if on_complete is not None:
             try:
                 on_complete(success)

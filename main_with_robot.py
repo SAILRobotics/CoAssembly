@@ -390,8 +390,11 @@ class _WorldAnchor:
 
     def _effective_cam_T(self, cam_T: np.ndarray,
                          center_T: np.ndarray | None) -> np.ndarray | None:
-        if self._T_eye_offset is not None and center_T is not None:
-            return center_T @ self._T_eye_offset
+        if self._T_eye_offset is not None:
+            # Calibrated: only use CenterEye+offset; if center_T is momentarily
+            # unavailable, return None so callers skip rather than using an
+            # inconsistent raw cam_T that would snap the scene.
+            return (center_T @ self._T_eye_offset) if center_T is not None else None
         return cam_T
 
 
@@ -2031,7 +2034,7 @@ class MainScene:
                 # ── Tracked board (markers A/B) — constantly updated ──────────
                 if self.anchor.locked and board_ok:
                     self.anchor.update_board_from_tracking(
-                        self.cam.camera_T, _center_T,
+                        None, _center_T,
                         T_cam_board[board_marker_seen],
                         self._T_BOARD_FROM_MARKER[board_marker_seen])
 
@@ -2053,8 +2056,9 @@ class MainScene:
                         self.robot.publish_joints(self.pb_scene.current_q)
 
                 T_wt            = self.anchor.T_world_tracking
-                T_world_camleft = (self.anchor.world_T(self.cam.camera_T)
-                                   if self.cam.camera_T is not None else None)
+                _eff_cam_T      = self.anchor._effective_cam_T(None, _center_T)
+                T_world_camleft = (self.anchor.world_T(_eff_cam_T)
+                                   if _eff_cam_T is not None else None)
                 T_world_center  = (self.anchor.world_T(_center_T)
                                    if _center_T is not None else None)
                 left_pts, right_pts = self.hands.world_joints(T_wt)
@@ -2103,6 +2107,7 @@ class MainScene:
                 _min_cos  = np.cos(np.deg2rad(self._AUTO_LOCK_MAX_TILT_DEG))
                 if (not self.anchor.locked and anchor_ok
                         and self.cam.camera_T is not None
+                        and _center_T is not None
                         and dist_to_anchor < self._AUTO_LOCK_MAX_DIST
                         and _cos_tilt > _min_cos):
                     self._lock_anchor_initial(T_cam_anchor, _center_T)
@@ -2130,12 +2135,12 @@ class MainScene:
                 if (self.tools.active_tool_id == self.anchor_marker_id
                         and _relock_available
                         and _now - self._last_proximity_relock_time >= self._RELOCK_COOLDOWN):
-                    self.anchor.relock(T_cam_anchor, self.cam.camera_T, _center_T)
+                    self.anchor.relock(T_cam_anchor, None, _center_T)
                     if self._load_pegboard_from_file:
                         self._try_load_pegboard_from_file()
                     elif pegboard_ok:
                         self.anchor.update_pegboard_from_tracking(
-                            self.cam.camera_T, _center_T, T_cam_pegboard)
+                            None, _center_T, T_cam_pegboard)
                     if self._synth_cubes_added and self.anchor.T_pegboard_in_world is not None:
                         T_wp = self.anchor.T_pegboard_in_world
                         R_wp = T_wp[:3, :3]
@@ -2463,11 +2468,14 @@ class MainScene:
                     if self.cam.camera_T is None:
                         if not self.simulation:
                             print("[ENTER] No camera pose — skipping.")
+                    elif _center_T is None:
+                        if not self.simulation:
+                            print("[ENTER] Head tracking not ready — skipping.")
                     else:
                         # ── Phase A: lock / relock world frame ────────────────
                         if anchor_ok:
                             if self.anchor.locked:
-                                self.anchor.relock(T_cam_anchor, self.cam.camera_T, _center_T)
+                                self.anchor.relock(T_cam_anchor, None, _center_T)
                                 print(f"[ENTER] Relocked world to marker "
                                       f"#{self.anchor_marker_id}")
                                 self._last_proximity_relock_time = _now
@@ -2486,7 +2494,7 @@ class MainScene:
                         # ── Phase B: lock pegboard (skipped if loaded from file) ─
                         if not self._load_pegboard_from_file and pegboard_ok and self.anchor.locked:
                             self.anchor.update_pegboard_from_tracking(
-                                self.cam.camera_T, _center_T, T_cam_pegboard)
+                                None, _center_T, T_cam_pegboard)
                             T_wp = self.anchor.T_pegboard_in_world
                             if T_wp is not None:
                                 R_wp = T_wp[:3, :3]
