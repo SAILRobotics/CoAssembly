@@ -65,6 +65,13 @@ except ImportError:
     RobotiqGripper = None         # type: ignore[assignment,misc]
     _GRIPPER_AVAILABLE = False
 
+# ── Force-monitoring tunables ─────────────────────────────────────────────────
+
+_FORCE_RELEASE_THRESHOLD = 20.0  # N — pull force delta to trigger tool release
+_FORCE_GRASP_THRESHOLD   =  4.0  # N — contact force delta to trigger board grasp
+_FORCE_DEBOUNCE_HITS     =  5    # consecutive over-threshold ticks before acting
+_FORCE_POLL_HZ           = 20    # Hz — force polling rate
+
 # ── Simulation waypoint runner ──────────────────────────────────────────────────
 
 try:
@@ -512,6 +519,7 @@ class RobotController:
         # Real-robot grasp thread
         self._grasp_thread: "threading.Thread | None" = None
         self._grasp_cancel  = threading.Event()
+        self._grasp_ctrl:   "RTDEControlInterface | None" = None
 
         # Simulation motion state machine
         self._sim_runner:       None                  = None
@@ -525,6 +533,14 @@ class RobotController:
         self._tracked_tcp_pos:  "np.ndarray | None" = None
         self._tracked_tcp_quat: "np.ndarray | None" = None
         self._tracked_tcp_cb:   "Callable | None"   = None
+        self._move_tcp_smooth:  "np.ndarray | None" = None  # EMA state for real servoJ
+
+        # Force monitoring — polled by tick(), fires callback on threshold (real robot only)
+        self._force_mode:     "str | None"        = None   # 'release' | 'grasp'
+        self._force_baseline: "np.ndarray | None" = None
+        self._force_hits:     int                  = 0
+        self._force_cb:       "Callable | None"    = None
+        self._force_last_t:   "float | None"       = None
 
         # frax OSC+CBF (real robot + simulation; None if unavailable or no urdf_path given)
         self._frax: "None" = None
@@ -641,6 +657,31 @@ class RobotController:
         Grasp state machine (sim only): advances _PbJointRunner one step.
         Call every frame regardless of simulation mode.
         """
+        # ── Force monitoring (real robot only, runs at _FORCE_POLL_HZ) ──────────
+        if self._force_mode is not None and not self.simulation:
+            _ft_now = time.perf_counter()
+            if self._force_last_t is None or _ft_now - self._force_last_t >= 1.0 / _FORCE_POLL_HZ:
+                self._force_last_t = _ft_now
+                _f = self.poll_tcp_force()
+                if _f is not None:
+                    if self._force_baseline is None:
+                        self._force_baseline = _f
+                    else:
+                        _delta  = float(np.linalg.norm(_f - self._force_baseline))
+                        _thresh = (_FORCE_RELEASE_THRESHOLD if self._force_mode == 'release'
+                                   else _FORCE_GRASP_THRESHOLD)
+                        self._force_hits = self._force_hits + 1 if _delta > _thresh else 0
+                        if self._force_hits >= _FORCE_DEBOUNCE_HITS:
+                            _mode = self._force_mode
+                            _cb   = self._force_cb
+                            self.stop_force_monitor()
+                            print(f"[Robot] Force trigger: {_mode} (delta={_delta:.1f} N)")
+                            if _cb:
+                                try:
+                                    _cb()
+                                except Exception as e:
+                                    print(f"[Robot] force trigger callback error: {e}")
+
         # move_tcp: one IK+CBF step, driven by caller's frame rate
         if self._sim_phase == 'move_tcp':
             tgt_pos  = self._tracked_tcp_pos
@@ -694,7 +735,7 @@ class RobotController:
             if self.simulation:
                 self._pb_scene.update_robot(q_target)
             else:
-                if not hasattr(self, '_move_tcp_smooth') or self._move_tcp_smooth is None:
+                if self._move_tcp_smooth is None:
                     self._move_tcp_smooth = q_target.copy()
                 else:
                     self._move_tcp_smooth = (0.25 * q_target
@@ -957,6 +998,77 @@ class RobotController:
         g = self._gripper_conn()
         g.move_and_wait_for_pos(g.get_closed_position(), speed, force)
 
+    def open_gripper_async(self, on_done: "Callable | None" = None) -> None:
+        """Non-blocking gripper open — dispatched to a daemon thread."""
+        def _do():
+            try:
+                self.open_gripper()
+            except Exception as e:
+                print(f"[Robot] open_gripper_async error: {e}")
+            finally:
+                if on_done:
+                    try:
+                        on_done()
+                    except Exception:
+                        pass
+        threading.Thread(target=_do, daemon=True).start()
+
+    def close_gripper_async(self, on_done: "Callable | None" = None) -> None:
+        """Non-blocking gripper close — dispatched to a daemon thread."""
+        def _do():
+            try:
+                self.close_gripper()
+            except Exception as e:
+                print(f"[Robot] close_gripper_async error: {e}")
+            finally:
+                if on_done:
+                    try:
+                        on_done()
+                    except Exception:
+                        pass
+        threading.Thread(target=_do, daemon=True).start()
+
+    # ── Force monitoring ──────────────────────────────────────────────────────
+
+    def poll_tcp_force(self) -> "np.ndarray | None":
+        """Read TCP force [Fx,Fy,Fz] in Newtons (base frame). Real robot only."""
+        if self._recv is None:
+            try:
+                self._recv = RTDEReceiveInterface(self._robot_ip)
+            except Exception:
+                return None
+        try:
+            return np.array(self._recv.getActualTCPForce()[:3], float)
+        except Exception:
+            return None
+
+    def start_force_monitor(self, mode: str, on_trigger: "Callable") -> None:
+        """Start non-blocking force threshold monitoring (polled by tick()).
+
+        mode='release': fires on_trigger when pull force > _FORCE_RELEASE_THRESHOLD
+        mode='grasp':   fires on_trigger when contact force > _FORCE_GRASP_THRESHOLD
+
+        on_trigger() is called on the main thread (from tick()), so it is safe
+        to update UI state directly.
+        """
+        self._force_baseline = self.poll_tcp_force()   # may be None — captured on first tick
+        self._force_mode     = mode
+        self._force_hits     = 0
+        self._force_cb       = on_trigger
+        self._force_last_t   = None
+        _thr = (_FORCE_RELEASE_THRESHOLD if mode == 'release' else _FORCE_GRASP_THRESHOLD)
+        print(f"[Robot] Force monitor started: mode={mode}, threshold={_thr:.1f} N")
+
+    def stop_force_monitor(self) -> None:
+        """Stop force monitoring without firing the callback."""
+        if self._force_mode is not None:
+            print(f"[Robot] Force monitor stopped (mode={self._force_mode})")
+        self._force_mode     = None
+        self._force_baseline = None
+        self._force_hits     = 0
+        self._force_cb       = None
+
+
     # ── Grasp sequence (both modes) ───────────────────────────────────────────
 
     @property
@@ -1048,6 +1160,16 @@ class RobotController:
                 print("[Robot] rtde_control not installed.")
                 return
             self._grasp_cancel.clear()
+            # Stop servo from the main thread (which owns _rtde_ctrl) before
+            # handing off — the grasp thread creates its own RTDE connection.
+            self.servoStop()
+            with self._rtde_lock:
+                if self._rtde_ctrl is not None:
+                    try:
+                        self._rtde_ctrl.disconnect()
+                    except Exception:
+                        pass
+                    self._rtde_ctrl = None
             self._grasp_thread = threading.Thread(
                 target=self._grasp_sequence,
                 args=(np.array(grasp_joints, dtype=float),
@@ -1060,6 +1182,7 @@ class RobotController:
 
     def cancel_motion(self) -> None:
         """Abort any running grasp/move and stop the arm."""
+        self.stop_force_monitor()
         if self.simulation:
             self._grasp_cancel.set()   # stops grasp runner and move_tcp tracking thread
             cb = self._sim_on_complete
@@ -1084,7 +1207,14 @@ class RobotController:
             self._tracked_tcp_cb   = None
             self._move_tcp_smooth  = None
             self._grasp_cancel.set()
-            self.stopJ()
+            _gc = self._grasp_ctrl
+            if _gc is not None:
+                try:
+                    _gc.stopJ(2.0)
+                except Exception:
+                    pass
+            else:
+                self.stopJ()
 
     # ── Unity publishing ──────────────────────────────────────────────────────
 
@@ -1161,6 +1291,16 @@ class RobotController:
             print(f"[Robot] RTDE control → {self._robot_ip}")
         return self._rtde_ctrl
 
+    def connect_gripper(self) -> None:
+        """Pre-connect and calibrate the gripper at startup so the first grasp
+        has no calibration delay. Safe to call from a background thread."""
+        if self.simulation or not _GRIPPER_AVAILABLE:
+            return
+        try:
+            self._gripper_conn()
+        except Exception as e:
+            print(f"[Robot] Gripper pre-connect failed: {e}")
+
     def _gripper_conn(self):
         if not _GRIPPER_AVAILABLE:
             raise RuntimeError("RobotiqGripper not available.")
@@ -1182,31 +1322,38 @@ class RobotController:
             if self._grasp_cancel.is_set():
                 raise InterruptedError("Grasp cancelled.")
         success = False
+        _ctrl = RTDEControlInterface(self._robot_ip)
+        self._grasp_ctrl = _ctrl
         try:
-            self.servoStop()
             _check()
             self.open_gripper()
             _check()
             if q_approach is not None:
-                self.moveJ(q_approach, speed=0.5, accel=0.5); _check()
+                _ctrl.moveJ(list(q_approach), 0.5, 0.5); _check()
             if q_above is not None:
-                self.moveJ(q_above, speed=0.3, accel=0.3); _check()
-            self.moveJ(grasp_joints, speed=0.2, accel=0.2); _check()
+                _ctrl.moveJ(list(q_above), 0.3, 0.3); _check()
+            _ctrl.moveJ(list(grasp_joints), 0.2, 0.2); _check()
             self.close_gripper()
             time.sleep(1.0)   # 1 s visual check — gripper opens if object resists
             self.open_gripper()
             _check()
             # Retract (reverse)
             if q_above is not None:
-                self.moveJ(q_above,    speed=0.2, accel=0.2); _check()
-                self.moveJ(q_approach, speed=0.3, accel=0.3)
+                _ctrl.moveJ(list(q_above),    0.2, 0.2); _check()
+                _ctrl.moveJ(list(q_approach), 0.3, 0.3)
             elif q_approach is not None:
-                self.moveJ(q_approach, speed=0.5, accel=0.5)
+                _ctrl.moveJ(list(q_approach), 0.5, 0.5)
             success = True
         except InterruptedError:
             print("[Robot] Grasp cancelled.")
         except Exception as e:
             print(f"[Robot] Grasp error: {e}")
+        finally:
+            self._grasp_ctrl = None
+            try:
+                _ctrl.disconnect()
+            except Exception:
+                pass
         if on_complete is not None:
             try:
                 on_complete(success)

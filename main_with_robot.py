@@ -390,8 +390,11 @@ class _WorldAnchor:
 
     def _effective_cam_T(self, cam_T: np.ndarray,
                          center_T: np.ndarray | None) -> np.ndarray | None:
-        if self._T_eye_offset is not None and center_T is not None:
-            return center_T @ self._T_eye_offset
+        if self._T_eye_offset is not None:
+            # Calibrated: only use CenterEye+offset; if center_T is momentarily
+            # unavailable, return None so callers skip rather than using an
+            # inconsistent raw cam_T that would snap the scene.
+            return (center_T @ self._T_eye_offset) if center_T is not None else None
         return cam_T
 
 
@@ -1761,8 +1764,8 @@ class MainScene:
     _RELOCK_COOLDOWN = 2.0
     _AUTO_LOCK_MAX_DIST     = 0.5    # metres — auto-lock-on-sight only within this range
     _AUTO_LOCK_MAX_TILT_DEG = 20.0   # degrees — max tilt from vertical to auto-lock
-    _TRACK_DIST_THRESHOLD = 0.02   # metres — TCP-to-target distance considered "arrived"
-    _TRACK_HOLD_SECS      = 0.5   # seconds continuously under threshold before locking grip
+    _TRACK_DIST_THRESHOLD = 0.075   # metres — TCP-to-target distance considered "arrived"
+    _TRACK_HOLD_SECS      = 0.2   # seconds continuously under threshold before locking grip
 
     # Robot workspace boundary, relative to the anchor ArUco marker (world frame).
     WORKSPACE_BOUNDS_LO = np.array(cfg.WORKSPACE_LO)
@@ -1878,6 +1881,8 @@ class MainScene:
             print(f"[Robot] Simulation mode — RobotController ready (no hardware)")
         elif self.robot is not None:
             print(f"[Robot] Live mode — RobotController ready ({robot_ip})")
+            threading.Thread(target=self.robot.connect_gripper, daemon=True,
+                             name="gripper-preconnect").start()
 
         self.anchor      = _WorldAnchor(quest_ip)
         self.tools       = _ToolSelectionManager(quest_ip)
@@ -1923,6 +1928,7 @@ class MainScene:
         self._tracked_hand_side: "str | None"        = None   # which hand is being tracked: 'left' or 'right'
         self._track_proximity_enter_t: "float | None"           = None   # perf_counter time when TCP first entered _TRACK_DIST_THRESHOLD
         self._track_palm_target_pos: "np.ndarray | None" = None   # world position of the palm being tracked toward
+        self._track_frozen_target:   "np.ndarray | None" = None   # target frozen on proximity entry so hold timer isn't reset by hand drift
         self._last_hand_track_time: "float | None"     = None   # timestamp of last hand-track servoJ command; used to compute dt
         self._last_tick_time:       "float | None"     = None   # timestamp of last robot tick; used to compute dt for move_tcp
         self._pending_vis_clears:   list               = []    # (tool_id,) tuples queued from grasp thread; drained on main thread
@@ -2028,7 +2034,7 @@ class MainScene:
                 # ── Tracked board (markers A/B) — constantly updated ──────────
                 if self.anchor.locked and board_ok:
                     self.anchor.update_board_from_tracking(
-                        self.cam.camera_T, _center_T,
+                        None, _center_T,
                         T_cam_board[board_marker_seen],
                         self._T_BOARD_FROM_MARKER[board_marker_seen])
 
@@ -2050,8 +2056,9 @@ class MainScene:
                         self.robot.publish_joints(self.pb_scene.current_q)
 
                 T_wt            = self.anchor.T_world_tracking
-                T_world_camleft = (self.anchor.world_T(self.cam.camera_T)
-                                   if self.cam.camera_T is not None else None)
+                _eff_cam_T      = self.anchor._effective_cam_T(None, _center_T)
+                T_world_camleft = (self.anchor.world_T(_eff_cam_T)
+                                   if _eff_cam_T is not None else None)
                 T_world_center  = (self.anchor.world_T(_center_T)
                                    if _center_T is not None else None)
                 left_pts, right_pts = self.hands.world_joints(T_wt)
@@ -2100,6 +2107,7 @@ class MainScene:
                 _min_cos  = np.cos(np.deg2rad(self._AUTO_LOCK_MAX_TILT_DEG))
                 if (not self.anchor.locked and anchor_ok
                         and self.cam.camera_T is not None
+                        and _center_T is not None
                         and dist_to_anchor < self._AUTO_LOCK_MAX_DIST
                         and _cos_tilt > _min_cos):
                     self._lock_anchor_initial(T_cam_anchor, _center_T)
@@ -2127,12 +2135,12 @@ class MainScene:
                 if (self.tools.active_tool_id == self.anchor_marker_id
                         and _relock_available
                         and _now - self._last_proximity_relock_time >= self._RELOCK_COOLDOWN):
-                    self.anchor.relock(T_cam_anchor, self.cam.camera_T, _center_T)
+                    self.anchor.relock(T_cam_anchor, None, _center_T)
                     if self._load_pegboard_from_file:
                         self._try_load_pegboard_from_file()
                     elif pegboard_ok:
                         self.anchor.update_pegboard_from_tracking(
-                            self.cam.camera_T, _center_T, T_cam_pegboard)
+                            None, _center_T, T_cam_pegboard)
                     if self._synth_cubes_added and self.anchor.T_pegboard_in_world is not None:
                         T_wp = self.anchor.T_pegboard_in_world
                         R_wp = T_wp[:3, :3]
@@ -2233,6 +2241,10 @@ class MainScene:
                         if _q_fresh is not None:
                             self.pb_scene.update_robot(_q_fresh)
 
+                    _now = time.perf_counter()
+                    _dt  = (min(_now - self._last_tick_time, 0.1)
+                            if self._last_tick_time is not None else 1.0 / 30.0)
+                    self._last_tick_time = _now
                     if self._grip_state == 'moving_to_hand':
                         target_pts = (left_pts if self._tracked_hand_side == "left"
                                       else right_pts)
@@ -2255,17 +2267,13 @@ class MainScene:
                                                        _track_dt)
                         # else: hand lost this frame — hold last commanded pose
                     else:
-                        _now = time.perf_counter()
-                        _dt  = (min(_now - self._last_tick_time, 0.1)
-                                if self._last_tick_time is not None else 1.0 / 30.0)
-                        self._last_tick_time = _now
-                        self.robot.tick(_dt)   # advances move_tcp (sim+real) and sim grasp
+                        self.robot.tick(_dt)   # force monitor + move_tcp + sim grasp
 
                     # ── Robot state poll ───────────────────────────────────────
                     self._T_world_tcp = self.robot.tcp_pose
                     _link_poses = self.robot.arm_link_poses()
 
-                    # ── Hand-track proximity check ────────────────────────────
+                    # ── Hand-track proximity check → 'reached_hand' ──────────
                     if (self._grip_state == 'moving_to_hand' and self._T_world_tcp is not None
                             and self._track_palm_target_pos is not None):
                         dist = float(np.linalg.norm(
@@ -2280,10 +2288,34 @@ class MainScene:
                                     >= self._TRACK_HOLD_SECS):
                             _tracked = self._tracked_hand_side
                             self._track_proximity_enter_t = None
-                            self._track_palm_target_pos = None
-                            self._grip_state = 'grabbed'
-                            print(f"[Robot] Reached {_tracked} palm → grip_state='grabbed' "
-                                  f"(waiting for board target from Unity)")
+                            self._track_palm_target_pos   = None
+                            if self.simulation or self.robot is None:
+                                # Sim: no gripper/force — skip reached_hand, go straight to grabbed
+                                self._grip_state = 'grabbed'
+                                print(f"[Robot] Reached {_tracked} palm → grip_state='grabbed' (sim)")
+                            else:
+                                # Real: stop hand tracking, open gripper, wait for board contact
+                                self._grip_state = 'reached_hand'
+                                self.robot.servoStop()
+                                def _on_board_release():
+                                    self.robot.cancel_motion()   # stop any move_tcp
+                                    self._last_ar_board_T = None
+                                    self._grip_state      = 'reached_hand'
+                                    print("[Robot] Board pulled → back to 'reached_hand', present board again")
+                                    self.robot.open_gripper_async(
+                                        on_done=lambda: self.robot.start_force_monitor(
+                                            'grasp', _on_board_contact))
+                                def _on_board_contact():
+                                    self._grip_state = 'grabbed'
+                                    print("[Robot] Board contact → closing gripper → grip_state='grabbed'")
+                                    self.robot.close_gripper_async(
+                                        on_done=lambda: self.robot.start_force_monitor(
+                                            'release', _on_board_release))
+                                print(f"[Robot] Reached {_tracked} palm → grip_state='reached_hand', "
+                                      f"opening gripper — present board to grasp")
+                                self.robot.open_gripper_async(
+                                    on_done=lambda: self.robot.start_force_monitor(
+                                        'grasp', _on_board_contact))
 
                     # ── Grip-state publishing + target-pose move ──────────────
                     if self._grip_state is not None and self._T_world_tcp is not None:
@@ -2436,11 +2468,14 @@ class MainScene:
                     if self.cam.camera_T is None:
                         if not self.simulation:
                             print("[ENTER] No camera pose — skipping.")
+                    elif _center_T is None:
+                        if not self.simulation:
+                            print("[ENTER] Head tracking not ready — skipping.")
                     else:
                         # ── Phase A: lock / relock world frame ────────────────
                         if anchor_ok:
                             if self.anchor.locked:
-                                self.anchor.relock(T_cam_anchor, self.cam.camera_T, _center_T)
+                                self.anchor.relock(T_cam_anchor, None, _center_T)
                                 print(f"[ENTER] Relocked world to marker "
                                       f"#{self.anchor_marker_id}")
                                 self._last_proximity_relock_time = _now
@@ -2459,7 +2494,7 @@ class MainScene:
                         # ── Phase B: lock pegboard (skipped if loaded from file) ─
                         if not self._load_pegboard_from_file and pegboard_ok and self.anchor.locked:
                             self.anchor.update_pegboard_from_tracking(
-                                self.cam.camera_T, _center_T, T_cam_pegboard)
+                                None, _center_T, T_cam_pegboard)
                             T_wp = self.anchor.T_pegboard_in_world
                             if T_wp is not None:
                                 R_wp = T_wp[:3, :3]
