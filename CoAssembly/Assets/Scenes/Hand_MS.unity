@@ -4659,7 +4659,7 @@ GameObject:
   - component: {fileID: 348179883}
   m_Layer: 0
   m_Name: LeftEyeAnchor
-  m_TagString: MainCamera
+  m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
@@ -25499,10 +25499,10 @@ SceneRoots:
   m_ObjectHideFlags: 0
   m_Roots:
   - {fileID: 410087041}
+  - {fileID: 3363828}
   - {fileID: 832575519}
   - {fileID: 109070962}
   - {fileID: 523536090}
-  - {fileID: 3363828}
   - {fileID: 1148439438}
   - {fileID: 1005247604}
   - {fileID: 1683168509}
