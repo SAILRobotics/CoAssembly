@@ -390,11 +390,8 @@ class _WorldAnchor:
 
     def _effective_cam_T(self, cam_T: np.ndarray,
                          center_T: np.ndarray | None) -> np.ndarray | None:
-        if self._T_eye_offset is not None:
-            # Calibrated: only use CenterEye+offset; if center_T is momentarily
-            # unavailable, return None so callers skip rather than using an
-            # inconsistent raw cam_T that would snap the scene.
-            return (center_T @ self._T_eye_offset) if center_T is not None else None
+        if self._T_eye_offset is not None and center_T is not None:
+            return center_T @ self._T_eye_offset
         return cam_T
 
 
@@ -1184,8 +1181,9 @@ class _SceneVis:
         world_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.3)
         self.vis.add_geometry(world_frame)
 
-        self._cam_frustum   = None
-        self._head_frustum  = None
+        self._cam_frustum            = None
+        self._head_frustum           = None
+        self._passthrough_cam_frustum = None
         self._tcp_axes      = None          # lazy — added on first update_tcp() call
         self._tool_box_linesets: list = []  # lazy — grows to match number of tool boxes
 
@@ -1411,6 +1409,23 @@ class _SceneVis:
             self._head_frustum.lines  = new_fr.lines
             self._head_frustum.colors = new_fr.colors
             self.vis.update_geometry(self._head_frustum)
+
+    def update_passthrough_cam(self, T: np.ndarray | None,
+                               w=640, h=480, fx=400., fy=400., cx=320., cy=240.):
+        T_use = T if T is not None else self._hidden_T()
+        intr  = o3d.camera.PinholeCameraIntrinsic(int(w), int(h), fx, fy, cx, cy)
+        new_fr = o3d.geometry.LineSet.create_camera_visualization(
+            int(w), int(h), intr.intrinsic_matrix,
+            np.linalg.inv(T_use), scale=self.FRUSTUM_SCALE)
+        new_fr.paint_uniform_color([1.0, 1.0, 0.0])
+        if self._passthrough_cam_frustum is None:
+            self._passthrough_cam_frustum = new_fr
+            self.vis.add_geometry(self._passthrough_cam_frustum)
+        else:
+            self._passthrough_cam_frustum.points = new_fr.points
+            self._passthrough_cam_frustum.lines  = new_fr.lines
+            self._passthrough_cam_frustum.colors = new_fr.colors
+            self.vis.update_geometry(self._passthrough_cam_frustum)
 
     def set_pegboard_outline(self, offset_x: float, offset_y: float,
                               width: float, height: float):
@@ -1995,7 +2010,7 @@ class MainScene:
         """First-time anchor lock + the same follow-up steps ENTER/relock run
         (scene origin reset, pegboard-from-file load). Used both by the
         ENTER handler and by the auto-lock-on-sight check in run()."""
-        self.anchor.lock(T_cam_anchor, self.cam.camera_T, center_T=center_T)
+        self.anchor.lock(T_cam_anchor, self.cam.camera_T, center_T=None)
         self._last_proximity_relock_time = time.time()
         if self.pb_scene is not None:
             self.pb_scene.set_scene_origin(np.eye(4))
@@ -2034,7 +2049,7 @@ class MainScene:
                 # ── Tracked board (markers A/B) — constantly updated ──────────
                 if self.anchor.locked and board_ok:
                     self.anchor.update_board_from_tracking(
-                        None, _center_T,
+                        self.cam.camera_T, None,
                         T_cam_board[board_marker_seen],
                         self._T_BOARD_FROM_MARKER[board_marker_seen])
 
@@ -2135,12 +2150,12 @@ class MainScene:
                 if (self.tools.active_tool_id == self.anchor_marker_id
                         and _relock_available
                         and _now - self._last_proximity_relock_time >= self._RELOCK_COOLDOWN):
-                    self.anchor.relock(T_cam_anchor, None, _center_T)
+                    self.anchor.relock(T_cam_anchor, self.cam.camera_T, None)
                     if self._load_pegboard_from_file:
                         self._try_load_pegboard_from_file()
                     elif pegboard_ok:
                         self.anchor.update_pegboard_from_tracking(
-                            None, _center_T, T_cam_pegboard)
+                            self.cam.camera_T, None, T_cam_pegboard)
                     if self._synth_cubes_added and self.anchor.T_pegboard_in_world is not None:
                         T_wp = self.anchor.T_pegboard_in_world
                         R_wp = T_wp[:3, :3]
@@ -2373,6 +2388,11 @@ class MainScene:
                     self.vis.update_cam_frustum(T_world_camleft,
                                                 self.cam.width, self.cam.height,
                                                 fx, fy, cx, cy)
+                    T_world_passthrough = (self.anchor.world_T(self.cam.camera_T)
+                                           if self.cam.camera_T is not None else None)
+                    self.vis.update_passthrough_cam(T_world_passthrough,
+                                                    self.cam.width, self.cam.height,
+                                                    fx, fy, cx, cy)
                 self.vis.update_pegboard(self.anchor.T_pegboard_in_world)
                 self.vis.update_board(self.anchor.T_board_in_world)
                 self.vis.update_tracking(T_wt)
@@ -2475,7 +2495,7 @@ class MainScene:
                         # ── Phase A: lock / relock world frame ────────────────
                         if anchor_ok:
                             if self.anchor.locked:
-                                self.anchor.relock(T_cam_anchor, None, _center_T)
+                                self.anchor.relock(T_cam_anchor, self.cam.camera_T, None)
                                 print(f"[ENTER] Relocked world to marker "
                                       f"#{self.anchor_marker_id}")
                                 self._last_proximity_relock_time = _now
@@ -2494,7 +2514,7 @@ class MainScene:
                         # ── Phase B: lock pegboard (skipped if loaded from file) ─
                         if not self._load_pegboard_from_file and pegboard_ok and self.anchor.locked:
                             self.anchor.update_pegboard_from_tracking(
-                                None, _center_T, T_cam_pegboard)
+                                self.cam.camera_T, None, T_cam_pegboard)
                             T_wp = self.anchor.T_pegboard_in_world
                             if T_wp is not None:
                                 R_wp = T_wp[:3, :3]
