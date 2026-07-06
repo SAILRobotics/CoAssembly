@@ -2010,7 +2010,7 @@ class MainScene:
         """First-time anchor lock + the same follow-up steps ENTER/relock run
         (scene origin reset, pegboard-from-file load). Used both by the
         ENTER handler and by the auto-lock-on-sight check in run()."""
-        self.anchor.lock(T_cam_anchor, self.cam.camera_T, center_T=None)
+        self.anchor.lock(T_cam_anchor, self.cam.camera_T, center_T=center_T)
         self._last_proximity_relock_time = time.time()
         if self.pb_scene is not None:
             self.pb_scene.set_scene_origin(np.eye(4))
@@ -2049,7 +2049,7 @@ class MainScene:
                 # ── Tracked board (markers A/B) — constantly updated ──────────
                 if self.anchor.locked and board_ok:
                     self.anchor.update_board_from_tracking(
-                        self.cam.camera_T, None,
+                        self.cam.camera_T, _center_T,
                         T_cam_board[board_marker_seen],
                         self._T_BOARD_FROM_MARKER[board_marker_seen])
 
@@ -2150,12 +2150,12 @@ class MainScene:
                 if (self.tools.active_tool_id == self.anchor_marker_id
                         and _relock_available
                         and _now - self._last_proximity_relock_time >= self._RELOCK_COOLDOWN):
-                    self.anchor.relock(T_cam_anchor, self.cam.camera_T, None)
+                    self.anchor.relock(T_cam_anchor, self.cam.camera_T, _center_T)
                     if self._load_pegboard_from_file:
                         self._try_load_pegboard_from_file()
                     elif pegboard_ok:
                         self.anchor.update_pegboard_from_tracking(
-                            self.cam.camera_T, None, T_cam_pegboard)
+                            self.cam.camera_T, _center_T, T_cam_pegboard)
                     if self._synth_cubes_added and self.anchor.T_pegboard_in_world is not None:
                         T_wp = self.anchor.T_pegboard_in_world
                         R_wp = T_wp[:3, :3]
@@ -2495,7 +2495,7 @@ class MainScene:
                         # ── Phase A: lock / relock world frame ────────────────
                         if anchor_ok:
                             if self.anchor.locked:
-                                self.anchor.relock(T_cam_anchor, self.cam.camera_T, None)
+                                self.anchor.relock(T_cam_anchor, self.cam.camera_T, _center_T)
                                 print(f"[ENTER] Relocked world to marker "
                                       f"#{self.anchor_marker_id}")
                                 self._last_proximity_relock_time = _now
@@ -2514,7 +2514,7 @@ class MainScene:
                         # ── Phase B: lock pegboard (skipped if loaded from file) ─
                         if not self._load_pegboard_from_file and pegboard_ok and self.anchor.locked:
                             self.anchor.update_pegboard_from_tracking(
-                                self.cam.camera_T, None, T_cam_pegboard)
+                                self.cam.camera_T, _center_T, T_cam_pegboard)
                             T_wp = self.anchor.T_pegboard_in_world
                             if T_wp is not None:
                                 R_wp = T_wp[:3, :3]
