@@ -567,6 +567,45 @@ class _WorldAnchor:
 
 
 # =============================================================================
+# CenterEye override publisher
+# =============================================================================
+
+class _CenterEyeOverridePublisher:
+    """Publishes a pose override for CenterEyeAnchor in Unity.
+
+    When OVR position tracking is disabled, Unity's CenterEyeAnchor stops
+    being driven by SLAM.  This publisher lets Python set its pose directly —
+    e.g. to match the left passthrough camera (cam_T) so the rendering camera
+    is physically accurate.
+    """
+
+    def __init__(self, pub_ip: str, port: int = cfg.CENTER_EYE_OVERRIDE_PORT):
+        ctx = zmq.Context()
+        self._pub = ctx.socket(zmq.PUB)
+        self._pub.connect(f"tcp://{pub_ip}:{port}")
+        time.sleep(0.2)
+
+    def publish(self, cam_T_o3d: np.ndarray) -> None:
+        if cam_T_o3d is None:
+            return
+        pos, rot, mat = _WorldAnchor._to_unity_pose(cam_T_o3d)
+        try:
+            self._pub.send_string(json.dumps({
+                "center_eye_position":      pos,
+                "center_eye_rotation_xyzw": rot,
+                "center_eye_matrix":        mat,
+            }))
+        except Exception as e:
+            print(f"[CenterEyeOverride] Publish error: {e}")
+
+    def close(self):
+        try:
+            self._pub.close(0)
+        except Exception:
+            pass
+
+
+# =============================================================================
 # Synthetic object publisher
 # =============================================================================
 
@@ -1900,6 +1939,7 @@ class MainScene:
                              name="gripper-preconnect").start()
 
         self.anchor      = _WorldAnchor(quest_ip)
+        self.center_eye_pub = _CenterEyeOverridePublisher(quest_ip)
         self.tools       = _ToolSelectionManager(quest_ip)
         self.tuner       = _OffsetTuner()
         self.synth       = _SyntheticObjectPublisher(quest_ip)
@@ -2045,6 +2085,9 @@ class MainScene:
 
                 # ── CenterEye pose ────────────────────────────────────────────
                 _center_T = self.hands.center_eye_T()
+
+                # ── Override CenterEyeAnchor pose with left cam_T ─────────────
+                self.center_eye_pub.publish(self.cam.camera_T)
 
                 # ── Tracked board (markers A/B) — constantly updated ──────────
                 if self.anchor.locked and board_ok:
@@ -2569,6 +2612,7 @@ class MainScene:
         cv.destroyAllWindows()
         self.tuner.close()
         self.anchor.close()
+        self.center_eye_pub.close()
         self.synth.close()
         self.tool_layout.close()
         self.grip_pub.close()

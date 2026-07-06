@@ -846,8 +846,16 @@ class RobotController:
                lookahead: float = 0.1, gain: int = 300) -> None:
         """Stream one servoJ command to the robot."""
         with self._rtde_lock:
-            self._rtde_ctrl_conn().servoJ(list(q), speed, accel, dt, lookahead, gain)
-            self._in_servo = True
+            try:
+                self._rtde_ctrl_conn().servoJ(list(q), speed, accel, dt, lookahead, gain)
+                self._in_servo = True
+            except Exception as e:
+                # Reset so the next tick attempts a fresh reconnect.
+                # "registers already in use" happens when the robot hasn't yet
+                # released the previous connection's RTDE registers; retrying
+                # next tick is sufficient.
+                print(f"[Robot] servoJ failed ({e}); will retry next tick")
+                self._rtde_ctrl = None
 
     def servoStop(self) -> None:
         """Exit servoJ mode so moveJ can be accepted."""
@@ -1160,16 +1168,7 @@ class RobotController:
                 print("[Robot] rtde_control not installed.")
                 return
             self._grasp_cancel.clear()
-            # Stop servo from the main thread (which owns _rtde_ctrl) before
-            # handing off — the grasp thread creates its own RTDE connection.
             self.servoStop()
-            with self._rtde_lock:
-                if self._rtde_ctrl is not None:
-                    try:
-                        self._rtde_ctrl.disconnect()
-                    except Exception:
-                        pass
-                    self._rtde_ctrl = None
             self._grasp_thread = threading.Thread(
                 target=self._grasp_sequence,
                 args=(np.array(grasp_joints, dtype=float),
@@ -1322,7 +1321,7 @@ class RobotController:
             if self._grasp_cancel.is_set():
                 raise InterruptedError("Grasp cancelled.")
         success = False
-        _ctrl = RTDEControlInterface(self._robot_ip)
+        _ctrl = self._rtde_ctrl_conn()
         self._grasp_ctrl = _ctrl
         try:
             _check()
@@ -1350,10 +1349,6 @@ class RobotController:
             print(f"[Robot] Grasp error: {e}")
         finally:
             self._grasp_ctrl = None
-            try:
-                _ctrl.disconnect()
-            except Exception:
-                pass
         if on_complete is not None:
             try:
                 on_complete(success)

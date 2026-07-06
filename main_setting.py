@@ -33,10 +33,11 @@ BOARD_ROOT_PORT    = 5014   # tracked board root transform
 ROBOT_BASE_PORT    = 5000   # robot base initial pose (matches RobotBaseInitialPoseReceiverNetMQ)
 ROBOT_JOINT_PORT   = 5001   # live arm joint angles, radians (matches RobotJointNetMQReceiver)
 WORKSPACE_BOUND_PORT = 5015 # robot workspace boundary wireframe (bounds + proximity)
+CENTER_EYE_OVERRIDE_PORT = 5016 # override CenterEyeAnchor pose from Python
 
 # ── ArUco marker IDs ──────────────────────────────────────────────────────────
-ANCHOR_MARKER_ID   = 101   # world frame + PyBullet scene origin
-PEGBOARD_MARKER_ID = 105   # pegboard origin (top-right corner)
+ANCHOR_MARKER_ID   = 100   # world frame + PyBullet scene origin
+PEGBOARD_MARKER_ID = 101   # pegboard origin (top-right corner)
 BOARD_MARKER_A_ID  = 102   # one large face of the tracked board
 BOARD_MARKER_B_ID  = 103   # opposite large face of the tracked board
 
