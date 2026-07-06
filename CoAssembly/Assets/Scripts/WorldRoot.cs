@@ -8,6 +8,13 @@ using Newtonsoft.Json;
 
 public class WorldRootPoseReceiverNetMQ : MonoBehaviour
 {
+    /// <summary>
+    /// Fired on the main thread each time a valid world_root_matrix arrives.
+    /// When subscribers are present, the receiver does NOT call SetPositionAndRotation
+    /// directly — the subscriber (e.g. WorldRootAnchorBridge) owns that responsibility.
+    /// </summary>
+    public event Action<Vector3, Quaternion> OnPoseReceived;
+
     [Header("Target")]
     public Transform worldRoot;
 
@@ -152,7 +159,10 @@ public class WorldRootPoseReceiverNetMQ : MonoBehaviour
         pos += rot * positionOffset;
         rot *= Quaternion.Euler(rotationOffset);
 
-        worldRoot.SetPositionAndRotation(pos, rot);
+        if (OnPoseReceived != null)
+            OnPoseReceived.Invoke(pos, rot);
+        else
+            worldRoot.SetPositionAndRotation(pos, rot);
 
         Debug.Log($"[WorldRootPoseReceiver] ✅ Applied WorldRoot pose: pos={pos}, rot={rot.eulerAngles}");
     }
