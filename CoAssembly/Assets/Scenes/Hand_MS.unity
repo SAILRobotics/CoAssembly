@@ -9988,7 +9988,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::CenterEyeOverrideReceiver
   centerEyeAnchor: {fileID: 337580216}
-  port: 5016
+  leftCamera: {fileID: 1005247602}
   verboseLogs: 0
 --- !u!1 &1186025667
 GameObject:

@@ -1,22 +1,40 @@
-using UnityEngine;
-using NetMQ;
-using NetMQ.Sockets;
 using System;
-using System.Threading;
-using System.Collections.Concurrent;
-using Newtonsoft.Json;
+using UnityEngine;
+using Meta.XR;
 
 /// <summary>
-/// Receives a pose override for CenterEyeAnchor from Python and applies it
-/// every LateUpdate() — after OVR has done its own tracking update — and again
-/// on Application.onBeforeRender, since OVRCameraRig re-drives CenterEyeAnchor
-/// from real HMD tracking on that same event (OVRCameraRig.OnBeforeRenderCallback)
-/// after all scripts' LateUpdate() has run. Without the second reapply, the two
-/// writers race and the anchor flickers between the override pose and the real
-/// tracked pose every frame.
+/// Drives CenterEyeAnchor to the true center-eye pose reconstructed from the
+/// left passthrough camera's real-time pose, computed entirely on-device —
+/// no round trip to Python, which used to add a full network+processing
+/// cycle of latency and made the pose visibly jittery/laggy relative to real
+/// head motion.
 ///
-/// Attach to any persistent GameObject.  Drag OVRCameraRig's CenterEyeAnchor
-/// into the centerEyeAnchor field in the Inspector.
+/// leftCamera.GetCameraPose() (a native OVRPlugin head-pose query, unaffected
+/// by anything we write to CenterEyeAnchor) internally computes
+/// camPose = headPose ∘ LensOffset, where LensOffset is the camera's fixed,
+/// factory-calibrated extrinsic relative to the head
+/// (leftCamera.Intrinsics.LensOffset — see PassthroughCameraAccess.cs).
+/// We just invert that composition: headPose = camPose ∘ inv(LensOffset).
+///
+/// An earlier version of this component instead auto-calibrated the offset
+/// at runtime by comparing CenterEyeAnchor's current pose against
+/// GetCameraPose()'s result — but GetCameraPose() is time-aligned to the
+/// camera's own (lower-rate) capture timestamp, not "now", so any head
+/// motion between those two moments got baked into the "fixed" offset as a
+/// large, bogus error. Using the SDK's already-known LensOffset sidesteps
+/// that timing mismatch entirely — no calibration step, no staleness risk.
+///
+/// Applies the override every LateUpdate() — after OVR has done its own
+/// tracking update — and again on Application.onBeforeRender, since
+/// OVRCameraRig re-drives CenterEyeAnchor from real HMD tracking on that same
+/// event (OVRCameraRig.OnBeforeRenderCallback) after all scripts'
+/// LateUpdate() has run. Without the second reapply, the two writers race
+/// and the anchor flickers between the override pose and the real tracked
+/// pose every frame.
+///
+/// Attach to any persistent GameObject. Drag OVRCameraRig's CenterEyeAnchor
+/// into centerEyeAnchor, and the left PassthroughCameraAccess (e.g. the one
+/// used by PassthroughCameraPublisher) into leftCamera.
 /// </summary>
 [DefaultExecutionOrder(10000)]   // run after OVRCameraRig so our position wins
 public class CenterEyeOverrideReceiver : MonoBehaviour
@@ -24,29 +42,16 @@ public class CenterEyeOverrideReceiver : MonoBehaviour
     [Header("Target")]
     public Transform centerEyeAnchor;
 
-    [Header("NetMQ")]
-    [SerializeField] private int port = 5016;
+    [Header("Left passthrough camera")]
+    public PassthroughCameraAccess leftCamera;
 
     [Header("Debug")]
     [SerializeField] private bool verboseLogs = false;
-
-    private Thread receiveThread;
-    private volatile bool isRunning = false;
-    private bool hasShutdown = false;
-    private SubscriberSocket subscriber;
-
-    private readonly ConcurrentQueue<float[]> matrixQueue = new();
 
     // Last pose we applied — reapplied on Application.onBeforeRender (see below).
     private bool hasPose = false;
     private Vector3 lastPos;
     private Quaternion lastRot;
-
-    [Serializable]
-    private class PoseData
-    {
-        public float[] center_eye_matrix;
-    }
 
     void Start()
     {
@@ -56,12 +61,12 @@ public class CenterEyeOverrideReceiver : MonoBehaviour
             enabled = false;
             return;
         }
-
-        NetMQManager.RegisterReceiver();
-
-        isRunning = true;
-        receiveThread = new Thread(ReceiveLoop) { IsBackground = true };
-        receiveThread.Start();
+        if (leftCamera == null)
+        {
+            Debug.LogError("[CenterEyeOverride] leftCamera is not assigned.");
+            enabled = false;
+            return;
+        }
 
         // OVRCameraRig re-drives centerEyeAnchor from real HMD tracking on
         // Application.onBeforeRender (fires after every script's LateUpdate),
@@ -71,8 +76,27 @@ public class CenterEyeOverrideReceiver : MonoBehaviour
         // [DefaultExecutionOrder(10000)] — reapplies our pose last so it
         // always wins right before render.
         Application.onBeforeRender += ReapplyBeforeRender;
+    }
 
-        Debug.Log($"[CenterEyeOverride] Listening on tcp://0.0.0.0:{port}");
+    void LateUpdate()
+    {
+        if (!leftCamera.enabled || !leftCamera.IsPlaying)
+            return;
+
+        Pose camPose     = leftCamera.GetCameraPose();
+        Pose lensOffset  = leftCamera.Intrinsics.LensOffset;
+
+        var mCam    = Matrix4x4.TRS(camPose.position, camPose.rotation, Vector3.one);
+        var mOffset = Matrix4x4.TRS(lensOffset.position, lensOffset.rotation, Vector3.one);
+        var mCenter = mCam * mOffset.inverse;
+
+        lastPos = mCenter.GetColumn(3);
+        lastRot = mCenter.rotation;
+        hasPose = true;
+        centerEyeAnchor.SetPositionAndRotation(lastPos, lastRot);
+
+        if (verboseLogs)
+            Debug.Log($"[CenterEyeOverride] pos={lastPos} rot={lastRot.eulerAngles}");
     }
 
     private void ReapplyBeforeRender()
@@ -81,102 +105,6 @@ public class CenterEyeOverrideReceiver : MonoBehaviour
             centerEyeAnchor.SetPositionAndRotation(lastPos, lastRot);
     }
 
-    private void ReceiveLoop()
-    {
-        AsyncIO.ForceDotNet.Force();
-        try
-        {
-            using (subscriber = new SubscriberSocket())
-            {
-                subscriber.Bind($"tcp://0.0.0.0:{port}");
-                subscriber.Subscribe("");
-
-                while (isRunning)
-                {
-                    try
-                    {
-                        if (subscriber.TryReceiveFrameString(TimeSpan.FromMilliseconds(100), out string msg))
-                        {
-                            var data = JsonConvert.DeserializeObject<PoseData>(msg);
-                            if (data?.center_eye_matrix != null && data.center_eye_matrix.Length == 16)
-                                matrixQueue.Enqueue(data.center_eye_matrix);
-                        }
-                    }
-                    catch (TerminatingException) { break; }
-                    catch (ObjectDisposedException) { break; }
-                    catch (Exception e)
-                    {
-                        if (isRunning)
-                            Debug.LogWarning("[CenterEyeOverride] ReceiveLoop error: " + e.Message);
-                    }
-                }
-            }
-        }
-        catch (Exception e)
-        {
-            if (isRunning)
-                Debug.LogWarning("[CenterEyeOverride] ReceiveLoop outer: " + e.Message);
-        }
-    }
-
-    void LateUpdate()
-    {
-        // Drain all but the latest message.
-        float[] latest = null;
-        while (matrixQueue.TryDequeue(out var flat16))
-            latest = flat16;
-
-        if (latest != null)
-            ApplyMatrix(latest);
-
-        if (NetMQManager.IsShutdownRequested)
-            Shutdown();
-    }
-
-    private void ApplyMatrix(float[] flat16)
-    {
-        Matrix4x4 mat = new Matrix4x4();
-        for (int i = 0; i < 16; i++)
-            mat[i] = flat16[i];
-
-        Vector4 row3 = mat.GetRow(3);
-        bool valid = Mathf.Approximately(row3.x, 0f) &&
-                     Mathf.Approximately(row3.y, 0f) &&
-                     Mathf.Approximately(row3.z, 0f) &&
-                     Mathf.Approximately(row3.w, 1f);
-        if (!valid) return;
-
-        Vector3 pos = mat.GetColumn(3);
-        Quaternion rot = mat.rotation;
-
-        lastPos = pos;
-        lastRot = rot;
-        hasPose = true;
-        centerEyeAnchor.SetPositionAndRotation(pos, rot);
-
-        if (verboseLogs)
-            Debug.Log($"[CenterEyeOverride] pos={pos} rot={rot.eulerAngles}");
-    }
-
-    public void Shutdown()
-    {
-        if (hasShutdown) return;
-        hasShutdown = true;
-
-        Application.onBeforeRender -= ReapplyBeforeRender;
-
-        isRunning = false;
-        subscriber?.Close();
-        subscriber?.Dispose();
-        subscriber = null;
-
-        if (receiveThread != null && receiveThread.IsAlive)
-            receiveThread.Join(1000);
-
-        NetMQManager.UnregisterReceiver();
-        Debug.Log("[CenterEyeOverride] Shutdown complete");
-    }
-
-    private void OnDestroy() => Shutdown();
-    private void OnApplicationQuit() => Shutdown();
+    private void OnDestroy() => Application.onBeforeRender -= ReapplyBeforeRender;
+    private void OnApplicationQuit() => Application.onBeforeRender -= ReapplyBeforeRender;
 }
