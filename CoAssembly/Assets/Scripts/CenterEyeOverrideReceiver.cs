@@ -8,14 +8,15 @@ using Newtonsoft.Json;
 
 /// <summary>
 /// Receives a pose override for CenterEyeAnchor from Python and applies it
-/// every LateUpdate() — after OVR has done its own tracking update — so the
-/// override wins even if rotation tracking is still enabled.
+/// every LateUpdate() — after OVR has done its own tracking update — and again
+/// on Application.onBeforeRender, since OVRCameraRig re-drives CenterEyeAnchor
+/// from real HMD tracking on that same event (OVRCameraRig.OnBeforeRenderCallback)
+/// after all scripts' LateUpdate() has run. Without the second reapply, the two
+/// writers race and the anchor flickers between the override pose and the real
+/// tracked pose every frame.
 ///
 /// Attach to any persistent GameObject.  Drag OVRCameraRig's CenterEyeAnchor
 /// into the centerEyeAnchor field in the Inspector.
-///
-/// Requires OVRManager.usePositionTracking = false (set in the Inspector on
-/// OVRManager, or at runtime) so OVR does not overwrite the position each frame.
 /// </summary>
 [DefaultExecutionOrder(10000)]   // run after OVRCameraRig so our position wins
 public class CenterEyeOverrideReceiver : MonoBehaviour
@@ -35,6 +36,11 @@ public class CenterEyeOverrideReceiver : MonoBehaviour
     private SubscriberSocket subscriber;
 
     private readonly ConcurrentQueue<float[]> matrixQueue = new();
+
+    // Last pose we applied — reapplied on Application.onBeforeRender (see below).
+    private bool hasPose = false;
+    private Vector3 lastPos;
+    private Quaternion lastRot;
 
     [Serializable]
     private class PoseData
@@ -57,7 +63,22 @@ public class CenterEyeOverrideReceiver : MonoBehaviour
         receiveThread = new Thread(ReceiveLoop) { IsBackground = true };
         receiveThread.Start();
 
+        // OVRCameraRig re-drives centerEyeAnchor from real HMD tracking on
+        // Application.onBeforeRender (fires after every script's LateUpdate),
+        // which otherwise fights our override and produces a per-frame
+        // flicker between the two poses. Subscribing here — after
+        // OVRCameraRig's own Start() runs, guaranteed by our
+        // [DefaultExecutionOrder(10000)] — reapplies our pose last so it
+        // always wins right before render.
+        Application.onBeforeRender += ReapplyBeforeRender;
+
         Debug.Log($"[CenterEyeOverride] Listening on tcp://0.0.0.0:{port}");
+    }
+
+    private void ReapplyBeforeRender()
+    {
+        if (hasPose)
+            centerEyeAnchor.SetPositionAndRotation(lastPos, lastRot);
     }
 
     private void ReceiveLoop()
@@ -128,6 +149,9 @@ public class CenterEyeOverrideReceiver : MonoBehaviour
         Vector3 pos = mat.GetColumn(3);
         Quaternion rot = mat.rotation;
 
+        lastPos = pos;
+        lastRot = rot;
+        hasPose = true;
         centerEyeAnchor.SetPositionAndRotation(pos, rot);
 
         if (verboseLogs)
@@ -138,6 +162,8 @@ public class CenterEyeOverrideReceiver : MonoBehaviour
     {
         if (hasShutdown) return;
         hasShutdown = true;
+
+        Application.onBeforeRender -= ReapplyBeforeRender;
 
         isRunning = false;
         subscriber?.Close();
