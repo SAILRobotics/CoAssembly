@@ -17,6 +17,7 @@ using Newtonsoft.Json;
 /// Requires OVRManager.usePositionTracking = false (set in the Inspector on
 /// OVRManager, or at runtime) so OVR does not overwrite the position each frame.
 /// </summary>
+[DefaultExecutionOrder(10000)]   // run after OVRCameraRig so our position wins
 public class CenterEyeOverrideReceiver : MonoBehaviour
 {
     [Header("Target")]
