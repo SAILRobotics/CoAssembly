@@ -403,28 +403,23 @@ class _WorldAnchor:
 
     def lock(self, T_cam_anchor: np.ndarray,
              cam_T: np.ndarray, center_T: np.ndarray | None = None) -> bool:
-        """Lock world frame to marker 100 (anchor). Returns True on success."""
-        if T_cam_anchor is None:
+        """Lock world frame to marker 100 (anchor). Returns True on success.
+
+        Always uses raw cam_T (left passthrough camera). CenterEyeAnchor is
+        driven to cam_T in Unity, so both the lock and the rendering camera
+        share the same reference frame — no offset correction needed.
+        """
+        if T_cam_anchor is None or cam_T is None:
             return False
-        if self._T_eye_offset is None and cam_T is not None and center_T is not None:
-            self._T_eye_offset = np.linalg.inv(center_T) @ cam_T
-            self._save_eye_offset()
-        eff = self._effective_cam_T(cam_T, center_T)
-        if eff is None:
-            return False
-        self._T_wt = np.linalg.inv(eff @ T_cam_anchor)
-        src = "CenterEye+offset" if self._T_eye_offset is not None else "cam_T"
-        print(f"[Anchor] Locked to marker 100 ({src}).")
+        self._T_wt = np.linalg.inv(cam_T @ T_cam_anchor)
+        print(f"[Anchor] Locked to marker 100 (cam_T).")
         return True
 
     def relock(self, T_cam_anchor: np.ndarray,
                cam_T: np.ndarray, center_T: np.ndarray | None = None) -> bool:
-        if T_cam_anchor is None or not self.locked:
+        if T_cam_anchor is None or cam_T is None or not self.locked:
             return False
-        eff = self._effective_cam_T(cam_T, center_T)
-        if eff is None:
-            return False
-        self._T_wt = np.linalg.inv(eff @ T_cam_anchor)
+        self._T_wt = np.linalg.inv(cam_T @ T_cam_anchor)
         return True
 
     def set_pegboard(self, T_world_pegboard: np.ndarray) -> None:
@@ -2092,7 +2087,7 @@ class MainScene:
                 # ── Tracked board (markers A/B) — constantly updated ──────────
                 if self.anchor.locked and board_ok:
                     self.anchor.update_board_from_tracking(
-                        self.cam.camera_T, _center_T,
+                        self.cam.camera_T, None,
                         T_cam_board[board_marker_seen],
                         self._T_BOARD_FROM_MARKER[board_marker_seen])
 
@@ -2198,7 +2193,7 @@ class MainScene:
                         self._try_load_pegboard_from_file()
                     elif pegboard_ok:
                         self.anchor.update_pegboard_from_tracking(
-                            self.cam.camera_T, _center_T, T_cam_pegboard)
+                            self.cam.camera_T, None, T_cam_pegboard)
                     if self._synth_cubes_added and self.anchor.T_pegboard_in_world is not None:
                         T_wp = self.anchor.T_pegboard_in_world
                         R_wp = T_wp[:3, :3]
@@ -2557,7 +2552,7 @@ class MainScene:
                         # ── Phase B: lock pegboard (skipped if loaded from file) ─
                         if not self._load_pegboard_from_file and pegboard_ok and self.anchor.locked:
                             self.anchor.update_pegboard_from_tracking(
-                                self.cam.camera_T, _center_T, T_cam_pegboard)
+                                self.cam.camera_T, None, T_cam_pegboard)
                             T_wp = self.anchor.T_pegboard_in_world
                             if T_wp is not None:
                                 R_wp = T_wp[:3, :3]
