@@ -10,6 +10,7 @@ using Oculus.Interaction.Input;
 using Newtonsoft.Json;
 using SerializableData;
 
+[DefaultExecutionOrder(10001)]  // run after CenterEyeOverrideReceiver (10000) so we read the overridden pose
 public class TrackingDataManager : MonoBehaviour
 {
     [SerializeField]
@@ -32,7 +33,7 @@ public class TrackingDataManager : MonoBehaviour
 
     private string lastJson = "";
 
-    void Update()
+    void LateUpdate()
     {
         var frame = CaptureFrame();
         string json = JsonConvert.SerializeObject(frame, Formatting.Indented);
