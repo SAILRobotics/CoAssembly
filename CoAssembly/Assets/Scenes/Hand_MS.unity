@@ -9989,6 +9989,10 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::CenterEyeOverrideReceiver
   centerEyeAnchor: {fileID: 337580216}
   leftCamera: {fileID: 1005247602}
+  overrideRotation: 0
+  overrideYOnly: 1
+  smoothPosition: 0
+  positionSmoothTime: 0.2
   verboseLogs: 0
 --- !u!1 &1186025667
 GameObject:

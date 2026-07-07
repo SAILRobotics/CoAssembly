@@ -58,13 +58,35 @@ public class CenterEyeOverrideReceiver : MonoBehaviour
              "match the reconstructed camera-relative pose.")]
     [SerializeField] private bool overrideRotation = false;
 
+    [Header("Position axes")]
+    [Tooltip("If true, only the reconstructed Y (height) is applied — X/Z are left as " +
+             "CenterEyeAnchor's own OVR-tracked position. Useful if only vertical alignment " +
+             "with the passthrough camera matters and you'd rather not touch X/Z at all.")]
+    [SerializeField] private bool overrideYOnly = false;
+
+    [Header("Position smoothing (optional)")]
+    [Tooltip("The reconstructed position only changes when a new passthrough camera frame " +
+             "arrives (lower rate than render), so it holds steady then steps — this can " +
+             "read as jitter. Enabling this eases toward the target with Vector3.SmoothDamp " +
+             "instead of snapping straight to it, trading a little added lag for a smoother " +
+             "motion. It never overshoots past real data (unlike velocity extrapolation), " +
+             "but it is always a bit behind — tune positionSmoothTime for the balance.")]
+    [SerializeField] private bool smoothPosition = false;
+    [SerializeField] private float positionSmoothTime = 0.05f;   // seconds
+
     [Header("Debug")]
     [SerializeField] private bool verboseLogs = false;
 
-    // Last pose we applied — reapplied on Application.onBeforeRender (see below).
-    private bool hasPose = false;
-    private Vector3 lastPos;
+    // Raw reconstructed target this frame (before smoothing).
+    private Vector3 targetPos;
     private Quaternion lastRot;
+
+    // What we actually applied to centerEyeAnchor.position — reapplied on
+    // Application.onBeforeRender (see below). When smoothPosition is on,
+    // this is the SmoothDamp-eased value, not the raw target.
+    private bool hasPose = false;
+    private Vector3 appliedPos;
+    private Vector3 smoothVelocity;   // SmoothDamp's internal velocity state
 
     void Start()
     {
@@ -103,27 +125,41 @@ public class CenterEyeOverrideReceiver : MonoBehaviour
         var mOffset = Matrix4x4.TRS(lensOffset.position, lensOffset.rotation, Vector3.one);
         var mCenter = mCam * mOffset.inverse;
 
-        lastPos = mCenter.GetColumn(3);
-        lastRot = mCenter.rotation;
-        hasPose = true;
+        targetPos = mCenter.GetColumn(3);
+        lastRot   = mCenter.rotation;
 
-        if (overrideRotation)
-            centerEyeAnchor.SetPositionAndRotation(lastPos, lastRot);
+        if (smoothPosition && hasPose)
+            appliedPos = Vector3.SmoothDamp(appliedPos, targetPos, ref smoothVelocity, positionSmoothTime);
         else
-            centerEyeAnchor.position = lastPos;
+            appliedPos = targetPos;   // first frame, or smoothing disabled — snap straight to target
+
+        hasPose = true;
+        ApplyToAnchor();
 
         if (verboseLogs)
-            Debug.Log($"[CenterEyeOverride] pos={lastPos} rot={(overrideRotation ? lastRot.eulerAngles : centerEyeAnchor.rotation.eulerAngles)}");
+            Debug.Log($"[CenterEyeOverride] pos={appliedPos} target={targetPos} rot={(overrideRotation ? lastRot.eulerAngles : centerEyeAnchor.rotation.eulerAngles)}");
     }
 
     private void ReapplyBeforeRender()
     {
         if (!hasPose) return;
+        ApplyToAnchor();
+    }
+
+    private void ApplyToAnchor()
+    {
+        // CenterEyeAnchor's own OVR-tracked pose was already (re-)written earlier this
+        // frame — by OVRCameraRig's Update()/LateUpdate() before ours, or by its
+        // onBeforeRender callback before this one — so reading it here for the axes we
+        // don't touch always reflects the current real-time tracked value, not a stale one.
+        Vector3 posToApply = overrideYOnly
+            ? new Vector3(centerEyeAnchor.position.x, appliedPos.y, centerEyeAnchor.position.z)
+            : appliedPos;
 
         if (overrideRotation)
-            centerEyeAnchor.SetPositionAndRotation(lastPos, lastRot);
+            centerEyeAnchor.SetPositionAndRotation(posToApply, lastRot);
         else
-            centerEyeAnchor.position = lastPos;
+            centerEyeAnchor.position = posToApply;
     }
 
     private void OnDestroy() => Application.onBeforeRender -= ReapplyBeforeRender;
