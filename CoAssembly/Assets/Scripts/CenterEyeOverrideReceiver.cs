@@ -16,6 +16,13 @@ using Meta.XR;
 /// (leftCamera.Intrinsics.LensOffset — see PassthroughCameraAccess.cs).
 /// We just invert that composition: headPose = camPose ∘ inv(LensOffset).
 ///
+/// By default (overrideRotation = false) only the reconstructed POSITION is
+/// applied — CenterEyeAnchor's own (OVR-tracked) rotation is left alone,
+/// since orientation tracking is already low-latency/high-rate via the gyro
+/// and doesn't need correcting; only translation needs to be pulled onto the
+/// camera's physical position. Check overrideRotation to also apply the
+/// reconstructed rotation if needed.
+///
 /// An earlier version of this component instead auto-calibrated the offset
 /// at runtime by comparing CenterEyeAnchor's current pose against
 /// GetCameraPose()'s result — but GetCameraPose() is time-aligned to the
@@ -35,16 +42,6 @@ using Meta.XR;
 /// Attach to any persistent GameObject. Drag OVRCameraRig's CenterEyeAnchor
 /// into centerEyeAnchor, and the left PassthroughCameraAccess (e.g. the one
 /// used by PassthroughCameraPublisher) into leftCamera.
-///
-/// Prediction: leftCamera.GetCameraPose() is time-aligned to
-/// leftCamera.Timestamp — the passthrough camera's own (lower-rate, delayed)
-/// image-capture time, not "now". During fast head motion that gap shows up
-/// as visible lag. We estimate the head's linear/angular velocity by
-/// finite-differencing consecutive camera frames, then extrapolate the
-/// reconstructed center-eye pose forward by (now - leftCamera.Timestamp) to
-/// approximately cancel that latency. This can slightly overshoot on sudden
-/// stops/direction reversals (the usual predictive-tracking artifact), which
-/// maxPredictionSeconds bounds.
 /// </summary>
 [DefaultExecutionOrder(10000)]   // run after OVRCameraRig so our position wins
 public class CenterEyeOverrideReceiver : MonoBehaviour
@@ -55,11 +52,11 @@ public class CenterEyeOverrideReceiver : MonoBehaviour
     [Header("Left passthrough camera")]
     public PassthroughCameraAccess leftCamera;
 
-    [Header("Latency compensation")]
-    [SerializeField] private bool enablePrediction = true;
-    [Tooltip("Upper bound on how far forward we'll extrapolate, in seconds. " +
-             "Guards against overshoot if camera frames stall.")]
-    [SerializeField] private float maxPredictionSeconds = 0.1f;
+    [Header("Rotation")]
+    [Tooltip("If false (default), only CenterEyeAnchor's position is overridden — its own " +
+             "OVR-tracked rotation is left alone. If true, rotation is also overridden to " +
+             "match the reconstructed camera-relative pose.")]
+    [SerializeField] private bool overrideRotation = false;
 
     [Header("Debug")]
     [SerializeField] private bool verboseLogs = false;
@@ -68,15 +65,6 @@ public class CenterEyeOverrideReceiver : MonoBehaviour
     private bool hasPose = false;
     private Vector3 lastPos;
     private Quaternion lastRot;
-
-    // Finite-differenced velocity, updated whenever a new camera frame arrives.
-    private bool hasPrevSample = false;
-    private DateTime prevTimestamp;
-    private Vector3 prevCenterPos;
-    private Quaternion prevCenterRot = Quaternion.identity;
-    private Vector3 linearVelocity;          // m/s
-    private Vector3 angularAxis = Vector3.up; // unit axis
-    private float angularSpeedDeg;            // deg/s
 
     void Start()
     {
@@ -110,69 +98,32 @@ public class CenterEyeOverrideReceiver : MonoBehaviour
 
         Pose camPose     = leftCamera.GetCameraPose();
         Pose lensOffset  = leftCamera.Intrinsics.LensOffset;
-        DateTime timestamp = leftCamera.Timestamp;
 
         var mCam    = Matrix4x4.TRS(camPose.position, camPose.rotation, Vector3.one);
         var mOffset = Matrix4x4.TRS(lensOffset.position, lensOffset.rotation, Vector3.one);
         var mCenter = mCam * mOffset.inverse;
 
-        Vector3 rawPos    = mCenter.GetColumn(3);
-        Quaternion rawRot = mCenter.rotation;
-
-        // A new camera frame arrived — refresh our velocity estimate via
-        // finite difference against the previous frame's reconstructed pose.
-        if (!hasPrevSample || timestamp != prevTimestamp)
-        {
-            if (hasPrevSample)
-            {
-                float dt = (float)(timestamp - prevTimestamp).TotalSeconds;
-                if (dt > 1e-4f)
-                {
-                    linearVelocity = (rawPos - prevCenterPos) / dt;
-
-                    Quaternion deltaRot = rawRot * Quaternion.Inverse(prevCenterRot);
-                    deltaRot.ToAngleAxis(out float deltaAngleDeg, out Vector3 axis);
-                    if (deltaAngleDeg > 180f) deltaAngleDeg -= 360f;   // shortest path
-                    if (axis.sqrMagnitude > 1e-6f)
-                    {
-                        angularAxis      = axis;
-                        angularSpeedDeg  = deltaAngleDeg / dt;
-                    }
-                    else
-                    {
-                        angularSpeedDeg = 0f;
-                    }
-                }
-            }
-            prevTimestamp  = timestamp;
-            prevCenterPos  = rawPos;
-            prevCenterRot  = rawRot;
-            hasPrevSample  = true;
-        }
-
-        Vector3 predictedPos    = rawPos;
-        Quaternion predictedRot = rawRot;
-        if (enablePrediction)
-        {
-            float predictDt = Mathf.Clamp((float)(DateTime.UtcNow - timestamp).TotalSeconds,
-                                          0f, maxPredictionSeconds);
-            predictedPos = rawPos + linearVelocity * predictDt;
-            predictedRot = Quaternion.AngleAxis(angularSpeedDeg * predictDt, angularAxis) * rawRot;
-        }
-
-        lastPos = predictedPos;
-        lastRot = predictedRot;
+        lastPos = mCenter.GetColumn(3);
+        lastRot = mCenter.rotation;
         hasPose = true;
-        centerEyeAnchor.SetPositionAndRotation(lastPos, lastRot);
+
+        if (overrideRotation)
+            centerEyeAnchor.SetPositionAndRotation(lastPos, lastRot);
+        else
+            centerEyeAnchor.position = lastPos;
 
         if (verboseLogs)
-            Debug.Log($"[CenterEyeOverride] pos={lastPos} rot={lastRot.eulerAngles}");
+            Debug.Log($"[CenterEyeOverride] pos={lastPos} rot={(overrideRotation ? lastRot.eulerAngles : centerEyeAnchor.rotation.eulerAngles)}");
     }
 
     private void ReapplyBeforeRender()
     {
-        if (hasPose)
+        if (!hasPose) return;
+
+        if (overrideRotation)
             centerEyeAnchor.SetPositionAndRotation(lastPos, lastRot);
+        else
+            centerEyeAnchor.position = lastPos;
     }
 
     private void OnDestroy() => Application.onBeforeRender -= ReapplyBeforeRender;
