@@ -1,12 +1,18 @@
 import numpy as np
 from scipy.spatial.transform import Rotation as ScipyR
 
-from .unity_conversion import unity_to_open3d_vector, unity_to_open3d_quaternion, HAND_BONES
+from .unity_conversion import (
+    unity_to_open3d_vector, unity_to_open3d_quaternion,
+    open3d_to_unity_vector, open3d_to_unity_quaternion, HAND_BONES,
+)
 
 
 # =============================================================================
 # Pose helpers
 # =============================================================================
+
+_R_FIX = ScipyR.from_euler('x', -90.0, degrees=True).as_matrix()
+
 
 def _unity_pose_to_T(pos_xyz, rot_xyzw) -> np.ndarray:
     pos_dict = {"x": float(pos_xyz[0]), "y": float(pos_xyz[1]), "z": float(pos_xyz[2])}
@@ -14,11 +20,32 @@ def _unity_pose_to_T(pos_xyz, rot_xyzw) -> np.ndarray:
     x, y, z, w = rot_xyzw
     q_o3d = unity_to_open3d_quaternion([float(w), float(x), float(y), float(z)])
     R_cam = ScipyR.from_quat([q_o3d[1], q_o3d[2], q_o3d[3], q_o3d[0]]).as_matrix()
-    R_fix = ScipyR.from_euler('x', -90.0, degrees=True).as_matrix()
     T = np.eye(4, dtype=np.float64)
-    T[:3, :3] = R_cam @ R_fix
+    T[:3, :3] = R_cam @ _R_FIX
     T[:3, 3]  = p
     return T
+
+
+def _T_to_unity_pose(T: np.ndarray):
+    """Exact inverse of _unity_pose_to_T. Given a camera-convention 4x4 (open3d
+    frame, with the extra -90 deg X 'R_fix' baked in), recover the raw Unity
+    (pos_xyz, rot_xyzw) that would reproduce it via _unity_pose_to_T.
+
+    T_eye_offset (the calibrated centerEyeAnchor<->left-cam tilt) is defined
+    in this same R_fix-laden convention (it's computed as inv(center_T) @ cam_T
+    where both center_T and cam_T come from _unity_pose_to_T). Converting a
+    pose composed with it back to Unity via the generic open3d<->Unity
+    conversion (which knows nothing about R_fix) would leave a stray ~90 deg
+    rotation error baked in — this function undoes R_fix as well.
+    """
+    R_cam = T[:3, :3] @ _R_FIX.T
+    q_xyzw = ScipyR.from_matrix(R_cam).as_quat()
+    q_o3d_wxyz = [q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]]
+    w, x, y, z = unity_to_open3d_quaternion(q_o3d_wxyz)   # involution -> unity wxyz
+    rot_xyzw = [float(x), float(y), float(z), float(w)]
+    p = T[:3, 3]
+    pos_xyz = [float(p[0]), float(p[2]), float(p[1])]
+    return pos_xyz, rot_xyzw
 
 
 def _adapt_cx_cy(fx, fy, cx, cy, sensor_w, sensor_h, img_w, img_h):

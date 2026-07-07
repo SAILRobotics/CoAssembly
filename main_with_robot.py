@@ -63,7 +63,7 @@ from utils.unity_conversion import (
     open3d_to_unity_quaternion,
 )
 from utils.pose_helpers import (
-    _unity_pose_to_T, _adapt_cx_cy, _transform_point,
+    _unity_pose_to_T, _T_to_unity_pose, _adapt_cx_cy, _transform_point,
     _BONES_NP, _N_JOINTS, _HIDDEN_PT, _JOINT_GROUP_ORDER,
     _unity_to_o3d, _to_world, _unit, _palm_quat, _tool_grasp_quat, _extract_joints,
     BOARD_SIZE, T_BOARD_FROM_MARKER_A, T_BOARD_FROM_MARKER_B,
@@ -90,6 +90,8 @@ class _CamFeedReceiver:
         self._sub.connect(f"tcp://{ip}:{port}")
         self.frame        = None
         self.camera_T     = None
+        self.raw_pos      = None   # (px, py, pz) straight from Unity, no axis/CV conversion
+        self.raw_rot_xyzw = None   # (qx, qy, qz, qw) straight from Unity, no axis/CV conversion
         self.fx = self.fy = self.cx = self.cy = None
         self.sensor_width = self.sensor_height = None
         self.width        = self.height        = None
@@ -126,6 +128,8 @@ class _CamFeedReceiver:
         self.sensor_width  = int(sw)
         self.sensor_height = int(sh)
         self.camera_T = _unity_pose_to_T([px, py, pz], [qx, qy, qz, qw])
+        self.raw_pos      = (px, py, pz)
+        self.raw_rot_xyzw = (qx, qy, qz, qw)
         return True
 
     def close(self):
@@ -394,6 +398,18 @@ class _WorldAnchor:
             return center_T @ self._T_eye_offset
         return cam_T
 
+    def center_eye_override_pose(self, cam_T: "np.ndarray | None",
+                                 raw_pos, raw_rot_xyzw):
+        """Return (pos_xyz, rot_xyzw) in Unity space to drive CenterEyeAnchor to
+        the true center-eye pose — i.e. cam_T with the calibrated camera tilt
+        (T_eye_offset) undone, since cam_T = center_T @ T_eye_offset.
+        Falls back to the raw cam_left pose when no calibration is loaded yet.
+        """
+        if self._T_eye_offset is None or cam_T is None:
+            return raw_pos, raw_rot_xyzw
+        T_center = cam_T @ np.linalg.inv(self._T_eye_offset)
+        return _T_to_unity_pose(T_center)
+
 
     def set_offset(self, pos_offset, yaw_deg: float):
         T = np.eye(4, dtype=np.float64)
@@ -403,28 +419,23 @@ class _WorldAnchor:
 
     def lock(self, T_cam_anchor: np.ndarray,
              cam_T: np.ndarray, center_T: np.ndarray | None = None) -> bool:
-        """Lock world frame to marker 100 (anchor). Returns True on success."""
-        if T_cam_anchor is None:
+        """Lock world frame to marker 100 (anchor). Returns True on success.
+
+        Always uses raw cam_T (left passthrough camera). CenterEyeAnchor is
+        driven to cam_T in Unity, so both the lock and the rendering camera
+        share the same reference frame — no offset correction needed.
+        """
+        if T_cam_anchor is None or cam_T is None:
             return False
-        if self._T_eye_offset is None and cam_T is not None and center_T is not None:
-            self._T_eye_offset = np.linalg.inv(center_T) @ cam_T
-            self._save_eye_offset()
-        eff = self._effective_cam_T(cam_T, center_T)
-        if eff is None:
-            return False
-        self._T_wt = np.linalg.inv(eff @ T_cam_anchor)
-        src = "CenterEye+offset" if self._T_eye_offset is not None else "cam_T"
-        print(f"[Anchor] Locked to marker 100 ({src}).")
+        self._T_wt = np.linalg.inv(cam_T @ T_cam_anchor)
+        print(f"[Anchor] Locked to marker 100 (cam_T).")
         return True
 
     def relock(self, T_cam_anchor: np.ndarray,
                cam_T: np.ndarray, center_T: np.ndarray | None = None) -> bool:
-        if T_cam_anchor is None or not self.locked:
+        if T_cam_anchor is None or cam_T is None or not self.locked:
             return False
-        eff = self._effective_cam_T(cam_T, center_T)
-        if eff is None:
-            return False
-        self._T_wt = np.linalg.inv(eff @ T_cam_anchor)
+        self._T_wt = np.linalg.inv(cam_T @ T_cam_anchor)
         return True
 
     def set_pegboard(self, T_world_pegboard: np.ndarray) -> None:
@@ -562,6 +573,54 @@ class _WorldAnchor:
             pass
         try:
             self._pub_board.close(0)
+        except Exception:
+            pass
+
+
+# =============================================================================
+# CenterEye override publisher
+# =============================================================================
+
+class _CenterEyeOverridePublisher:
+    """Publishes a pose override for CenterEyeAnchor in Unity.
+
+    When OVR position tracking is disabled, Unity's CenterEyeAnchor stops
+    being driven by SLAM.  This publisher lets Python set its pose directly —
+    e.g. to match the left passthrough camera so the rendering camera is
+    physically accurate.
+
+    Takes the raw Unity-space position/quaternion straight from the cam_left
+    feed (_CamFeedReceiver.raw_pos / raw_rot_xyzw) — NOT _CamFeedReceiver.camera_T,
+    which has an extra -90 deg X rotation baked in for OpenCV/ArUco solvePnP
+    conventions. Feeding that CV-convention matrix back to Unity as-is would
+    misalign the override by that same 90 deg every frame.
+    """
+
+    def __init__(self, pub_ip: str, port: int = cfg.CENTER_EYE_OVERRIDE_PORT):
+        ctx = zmq.Context()
+        self._pub = ctx.socket(zmq.PUB)
+        self._pub.connect(f"tcp://{pub_ip}:{port}")
+        time.sleep(0.2)
+
+    def publish(self, pos_xyz, rot_xyzw) -> None:
+        if pos_xyz is None or rot_xyzw is None:
+            return
+        T = np.eye(4, dtype=np.float64)
+        T[:3, :3] = ScipyR.from_quat(list(rot_xyzw)).as_matrix()
+        T[:3, 3]  = pos_xyz
+        mat = T.T.flatten().tolist()   # column-major, matches Unity Matrix4x4 layout
+        try:
+            self._pub.send_string(json.dumps({
+                "center_eye_position":      [float(v) for v in pos_xyz],
+                "center_eye_rotation_xyzw": [float(v) for v in rot_xyzw],
+                "center_eye_matrix":        mat,
+            }))
+        except Exception as e:
+            print(f"[CenterEyeOverride] Publish error: {e}")
+
+    def close(self):
+        try:
+            self._pub.close(0)
         except Exception:
             pass
 
@@ -1900,6 +1959,7 @@ class MainScene:
                              name="gripper-preconnect").start()
 
         self.anchor      = _WorldAnchor(quest_ip)
+        self.center_eye_pub = _CenterEyeOverridePublisher(quest_ip)
         self.tools       = _ToolSelectionManager(quest_ip)
         self.tuner       = _OffsetTuner()
         self.synth       = _SyntheticObjectPublisher(quest_ip)
@@ -2046,10 +2106,15 @@ class MainScene:
                 # ── CenterEye pose ────────────────────────────────────────────
                 _center_T = self.hands.center_eye_T()
 
+                # ── Override CenterEyeAnchor pose with left cam_T ─────────────
+                _override_pos, _override_rot = self.anchor.center_eye_override_pose(
+                    self.cam.camera_T, self.cam.raw_pos, self.cam.raw_rot_xyzw)
+                self.center_eye_pub.publish(_override_pos, _override_rot)
+
                 # ── Tracked board (markers A/B) — constantly updated ──────────
                 if self.anchor.locked and board_ok:
                     self.anchor.update_board_from_tracking(
-                        self.cam.camera_T, _center_T,
+                        self.cam.camera_T, None,
                         T_cam_board[board_marker_seen],
                         self._T_BOARD_FROM_MARKER[board_marker_seen])
 
@@ -2155,7 +2220,7 @@ class MainScene:
                         self._try_load_pegboard_from_file()
                     elif pegboard_ok:
                         self.anchor.update_pegboard_from_tracking(
-                            self.cam.camera_T, _center_T, T_cam_pegboard)
+                            self.cam.camera_T, None, T_cam_pegboard)
                     if self._synth_cubes_added and self.anchor.T_pegboard_in_world is not None:
                         T_wp = self.anchor.T_pegboard_in_world
                         R_wp = T_wp[:3, :3]
@@ -2514,7 +2579,7 @@ class MainScene:
                         # ── Phase B: lock pegboard (skipped if loaded from file) ─
                         if not self._load_pegboard_from_file and pegboard_ok and self.anchor.locked:
                             self.anchor.update_pegboard_from_tracking(
-                                self.cam.camera_T, _center_T, T_cam_pegboard)
+                                self.cam.camera_T, None, T_cam_pegboard)
                             T_wp = self.anchor.T_pegboard_in_world
                             if T_wp is not None:
                                 R_wp = T_wp[:3, :3]
@@ -2569,6 +2634,7 @@ class MainScene:
         cv.destroyAllWindows()
         self.tuner.close()
         self.anchor.close()
+        self.center_eye_pub.close()
         self.synth.close()
         self.tool_layout.close()
         self.grip_pub.close()
