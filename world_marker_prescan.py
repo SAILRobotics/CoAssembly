@@ -285,7 +285,7 @@ class WorldMarkerPrescanApp:
         print(f'  Secondary markers: {SECONDARY_MARKER_IDS}')
         print(f'  Samples per marker: {N_SAMPLES}')
         print(f'  Simply walk around and point at each marker — they will auto-register.')
-        print(f'  Press Q to quit at any time\n')
+        print(f'  Controls: Q or ENTER to save and quit at any time\n')
 
         while True:
             self.event.wait()
@@ -351,14 +351,14 @@ class WorldMarkerPrescanApp:
 
             # ── Key input ──────────────────────────────────────────────
             key = cv2.waitKey(1) & 0xFF
-            if key == ord('q'):
+            if key == ord('q') or key == 13:  # Q or ENTER to quit
                 break
 
             # ── Status overlay ────────────────────────────────────────
             status_line = self._status_line()
             cv2.putText(rgb_bgr, status_line, (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 220, 80), 2)
-            progress_text = f'Elapsed: {elapsed:.1f}s  Frames: {frame_count}  [Press Q to quit]'
+            progress_text = f'Elapsed: {elapsed:.1f}s  Frames: {frame_count}  [Q or ENTER to save & quit]'
             cv2.putText(rgb_bgr, progress_text, (10, rgb_bgr.shape[0] - 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.40, (200, 200, 200), 1)
 
@@ -368,11 +368,6 @@ class WorldMarkerPrescanApp:
             # Update Open3D visualization
             vis.poll_events()
             vis.update_renderer()
-
-            # Auto-finish when all registered
-            if not self.pending:
-                print(f'\n[Prescan] All 5 markers registered!')
-                break
 
         cv2.destroyAllWindows()
         vis.destroy_window()
