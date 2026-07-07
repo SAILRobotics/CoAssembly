@@ -26,6 +26,7 @@ from threading import Event
 
 import cv2
 import numpy as np
+import open3d as o3d
 from record3d import Record3DStream
 from scipy.spatial.transform import Rotation as ScipyR
 
@@ -75,6 +76,30 @@ def _average_se3(T_list):
     return out
 
 
+def make_axes_lineset(T: np.ndarray, size: float = 0.10) -> o3d.geometry.LineSet:
+    """RGB XYZ axes as a LineSet at the given 4×4 pose."""
+    o = T[:3, 3]
+    pts = np.array([o,
+                    o + T[:3, 0] * size,
+                    o + T[:3, 1] * size,
+                    o + T[:3, 2] * size])
+    ls = o3d.geometry.LineSet()
+    ls.points = o3d.utility.Vector3dVector(pts)
+    ls.lines  = o3d.utility.Vector2iVector([[0, 1], [0, 2], [0, 3]])
+    ls.colors = o3d.utility.Vector3dVector([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+    return ls
+
+
+def make_marker_sphere(T: np.ndarray, radius: float = 0.02,
+                       color=(0.8, 0.8, 0.8)) -> o3d.geometry.TriangleMesh:
+    """Small sphere at marker position."""
+    sphere = o3d.geometry.TriangleMesh.create_sphere(radius=radius)
+    sphere.translate(T[:3, 3])
+    sphere.paint_uniform_color(color)
+    sphere.compute_vertex_normals()
+    return sphere
+
+
 # ---------------------------------------------------------------------------
 # Main app
 # ---------------------------------------------------------------------------
@@ -95,7 +120,8 @@ class WorldMarkerPrescanApp:
         # Registration state: id -> T_ref_from_marker
         self.R = {REFERENCE_MARKER_ID: np.eye(4, dtype=np.float64)}
         self.pending = set(SECONDARY_MARKER_IDS)
-        self.samples = defaultdict(list)  # id -> list of T_ref_from_marker candidates
+        # samples: id -> list of T_tracking_marker poses (we compute relative transforms at the end)
+        self.samples = defaultdict(list)
         self._last_warning_time = defaultdict(float)  # id -> time of last warning
 
     def on_new_frame(self):
@@ -123,6 +149,15 @@ class WorldMarkerPrescanApp:
         return np.array([[c.fx, 0, c.tx],
                          [0, c.fy, c.ty],
                          [0,    0,    1]], dtype=np.float64)
+
+    def _T_tracking_cam(self) -> np.ndarray:
+        """Camera pose in iPad's tracking frame (from Record3D ARKit tracking)."""
+        p = self.session.get_camera_pose()
+        R = quat_to_rotation_matrix(p.qx, p.qy, p.qz, p.qw)
+        T = np.eye(4, dtype=np.float64)
+        T[:3, :3] = R
+        T[:3, 3] = [p.tx, p.ty, p.tz]
+        return T
 
     def _detect_aruco(self, rgb_bgr: np.ndarray,
                       K: np.ndarray, dist: np.ndarray):
@@ -226,10 +261,30 @@ class WorldMarkerPrescanApp:
         cv2.namedWindow('World Marker Prescan', cv2.WINDOW_NORMAL)
         cv2.resizeWindow('World Marker Prescan', 960, 540)
 
-        print(f'[Prescan] Starting registration…')
+        # ── Open3D Visualizer ──────────────────────────────────────
+        vis = o3d.visualization.Visualizer()
+        vis.create_window('Marker Registration (Open3D)', width=800, height=600)
+        opt = vis.get_render_option()
+        opt.background_color = np.array([0.1, 0.1, 0.15])
+        opt.line_width = 2.0
+
+        # Add world origin coordinate frame
+        vis.add_geometry(o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.15))
+
+        # Store geometry names for updating
+        self._geom_axes = {}
+        self._geom_spheres = {}
+        self._geom_axes[REFERENCE_MARKER_ID] = make_axes_lineset(np.eye(4), size=0.10)
+        self._geom_spheres[REFERENCE_MARKER_ID] = make_marker_sphere(np.eye(4), color=(1.0, 0.5, 0.0))
+        vis.add_geometry(self._geom_axes[REFERENCE_MARKER_ID])
+        vis.add_geometry(self._geom_spheres[REFERENCE_MARKER_ID])
+
+        print(f'[Prescan] Starting tracking-based registration…')
+        print(f'  Method: iPad SLAM tracking (no co-visibility required)')
         print(f'  Reference marker: #{REFERENCE_MARKER_ID}')
         print(f'  Secondary markers: {SECONDARY_MARKER_IDS}')
         print(f'  Samples per marker: {N_SAMPLES}')
+        print(f'  Simply walk around and point at each marker — they will auto-register.')
         print(f'  Press Q to quit at any time\n')
 
         while True:
@@ -244,35 +299,54 @@ class WorldMarkerPrescanApp:
             rgb_bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
             detections, rgb_bgr = self._detect_aruco(rgb_bgr, K, dist_coeffs)
 
-            # ── Incremental registration: collect samples, lock transforms ────
+            # ── Tracking-based registration: independent detection via iPad SLAM ────
+            # Get camera pose in iPad's tracking frame
+            T_tracking_cam = self._T_tracking_cam()
+
             now = time.time()
             elapsed = now - start_time
 
-            # For each pending marker, check if it's co-visible with any registered marker
-            for new_id in list(self.pending):
-                if new_id not in detections:
+            # Process all detected markers (no co-visibility requirement!)
+            all_marker_ids = {REFERENCE_MARKER_ID, *SECONDARY_MARKER_IDS}
+            for marker_id in all_marker_ids:
+                if marker_id not in detections:
                     continue
 
-                # Find a co-visible registered marker
-                for seen_id in self.R.keys():
-                    if seen_id not in detections:
+                # Compute marker pose in tracking frame
+                T_cam_marker = detections[marker_id]
+                T_tracking_marker = T_tracking_cam @ T_cam_marker
+                self.samples[marker_id].append(T_tracking_marker)
+
+            # Check if any pending marker has enough samples
+            for new_id in list(self.pending):
+                if len(self.samples[new_id]) >= N_SAMPLES:
+                    # We need enough ref marker samples to anchor the registration
+                    if len(self.samples[REFERENCE_MARKER_ID]) < N_SAMPLES:
                         continue
 
-                    # Compute candidate offset: T_ref_from_new
-                    T_ref_from_new = self.R[seen_id] @ np.linalg.inv(detections[seen_id]) @ detections[new_id]
-                    self.samples[new_id].append(T_ref_from_new)
-                    break  # one co-visible per pending marker per frame
+                    # Average all tracking-frame observations of both markers
+                    T_tracking_ref = _average_se3(self.samples[REFERENCE_MARKER_ID])
+                    T_tracking_marker = _average_se3(self.samples[new_id])
 
-                # Check if we have enough samples
-                if len(self.samples[new_id]) >= N_SAMPLES and new_id in self.pending:
-                    self.R[new_id] = _average_se3(self.samples[new_id])
+                    # Compute relative transform: T_ref_from_marker = inv(T_tracking_ref) @ T_tracking_marker
+                    self.R[new_id] = np.linalg.inv(T_tracking_ref) @ T_tracking_marker
                     self.pending.discard(new_id)
-                    print(f'[Prescan] ✓ Marker {new_id} registered ({N_SAMPLES} samples).')
+
+                    pos = self.R[new_id][:3, 3]
+                    dist = float(np.linalg.norm(pos))
+                    print(f'[Prescan] ✓ Marker {new_id} registered ({N_SAMPLES} samples, {dist:.3f}m from origin).')
+
+                    # Add to Open3D visualization
+                    color = (0.2, 0.8, 1.0) if new_id in SECONDARY_MARKER_IDS else (1.0, 0.5, 0.0)
+                    self._geom_axes[new_id] = make_axes_lineset(self.R[new_id], size=0.08)
+                    self._geom_spheres[new_id] = make_marker_sphere(self.R[new_id], color=color)
+                    vis.add_geometry(self._geom_axes[new_id], reset_bounding_box=False)
+                    vis.add_geometry(self._geom_spheres[new_id], reset_bounding_box=False)
 
                 # Warn if stalled (>30s with no samples)
                 if (len(self.samples[new_id]) == 0 and
                         now - self._last_warning_time[new_id] > 30.0):
-                    print(f'[Prescan] Marker {new_id} not yet seen alongside a registered marker — walk between them.')
+                    print(f'[Prescan] Marker {new_id} not yet detected — point the iPad at it.')
                     self._last_warning_time[new_id] = now
 
             # ── Key input ──────────────────────────────────────────────
@@ -291,23 +365,35 @@ class WorldMarkerPrescanApp:
             cv2.imshow('World Marker Prescan', rgb_bgr)
             frame_count += 1
 
+            # Update Open3D visualization
+            vis.poll_events()
+            vis.update_renderer()
+
             # Auto-finish when all registered
             if not self.pending:
                 print(f'\n[Prescan] All 5 markers registered!')
                 break
 
         cv2.destroyAllWindows()
+        vis.destroy_window()
 
         # ── Save and report ────────────────────────────────────────
         if len(self.R) > 1:
             self._save_transforms()
-            print(f'\n[Prescan] Registration complete:')
+            print(f'\n[Prescan] ✓ Registration complete (tracking-based):')
             print(f'  Registered markers: {sorted([mid for mid in self.R.keys() if mid != REFERENCE_MARKER_ID])}')
             missing = sorted(list(self.pending))
             if missing:
-                print(f'  Missing markers: {missing}')
+                print(f'  Missing markers: {missing} — re-run prescan to complete.')
+            # Show summary stats
+            for mid in sorted(self.R.keys()):
+                if mid == REFERENCE_MARKER_ID:
+                    continue
+                pos = self.R[mid][:3, 3]
+                dist = float(np.linalg.norm(pos))
+                print(f'    #{mid}: {dist:.3f}m from origin')
         else:
-            print(f'\n[Prescan] No secondary markers registered.')
+            print(f'\n[Prescan] No markers registered.')
 
         self.session.disconnect()
 
