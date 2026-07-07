@@ -88,6 +88,17 @@ public class CenterEyeOverrideReceiver : MonoBehaviour
     private Vector3 appliedPos;
     private Vector3 smoothVelocity;   // SmoothDamp's internal velocity state
 
+    /// <summary>
+    /// How far we just moved centerEyeAnchor this frame (appliedPos minus the real,
+    /// OVR-tracked position it held before we overrode it). Hand joint poses are
+    /// tracked relative to the headset and aren't touched by our override, so anything
+    /// that sends hand positions alongside centerEyeAnchor's pose (e.g.
+    /// TrackingDataManager) should add this same delta to each hand joint position to
+    /// keep them consistent with the overridden head reference. Updated once per
+    /// LateUpdate(), before TrackingDataManager (execution order 10001) reads it.
+    /// </summary>
+    public static Vector3 CenterEyeDelta { get; private set; } = Vector3.zero;
+
     void Start()
     {
         if (centerEyeAnchor == null)
@@ -118,6 +129,8 @@ public class CenterEyeOverrideReceiver : MonoBehaviour
         if (!leftCamera.enabled || !leftCamera.IsPlaying)
             return;
 
+        Vector3 rawPosBeforeOverride = centerEyeAnchor.position;   // real OVR-tracked position, still intact this frame
+
         Pose camPose     = leftCamera.GetCameraPose();
         Pose lensOffset  = leftCamera.Intrinsics.LensOffset;
 
@@ -135,6 +148,8 @@ public class CenterEyeOverrideReceiver : MonoBehaviour
 
         hasPose = true;
         ApplyToAnchor();
+
+        CenterEyeDelta = centerEyeAnchor.position - rawPosBeforeOverride;
 
         if (verboseLogs)
             Debug.Log($"[CenterEyeOverride] pos={appliedPos} target={targetPos} rot={(overrideRotation ? lastRot.eulerAngles : centerEyeAnchor.rotation.eulerAngles)}");
