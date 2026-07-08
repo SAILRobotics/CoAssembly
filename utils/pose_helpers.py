@@ -151,32 +151,23 @@ def _extract_joints(hand_block) -> np.ndarray | None:
 
 
 # =============================================================================
-# Tracked board geometry — 250 x 200 x 30 mm board with an ArUco marker
-# centred on each of its two large (250x200) faces, marker Y axes aligned
-# in the same world direction. Board origin = geometric centre of the box.
-# Each marker is inset 1mm from its exterior face, so its centre sits
-# 14mm (half the 30mm thickness, minus the 1mm inset) from the board
-# origin along its own -Z axis.
+# Tracked board geometry: 250 x 200 x 30 mm board with ArUco markers
+# centred on each large face. Board origin is marker A/102 exactly.
+# Marker B/103 is on the opposite face, 28 mm along marker A's -Z axis
+# (30 mm thickness minus 1 mm inset on each side), rotated 180 degrees about Y.
 #
-#   _BOARD_SIZE             : (X, Y, Z) full extents in the board's local frame.
-#   _T_BOARD_FROM_MARKER_A/_B : fixed transforms from each marker's frame to
-#                               the board frame. Marker A defines the board's
-#                               Z axis directly; marker B is on the opposite
-#                               face, related by a 180° rotation about Y.
+#   BOARD_SIZE              : (X, Y, Z) full extents in the board's local frame.
+#   T_BOARD_FROM_MARKER_A/B : fixed transforms from each marker's frame to
+#                             the board frame whose origin is marker A/102.
 # =============================================================================
 
 BOARD_SIZE = (0.250, 0.200, 0.030)
 
-T_BOARD_FROM_MARKER_A = np.array([
-    [1.0, 0.0,  0.0,  0.0  ],
-    [0.0, 1.0,  0.0,  0.0  ],
-    [0.0, 0.0,  1.0, -0.014],
-    [0.0, 0.0,  0.0,  1.0  ],
-], dtype=np.float64)
+T_BOARD_FROM_MARKER_A = np.eye(4, dtype=np.float64)
 
 T_BOARD_FROM_MARKER_B = np.array([
     [-1.0, 0.0,  0.0,  0.0  ],
     [ 0.0, 1.0,  0.0,  0.0  ],
-    [ 0.0, 0.0, -1.0, -0.014],
+    [ 0.0, 0.0, -1.0, -0.028],
     [ 0.0, 0.0,  0.0,  1.0  ],
 ], dtype=np.float64)

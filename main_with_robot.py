@@ -1395,46 +1395,46 @@ class _SceneVis:
         self.vis.add_geometry(self._tracking_sphere)
         self._tracking_T = self._hidden_T()
 
-        # Tracked board (coordinate frame + baseboard mesh)
+        # World baseboard at the calibrated world origin, plus tracked board mesh.
         self._board_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.10)
         self._board_frame.transform(self._hidden_T())
         self.vis.add_geometry(self._board_frame)
+        self._world_baseboard_mesh = None
         self._board_mesh       = None
         self._board_manip_mesh = None
-        _baseboard_path = cfg.SCENE_LAYOUT_DIR.parent / "robot_assets" / "baseboard.obj"
+
+        _asset_dir = cfg.SCENE_LAYOUT_DIR.parent / "robot_assets"
+        _baseboard_path = _asset_dir / "baseboard.obj"
         if _baseboard_path.exists():
-            # Mesh raw: X=201mm, Y=250mm, Z=25mm(face normal), geometric centre at [0,0,-11.5mm].
-            # _board_mesh      (ArUco):  Rz(+90°) — swaps X↔Y so board X=250mm; face normal stays Z.
-            # _board_manip_mesh (AR box): Ry(-90°) after Rz(+90°) — rotates face-normal (Z) to X
-            #   so that board X (250mm) aligns with grip_z (TCP approach direction from the edge).
-            _RAW_CENTER = np.array([0.0, 0.0, -0.0115])  # mesh geometric centre before any rotation
+            _mesh = o3d.io.read_triangle_mesh(str(_baseboard_path))
+            _mesh.compute_vertex_normals()
+            _mesh.paint_uniform_color([0.45, 0.45, 0.45])
+            # Identity placement: this reference board is authored in world coordinates.
+            self.vis.add_geometry(_mesh)
+            self._world_baseboard_mesh = _mesh
+            print(f"[SceneVis] baseboard.obj loaded at world origin ({len(_mesh.vertices)} verts)")
+        else:
+            print(f"[SceneVis] baseboard.obj not found at {_baseboard_path}")
 
-            def _T_fix(euler_seq: str, *deg_angles) -> np.ndarray:
-                R = ScipyR.from_euler(euler_seq, list(deg_angles), degrees=True).as_matrix()
-                # auto-centre: translate so rotated mesh centre lands at origin
-                centre_after = R @ _RAW_CENTER
-                T = np.eye(4, dtype=np.float64)
-                T[:3, :3] = R
-                T[:3, 3]  = -centre_after
-                return T
-
-            def _load_baseboard(color, euler_seq, *deg_angles):
-                _bm = o3d.io.read_triangle_mesh(str(_baseboard_path))
+        _tracked_board_path = _asset_dir / "NewBaseBoard.obj"
+        if _tracked_board_path.exists():
+            def _load_tracked_board(color):
+                _bm = o3d.io.read_triangle_mesh(str(_tracked_board_path))
                 _bm.compute_vertex_normals()
                 _bm.paint_uniform_color(color)
-                _bm.transform(_T_fix(euler_seq, *deg_angles))
+                # Hidden until markers 102/103 produce a board pose. The OBJ local
+                # frame is interpreted as board-local, whose origin is marker 102.
                 _bm.transform(self._hidden_T())
                 self.vis.add_geometry(_bm)
                 return _bm
 
-            self._board_mesh       = _load_baseboard([0.9, 0.75, 0.5], 'z',  90.0)        # warm tan  — ArUco
-            self._board_manip_mesh = _load_baseboard([0.5, 0.75, 0.9], 'zy', 90.0, -90.0) # steel blue — AR box
-            print(f"[SceneVis] baseboard.obj loaded ({len(self._board_mesh.vertices)} verts)")
+            self._board_mesh = _load_tracked_board([0.9, 0.75, 0.5])
+            self._board_manip_mesh = _load_tracked_board([0.5, 0.75, 0.9])
+            print(f"[SceneVis] NewBaseBoard.obj loaded for tracked board ({len(self._board_mesh.vertices)} verts)")
         else:
-            print(f"[SceneVis] baseboard.obj not found at {_baseboard_path}")
+            print(f"[SceneVis] NewBaseBoard.obj not found at {_tracked_board_path}")
         self._board_T       = self._hidden_T()
         self._board_manip_T = self._hidden_T()
-
         # Gripper mesh — loaded once, placed at TCP pose each frame via delta
         # transforms. OBJ tool axis is mesh-Y; Rx(+90°) is baked into vertices
         # at load time so mesh-Y aligns with TCP-Z (standard robot convention).
