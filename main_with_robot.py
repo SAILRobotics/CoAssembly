@@ -63,7 +63,7 @@ from utils.unity_conversion import (
     open3d_to_unity_quaternion,
 )
 from utils.pose_helpers import (
-    _unity_pose_to_T, _adapt_cx_cy, _transform_point,
+    _unity_pose_to_T, _T_to_unity_pose, _adapt_cx_cy, _transform_point,
     _BONES_NP, _N_JOINTS, _HIDDEN_PT, _JOINT_GROUP_ORDER,
     _unity_to_o3d, _to_world, _unit, _palm_quat, _tool_grasp_quat, _extract_joints,
     BOARD_SIZE, T_BOARD_FROM_MARKER_A, T_BOARD_FROM_MARKER_B,
@@ -90,6 +90,8 @@ class _CamFeedReceiver:
         self._sub.connect(f"tcp://{ip}:{port}")
         self.frame        = None
         self.camera_T     = None
+        self.raw_pos      = None   # (px, py, pz) straight from Unity, no axis/CV conversion
+        self.raw_rot_xyzw = None   # (qx, qy, qz, qw) straight from Unity, no axis/CV conversion
         self.fx = self.fy = self.cx = self.cy = None
         self.sensor_width = self.sensor_height = None
         self.width        = self.height        = None
@@ -126,6 +128,8 @@ class _CamFeedReceiver:
         self.sensor_width  = int(sw)
         self.sensor_height = int(sh)
         self.camera_T = _unity_pose_to_T([px, py, pz], [qx, qy, qz, qw])
+        self.raw_pos      = (px, py, pz)
+        self.raw_rot_xyzw = (qx, qy, qz, qw)
         return True
 
     def close(self):
@@ -359,6 +363,7 @@ class _WorldAnchor:
         self._T_world_pegboard: np.ndarray | None = None
         self._T_world_board: np.ndarray | None = None
         self._T_eye_offset: np.ndarray | None = None
+        self._T_world_marker: dict[int, np.ndarray] = {}  # secondary marker relocking: id -> T_ref_from_marker
         ctx = zmq.Context()
         self._pub = ctx.socket(zmq.PUB)
         self._pub.connect(f"tcp://{pub_ip}:{pub_port}")
@@ -368,6 +373,7 @@ class _WorldAnchor:
         self._pub_board.connect(f"tcp://{pub_ip}:{board_pub_port}")
         time.sleep(0.2)
         self._load_eye_offset()
+        self._load_world_markers()
 
     def _load_eye_offset(self):
         if not self._EYE_OFFSET_FILE.exists():
@@ -379,6 +385,21 @@ class _WorldAnchor:
             print(f"[Anchor] Eye offset loaded from {self._EYE_OFFSET_FILE.name}")
         except Exception as e:
             print(f"[Anchor] Eye offset load failed: {e}")
+
+    def _load_world_markers(self):
+        """Load prescan registration transforms for secondary markers."""
+        if not cfg.WORLD_MARKERS_FILE.exists():
+            return
+        try:
+            data = json.loads(cfg.WORLD_MARKERS_FILE.read_text())
+            for mid_str, T_flat in data.get("markers", {}).items():
+                mid = int(mid_str)
+                T = np.array(T_flat, dtype=np.float64).reshape(4, 4)
+                self._T_world_marker[mid] = T
+            if self._T_world_marker:
+                print(f"[Anchor] World markers loaded: {sorted(self._T_world_marker.keys())}")
+        except Exception as e:
+            print(f"[Anchor] World marker load failed: {e}")
 
     def _save_eye_offset(self):
         try:
@@ -394,6 +415,18 @@ class _WorldAnchor:
             return center_T @ self._T_eye_offset
         return cam_T
 
+    def center_eye_override_pose(self, cam_T: "np.ndarray | None",
+                                 raw_pos, raw_rot_xyzw):
+        """Return (pos_xyz, rot_xyzw) in Unity space to drive CenterEyeAnchor to
+        the true center-eye pose — i.e. cam_T with the calibrated camera tilt
+        (T_eye_offset) undone, since cam_T = center_T @ T_eye_offset.
+        Falls back to the raw cam_left pose when no calibration is loaded yet.
+        """
+        if self._T_eye_offset is None or cam_T is None:
+            return raw_pos, raw_rot_xyzw
+        T_center = cam_T @ np.linalg.inv(self._T_eye_offset)
+        return _T_to_unity_pose(T_center)
+
 
     def set_offset(self, pos_offset, yaw_deg: float):
         T = np.eye(4, dtype=np.float64)
@@ -403,28 +436,47 @@ class _WorldAnchor:
 
     def lock(self, T_cam_anchor: np.ndarray,
              cam_T: np.ndarray, center_T: np.ndarray | None = None) -> bool:
-        """Lock world frame to marker 100 (anchor). Returns True on success."""
-        if T_cam_anchor is None:
+        """Lock world frame to marker 100 (anchor). Returns True on success.
+
+        Always uses raw cam_T (left passthrough camera). CenterEyeAnchor is
+        driven to cam_T in Unity, so both the lock and the rendering camera
+        share the same reference frame — no offset correction needed.
+        """
+        if T_cam_anchor is None or cam_T is None:
             return False
-        if self._T_eye_offset is None and cam_T is not None and center_T is not None:
-            self._T_eye_offset = np.linalg.inv(center_T) @ cam_T
-            self._save_eye_offset()
-        eff = self._effective_cam_T(cam_T, center_T)
-        if eff is None:
-            return False
-        self._T_wt = np.linalg.inv(eff @ T_cam_anchor)
-        src = "CenterEye+offset" if self._T_eye_offset is not None else "cam_T"
-        print(f"[Anchor] Locked to marker 100 ({src}).")
+        self._T_wt = np.linalg.inv(cam_T @ T_cam_anchor)
+        print(f"[Anchor] Locked to marker 100 (cam_T).")
         return True
 
     def relock(self, T_cam_anchor: np.ndarray,
                cam_T: np.ndarray, center_T: np.ndarray | None = None) -> bool:
-        if T_cam_anchor is None or not self.locked:
+        if T_cam_anchor is None or cam_T is None or not self.locked:
             return False
-        eff = self._effective_cam_T(cam_T, center_T)
-        if eff is None:
+        self._T_wt = np.linalg.inv(cam_T @ T_cam_anchor)
+        return True
+
+    def relock_from_world_marker(self, marker_id: int, T_cam_marker: np.ndarray,
+                                  cam_T: np.ndarray) -> bool:
+        """Relock from a secondary marker (104-107) using prescan registration.
+
+        T_cam_marker: camera → marker (OpenCV convention)
+        cam_T: camera pose in tracking frame
+        Returns True if relock succeeded.
+        """
+        if marker_id not in self._T_world_marker or not self.locked:
             return False
-        self._T_wt = np.linalg.inv(eff @ T_cam_anchor)
+        if T_cam_marker is None or cam_T is None:
+            return False
+
+        # Compute reference marker pose in camera frame
+        # T_ref_from_marker[id] maps marker-local points to reference frame
+        # inv(T_ref_from_marker) maps reference frame to marker-local
+        # Composing with T_cam_marker gives reference marker in camera frame
+        T_ref_from_marker = self._T_world_marker[marker_id]
+        T_cam_ref = T_cam_marker @ np.linalg.inv(T_ref_from_marker)
+
+        # Update tracking frame to world transform
+        self._T_wt = np.linalg.inv(cam_T @ T_cam_ref)
         return True
 
     def set_pegboard(self, T_world_pegboard: np.ndarray) -> None:
@@ -562,6 +614,54 @@ class _WorldAnchor:
             pass
         try:
             self._pub_board.close(0)
+        except Exception:
+            pass
+
+
+# =============================================================================
+# CenterEye override publisher
+# =============================================================================
+
+class _CenterEyeOverridePublisher:
+    """Publishes a pose override for CenterEyeAnchor in Unity.
+
+    When OVR position tracking is disabled, Unity's CenterEyeAnchor stops
+    being driven by SLAM.  This publisher lets Python set its pose directly —
+    e.g. to match the left passthrough camera so the rendering camera is
+    physically accurate.
+
+    Takes the raw Unity-space position/quaternion straight from the cam_left
+    feed (_CamFeedReceiver.raw_pos / raw_rot_xyzw) — NOT _CamFeedReceiver.camera_T,
+    which has an extra -90 deg X rotation baked in for OpenCV/ArUco solvePnP
+    conventions. Feeding that CV-convention matrix back to Unity as-is would
+    misalign the override by that same 90 deg every frame.
+    """
+
+    def __init__(self, pub_ip: str, port: int = cfg.CENTER_EYE_OVERRIDE_PORT):
+        ctx = zmq.Context()
+        self._pub = ctx.socket(zmq.PUB)
+        self._pub.connect(f"tcp://{pub_ip}:{port}")
+        time.sleep(0.2)
+
+    def publish(self, pos_xyz, rot_xyzw) -> None:
+        if pos_xyz is None or rot_xyzw is None:
+            return
+        T = np.eye(4, dtype=np.float64)
+        T[:3, :3] = ScipyR.from_quat(list(rot_xyzw)).as_matrix()
+        T[:3, 3]  = pos_xyz
+        mat = T.T.flatten().tolist()   # column-major, matches Unity Matrix4x4 layout
+        try:
+            self._pub.send_string(json.dumps({
+                "center_eye_position":      [float(v) for v in pos_xyz],
+                "center_eye_rotation_xyzw": [float(v) for v in rot_xyzw],
+                "center_eye_matrix":        mat,
+            }))
+        except Exception as e:
+            print(f"[CenterEyeOverride] Publish error: {e}")
+
+    def close(self):
+        try:
+            self._pub.close(0)
         except Exception:
             pass
 
@@ -1869,8 +1969,8 @@ class MainScene:
                                 pegboard_marker_id     = pegboard_marker_id,
                                 anchor_marker_size_m   = anchor_marker_size_m,
                                 pegboard_marker_size_m = pegboard_marker_size_m,
-                                board_marker_ids       = (board_marker_a, board_marker_b),
-                                board_marker_size_m    = board_marker_size_m)
+                                board_marker_ids       = (*((board_marker_a, board_marker_b)), *cfg.WORLD_MARKER_IDS),
+                                board_marker_size_m    = cfg.WORLD_MARKER_SIZE)
         self.aruco_worker = _ArUcoWorker(self.cam, self.aruco)
         self.hands        = _HandDataReceiver(quest_ip, hand_port)
         self.robot: "_RobotController | None" = None
@@ -1900,6 +2000,7 @@ class MainScene:
                              name="gripper-preconnect").start()
 
         self.anchor      = _WorldAnchor(quest_ip)
+        self.center_eye_pub = _CenterEyeOverridePublisher(quest_ip)
         self.tools       = _ToolSelectionManager(quest_ip)
         self.tuner       = _OffsetTuner()
         self.synth       = _SyntheticObjectPublisher(quest_ip)
@@ -1935,6 +2036,7 @@ class MainScene:
         self._prev_relock_available = False  # previous relock-available flag; drives anchor-marker color change
         self._anchor_highlight_until           = 0.0   # time until anchor marker highlight reverts to normal color
         self._last_proximity_relock_time = 0.0   # timestamp of last auto-relock; enforces _RELOCK_COOLDOWN between relocks
+        self._last_world_marker_relock_time = 0.0  # timestamp of last secondary marker relock; enforces WORLD_MARKERS_RELOCK_COOLDOWN
         self._reachability_arrows_hide_at           = 0.0   # timestamp after which reachability arrows are hidden; set to now+5s on R keypress
         self._T_world_tcp: "np.ndarray | None"          = None   # current TCP pose in world; polled each frame from robot
         self._grip_state: "str | None"              = None   # None | 'moving_to_hand' | 'grabbed' | 'moving_to_pose'
@@ -1962,6 +2064,9 @@ class MainScene:
               f"distance) — later re-locks need ENTER or the relock cube")
         print(f"  ENTER with marker #{pegboard_marker_id} visible (after locking)"
               f" → lock pegboard")
+        print(f"  Secondary markers {cfg.WORLD_MARKER_IDS} provide continuous drift "
+              f"correction (proximity <{cfg.WORLD_MARKERS_PROXIMITY_MAX}m, "
+              f"tilt <{cfg.WORLD_MARKERS_TILT_MAX_DEG}°, cooldown {cfg.WORLD_MARKERS_RELOCK_COOLDOWN}s)")
         print("  ESC = quit\n")
 
     # ── Helpers ───────────────────────────────────────────────────────────────
@@ -2046,10 +2151,15 @@ class MainScene:
                 # ── CenterEye pose ────────────────────────────────────────────
                 _center_T = self.hands.center_eye_T()
 
+                # ── Override CenterEyeAnchor pose with left cam_T ─────────────
+                _override_pos, _override_rot = self.anchor.center_eye_override_pose(
+                    self.cam.camera_T, self.cam.raw_pos, self.cam.raw_rot_xyzw)
+                self.center_eye_pub.publish(_override_pos, _override_rot)
+
                 # ── Tracked board (markers A/B) — constantly updated ──────────
                 if self.anchor.locked and board_ok:
                     self.anchor.update_board_from_tracking(
-                        self.cam.camera_T, _center_T,
+                        self.cam.camera_T, None,
                         T_cam_board[board_marker_seen],
                         self._T_BOARD_FROM_MARKER[board_marker_seen])
 
@@ -2155,7 +2265,7 @@ class MainScene:
                         self._try_load_pegboard_from_file()
                     elif pegboard_ok:
                         self.anchor.update_pegboard_from_tracking(
-                            self.cam.camera_T, _center_T, T_cam_pegboard)
+                            self.cam.camera_T, None, T_cam_pegboard)
                     if self._synth_cubes_added and self.anchor.T_pegboard_in_world is not None:
                         T_wp = self.anchor.T_pegboard_in_world
                         R_wp = T_wp[:3, :3]
@@ -2175,6 +2285,45 @@ class MainScene:
                         self.vis.update_tool_boxes(_boxes)
                     print("[AutoRelock] Relocked via proximity click")
                 self.tools.deselect(self.anchor_marker_id)
+
+                # ── Secondary marker automatic continuous relocking ────────────
+                # Use prescan-registered markers for continuous drift correction
+                if (self.anchor.locked and self.cam.camera_T is not None
+                        and _now - self._last_world_marker_relock_time >= cfg.WORLD_MARKERS_RELOCK_COOLDOWN):
+                    # Find all secondary markers that pass the gates
+                    candidates = {}  # mid -> (distance, T_cam_marker)
+                    for mid in cfg.WORLD_MARKER_IDS:
+                        if mid not in T_cam_board:
+                            continue
+                        T_cam_mid = T_cam_board[mid]
+                        dist = float(np.linalg.norm(T_cam_mid[:3, 3]))
+
+                        # Gate 1: proximity
+                        if dist > cfg.WORLD_MARKERS_PROXIMITY_MAX:
+                            continue
+
+                        # Gate 2: obliquity — only relock when looking nearly face-on
+                        # at the marker's flat square. The marker's surface normal is
+                        # its local +Z axis = 3rd column of the rotation; T_cam_mid[2, 2]
+                        # is that normal's component along the camera optical axis.
+                        # |value| ≈ 1 → face-on (0°); ≈ 0 → edge-on/grazing (90°).
+                        _cos_obliq_mid = abs(float(T_cam_mid[2, 2]))
+                        _min_cos_mid = np.cos(np.deg2rad(cfg.WORLD_MARKERS_TILT_MAX_DEG))  # 20° → 0.940
+                        if _cos_obliq_mid < _min_cos_mid:  # too oblique / grazing → skip
+                            continue
+
+                        # Passed both gates
+                        candidates[mid] = (dist, T_cam_mid)
+
+                    # Pick the closest candidate if any passed
+                    if candidates:
+                        best_mid = min(candidates.keys(), key=lambda m: candidates[m][0])
+                        best_dist, best_T_cam = candidates[best_mid]
+                        _cos_obliq_best = abs(float(best_T_cam[2, 2]))
+                        _angle_best_deg = float(np.degrees(np.arccos(np.clip(_cos_obliq_best, -1, 1))))
+                        if self.anchor.relock_from_world_marker(best_mid, best_T_cam, self.cam.camera_T):
+                            self._last_world_marker_relock_time = _now
+                            print(f"[WorldRelock] marker #{best_mid}, {best_dist:.3f}m, {_angle_best_deg:.1f}° off-normal")
 
                 # ── TCP click → toggle continuous hand tracking ────────────────
                 if (self.tools.active_tool_id == self._TCP_TOOL_ID
@@ -2514,7 +2663,7 @@ class MainScene:
                         # ── Phase B: lock pegboard (skipped if loaded from file) ─
                         if not self._load_pegboard_from_file and pegboard_ok and self.anchor.locked:
                             self.anchor.update_pegboard_from_tracking(
-                                self.cam.camera_T, _center_T, T_cam_pegboard)
+                                self.cam.camera_T, None, T_cam_pegboard)
                             T_wp = self.anchor.T_pegboard_in_world
                             if T_wp is not None:
                                 R_wp = T_wp[:3, :3]
@@ -2569,6 +2718,7 @@ class MainScene:
         cv.destroyAllWindows()
         self.tuner.close()
         self.anchor.close()
+        self.center_eye_pub.close()
         self.synth.close()
         self.tool_layout.close()
         self.grip_pub.close()
