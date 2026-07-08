@@ -152,13 +152,15 @@ def _extract_joints(hand_block) -> np.ndarray | None:
 
 # =============================================================================
 # Tracked board geometry: 250 x 200 x 30 mm board with ArUco markers
-# centred on each large face. Board origin is marker A/102 exactly.
+# centred on each large face. Internal board origin is marker A/102 exactly.
 # Marker B/103 is on the opposite face, 28 mm along marker A's -Z axis
 # (30 mm thickness minus 1 mm inset on each side), rotated 180 degrees about Y.
 #
-#   BOARD_SIZE              : (X, Y, Z) full extents in the board's local frame.
-#   T_BOARD_FROM_MARKER_A/B : fixed transforms from each marker's frame to
-#                             the board frame whose origin is marker A/102.
+#   BOARD_SIZE                 : (X, Y, Z) full extents in the board's local frame.
+#   T_BOARD_FROM_MARKER_A/B    : fixed transforms from marker frame to marker-102
+#                                board-origin frame used internally.
+#   T_UNITY_BOARD_ROOT_FROM_ORIGIN : Unity-only offset from marker 102 to
+#                                  the NewBaseBoard OBJ transform origin.
 # =============================================================================
 
 BOARD_SIZE = (0.250, 0.200, 0.030)
@@ -170,4 +172,11 @@ T_BOARD_FROM_MARKER_B = np.array([
     [ 0.0, 1.0,  0.0,  0.0  ],
     [ 0.0, 0.0, -1.0, -0.028],
     [ 0.0, 0.0,  0.0,  1.0  ],
+], dtype=np.float64)
+
+T_UNITY_BOARD_ROOT_FROM_ORIGIN = np.array([
+    [1.0, 0.0, 0.0,  0.0  ],
+    [0.0, 1.0, 0.0,  0.0  ],
+    [0.0, 0.0, 1.0,  0.0  ],
+    [0.0, 0.0, 0.0,  1.0  ],
 ], dtype=np.float64)

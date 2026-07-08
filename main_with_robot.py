@@ -66,7 +66,7 @@ from utils.pose_helpers import (
     _unity_pose_to_T, _T_to_unity_pose, _adapt_cx_cy, _transform_point,
     _BONES_NP, _N_JOINTS, _HIDDEN_PT, _JOINT_GROUP_ORDER,
     _unity_to_o3d, _to_world, _unit, _palm_quat, _tool_grasp_quat, _extract_joints,
-    BOARD_SIZE, T_BOARD_FROM_MARKER_A, T_BOARD_FROM_MARKER_B,
+    BOARD_SIZE, T_BOARD_FROM_MARKER_A, T_BOARD_FROM_MARKER_B, T_UNITY_BOARD_ROOT_FROM_ORIGIN,
 )
 import main_setting as cfg
 
@@ -613,7 +613,11 @@ class _WorldAnchor:
     def publish_board(self) -> bool:
         if self._T_world_board is None:
             return False
-        return self._publish_T(self._T_offset @ self._T_world_board,
+        T_board = (self._T_offset @ self._T_world_board) @ T_UNITY_BOARD_ROOT_FROM_ORIGIN
+        pos, rot_xyzw, _ = self._to_unity_pose(T_board)
+        euler = ScipyR.from_quat(rot_xyzw).as_euler("xyz", degrees=True)
+        print(f"[BoardRoot] pos={pos}, rot_euler_xyz={euler.tolist()}")
+        return self._publish_T(T_board,
                                self._pub_board, "BoardRoot",
                                "board_root_position",
                                "board_root_rotation_xyzw",
