@@ -4,10 +4,14 @@ Pre-scanning tool for registering 5 ArUco markers relative to each other.
 
 Pipeline
 --------
-  Point the iPad at each marker and press ENTER to capture it.
-  No co-visibility required — the iPad SLAM tracking frame ties everything
-  together.  Capture the reference marker (100) at any point; secondary
-  markers can be captured independently.
+  Co-visibility capture: hold the reference marker (100) and a secondary
+  marker (104/105) in the SAME frame, then press ENTER to sample.  Because
+  both poses come from one camera image, the camera pose cancels out
+  (T_ref_from_marker = inv(T_cam_ref) @ T_cam_secondary) — no iPad tracking
+  is involved, so there is no tracking drift.
+
+  Each ENTER captures one measurement; the most recent press for a marker wins,
+  so you can re-sample until it looks right in the 3D view.
 
   Press Q to quit and save whatever has been registered so far.
 
@@ -34,34 +38,14 @@ from scipy.spatial.transform import Rotation as ScipyR
 # ---------------------------------------------------------------------------
 
 REFERENCE_MARKER_ID  = 100
-SECONDARY_MARKER_IDS = (104, 105, 106, 107)
+SECONDARY_MARKER_IDS = (104, 105)
 MARKER_SIZE          = 0.10                    # metres
 SCENE_LAYOUT_DIR     = Path("scene_layout")
-
-# ARKit camera frame (Record3D): X right, Y up, -Z forward
-# OpenCV camera frame (aruco):   X right, Y down, +Z forward
-# Multiply between them: flip Y and Z
-_CV_TO_ARKIT = np.diag([1.0, -1.0, -1.0, 1.0])
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def quat_to_rotation_matrix(qx, qy, qz, qw):
-    n = qx*qx + qy*qy + qz*qz + qw*qw
-    if n < 1e-10:
-        return np.eye(3, dtype=np.float64)
-    s = 2.0 / n
-    wx = s*qw*qx; wy = s*qw*qy; wz = s*qw*qz
-    xx = s*qx*qx; xy = s*qx*qy; xz = s*qx*qz
-    yy = s*qy*qy; yz = s*qy*qz; zz = s*qz*qz
-    return np.array([
-        [1-(yy+zz),  xy-wz,   xz+wy],
-        [ xy+wz,  1-(xx+zz),  yz-wx],
-        [ xz-wy,   yz+wx,  1-(xx+yy)],
-    ], dtype=np.float64)
-
 
 def make_axes_lineset(T: np.ndarray, size: float = 0.10) -> o3d.geometry.LineSet:
     o = T[:3, 3]
@@ -109,10 +93,8 @@ class WorldMarkerPrescanApp:
         self.aruco_dict = cv2.aruco.getPredefinedDictionary(aruco_dict_id)
         self.aruco_params = cv2.aruco.DetectorParameters()
 
-        # One-shot captures: id -> T_tracking_marker
-        self.captured: dict[int, np.ndarray] = {}
-
         # Registered transforms relative to reference: id -> T_ref_from_marker
+        # (single co-visible capture; a later ENTER overwrites an earlier one)
         self.R: dict[int, np.ndarray] = {REFERENCE_MARKER_ID: np.eye(4, dtype=np.float64)}
 
     def on_new_frame(self):
@@ -140,14 +122,6 @@ class WorldMarkerPrescanApp:
         return np.array([[c.fx, 0, c.tx],
                          [0, c.fy, c.ty],
                          [0,    0,    1]], dtype=np.float64)
-
-    def _T_tracking_cam(self) -> np.ndarray:
-        p = self.session.get_camera_pose()
-        R = quat_to_rotation_matrix(p.qx, p.qy, p.qz, p.qw)
-        T = np.eye(4, dtype=np.float64)
-        T[:3, :3] = R
-        T[:3, 3] = [p.tx, p.ty, p.tz]
-        return T
 
     def _detect_aruco(self, rgb_bgr: np.ndarray,
                       K: np.ndarray, dist: np.ndarray):
@@ -177,27 +151,39 @@ class WorldMarkerPrescanApp:
 
         return detections, rgb_bgr
 
-    def _try_register(self, vis):
-        """Register any secondary marker whose capture is ready alongside the reference."""
-        if REFERENCE_MARKER_ID not in self.captured:
+    def _capture_covisible(self, detections: dict, vis) -> None:
+        """Capture every secondary marker seen alongside the reference in the current
+        frame. Same-frame poses → the camera pose cancels; a later ENTER overwrites."""
+        if REFERENCE_MARKER_ID not in detections:
+            print(f'[Prescan] Reference marker #{REFERENCE_MARKER_ID} not in view — '
+                  f'point at #{REFERENCE_MARKER_ID} AND a secondary marker together.')
             return
-        T_tracking_ref = self.captured[REFERENCE_MARKER_ID]
-        for mid in SECONDARY_MARKER_IDS:
-            if mid in self.R:
-                continue  # already registered
-            if mid not in self.captured:
-                continue
-            T_tracking_marker = self.captured[mid]
-            self.R[mid] = np.linalg.inv(T_tracking_ref) @ T_tracking_marker
-            pos = self.R[mid][:3, 3]
-            dist = float(np.linalg.norm(pos))
-            print(f'[Prescan] ✓ Marker {mid} registered ({dist:.3f}m from origin).')
 
-            color = (0.2, 0.8, 1.0)
-            self._geom_axes[mid] = make_axes_lineset(self.R[mid], size=0.08)
-            self._geom_squares[mid] = make_marker_square(self.R[mid], color=color)
-            vis.add_geometry(self._geom_axes[mid], reset_bounding_box=False)
-            vis.add_geometry(self._geom_squares[mid], reset_bounding_box=False)
+        T_cam_ref = detections[REFERENCE_MARKER_ID]
+        captured = []
+        for mid in SECONDARY_MARKER_IDS:
+            if mid not in detections:
+                continue
+            self.R[mid] = np.linalg.inv(T_cam_ref) @ detections[mid]
+            dist = float(np.linalg.norm(self.R[mid][:3, 3]))
+            captured.append(f'#{mid} ({dist:.3f}m)')
+            self._update_marker_geom(vis, mid)
+
+        if captured:
+            print(f'[Prescan] ✓ Captured: {"   ".join(captured)}')
+        else:
+            print(f'[Prescan] #{REFERENCE_MARKER_ID} visible but no secondary marker '
+                  f'in the same frame — bring one into view.')
+
+    def _update_marker_geom(self, vis, mid: int) -> None:
+        """(Re)draw a registered marker's axes + square in the Open3D view."""
+        if mid in self._geom_axes:
+            vis.remove_geometry(self._geom_axes[mid], reset_bounding_box=False)
+            vis.remove_geometry(self._geom_squares[mid], reset_bounding_box=False)
+        self._geom_axes[mid] = make_axes_lineset(self.R[mid], size=0.08)
+        self._geom_squares[mid] = make_marker_square(self.R[mid], color=(0.2, 0.8, 1.0))
+        vis.add_geometry(self._geom_axes[mid], reset_bounding_box=False)
+        vis.add_geometry(self._geom_squares[mid], reset_bounding_box=False)
 
     def _save_transforms(self):
         SCENE_LAYOUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -243,10 +229,8 @@ class WorldMarkerPrescanApp:
         parts = []
         all_ids = [REFERENCE_MARKER_ID, *SECONDARY_MARKER_IDS]
         for mid in all_ids:
-            if mid in self.R and mid != REFERENCE_MARKER_ID:
+            if mid != REFERENCE_MARKER_ID and mid in self.R:
                 tag = 'REG'
-            elif mid in self.captured:
-                tag = 'CAP'
             elif mid in visible_ids:
                 tag = 'VIS'
             else:
@@ -284,20 +268,18 @@ class WorldMarkerPrescanApp:
         print(f'[Prescan] Ready.')
         print(f'  Reference marker: #{REFERENCE_MARKER_ID}')
         print(f'  Secondary markers: {SECONDARY_MARKER_IDS}')
-        print(f'  Point at a marker and press ENTER to capture it (one-shot).')
-        print(f'  No co-visibility required — capture each marker separately.')
+        print(f'  Hold #{REFERENCE_MARKER_ID} AND a secondary marker in the same frame,')
+        print(f'  then press ENTER to capture. A later ENTER overwrites an earlier one.')
         print(f'  Press Q to save and quit.\n')
-        print(f'  Status tags:  VIS=visible now  CAP=captured  REG=registered  ---=not seen\n')
+        print(f'  Status tags:  VIS=visible now  REG=registered  ---=not seen\n')
 
         # Current frame detections (updated every frame, read on ENTER)
         current_detections: dict[int, np.ndarray] = {}
-        current_T_tracking_cam: np.ndarray = np.eye(4)
 
         while True:
             self.event.wait()
             rgb = self.session.get_rgb_frame()
             K = self._intrinsic_matrix()
-            current_T_tracking_cam = self._T_tracking_cam()
             self.event.clear()
 
             if self.session.get_device_type() == self.DEVICE_TYPE__TRUEDEPTH:
@@ -314,29 +296,14 @@ class WorldMarkerPrescanApp:
             if key == ord('q'):
                 break
 
-            if key == 13:  # ENTER — one-shot capture of all currently visible markers
-                newly_captured = []
-                for mid, T_cam_marker in current_detections.items():
-                    if mid in self.captured:
-                        print(f'[Prescan] Marker {mid} already captured — skipping.')
-                        continue
-                    self.captured[mid] = current_T_tracking_cam @ _CV_TO_ARKIT @ T_cam_marker
-                    newly_captured.append(mid)
-                    print(f'[Prescan] Captured marker {mid}.')
-
-                if not newly_captured:
-                    if not current_detections:
-                        print('[Prescan] No markers visible — point at a marker first.')
-                    else:
-                        print('[Prescan] All visible markers already captured.')
-
-                self._try_register(vis)
+            if key == 13:  # ENTER — sample every secondary co-visible with the reference
+                self._capture_covisible(current_detections, vis)
 
             # ── Status overlay ────────────────────────────────────────
             status = self._status_line(visible_ids)
             cv2.putText(rgb_bgr, status, (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 80), 2)
-            hint = 'ENTER: capture visible markers   Q: save & quit'
+            hint = 'ENTER: sample (need #100 + a secondary together)   Q: save & quit'
             cv2.putText(rgb_bgr, hint, (10, rgb_bgr.shape[0] - 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.40, (200, 200, 200), 1)
 
