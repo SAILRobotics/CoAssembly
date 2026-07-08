@@ -34,6 +34,7 @@ ROBOT_BASE_PORT    = 5000   # robot base initial pose (matches RobotBaseInitialP
 ROBOT_JOINT_PORT   = 5001   # live arm joint angles, radians (matches RobotJointNetMQReceiver)
 WORKSPACE_BOUND_PORT = 5015 # robot workspace boundary wireframe (bounds + proximity)
 CENTER_EYE_OVERRIDE_PORT = 5016 # override CenterEyeAnchor pose from Python
+RELOCK_CUBE_PORT   = 5017   # secondary relock-cube world poses (matches RelockCubePoseReceiver)
 
 # ── ArUco marker IDs ──────────────────────────────────────────────────────────
 ANCHOR_MARKER_ID   = 100   # world frame + PyBullet scene origin
@@ -47,11 +48,10 @@ PEGBOARD_MARKER_SIZE = 0.100   # marker 101: 10 cm
 BOARD_MARKER_SIZE    = 0.100   # markers 102/103: 10 cm
 WORLD_MARKER_SIZE    = 0.100   # markers 104-107: 10 cm
 
-# ── World marker continuous relocking (secondary markers) ──────────────────────
-WORLD_MARKER_IDS           = (104, 105, 106, 107)   # secondary relock markers
+# ── World marker click-to-relock (secondary markers) ──────────────────────────
 WORLD_MARKERS_FILE         = SCENE_LAYOUT_DIR / "world_markers_T_ref_from_marker.json"
 WORLD_MARKERS_PROXIMITY_MAX = 1.0                    # metres — max distance to relock
-WORLD_MARKERS_TILT_MAX_DEG = 20.0                    # degrees from vertical to relock
+WORLD_MARKERS_TILT_MAX_DEG = 20.0                    # max degrees off face-on to relock
 WORLD_MARKERS_RELOCK_COOLDOWN = 1.0                  # seconds between secondary relocks
 
 # ── Robot workspace boundary (world frame, metres) ────────────────────────────

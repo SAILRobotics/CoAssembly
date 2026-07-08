@@ -185,6 +185,22 @@ class _ArUcoWorker:
 # ArUco pose estimator — marker 100 (anchor) + marker 101 (pegboard)
 # =============================================================================
 
+def _load_prescan_marker_ids() -> tuple[int, ...]:
+    """Secondary relock-marker IDs, read straight from the prescan file so it is
+    the single source of truth: whatever was registered in
+    world_markers_T_ref_from_marker.json is what the detector looks for and what
+    gets a click-to-relock cube. Returns () if the file is absent/unreadable."""
+    try:
+        if not cfg.WORLD_MARKERS_FILE.exists():
+            return ()
+        data = json.loads(cfg.WORLD_MARKERS_FILE.read_text())
+        return tuple(sorted(int(mid) for mid in data.get("markers", {})))
+    except Exception as e:
+        print(f"[Prescan] Could not read marker IDs from "
+              f"{cfg.WORLD_MARKERS_FILE.name}: {e}")
+        return ()
+
+
 class _ArucoPoseEstimator:
     def __init__(self, anchor_marker_id: int, pegboard_marker_id: int,
                  anchor_marker_size_m: float, pegboard_marker_size_m: float,
@@ -731,6 +747,56 @@ class _SyntheticObjectPublisher:
             self._pub.send_string(json.dumps(payload))
         except Exception as e:
             print(f"[SynthObjects] Publish error: {e}")
+
+    def close(self):
+        try:
+            self._pub.close(0)
+        except Exception:
+            pass
+
+
+class _RelockCubePublisher:
+    """Publishes the secondary relock cubes' world poses to Unity (PUB, port 5017).
+
+    Positions come from the prescan registration (anchor._T_world_marker) and are
+    static, but are republished periodically so a late-joining Unity receiver still
+    gets them. Poses are sent in Unity coordinates; Unity's RelockCubePoseReceiver
+    matches each cube to the interactable whose ToolClickPublisher.toolId == id and
+    sets its localPosition (the cubes are children of WorldRoot).
+
+    Each cube is lifted along Unity world up (+Y) by half its edge so its bottom
+    face sits on top of the marker rather than the cube centre on the marker."""
+
+    CUBE_EDGE_M = 0.10   # cube side length (metres) — keep in sync with the Unity localScale
+
+    def __init__(self, ip: str, port: int = cfg.RELOCK_CUBE_PORT):
+        ctx = zmq.Context.instance()
+        self._pub = ctx.socket(zmq.PUB)
+        self._pub.connect(f"tcp://{ip}:{port}")
+        time.sleep(0.2)
+        self._payload: "str | None" = None
+        print(f"[RelockCubes] Connected to tcp://{ip}:{port}")
+
+    def set_markers(self, T_world_marker: dict) -> None:
+        """Build the payload from {marker_id: T_world_marker (4x4, Open3D frame)}."""
+        cubes = []
+        for mid, T in sorted(T_world_marker.items()):
+            pos, rot_xyzw, _ = _WorldAnchor._to_unity_pose(np.asarray(T, dtype=np.float64))
+            # Lift along Unity world up (+Y is up/down in Unity) so the cube's
+            # bottom face sits on top of the marker instead of centred on it.
+            pos = [pos[0], pos[1] + self.CUBE_EDGE_M / 2.0, pos[2]]
+            cubes.append({"id": int(mid), "position": pos, "rotation_xyzw": rot_xyzw})
+        self._payload = json.dumps({"cubes": cubes})
+        print(f"[RelockCubes] Prepared {len(cubes)} cube pose(s): "
+              f"{sorted(int(m) for m in T_world_marker)}")
+
+    def publish(self) -> None:
+        if self._payload is None:
+            return
+        try:
+            self._pub.send_string(self._payload)
+        except Exception as e:
+            print(f"[RelockCubes] Publish error: {e}")
 
     def close(self):
         try:
@@ -1964,12 +2030,15 @@ class MainScene:
 
         # ── Receivers / publishers ────────────────────────────────────────────
         self.cam          = _CamFeedReceiver(quest_ip)
+        # Secondary relock markers come from the prescan file (single source of
+        # truth) — the detector, the relock loop, and the Unity cubes all follow it.
+        self._world_marker_ids = _load_prescan_marker_ids()
         self.aruco        = _ArucoPoseEstimator(
                                 anchor_marker_id       = anchor_marker_id,
                                 pegboard_marker_id     = pegboard_marker_id,
                                 anchor_marker_size_m   = anchor_marker_size_m,
                                 pegboard_marker_size_m = pegboard_marker_size_m,
-                                board_marker_ids       = (*((board_marker_a, board_marker_b)), *cfg.WORLD_MARKER_IDS),
+                                board_marker_ids       = (*((board_marker_a, board_marker_b)), *self._world_marker_ids),
                                 board_marker_size_m    = cfg.WORLD_MARKER_SIZE)
         self.aruco_worker = _ArUcoWorker(self.cam, self.aruco)
         self.hands        = _HandDataReceiver(quest_ip, hand_port)
@@ -2004,6 +2073,10 @@ class MainScene:
         self.tools       = _ToolSelectionManager(quest_ip)
         self.tuner       = _OffsetTuner()
         self.synth       = _SyntheticObjectPublisher(quest_ip)
+        # Secondary relock-cube poses → Unity (positions the click cubes on their
+        # physical markers using the prescan registration).
+        self.relock_cubes = _RelockCubePublisher(quest_ip)
+        self.relock_cubes.set_markers(self.anchor._T_world_marker)
         self.tool_layout = _ToolLayoutManager(
                                cfg.SCENE_LAYOUT_DIR / "tool_layout1.json", quest_ip)
         self.grip_pub    = _GripStatePublisher(quest_ip)
@@ -2036,7 +2109,16 @@ class MainScene:
         self._prev_relock_available = False  # previous relock-available flag; drives anchor-marker color change
         self._anchor_highlight_until           = 0.0   # time until anchor marker highlight reverts to normal color
         self._last_proximity_relock_time = 0.0   # timestamp of last auto-relock; enforces _RELOCK_COOLDOWN between relocks
-        self._last_world_marker_relock_time = 0.0  # timestamp of last secondary marker relock; enforces WORLD_MARKERS_RELOCK_COOLDOWN
+        # Per secondary marker (104-107, …) click-to-relock state — mirrors the
+        # anchor marker's relock-cube flow, keyed by marker id. Driven by the
+        # prescan file: one entry per marker whose pose was loaded.
+        self._world_relock_prev_available:  dict[int, bool]  = {}   # last relock-available flag per marker (drives hover-color swap)
+        self._world_relock_highlight_until: dict[int, float] = {}   # time until the SELECTED flash reverts, per marker
+        self._last_world_relock_time:       dict[int, float] = {}   # timestamp of last relock per marker; enforces WORLD_MARKERS_RELOCK_COOLDOWN
+        for _mid in self.anchor._T_world_marker:
+            self._world_relock_prev_available[_mid]  = False
+            self._world_relock_highlight_until[_mid] = 0.0
+            self._last_world_relock_time[_mid]       = 0.0
         self._reachability_arrows_hide_at           = 0.0   # timestamp after which reachability arrows are hidden; set to now+5s on R keypress
         self._T_world_tcp: "np.ndarray | None"          = None   # current TCP pose in world; polled each frame from robot
         self._grip_state: "str | None"              = None   # None | 'moving_to_hand' | 'grabbed' | 'moving_to_pose'
@@ -2064,9 +2146,11 @@ class MainScene:
               f"distance) — later re-locks need ENTER or the relock cube")
         print(f"  ENTER with marker #{pegboard_marker_id} visible (after locking)"
               f" → lock pegboard")
-        print(f"  Secondary markers {cfg.WORLD_MARKER_IDS} provide continuous drift "
-              f"correction (proximity <{cfg.WORLD_MARKERS_PROXIMITY_MAX}m, "
-              f"tilt <{cfg.WORLD_MARKERS_TILT_MAX_DEG}°, cooldown {cfg.WORLD_MARKERS_RELOCK_COOLDOWN}s)")
+        _secondary = sorted(self.anchor._T_world_marker) or "none (no prescan file)"
+        print(f"  Secondary relock cubes {_secondary}: click one for drift "
+              f"correction when it lights up (proximity <{cfg.WORLD_MARKERS_PROXIMITY_MAX}m, "
+              f"looking within {cfg.WORLD_MARKERS_TILT_MAX_DEG}° of face-on, "
+              f"cooldown {cfg.WORLD_MARKERS_RELOCK_COOLDOWN}s)")
         print("  ESC = quit\n")
 
     # ── Helpers ───────────────────────────────────────────────────────────────
@@ -2174,6 +2258,7 @@ class MainScene:
                     _now = time.time()
                     if _now - self._last_synth_pub_time >= self._SYNTH_INTERVAL:
                         self.synth.publish()
+                        self.relock_cubes.publish()
                         self._last_synth_pub_time = _now
 
                 if self.pb_scene is not None:
@@ -2286,44 +2371,57 @@ class MainScene:
                     print("[AutoRelock] Relocked via proximity click")
                 self.tools.deselect(self.anchor_marker_id)
 
-                # ── Secondary marker automatic continuous relocking ────────────
-                # Use prescan-registered markers for continuous drift correction
-                if (self.anchor.locked and self.cam.camera_T is not None
-                        and _now - self._last_world_marker_relock_time >= cfg.WORLD_MARKERS_RELOCK_COOLDOWN):
-                    # Find all secondary markers that pass the gates
-                    candidates = {}  # mid -> (distance, T_cam_marker)
-                    for mid in cfg.WORLD_MARKER_IDS:
-                        if mid not in T_cam_board:
-                            continue
-                        T_cam_mid = T_cam_board[mid]
-                        dist = float(np.linalg.norm(T_cam_mid[:3, 3]))
+                # ── Secondary marker click-to-relock (cube logic, per marker) ──
+                # Each prescanned marker (104-107, …) has an authored relock cube
+                # in Unity tagged with its marker id. Same flow as the anchor cube:
+                # the cube lights up (HOVER_COLOR) when you are looking nearly
+                # face-on at the physical marker within range, and clicking it
+                # relocks the world frame from that marker's prescan registration.
+                for mid in self.anchor._T_world_marker:
+                    T_cam_mid = T_cam_board.get(mid)
+                    _available = False
+                    _dist = _angle_deg = 0.0
+                    if (self.anchor.locked and self.cam.camera_T is not None
+                            and T_cam_mid is not None):
+                        _dist = float(np.linalg.norm(T_cam_mid[:3, 3]))
+                        # Obliquity: T_cam_mid[2, 2] is the marker normal's component
+                        # along the camera optical axis — |value| ≈ 1 → face-on (0°),
+                        # ≈ 0 → edge-on/grazing (90°).
+                        _cos_obliq = abs(float(T_cam_mid[2, 2]))
+                        _min_cos   = np.cos(np.deg2rad(cfg.WORLD_MARKERS_TILT_MAX_DEG))
+                        _angle_deg = float(np.degrees(np.arccos(np.clip(_cos_obliq, -1, 1))))
+                        _available = (_dist <= cfg.WORLD_MARKERS_PROXIMITY_MAX
+                                      and _cos_obliq >= _min_cos)
 
-                        # Gate 1: proximity
-                        if dist > cfg.WORLD_MARKERS_PROXIMITY_MAX:
-                            continue
+                    # Revert the post-relock SELECTED flash once it expires
+                    if (self._world_relock_highlight_until[mid] > 0.0
+                            and _now >= self._world_relock_highlight_until[mid]):
+                        self._world_relock_highlight_until[mid] = 0.0
+                        self._world_relock_prev_available[mid] = not _available
 
-                        # Gate 2: obliquity — only relock when looking nearly face-on
-                        # at the marker's flat square. The marker's surface normal is
-                        # its local +Z axis = 3rd column of the rotation; T_cam_mid[2, 2]
-                        # is that normal's component along the camera optical axis.
-                        # |value| ≈ 1 → face-on (0°); ≈ 0 → edge-on/grazing (90°).
-                        _cos_obliq_mid = abs(float(T_cam_mid[2, 2]))
-                        _min_cos_mid = np.cos(np.deg2rad(cfg.WORLD_MARKERS_TILT_MAX_DEG))  # 20° → 0.940
-                        if _cos_obliq_mid < _min_cos_mid:  # too oblique / grazing → skip
-                            continue
+                    # Swap the cube colour when availability changes (hover-on / reset)
+                    if (self._world_relock_highlight_until[mid] == 0.0
+                            and _available != self._world_relock_prev_available[mid]):
+                        self.tools.send_color(
+                            mid,
+                            _ToolSelectionManager.HOVER_COLOR if _available
+                            else _ToolSelectionManager.RESET_COLOR)
+                        self._world_relock_prev_available[mid] = _available
 
-                        # Passed both gates
-                        candidates[mid] = (dist, T_cam_mid)
-
-                    # Pick the closest candidate if any passed
-                    if candidates:
-                        best_mid = min(candidates.keys(), key=lambda m: candidates[m][0])
-                        best_dist, best_T_cam = candidates[best_mid]
-                        _cos_obliq_best = abs(float(best_T_cam[2, 2]))
-                        _angle_best_deg = float(np.degrees(np.arccos(np.clip(_cos_obliq_best, -1, 1))))
-                        if self.anchor.relock_from_world_marker(best_mid, best_T_cam, self.cam.camera_T):
-                            self._last_world_marker_relock_time = _now
-                            print(f"[WorldRelock] marker #{best_mid}, {best_dist:.3f}m, {_angle_best_deg:.1f}° off-normal")
+                    # Click on the cube while available → relock world from this marker
+                    if (self.tools.active_tool_id == mid
+                            and _available
+                            and _now - self._last_world_relock_time[mid]
+                                >= cfg.WORLD_MARKERS_RELOCK_COOLDOWN):
+                        if self.anchor.relock_from_world_marker(
+                                mid, T_cam_mid, self.cam.camera_T):
+                            self.tools.send_color(mid, _ToolSelectionManager.SELECTED_COLOR)
+                            self._world_relock_highlight_until[mid] = _now + 1.0
+                            self._world_relock_prev_available[mid]  = True
+                            self._last_world_relock_time[mid]       = _now
+                            print(f"[WorldRelock] marker #{mid}, {_dist:.3f}m, "
+                                  f"{_angle_deg:.1f}° off-normal (click)")
+                    self.tools.deselect(mid)
 
                 # ── TCP click → toggle continuous hand tracking ────────────────
                 if (self.tools.active_tool_id == self._TCP_TOOL_ID
@@ -2720,6 +2818,7 @@ class MainScene:
         self.anchor.close()
         self.center_eye_pub.close()
         self.synth.close()
+        self.relock_cubes.close()
         self.tool_layout.close()
         self.grip_pub.close()
         self.target_recv.close()
