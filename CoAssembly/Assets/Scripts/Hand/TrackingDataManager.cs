@@ -10,9 +10,13 @@ using Oculus.Interaction.Input;
 using Newtonsoft.Json;
 using SerializableData;
 
-// Run after CenterEyeOverrideReceiver (execution order 10000) so we read its overridden
-// centerEyeAnchor pose AND its up-to-date CenterEyeDelta for this frame (see
-// CenterEyeOverrideReceiver.CenterEyeDelta / ExtractHandData below).
+// Run after CenterEyeOverrideReceiver (execution order 10000), which shifts
+// OVRCameraRig.trackingSpace so centerEyeAnchor lands on the corrected pose for this
+// frame — reading centerEyeAnchor.position after that (rather than before) reports the
+// corrected value. Hand joint poses (via Hand.GetJointPose()) are also derived from
+// trackingSpace under the hood (Oculus.Interaction's TrackingToWorldTransformerOVR), so
+// they're automatically consistent with centerEyeAnchor here — no separate compensation
+// needed for hand positions.
 [DefaultExecutionOrder(10001)]
 public class TrackingDataManager : MonoBehaviour
 {
@@ -124,10 +128,6 @@ public class TrackingDataManager : MonoBehaviour
                 Pose pose = Pose.identity;
                 if (hand.GetJointPose(joints[i], out pose))
                 {
-                    // Hand joints are tracked relative to the headset and aren't touched by
-                    // CenterEyeOverrideReceiver's override — shift them by the same delta so
-                    // they stay consistent with the overridden centerEyeAnchor pose sent above.
-                    pose.position += CenterEyeOverrideReceiver.CenterEyeDelta;
                     group.Add(new SerializablePose(pose));
                 }
                 else

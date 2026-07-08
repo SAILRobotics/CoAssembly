@@ -10027,6 +10027,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 5dc6bdd3a77c85a47ae002ce63a7f4a0, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::CenterEyeOverrideReceiver
+  trackingSpace: {fileID: 734396003}
   centerEyeAnchor: {fileID: 337580216}
   leftCamera: {fileID: 1005247602}
   overrideRotation: 0
