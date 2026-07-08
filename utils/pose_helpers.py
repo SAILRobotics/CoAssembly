@@ -153,30 +153,38 @@ def _extract_joints(hand_block) -> np.ndarray | None:
 # =============================================================================
 # Tracked board geometry — 250 x 200 x 30 mm board with an ArUco marker
 # centred on each of its two large (250x200) faces, marker Y axes aligned
-# in the same world direction. Board origin = geometric centre of the box.
-# Each marker is inset 1mm from its exterior face, so its centre sits
-# 14mm (half the 30mm thickness, minus the 1mm inset) from the board
-# origin along its own -Z axis.
+# in the same world direction. Board origin = marker A's (102) exact pose —
+# NOT the geometric centre. Each marker is inset 1mm from its exterior face,
+# so the two marker planes are 28mm apart (30mm thickness minus 1mm inset on
+# each side); marker B (103) sits 28mm along marker A's own -Z axis, rotated
+# 180° about Y (opposite face, so it faces the other way).
 #
 #   _BOARD_SIZE             : (X, Y, Z) full extents in the board's local frame.
 #   _T_BOARD_FROM_MARKER_A/_B : fixed transforms from each marker's frame to
 #                               the board frame. Marker A defines the board's
-#                               Z axis directly; marker B is on the opposite
-#                               face, related by a 180° rotation about Y.
+#                               origin/axes directly (identity); marker B is
+#                               on the opposite face, offset along -Z and
+#                               related by a 180° rotation about Y.
 # =============================================================================
 
 BOARD_SIZE = (0.250, 0.200, 0.030)
 
-T_BOARD_FROM_MARKER_A = np.array([
-    [1.0, 0.0,  0.0,  0.0  ],
-    [0.0, 1.0,  0.0,  0.0  ],
-    [0.0, 0.0,  1.0, -0.014],
-    [0.0, 0.0,  0.0,  1.0  ],
-], dtype=np.float64)
+T_BOARD_FROM_MARKER_A = np.eye(4, dtype=np.float64)
 
 T_BOARD_FROM_MARKER_B = np.array([
     [-1.0, 0.0,  0.0,  0.0  ],
     [ 0.0, 1.0,  0.0,  0.0  ],
-    [ 0.0, 0.0, -1.0, -0.014],
+    [ 0.0, 0.0, -1.0, -0.028],
     [ 0.0, 0.0,  0.0,  1.0  ],
+], dtype=np.float64)
+
+# The physical board mesh's own geometry is centred on its geometric centre, not on
+# marker A/the board origin above — this is the fixed local offset from the board origin
+# to that geometric centre (14mm along -Z: half the 30mm thickness, minus marker A's 1mm
+# inset), for code that positions the actual board mesh rather than just the origin frame.
+T_BOARD_CENTER_FROM_ORIGIN = np.array([
+    [1.0, 0.0, 0.0,  0.0  ],
+    [0.0, 1.0, 0.0,  0.0  ],
+    [0.0, 0.0, 1.0, -0.014],
+    [0.0, 0.0, 0.0,  1.0  ],
 ], dtype=np.float64)

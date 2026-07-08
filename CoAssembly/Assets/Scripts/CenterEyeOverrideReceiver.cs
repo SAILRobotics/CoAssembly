@@ -3,19 +3,21 @@ using UnityEngine;
 using Meta.XR;
 
 /// <summary>
-/// Shifts OVRCameraRig's trackingSpace so that CenterEyeAnchor ends up at the true
-/// center-eye pose reconstructed from the left passthrough camera's real-time pose,
-/// computed entirely on-device — no round trip to Python, which used to add a full
-/// network+processing cycle of latency and made the pose visibly jittery/laggy
-/// relative to real head motion.
+/// Shifts OVRCameraRig's trackingSpace so that CenterEyeAnchor ends up exactly at the
+/// left passthrough camera's real-time pose, computed entirely on-device — no round trip
+/// to Python, which used to add a full network+processing cycle of latency and made the
+/// pose visibly jittery/laggy relative to real head motion.
 ///
 /// leftCamera.GetCameraPose() (a native OVRPlugin head-pose query, unaffected by
-/// anything we write here) internally computes camPose = headPose ∘ LensOffset, where
-/// LensOffset is the camera's fixed, factory-calibrated extrinsic relative to the head
-/// (leftCamera.Intrinsics.LensOffset — see PassthroughCameraAccess.cs). We invert that
-/// composition to get the desired world pose for CenterEyeAnchor: headPose = camPose ∘
-/// inv(LensOffset). Then we solve for the trackingSpace pose that places
-/// CenterEyeAnchor exactly there (see ApplyCorrection below).
+/// anything we write here) IS the desired world pose for CenterEyeAnchor directly — we
+/// want the render camera to sit exactly where the passthrough camera physically is, so
+/// virtual content lines up with the passthrough video. (GetCameraPose() internally
+/// computes camPose = headPose ∘ LensOffset; composing the result with inv(LensOffset), as
+/// an earlier version of this component did, algebraically cancels straight back to
+/// headPose — a no-op that leaves CenterEyeAnchor at the native head pose and never
+/// actually moves it toward the camera. GetCameraPose()'s result needs no further
+/// transformation.) We solve for the trackingSpace pose that places CenterEyeAnchor
+/// exactly at GetCameraPose() (see ApplyCorrection below).
 ///
 /// WHY trackingSpace AND NOT CenterEyeAnchor DIRECTLY: an earlier version of this
 /// component wrote straight to CenterEyeAnchor.position/rotation. On a real headset,
@@ -131,15 +133,12 @@ public class CenterEyeOverrideReceiver : MonoBehaviour
         if (!leftCamera.enabled || !leftCamera.IsPlaying)
             return;
 
-        Pose camPose    = leftCamera.GetCameraPose();
-        Pose lensOffset = leftCamera.Intrinsics.LensOffset;
+        Pose camPose = leftCamera.GetCameraPose();
 
-        var mCam    = Matrix4x4.TRS(camPose.position, camPose.rotation, Vector3.one);
-        var mOffset = Matrix4x4.TRS(lensOffset.position, lensOffset.rotation, Vector3.one);
-        var mCenter = mCam * mOffset.inverse;   // desired WORLD pose for CenterEyeAnchor
-
-        targetPos = mCenter.GetColumn(3);
-        targetRot = mCenter.rotation;
+        // camPose IS the desired world pose for CenterEyeAnchor — no further composition
+        // needed (see class doc comment for why an inv(LensOffset) step here is wrong).
+        targetPos = camPose.position;
+        targetRot = camPose.rotation;
 
         if (smoothPosition && hasPose)
             appliedPos = Vector3.SmoothDamp(appliedPos, targetPos, ref smoothVelocity, positionSmoothTime);

@@ -66,7 +66,7 @@ from utils.pose_helpers import (
     _unity_pose_to_T, _T_to_unity_pose, _adapt_cx_cy, _transform_point,
     _BONES_NP, _N_JOINTS, _HIDDEN_PT, _JOINT_GROUP_ORDER,
     _unity_to_o3d, _to_world, _unit, _palm_quat, _tool_grasp_quat, _extract_joints,
-    BOARD_SIZE, T_BOARD_FROM_MARKER_A, T_BOARD_FROM_MARKER_B,
+    BOARD_SIZE, T_BOARD_FROM_MARKER_A, T_BOARD_FROM_MARKER_B, T_BOARD_CENTER_FROM_ORIGIN,
 )
 import main_setting as cfg
 
@@ -1335,13 +1335,16 @@ class _SceneVis:
         self.vis.add_geometry(self._board_frame)
         self._board_mesh       = None
         self._board_manip_mesh = None
-        _baseboard_path = cfg.SCENE_LAYOUT_DIR.parent / "robot_assets" / "baseboard.obj"
+        _baseboard_path        = cfg.SCENE_LAYOUT_DIR.parent / "robot_assets" / "NewBaseBoard.obj"  # markers 102/103
+        _origin_baseboard_path = cfg.SCENE_LAYOUT_DIR.parent / "robot_assets" / "baseboard.obj"      # static origin reference
         if _baseboard_path.exists():
-            # Mesh raw: X=201mm, Y=250mm, Z=25mm(face normal), geometric centre at [0,0,-11.5mm].
-            # _board_mesh      (ArUco):  Rz(+90°) — swaps X↔Y so board X=250mm; face normal stays Z.
-            # _board_manip_mesh (AR box): Ry(-90°) after Rz(+90°) — rotates face-normal (Z) to X
-            #   so that board X (250mm) aligns with grip_z (TCP approach direction from the edge).
-            _RAW_CENTER = np.array([0.0, 0.0, -0.0115])  # mesh geometric centre before any rotation
+            # Mesh raw: X=250mm, Y=201mm, Z=30mm(face normal), geometric centre at [0,0,-9mm].
+            # Unlike the older baseboard.obj/New_BaseBoard.obj files, this mesh's raw X/Y are
+            # already board-convention (X=250mm wide, Y matches board Y) — no X↔Y swap needed.
+            # _board_mesh      (ArUco):  no rotation — raw axes already match board convention.
+            # _board_manip_mesh (AR box): Ry(-90°) — rotates face-normal (Z) to X so that board
+            #   X (250mm) aligns with grip_z (TCP approach direction from the edge).
+            _RAW_CENTER = np.array([0.0, 0.0, -0.009])  # mesh geometric centre before any rotation
 
             def _T_fix(euler_seq: str, *deg_angles) -> np.ndarray:
                 R = ScipyR.from_euler(euler_seq, list(deg_angles), degrees=True).as_matrix()
@@ -1361,12 +1364,29 @@ class _SceneVis:
                 self.vis.add_geometry(_bm)
                 return _bm
 
-            self._board_mesh       = _load_baseboard([0.9, 0.75, 0.5], 'z',  90.0)        # warm tan  — ArUco
-            self._board_manip_mesh = _load_baseboard([0.5, 0.75, 0.9], 'zy', 90.0, -90.0) # steel blue — AR box
+            self._board_mesh       = _load_baseboard([0.9, 0.75, 0.5], 'z',   0.0)  # warm tan  — ArUco (no swap needed)
+            self._board_manip_mesh = _load_baseboard([0.5, 0.75, 0.9], 'y', -90.0)  # steel blue — AR box
+
+            # Static reference copy, fixed at the world origin (not hidden, never moved).
+            # Uses baseboard.obj (not the NewBaseBoard.obj used for 102/103 tracking above).
+            # Rotation only — no _T_fix re-centering — so the mesh's own native origin
+            # (1mm below its top face, not the geometric centre) lands at the world origin.
+            if _origin_baseboard_path.exists():
+                _T_origin_board = np.eye(4, dtype=np.float64)
+                # _T_origin_board[:3, :3] = ScipyR.from_euler('z', 90.0, degrees=True).as_matrix()
+                _origin_board = o3d.io.read_triangle_mesh(str(_origin_baseboard_path))
+                _origin_board.compute_vertex_normals()
+                _origin_board.paint_uniform_color([0.6, 0.6, 0.6])   # neutral gray
+                _origin_board.transform(_T_origin_board)
+                self.vis.add_geometry(_origin_board)
+            else:
+                print(f"[SceneVis] {_origin_baseboard_path.name} not found at {_origin_baseboard_path}")
+
             print(f"[SceneVis] baseboard.obj loaded ({len(self._board_mesh.vertices)} verts)")
         else:
             print(f"[SceneVis] baseboard.obj not found at {_baseboard_path}")
         self._board_T       = self._hidden_T()
+        self._board_mesh_T  = self._hidden_T()  # _board_mesh tracks the geometric centre, not the origin frame
         self._board_manip_T = self._hidden_T()
 
         # Gripper mesh — loaded once, placed at TCP pose each frame via delta
@@ -1604,8 +1624,15 @@ class _SceneVis:
         self._board_frame.transform(delta)
         self.vis.update_geometry(self._board_frame)
         if self._board_mesh is not None:
-            self._board_mesh.transform(delta)
+            # T (and thus _board_frame) tracks the board ORIGIN (marker A's exact pose);
+            # the mesh's own geometry is centred on the board's geometric centre, offset
+            # from that origin by T_BOARD_CENTER_FROM_ORIGIN — track it separately.
+            mesh_T_new = (T_new @ T_BOARD_CENTER_FROM_ORIGIN
+                         if T is not None else self._hidden_T())
+            mesh_delta = mesh_T_new @ np.linalg.inv(self._board_mesh_T)
+            self._board_mesh.transform(mesh_delta)
             self.vis.update_geometry(self._board_mesh)
+            self._board_mesh_T = mesh_T_new
         if T is not None and not np.allclose(T, self._board_T):
             p = T[:3, 3]
             # print(f"[SceneVis] board → ({p[0]:+.3f}, {p[1]:+.3f}, {p[2]:+.3f})")
