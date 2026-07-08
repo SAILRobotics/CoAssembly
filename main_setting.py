@@ -12,7 +12,7 @@ _HERE = Path(__file__).resolve().parent
 SCENE_LAYOUT_DIR = _HERE / "scene_layout"
 
 # ── Machine IPs ───────────────────────────────────────────────────────────────
-UNITY_IP   = "192.168.50.103"   # Quest / Windows machine running Unity
+UNITY_IP   = "192.168.50.167"   # Quest / Windows machine running Unity
 ROBOT_IP   = "192.168.50.70"    # UR10e robot controller
 
 # ── Ports (Unity → Python) ────────────────────────────────────────────────────
@@ -45,6 +45,14 @@ BOARD_MARKER_B_ID  = 103   # opposite large face of the tracked board
 ANCHOR_MARKER_SIZE   = 0.100   # marker 100:  10 cm
 PEGBOARD_MARKER_SIZE = 0.100   # marker 101: 10 cm
 BOARD_MARKER_SIZE    = 0.100   # markers 102/103: 10 cm
+WORLD_MARKER_SIZE    = 0.100   # markers 104-107: 10 cm
+
+# ── World marker continuous relocking (secondary markers) ──────────────────────
+WORLD_MARKER_IDS           = (104, 105, 106, 107)   # secondary relock markers
+WORLD_MARKERS_FILE         = SCENE_LAYOUT_DIR / "world_markers_T_ref_from_marker.json"
+WORLD_MARKERS_PROXIMITY_MAX = 1.0                    # metres — max distance to relock
+WORLD_MARKERS_TILT_MAX_DEG = 20.0                    # degrees from vertical to relock
+WORLD_MARKERS_RELOCK_COOLDOWN = 1.0                  # seconds between secondary relocks
 
 # ── Robot workspace boundary (world frame, metres) ────────────────────────────
 # Used by the SceneVis boundary box, Unity workspace publisher, and frax CBF.
