@@ -67,7 +67,7 @@ WORKSPACE_HI = [ 0.7942,  0.4220, 0.750]   # [x_max, y_max, z_max]
 # trade-off between human convenience (distance to the receiving palm) and robot
 # effort (joint travel), and the tool is delivered to the best voxel's centroid.
 HANDOVER_OFFSET_M      = 0.50   # grid-centre distance in front of the headset (m)
-HANDOVER_DEPTH_M       = 0.40   # grid depth along the headset forward axis (m)
+HANDOVER_DEPTH_M       = 1.0   # grid depth along the headset forward axis (m)
 HANDOVER_WIDTH_M       = 0.60   # grid width along the headset right axis (m)
 HANDOVER_UPPER_LIMIT_M = 0.0   # upper vertical bound = headset_z − this (m below head)
 HANDOVER_LOWER_FRAC    = 0.40   # lower bound = this fraction × headset height above floor
@@ -75,6 +75,7 @@ HANDOVER_RESOLUTION    = 5      # voxel cells per axis (mesh resolution)
 HANDOVER_WEIGHT_HUMAN  = 1.0    # weight on the human-distance term
 HANDOVER_WEIGHT_ROBOT  = 1.0    # weight on the robot joint-travel term
 HANDOVER_STANDOFF_M    = 0.15   # TCP stops this far short of the point along the gripper approach (+Z); the sphere stays on the point
+HANDOVER_RELEASE_THRESHOLD_N = 15.0  # N — pull force to release the tool at the handover point (real robot only)
 
 # ── Conservative UR10e joint limits (degrees) ─────────────────────────────────
 # Applied to both PyBullet IK and the frax CBF safety filter.

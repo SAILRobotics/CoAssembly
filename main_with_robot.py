@@ -2226,7 +2226,7 @@ class MainScene:
             self._last_world_relock_time[_mid]       = 0.0
         self._reachability_arrows_hide_at           = 0.0   # timestamp after which reachability arrows are hidden; set to now+5s on R keypress
         self._T_world_tcp: "np.ndarray | None"          = None   # current TCP pose in world; polled each frame from robot
-        self._grip_state: "str | None"              = None   # None | 'moving_to_hand' | 'moving_to_handover' | 'grabbed' | 'moving_to_pose'
+        self._grip_state: "str | None"              = None   # None | 'moving_to_hand' | 'moving_to_handover' | 'handover_release' | 'grabbed' | 'moving_to_pose'
         self._handover: "dict | None"               = None   # frozen compromise-handover result (grid/target/sphere), set on tool grasp
         self._pending_handover_move                 = False  # set by grasp on_complete; main thread then issues the handover move_tcp
         self._last_ar_board_T: "np.ndarray | None"    = None   # last AR box pose from _TargetPoseReceiver; persists between polls
@@ -2435,6 +2435,38 @@ class MainScene:
         result['target_pos']    = tcp_target    # where the TCP is actually commanded (pulled back)
         result['target_quat']   = quat
         return result
+
+    def _on_handover_arrived(self, ok: bool) -> None:
+        """Callback when the robot reaches the compromise point holding the tool.
+
+        Sim / no robot: no force sensor — just present it and go idle.
+        Real robot: keep clamping the tool and arm a 'release' force monitor; when
+        the human tugs it (> _FORCE_RELEASE_THRESHOLD, mirrors the reached_hand
+        workholding handshake) the gripper opens to let go, then we idle."""
+        print(f"[Handover] Reached point — {'OK' if ok else 'FAILED'}")
+
+        def _clear_and_idle():
+            self._grip_state = None
+            self.handover_sphere.hide()
+            self.vis.clear_handover()
+
+        if not ok or self.simulation or self.robot is None:
+            _clear_and_idle()
+            return
+
+        # Real robot: hold the tool until the human pulls it out.
+        self._grip_state = 'handover_release'
+
+        def _on_tool_pulled():
+            print("[Handover] Tug detected → opening gripper, releasing tool")
+            self.robot.open_gripper_async(on_done=lambda: (
+                _clear_and_idle(),
+                print("[Handover] Tool released → idle"),
+            ))
+
+        self.robot.start_force_monitor('release', _on_tool_pulled,
+                                       threshold=cfg.HANDOVER_RELEASE_THRESHOLD_N)
+        print(f"[Handover] Presenting tool — pull ({cfg.HANDOVER_RELEASE_THRESHOLD_N:.0f} N) to release.")
 
     # ── Main loop ─────────────────────────────────────────────────────────────
 
@@ -2773,12 +2805,7 @@ class MainScene:
                               f"({_hpos[0]:.3f}, {_hpos[1]:.3f}, {_hpos[2]:.3f})")
                         self.robot.move_tcp(
                             _hpos.tolist(), _hquat,
-                            on_complete=lambda ok: (
-                                setattr(self, '_grip_state', None),
-                                self.handover_sphere.hide(),
-                                self.vis.clear_handover(),
-                                print(f"[Handover] Delivered — {'OK ✓' if ok else 'FAILED ✗'}"),
-                            ),
+                            on_complete=self._on_handover_arrived,
                         )
                     if self._grip_state == 'moving_to_hand':
                         target_pts = (left_pts if self._tracked_hand_side == "left"

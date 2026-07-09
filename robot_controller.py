@@ -541,6 +541,7 @@ class RobotController:
         self._force_hits:     int                  = 0
         self._force_cb:       "Callable | None"    = None
         self._force_last_t:   "float | None"       = None
+        self._force_threshold: "float | None"      = None   # active trigger delta (N); set by start_force_monitor
 
         # frax OSC+CBF (real robot + simulation; None if unavailable or no urdf_path given)
         self._frax: "None" = None
@@ -668,8 +669,7 @@ class RobotController:
                         self._force_baseline = _f
                     else:
                         _delta  = float(np.linalg.norm(_f - self._force_baseline))
-                        _thresh = (_FORCE_RELEASE_THRESHOLD if self._force_mode == 'release'
-                                   else _FORCE_GRASP_THRESHOLD)
+                        _thresh = self._force_threshold
                         self._force_hits = self._force_hits + 1 if _delta > _thresh else 0
                         if self._force_hits >= _FORCE_DEBOUNCE_HITS:
                             _mode = self._force_mode
@@ -1050,11 +1050,14 @@ class RobotController:
         except Exception:
             return None
 
-    def start_force_monitor(self, mode: str, on_trigger: "Callable") -> None:
+    def start_force_monitor(self, mode: str, on_trigger: "Callable",
+                            threshold: "float | None" = None) -> None:
         """Start non-blocking force threshold monitoring (polled by tick()).
 
-        mode='release': fires on_trigger when pull force > _FORCE_RELEASE_THRESHOLD
-        mode='grasp':   fires on_trigger when contact force > _FORCE_GRASP_THRESHOLD
+        mode='release': fires on_trigger when pull force > threshold
+        mode='grasp':   fires on_trigger when contact force > threshold
+        threshold: optional override (N) for the trigger delta; defaults to the
+                   mode constant (_FORCE_RELEASE_THRESHOLD / _FORCE_GRASP_THRESHOLD).
 
         on_trigger() is called on the main thread (from tick()), so it is safe
         to update UI state directly.
@@ -1064,8 +1067,10 @@ class RobotController:
         self._force_hits     = 0
         self._force_cb       = on_trigger
         self._force_last_t   = None
-        _thr = (_FORCE_RELEASE_THRESHOLD if mode == 'release' else _FORCE_GRASP_THRESHOLD)
-        print(f"[Robot] Force monitor started: mode={mode}, threshold={_thr:.1f} N")
+        self._force_threshold = (threshold if threshold is not None
+                                 else (_FORCE_RELEASE_THRESHOLD if mode == 'release'
+                                       else _FORCE_GRASP_THRESHOLD))
+        print(f"[Robot] Force monitor started: mode={mode}, threshold={self._force_threshold:.1f} N")
 
     def stop_force_monitor(self) -> None:
         """Stop force monitoring without firing the callback."""
@@ -1075,6 +1080,7 @@ class RobotController:
         self._force_baseline = None
         self._force_hits     = 0
         self._force_cb       = None
+        self._force_threshold = None
 
 
     # ── Grasp sequence (both modes) ───────────────────────────────────────────
