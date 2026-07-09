@@ -614,9 +614,9 @@ class _WorldAnchor:
         if self._T_world_board is None:
             return False
         T_board = (self._T_offset @ self._T_world_board) @ T_UNITY_BOARD_ROOT_FROM_ORIGIN
-        pos, rot_xyzw, _ = self._to_unity_pose(T_board)
-        euler = ScipyR.from_quat(rot_xyzw).as_euler("xyz", degrees=True)
-        print(f"[BoardRoot] pos={pos}, rot_euler_xyz={euler.tolist()}")
+        # pos, rot_xyzw, _ = self._to_unity_pose(T_board)
+        # euler = ScipyR.from_quat(rot_xyzw).as_euler("xyz", degrees=True)
+        # print(f"[BoardRoot] pos={pos}, rot_euler_xyz={euler.tolist()}")
         return self._publish_T(T_board,
                                self._pub_board, "BoardRoot",
                                "board_root_position",
@@ -801,6 +801,46 @@ class _RelockCubePublisher:
             self._pub.send_string(self._payload)
         except Exception as e:
             print(f"[RelockCubes] Publish error: {e}")
+
+    def close(self):
+        try:
+            self._pub.close(0)
+        except Exception:
+            pass
+
+
+class _HandoverSpherePublisher:
+    """Publishes the chosen handover centroid to Unity (PUB, port 5018) so the
+    person in the headset sees a sphere at the compromise delivery point.
+
+    The position is sent in the WorldRoot (marker-100) frame in Unity coordinates,
+    exactly like the relock cubes, so Unity's HandoverSphereReceiver can set it as
+    a localPosition on a sphere GameObject parented under WorldRoot. `visible`
+    toggles the renderer; the sphere is hidden once the robot arrives."""
+
+    def __init__(self, ip: str, port: int = cfg.HANDOVER_SPHERE_PORT):
+        ctx = zmq.Context.instance()
+        self._pub = ctx.socket(zmq.PUB)
+        self._pub.connect(f"tcp://{ip}:{port}")
+        time.sleep(0.2)
+        self._payload = json.dumps({"position": [0.0, 0.0, 0.0], "visible": False})
+        print(f"[HandoverSphere] Connected to tcp://{ip}:{port}")
+
+    def show(self, centroid_o3d) -> None:
+        """centroid_o3d = (3,) world point in the Open3D/world frame."""
+        T = np.eye(4, dtype=np.float64)
+        T[:3, 3] = np.asarray(centroid_o3d, dtype=np.float64)
+        pos, _, _ = _WorldAnchor._to_unity_pose(T)
+        self._payload = json.dumps({"position": pos, "visible": True})
+
+    def hide(self) -> None:
+        self._payload = json.dumps({"position": [0.0, 0.0, 0.0], "visible": False})
+
+    def publish(self) -> None:
+        try:
+            self._pub.send_string(self._payload)
+        except Exception as e:
+            print(f"[HandoverSphere] Publish error: {e}")
 
     def close(self):
         try:
@@ -1274,6 +1314,10 @@ class _SceneVis:
 
     _WORKSPACE_COLOR = np.array([0.4, 0.7, 1.0])  # light blue — workspace boundary box
 
+    _HANDOVER_GRID_COLOR   = np.array([0.45, 0.45, 0.90])  # handover voxels outside the workspace
+    _HANDOVER_VALID_COLOR  = np.array([0.20, 0.90, 0.40])  # handover voxels fully inside the workspace
+    _HANDOVER_SPHERE_COLOR = (1.0, 0.85, 0.10)             # chosen delivery centroid
+
     # ── Static geometry helpers ───────────────────────────────────────────────
 
     @staticmethod
@@ -1383,6 +1427,12 @@ class _SceneVis:
         # Robot workspace boundary — fades in as the head/hands approach/exit
         self._workspace_box_lineset = o3d.geometry.LineSet()
         self.vis.add_geometry(self._workspace_box_lineset)
+
+        # Handover compromise grid + chosen-centroid sphere (frozen at tool grasp)
+        self._handover_grid_lineset = o3d.geometry.LineSet()
+        self.vis.add_geometry(self._handover_grid_lineset)
+        self._handover_sphere_lineset = o3d.geometry.LineSet()
+        self.vis.add_geometry(self._handover_sphere_lineset)
 
         # Reachability arrows (shown for 5 s after pressing R, then hidden)
         self._reach_lineset = o3d.geometry.LineSet()
@@ -1658,6 +1708,56 @@ class _SceneVis:
         self._workspace_box_lineset.lines  = new_ls.lines
         self._workspace_box_lineset.colors = new_ls.colors
         self.vis.update_geometry(self._workspace_box_lineset)
+
+    def update_handover(self, result):
+        """Draw the handover voxel grid (valid vs invalid coloured) plus a
+        wireframe sphere at the chosen centroid. `result` comes from
+        MainScene._compute_handover; None hides everything."""
+        if result is None:
+            self.clear_handover()
+            return
+        cents = np.asarray(result['centroids'])
+        R     = np.asarray(result['R'])
+        cw, cd, ch = result['cell']
+        valid = np.asarray(result['valid_mask'])
+        hx, hy, hz = cw / 2.0, cd / 2.0, ch / 2.0
+        local = np.array([[-hx,-hy,-hz],[hx,-hy,-hz],[hx,hy,-hz],[-hx,hy,-hz],
+                          [-hx,-hy, hz],[hx,-hy, hz],[hx,hy, hz],[-hx,hy, hz]])
+        rot_corners = local @ R.T                        # (8,3), identical for every cell
+        edges = [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],
+                 [0,4],[1,5],[2,6],[3,7]]
+        pts, lines, cols = [], [], []
+        off = 0
+        for cen, v in zip(cents, valid):
+            pts.append(rot_corners + cen)
+            lines.extend([[off + a, off + b] for a, b in edges])
+            col = self._HANDOVER_VALID_COLOR if v else self._HANDOVER_GRID_COLOR
+            cols.extend([col] * len(edges))
+            off += 8
+        ls = self._handover_grid_lineset
+        ls.points = o3d.utility.Vector3dVector(np.vstack(pts))
+        ls.lines  = o3d.utility.Vector2iVector(np.asarray(lines, dtype=np.int32))
+        ls.colors = o3d.utility.Vector3dVector(np.asarray(cols, dtype=np.float64))
+        self.vis.update_geometry(ls)
+
+        sc  = result.get('sphere_center')
+        sph = self._handover_sphere_lineset
+        if sc is not None:
+            new_s = self.make_sphere_wireframe(np.asarray([sc], dtype=np.float64),
+                                               np.array([0.04]),
+                                               color=self._HANDOVER_SPHERE_COLOR)
+            sph.points = new_s.points
+            sph.lines  = new_s.lines
+            sph.colors = new_s.colors
+            self.vis.update_geometry(sph)
+
+    def clear_handover(self):
+        """Hide the handover grid + sphere (empty geometry)."""
+        for ls in (self._handover_grid_lineset, self._handover_sphere_lineset):
+            ls.points = o3d.utility.Vector3dVector(np.zeros((0, 3)))
+            ls.lines  = o3d.utility.Vector2iVector(np.zeros((0, 2), dtype=np.int32))
+            ls.colors = o3d.utility.Vector3dVector(np.zeros((0, 3)))
+            self.vis.update_geometry(ls)
 
     def update_tracking(self, T: np.ndarray | None):
         T_new = T if T is not None else self._hidden_T()
@@ -2081,6 +2181,7 @@ class MainScene:
         # physical markers using the prescan registration).
         self.relock_cubes = _RelockCubePublisher(quest_ip)
         self.relock_cubes.set_markers(self.anchor._T_world_marker)
+        self.handover_sphere = _HandoverSpherePublisher(quest_ip)
         self.tool_layout = _ToolLayoutManager(
                                cfg.SCENE_LAYOUT_DIR / "tool_layout1.json", quest_ip)
         self.grip_pub    = _GripStatePublisher(quest_ip)
@@ -2125,7 +2226,9 @@ class MainScene:
             self._last_world_relock_time[_mid]       = 0.0
         self._reachability_arrows_hide_at           = 0.0   # timestamp after which reachability arrows are hidden; set to now+5s on R keypress
         self._T_world_tcp: "np.ndarray | None"          = None   # current TCP pose in world; polled each frame from robot
-        self._grip_state: "str | None"              = None   # None | 'moving_to_hand' | 'grabbed' | 'moving_to_pose'
+        self._grip_state: "str | None"              = None   # None | 'moving_to_hand' | 'moving_to_handover' | 'grabbed' | 'moving_to_pose'
+        self._handover: "dict | None"               = None   # frozen compromise-handover result (grid/target/sphere), set on tool grasp
+        self._pending_handover_move                 = False  # set by grasp on_complete; main thread then issues the handover move_tcp
         self._last_ar_board_T: "np.ndarray | None"    = None   # last AR box pose from _TargetPoseReceiver; persists between polls
         self._pending_grasp_tool_id: "int | None"           = None   # tool ID being grasped (set on click, not yet read back)
         self._tracked_hand_side: "str | None"        = None   # which hand is being tracked: 'left' or 'right'
@@ -2210,6 +2313,129 @@ class MainScene:
         if self._load_pegboard_from_file:
             self._try_load_pegboard_from_file()
 
+    # ── Compromise handover ────────────────────────────────────────────────────
+
+    def _compute_handover(self, T_world_center, opp_pts, is_left):
+        """Build a headset-yaw-aligned voxel grid in front of the human, keep the
+        voxels whose 8 vertices all lie inside the robot workspace, and pick the
+        one that minimises a weighted blend of human distance (to the receiving
+        palm, z-clamped to the vertical bounds) and robot joint travel.
+
+        Returns a dict with `target_pos`, `target_quat`, `sphere_center`,
+        `centroids`, `R`, `cell`, `valid_mask` for the move + Open3D vis, or None
+        if inputs are missing or no voxel is valid. Computed once (frozen) at
+        tool-grasp time — the per-voxel IK therefore runs only once, not per frame.
+        """
+        if T_world_center is None or opp_pts is None or self.robot is None:
+            return None
+        p_head = np.asarray(T_world_center[:3, 3], dtype=np.float64)
+
+        # Headset yaw frame: forward = camera +Z (look dir) projected onto world XY.
+        fwd_full = T_world_center[:3, :3] @ np.array([0., 0., 1.])
+        fwd = np.array([fwd_full[0], fwd_full[1], 0.0])
+        if np.linalg.norm(fwd) < 1e-6:
+            return None
+        fwd  = fwd / np.linalg.norm(fwd)
+        up    = np.array([0., 0., 1.])
+        right = np.cross(fwd, up)
+        right = right / (np.linalg.norm(right) + 1e-9)
+        R = np.column_stack([right, fwd, up])   # local (x=right, y=fwd, z=up) → world
+
+        # Vertical bounds (dynamic). Marker 100 is the world origin, so its world z
+        # is 0 by construction — it acts as a floor guard on the lower bound.
+        anchor_world_z = 0.0
+        lower = max(anchor_world_z, cfg.HANDOVER_LOWER_FRAC * p_head[2])
+        upper = p_head[2] - cfg.HANDOVER_UPPER_LIMIT_M
+        if upper <= lower:
+            print(f"[Handover] DIAG bounds invalid: head_z={p_head[2]:.3f} "
+                  f"lower={lower:.3f} upper={upper:.3f} (upper<=lower)")
+            return None
+
+        # Grid centre: offset forward from the head, vertically centred on bounds.
+        c = p_head + fwd * cfg.HANDOVER_OFFSET_M
+        c[2] = 0.5 * (lower + upper)
+
+        n  = int(cfg.HANDOVER_RESOLUTION)
+        cw = cfg.HANDOVER_WIDTH_M / n
+        cd = cfg.HANDOVER_DEPTH_M / n
+        ch = (upper - lower) / n
+        sx = (np.arange(n) - (n - 1) / 2.0) * cw          # symmetric offsets along right
+        sy = (np.arange(n) - (n - 1) / 2.0) * cd          # symmetric offsets along fwd
+        sz = (lower + (np.arange(n) + 0.5) * ch) - c[2]   # lower→upper, as offset from centre
+        centroids = np.array([c + right * ix + fwd * iy + up * iz
+                              for iz in sz for iy in sy for ix in sx])
+
+        # Validity: all 8 vertices inside the axis-aligned workspace box.
+        hx, hy, hz = cw / 2.0, cd / 2.0, ch / 2.0
+        local_v = np.array([[-hx,-hy,-hz],[hx,-hy,-hz],[hx,hy,-hz],[-hx,hy,-hz],
+                            [-hx,-hy, hz],[hx,-hy, hz],[hx,hy, hz],[-hx,hy, hz]])
+        rot_v = local_v @ R.T                              # (8,3)
+        lo, hi = self.WORKSPACE_BOUNDS_LO, self.WORKSPACE_BOUNDS_HI
+        valid = np.array([bool(np.all((rot_v + cen >= lo) & (rot_v + cen <= hi)))
+                          for cen in centroids])
+        print(f"[Handover] DIAG head_z={p_head[2]:.3f} bounds=[{lower:.3f},{upper:.3f}] "
+              f"grid_centre=({c[0]:.2f},{c[1]:.2f},{c[2]:.2f}) "
+              f"valid={int(valid.sum())}/{len(centroids)} "
+              f"WS_lo={np.round(lo, 2).tolist()} WS_hi={np.round(hi, 2).tolist()}")
+
+        result = {'centroids': centroids, 'R': R, 'cell': [cw, cd, ch],
+                  'valid_mask': valid, 'sphere_center': None,
+                  'target_pos': None, 'target_quat': None}
+        if not valid.any():
+            return None
+
+        vcents = centroids[valid]
+
+        # Delivery orientation from the receiving palm (mirror moving_to_hand flip).
+        quat = _palm_quat(opp_pts, is_left=is_left)
+        if ScipyR.from_quat(quat).apply([0., 1., 0.])[2] > 0:
+            quat = (ScipyR.from_quat(quat)
+                    * ScipyR.from_euler('z', 180, degrees=True)).as_quat()
+
+        # Human term: distance to receiving palm, z clamped to [lower, upper].
+        human_ref = np.asarray(opp_pts[1], dtype=np.float64).copy()
+        human_ref[2] = float(np.clip(human_ref[2], lower, upper))
+        d_human = np.linalg.norm(vcents - human_ref, axis=1)
+
+        # Robot term: wrapped joint travel from current config to each centroid's IK.
+        q_cur  = self.robot.q
+        travel = np.full(len(vcents), np.inf)
+        if q_cur is not None and not np.any(np.isnan(q_cur)):
+            q_cur = np.asarray(q_cur, dtype=np.float64)
+            for i, cen in enumerate(vcents):
+                try:
+                    q_t = self.robot.query_ik_joints(cen.tolist(), quat, seed_q=q_cur)
+                except Exception:
+                    q_t = None
+                if q_t is None:
+                    continue
+                dq = (np.asarray(q_t, dtype=np.float64) - q_cur + np.pi) % (2 * np.pi) - np.pi
+                travel[i] = float(np.linalg.norm(dq))
+        finite = np.isfinite(travel)
+        if not finite.any():
+            travel[:] = 0.0
+        else:
+            travel[~finite] = travel[finite].max()
+
+        def _norm(a):
+            span = a.max() - a.min()
+            return (a - a.min()) / span if span > 1e-9 else np.zeros_like(a)
+        cost = (cfg.HANDOVER_WEIGHT_HUMAN * _norm(d_human)
+                + cfg.HANDOVER_WEIGHT_ROBOT * _norm(travel))
+        target = vcents[int(np.argmin(cost))]
+
+        # Standoff: stop the TCP short of the point along the gripper approach axis
+        # (+Z), so the tool is presented at the point rather than driving the TCP
+        # onto it (mirrors the moving_to_hand palm standoff). The sphere stays on
+        # the true point; only the TCP target is pulled back.
+        gripper_z  = ScipyR.from_quat(quat).apply([0., 0., 1.])
+        tcp_target = target - gripper_z * cfg.HANDOVER_STANDOFF_M
+
+        result['sphere_center'] = target        # the compromise handover point (shown to the user)
+        result['target_pos']    = tcp_target    # where the TCP is actually commanded (pulled back)
+        result['target_quat']   = quat
+        return result
+
     # ── Main loop ─────────────────────────────────────────────────────────────
 
     def run(self) -> None:
@@ -2263,6 +2489,7 @@ class MainScene:
                     if _now - self._last_synth_pub_time >= self._SYNTH_INTERVAL:
                         self.synth.publish()
                         self.relock_cubes.publish()
+                        self.handover_sphere.publish()
                         self._last_synth_pub_time = _now
 
                 if self.pb_scene is not None:
@@ -2484,6 +2711,29 @@ class MainScene:
                         if _gj is not None:
                             print(f"[User] Clicked {_cat} id={_tid} → grasp sequence  "
                                   f"[{_hw}] joint-space moveJ  |  {_seq}")
+                            # ── Compromise handover: snapshot + freeze the target ──
+                            self._handover = None
+                            self.vis.clear_handover()
+                            _click_hand = self.tools.active_hand
+                            _opp_hand   = {"left": "right", "right": "left"}.get(_click_hand)
+                            _opp_pts    = (left_pts  if _opp_hand == "left"
+                                           else right_pts if _opp_hand == "right" else None)
+                            if _opp_pts is not None and T_world_center is not None:
+                                self._handover = self._compute_handover(
+                                    T_world_center, _opp_pts, is_left=(_opp_hand == "left"))
+                                if self._handover is not None:
+                                    self.vis.update_handover(self._handover)
+                                    self.handover_sphere.show(self._handover['target_pos'])
+                                    _hp = self._handover['target_pos']
+                                    print(f"[Handover] {_click_hand} clicked → deliver toward "
+                                          f"{_opp_hand} hand; point=({_hp[0]:.3f}, {_hp[1]:.3f}, "
+                                          f"{_hp[2]:.3f})")
+                                else:
+                                    self.handover_sphere.hide()
+                                    print("[Handover] No valid voxel in workspace — grasp only.")
+                            else:
+                                self.handover_sphere.hide()
+                                print(f"[Handover] {_opp_hand} hand not visible — grasp only.")
                             self.robot.execute_grasp(
                                 _gj,
                                 category     = _cat,
@@ -2491,6 +2741,8 @@ class MainScene:
                                 on_complete  = lambda ok, tid=_grasp_tid: (
                                     self.tools.send_color(tid, _ToolSelectionManager.RESET_COLOR),
                                     self._pending_vis_clears.append(tid),
+                                    setattr(self, '_pending_handover_move',
+                                            bool(ok) and self._handover is not None),
                                     print(f"[Robot] Grasp id={tid} — {'OK ✓' if ok else 'FAILED ✗'}"),
                                 ),
                             )
@@ -2511,6 +2763,23 @@ class MainScene:
                     _dt  = (min(_now - self._last_tick_time, 0.1)
                             if self._last_tick_time is not None else 1.0 / 30.0)
                     self._last_tick_time = _now
+                    # ── Handover: grasp finished → move to the frozen compromise point ──
+                    if self._pending_handover_move and self._handover is not None:
+                        self._pending_handover_move = False
+                        self._grip_state = 'moving_to_handover'
+                        _hpos  = self._handover['target_pos']
+                        _hquat = self._handover['target_quat']
+                        print(f"[Handover] Grasp done → move_tcp to "
+                              f"({_hpos[0]:.3f}, {_hpos[1]:.3f}, {_hpos[2]:.3f})")
+                        self.robot.move_tcp(
+                            _hpos.tolist(), _hquat,
+                            on_complete=lambda ok: (
+                                setattr(self, '_grip_state', None),
+                                self.handover_sphere.hide(),
+                                self.vis.clear_handover(),
+                                print(f"[Handover] Delivered — {'OK ✓' if ok else 'FAILED ✗'}"),
+                            ),
+                        )
                     if self._grip_state == 'moving_to_hand':
                         target_pts = (left_pts if self._tracked_hand_side == "left"
                                       else right_pts)
@@ -2823,6 +3092,7 @@ class MainScene:
         self.center_eye_pub.close()
         self.synth.close()
         self.relock_cubes.close()
+        self.handover_sphere.close()
         self.tool_layout.close()
         self.grip_pub.close()
         self.target_recv.close()
