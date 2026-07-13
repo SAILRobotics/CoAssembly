@@ -12,7 +12,7 @@ _HERE = Path(__file__).resolve().parent
 SCENE_LAYOUT_DIR = _HERE / "scene_layout"
 
 # ── Machine IPs ───────────────────────────────────────────────────────────────
-UNITY_IP   = "192.168.50.103"   # Quest / Windows machine running Unity
+UNITY_IP   = "192.168.50.167"   # Quest / Windows machine running Unity
 ROBOT_IP   = "192.168.50.70"    # UR10e robot controller
 
 # ── Ports (Unity → Python) ────────────────────────────────────────────────────
@@ -35,6 +35,7 @@ ROBOT_JOINT_PORT   = 5001   # live arm joint angles, radians (matches RobotJoint
 WORKSPACE_BOUND_PORT = 5015 # robot workspace boundary wireframe (bounds + proximity)
 CENTER_EYE_OVERRIDE_PORT = 5016 # override CenterEyeAnchor pose from Python
 RELOCK_CUBE_PORT   = 5017   # secondary relock-cube world poses (matches RelockCubePoseReceiver)
+HANDOVER_SPHERE_PORT = 5018 # handover target sphere world position (matches HandoverSphereReceiver)
 
 # ── ArUco marker IDs ──────────────────────────────────────────────────────────
 ANCHOR_MARKER_ID   = 100   # world frame + PyBullet scene origin
@@ -59,6 +60,22 @@ WORLD_MARKERS_RELOCK_COOLDOWN = 1.0                  # seconds between secondary
 # WORKSPACE_LO = [-1.0474, -0.3082, 0.05]   # [x_min, y_min, z_min]
 WORKSPACE_LO = [-0.6000, -0.3082, 0.05]   # [x_min, y_min, z_min]
 WORKSPACE_HI = [ 0.7942,  0.4220, 0.750]   # [x_max, y_max, z_max]
+
+# ── Handover grid (compromise tool delivery) ──────────────────────────────────
+# When a pegboard tool is grasped, a headset-yaw-aligned voxel grid is built in
+# front of the human; voxels fully inside WORKSPACE_LO/HI are scored by a weighted
+# trade-off between human convenience (distance to the receiving palm) and robot
+# effort (joint travel), and the tool is delivered to the best voxel's centroid.
+HANDOVER_OFFSET_M      = 0.50   # grid-centre distance in front of the headset (m)
+HANDOVER_DEPTH_M       = 1.0   # grid depth along the headset forward axis (m)
+HANDOVER_WIDTH_M       = 0.60   # grid width along the headset right axis (m)
+HANDOVER_UPPER_LIMIT_M = 0.0   # upper vertical bound = headset_z − this (m below head)
+HANDOVER_LOWER_FRAC    = 0.40   # lower bound = this fraction × headset height above floor
+HANDOVER_RESOLUTION    = 5      # voxel cells per axis (mesh resolution)
+HANDOVER_WEIGHT_HUMAN  = 1.0    # weight on the human-distance term
+HANDOVER_WEIGHT_ROBOT  = 1.0    # weight on the robot joint-travel term
+HANDOVER_STANDOFF_M    = 0.15   # TCP stops this far short of the point along the gripper approach (+Z); the sphere stays on the point
+HANDOVER_RELEASE_THRESHOLD_N = 15.0  # N — pull force to release the tool at the handover point (real robot only)
 
 # ── Conservative UR10e joint limits (degrees) ─────────────────────────────────
 # Applied to both PyBullet IK and the frax CBF safety filter.
