@@ -37,6 +37,19 @@ CENTER_EYE_OVERRIDE_PORT = 5016 # override CenterEyeAnchor pose from Python
 RELOCK_CUBE_PORT   = 5017   # secondary relock-cube world poses (matches RelockCubePoseReceiver)
 HANDOVER_SPHERE_PORT = 5018 # handover target sphere world position (matches HandoverSphereReceiver)
 
+# ── Ports (Python ↔ Python: dedicated robot-control process) ─────────────────
+ROBOT_CMD_PORT   = 5020   # main_with_robot.py → robot_control_server.py: commands
+ROBOT_EVENT_PORT = 5021   # robot_control_server.py → main_with_robot.py: state + events
+
+# ── Robot-control process tuning ──────────────────────────────────────────────
+ROBOT_CONTROL_HZ      = 120   # fixed-rate hardware loop, simulation
+ROBOT_CONTROL_HZ_REAL = 30    # real hardware — intentionally slower for now (safety while testing)
+
+# Real-hardware speed cap (temporary safety measure while testing) — multiplies
+# moveJ/servoJ speed & acceleration and the pre-CBF joint-delta rate limit.
+# 1.0 = full speed. Simulation is unaffected.
+REAL_ROBOT_SPEED_SCALE = 0.3
+
 # ── ArUco marker IDs ──────────────────────────────────────────────────────────
 ANCHOR_MARKER_ID   = 100   # world frame + PyBullet scene origin
 PEGBOARD_MARKER_ID = 101   # pegboard origin (top-right corner)
@@ -66,7 +79,7 @@ WORKSPACE_HI = [ 0.7942,  0.4220, 0.750]   # [x_max, y_max, z_max]
 # front of the human; voxels fully inside WORKSPACE_LO/HI are scored by a weighted
 # trade-off between human convenience (distance to the receiving palm) and robot
 # effort (joint travel), and the tool is delivered to the best voxel's centroid.
-HANDOVER_OFFSET_M      = 0.50   # grid-centre distance in front of the headset (m)
+HANDOVER_OFFSET_M      = 0.30   # grid-centre distance in front of the headset (m)
 HANDOVER_DEPTH_M       = 1.0   # grid depth along the headset forward axis (m)
 HANDOVER_WIDTH_M       = 0.60   # grid width along the headset right axis (m)
 HANDOVER_UPPER_LIMIT_M = 0.0   # upper vertical bound = headset_z − this (m below head)
@@ -81,8 +94,8 @@ HANDOVER_RELEASE_THRESHOLD_N = 15.0  # N — pull force to release the tool at t
 # Applied to both PyBullet IK and the frax CBF safety filter.
 # Adjust to match your actual robot range / mounting pose.
 #            J1      J2     J3     J4      J5      J6
-JOINT_MIN_DEG = [-180.00, -90.00,  50,  -160,  0,  0]
-JOINT_MAX_DEG = [ -90.00, -20.00,  150,   60,   360,   360]
+JOINT_MIN_DEG = [-180.00, -90.00,  50,  -360,  -360,  -360]
+JOINT_MAX_DEG = [ -90.00, -20.00,  150,   360,   360,   360]
 
 
 # JOINT_MIN_DEG = [-360.00, -360,  -360,  -360,  -360,  -360]

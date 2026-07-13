@@ -45,13 +45,6 @@ import open3d as o3d
 import zmq
 from scipy.spatial.transform import Rotation as ScipyR
 
-try:
-    from pybullet_ik import IKScene as PyBulletScene
-    _PYBULLET_AVAILABLE = True
-except ImportError:
-    _PYBULLET_AVAILABLE = False
-    print("[main_with_robot] pybullet_ik import failed — IK/FK disabled.")
-
 _FILE_DIR = Path(__file__).resolve().parent
 if str(_FILE_DIR) not in sys.path:
     sys.path.insert(0, str(_FILE_DIR))
@@ -71,11 +64,11 @@ from utils.pose_helpers import (
 import main_setting as cfg
 
 try:
-    from robot_controller import RobotController as _RobotController
+    from robot_client import RobotClient as _RobotController
     _ROBOT_CTRL_AVAILABLE = True
 except ImportError as _e:
     _ROBOT_CTRL_AVAILABLE = False
-    print(f"[main_with_robot] RobotController not available: {_e}")
+    print(f"[main_with_robot] RobotClient not available: {_e}")
 
 
 # =============================================================================
@@ -1352,6 +1345,7 @@ class _SceneVis:
         self._head_frustum           = None
         self._passthrough_cam_frustum = None
         self._tcp_axes      = None          # lazy — added on first update_tcp() call
+        self._tcp_target_ls = None          # lazy — added on first update_tcp_target() call (debug: commanded move_tcp/step_hand_track target)
         self._tool_box_linesets: list = []  # lazy — grows to match number of tool boxes
 
         # Collision sphere wireframe (toggle with show_collision_spheres)
@@ -1752,6 +1746,24 @@ class _SceneVis:
             self.vis.update_geometry(self._tcp_gripper_mesh)
         self._tcp_T = T_new
 
+    def update_tcp_target(self, T: "np.ndarray | None"):
+        """Debug: draw the commanded move_tcp/step_hand_track target — a
+        magenta wireframe sphere at the target position, distinct from the
+        RGB-axes actual TCP drawn by update_tcp(), so target vs. arrived
+        pose can be compared visually."""
+        T_new = T if T is not None else self._hidden_T()
+        new_ls = self.make_sphere_wireframe(
+            np.array([T_new[:3, 3]]), np.array([0.035]),
+            color=(1.0, 0.0, 1.0))
+        if self._tcp_target_ls is None:
+            self._tcp_target_ls = new_ls
+            self.vis.add_geometry(self._tcp_target_ls)
+        else:
+            self._tcp_target_ls.points = new_ls.points
+            self._tcp_target_ls.lines  = new_ls.lines
+            self._tcp_target_ls.colors = new_ls.colors
+            self.vis.update_geometry(self._tcp_target_ls)
+
     def update_tool_boxes(self, boxes):
         """Update wireframe box linesets for all tool bounding boxes.
         boxes: list of (pos_world, R_world, size) from tool_layout.world_boxes()."""
@@ -2044,47 +2056,6 @@ class MainScene:
         }
         self._sim_q = np.deg2rad(self._SIM_Q_DEG)
 
-        # ── PyBullet IK scene (headless) ──────────────────────────────────────
-        _calib_dir = _FILE_DIR / "calibration_data" / "results"
-        self.pb_scene: "PyBulletScene | None" = None
-        if _PYBULLET_AVAILABLE:
-            if simulation:
-                if use_calibrated_robot_base and _calib_dir.exists():
-                    try:
-                        _p1 = np.load(_calib_dir / "phase1_results.npz")
-                        self.pb_scene = PyBulletScene(
-                            T_world_base=_p1["T_world_base"])
-                        self.pb_scene.build()
-                        self.pb_scene.update_robot(self._sim_q)
-                        print("[PyBullet] Simulation + calibrated base pose (headless).")
-                    except Exception as e:
-                        print(f"[MainScene] PyBullet (calibrated) failed: {e}")
-                        self.pb_scene = None
-                else:
-                    _T_world_base_sim = np.eye(4, dtype=float)
-                    _T_world_base_sim[:3, 3] = [-0.4, -0.8, 0.4]
-                    try:
-                        self.pb_scene = PyBulletScene(
-                            T_world_base=_T_world_base_sim)
-                        self.pb_scene.build()
-                        self.pb_scene.update_robot(self._sim_q)
-                        print("[PyBullet] Simulation — hardcoded base pose (headless).")
-                    except Exception as e:
-                        print(f"[MainScene] PyBullet scene failed to build: {e}")
-                        self.pb_scene = None
-            else:
-                if _calib_dir.exists():
-                    try:
-                        self.pb_scene = PyBulletScene.from_calibration(_calib_dir)
-                        self.pb_scene.build()
-                        self.pb_scene.update_robot(self._sim_q)
-                    except Exception as e:
-                        print(f"[MainScene] PyBullet scene failed to build: {e}")
-                        self.pb_scene = None
-                else:
-                    print(f"[MainScene] Calibration dir not found: {_calib_dir}")
-
-
         # ── Receivers / publishers ────────────────────────────────────────────
         self.cam          = _CamFeedReceiver(quest_ip)
         # Secondary relock markers come from the prescan file (single source of
@@ -2099,31 +2070,30 @@ class MainScene:
                                 board_marker_size_m    = cfg.WORLD_MARKER_SIZE)
         self.aruco_worker = _ArUcoWorker(self.cam, self.aruco)
         self.hands        = _HandDataReceiver(quest_ip, hand_port)
-        self.robot: "_RobotController | None" = None
-        if _ROBOT_CTRL_AVAILABLE and self.pb_scene is not None:
-            # Apply conservative joint limits to PyBullet IK
-            self.pb_scene.set_joint_limits(
-                cfg.JOINT_MIN_DEG, cfg.JOINT_MAX_DEG, degrees=True)
-            _urdf = cfg.SCENE_LAYOUT_DIR.parent / "robot_assets" / "ur10e.urdf"
-            self.robot = _RobotController(
-                unity_ip               = quest_ip,
-                pb_scene               = self.pb_scene,
-                T_world_base           = self.pb_scene.T_world_base,
-                robot_ip               = robot_ip if not simulation else None,
-                urdf_path              = str(_urdf) if _urdf.exists() else None,
-                frax_q_min             = list(np.deg2rad(cfg.JOINT_MIN_DEG)),
-                frax_q_max             = list(np.deg2rad(cfg.JOINT_MAX_DEG)),
-                frax_ws_lo             = cfg.WORKSPACE_LO,
-                frax_ws_hi             = cfg.WORKSPACE_HI,
-                frax_gripper_collision = gripper_collision,
-            )
 
-        if simulation:
-            print(f"[Robot] Simulation mode — RobotController ready (no hardware)")
-        elif self.robot is not None:
-            print(f"[Robot] Live mode — RobotController ready ({robot_ip})")
-            threading.Thread(target=self.robot.connect_gripper, daemon=True,
-                             name="gripper-preconnect").start()
+        # ── Robot control client (talks to robot_control_server.py) ────────────
+        # Real IK/FK for hardware control, RTDE, the gripper, and the frax CBF
+        # filter all live in the dedicated robot_control_server.py process —
+        # see that file's docstring. self.pb_scene here is the client's local,
+        # IK-free visualization scene (robot mesh + reachability arrows only).
+        self.robot: "_RobotController | None" = None
+        self.pb_scene = None
+        if _ROBOT_CTRL_AVAILABLE:
+            try:
+                self.robot = _RobotController(
+                    simulation                = simulation,
+                    use_calibrated_robot_base = use_calibrated_robot_base,
+                )
+                self.pb_scene = self.robot.pb_scene
+            except Exception as e:
+                print(f"[MainScene] RobotClient failed to connect: {e}")
+                self.robot = None
+
+        if self.robot is not None:
+            print(f"[Robot] {'Simulation' if simulation else f'Live ({robot_ip})'} mode — "
+                  f"RobotClient connected to robot_control_server.py")
+        else:
+            print("[Robot] No robot control — is robot_control_server.py running?")
 
         self.anchor      = _WorldAnchor(quest_ip)
         self.tools       = _ToolSelectionManager(quest_ip)
@@ -2165,6 +2135,7 @@ class MainScene:
         # ── Per-iteration state ───────────────────────────────────────────────
         self._prev_relock_available = False  # previous relock-available flag; drives anchor-marker color change
         self._anchor_highlight_until           = 0.0   # time until anchor marker highlight reverts to normal color
+        self._tcp_target_T: "np.ndarray | None" = None   # debug: most recently commanded move_tcp/step_hand_track target, drawn by vis.update_tcp_target()
         self._last_proximity_relock_time = 0.0   # timestamp of last auto-relock; enforces _RELOCK_COOLDOWN between relocks
         # Per secondary marker (104-107, …) click-to-relock state — mirrors the
         # anchor marker's relock-cube flow, keyed by marker id. Driven by the
@@ -2178,7 +2149,7 @@ class MainScene:
             self._last_world_relock_time[_mid]       = 0.0
         self._reachability_arrows_hide_at           = 0.0   # timestamp after which reachability arrows are hidden; set to now+5s on R keypress
         self._T_world_tcp: "np.ndarray | None"          = None   # current TCP pose in world; polled each frame from robot
-        self._grip_state: "str | None"              = None   # None | 'moving_to_hand' | 'moving_to_handover' | 'handover_release' | 'grabbed' | 'moving_to_pose'
+        self._grip_state: "str | None"              = None   # None | 'moving_to_hand' | 'reached_hand' | 'grabbed' | 'approaching' | 'grasping' | 'grasped' | 'retracting' | 'moving' | 'handover_release'
         self._handover: "dict | None"               = None   # frozen compromise-handover result (grid/target/sphere), set on tool grasp
         self._pending_handover_move                 = False  # set by grasp on_complete; main thread then issues the handover move_tcp
         self._last_ar_board_T: "np.ndarray | None"    = None   # last AR box pose from _TargetPoseReceiver; persists between polls
@@ -2260,8 +2231,8 @@ class MainScene:
         ENTER handler and by the auto-lock-on-sight check in run()."""
         self.anchor.lock(T_cam_anchor, self.cam.camera_T, center_T=center_T)
         self._last_proximity_relock_time = time.time()
-        if self.pb_scene is not None:
-            self.pb_scene.set_scene_origin(np.eye(4))
+        if self.robot is not None:
+            self.robot.set_scene_origin(np.eye(4))
         if self._load_pegboard_from_file:
             self._try_load_pegboard_from_file()
 
@@ -2396,6 +2367,7 @@ class MainScene:
         the human tugs it (> _FORCE_RELEASE_THRESHOLD, mirrors the reached_hand
         workholding handshake) the gripper opens to let go, then we idle."""
         print(f"[Handover] Reached point — {'OK' if ok else 'FAILED'}")
+        self._tcp_target_T = None
 
         def _clear_and_idle():
             self._grip_state = None
@@ -2430,6 +2402,8 @@ class MainScene:
                 # ── Poll streams ──────────────────────────────────────────────
                 self.tools.poll(timeout_ms=0)
                 self.hands.poll()
+                if self.robot is not None:
+                    self.robot.poll()   # drain robot_control_server.py state/events
 
                 # ── ArUco results (background thread) ─────────────────────────
                 T_cam_anchor, T_cam_pegboard, T_cam_board, det_vis = \
@@ -2457,23 +2431,18 @@ class MainScene:
                         self._T_BOARD_FROM_MARKER[board_marker_seen])
 
                 # ── Publish world root + pegboard to Unity ────────────────────
+                # (robot base/joint publishing to Unity is now handled by
+                # robot_control_server.py itself, on its own steady cadence)
                 if self.anchor.locked:
                     self.anchor.publish()
                     self.anchor.publish_pegboard()
                     self.anchor.publish_board()
-                    if self.pb_scene is not None:
-                        if self.robot is not None:
-                            self.robot.publish_base(self.pb_scene.T_world_base)
                     _now = time.time()
                     if _now - self._last_synth_pub_time >= self._SYNTH_INTERVAL:
                         self.synth.publish()
                         self.relock_cubes.publish()
                         self.handover_sphere.publish()
                         self._last_synth_pub_time = _now
-
-                if self.pb_scene is not None:
-                    if self.robot is not None:
-                        self.robot.publish_joints(self.pb_scene.current_q)
 
                 T_wt            = self.anchor.T_world_tracking
                 _eff_cam_T      = self.anchor._effective_cam_T(None, _center_T)
@@ -2643,6 +2612,7 @@ class MainScene:
                         self._last_ar_board_T = None
                         self._tracked_hand_side = None
                         self._track_proximity_enter_t = None
+                        self._tcp_target_T = None
                         self.vis.clear_board_manip_debug()
                         if self.robot is not None:
                             self.robot.cancel_motion()
@@ -2713,15 +2683,23 @@ class MainScene:
                             else:
                                 self.handover_sphere.hide()
                                 print(f"[Handover] {_opp_hand} hand not visible — grasp only.")
+                            self._grip_state = 'approaching'
                             self.robot.execute_grasp(
                                 _gj,
                                 category     = _cat,
                                 board_normal = _T_wp[:3, 2] if _T_wp is not None else None,
+                                on_phase     = lambda phase: setattr(self, '_grip_state', phase),
                                 on_complete  = lambda ok, tid=_grasp_tid: (
                                     self.tools.send_color(tid, _ToolSelectionManager.RESET_COLOR),
                                     self._pending_vis_clears.append(tid),
                                     setattr(self, '_pending_handover_move',
                                             bool(ok) and self._handover is not None),
+                                    # No handover follows → grasp sequence is
+                                    # done, back to idle. Otherwise leave
+                                    # _grip_state as-is; the handover trigger
+                                    # below picks it up and sets 'moving'.
+                                    (setattr(self, '_grip_state', None)
+                                     if not self._pending_handover_move else None),
                                     print(f"[Robot] Grasp id={tid} — {'OK ✓' if ok else 'FAILED ✗'}"),
                                 ),
                             )
@@ -2730,26 +2708,23 @@ class MainScene:
                     self.tools.deselect(_tid)
 
                 # ── PyBullet scene update ─────────────────────────────────────
+                # (joint-state sync + tick()/force-monitor/move_tcp/grasp
+                # progression now run inside robot_control_server.py's own
+                # fixed-rate loop — self.robot.poll() above just keeps the
+                # local visualization scene's joint state up to date)
                 if self.robot is not None:
-                    # Real robot: poll fresh joint state every frame so frax OSC always
-                    # has an accurate q_current (not just the state from when tracking started).
-                    if not self.simulation:
-                        _q_fresh = self.robot.poll_q()
-                        if _q_fresh is not None:
-                            self.pb_scene.update_robot(_q_fresh)
-
-                    _now = time.perf_counter()
-                    _dt  = (min(_now - self._last_tick_time, 0.1)
-                            if self._last_tick_time is not None else 1.0 / 30.0)
-                    self._last_tick_time = _now
                     # ── Handover: grasp finished → move to the frozen compromise point ──
                     if self._pending_handover_move and self._handover is not None:
                         self._pending_handover_move = False
-                        self._grip_state = 'moving_to_handover'
+                        self._grip_state = 'moving'
                         _hpos  = self._handover['target_pos']
                         _hquat = self._handover['target_quat']
                         print(f"[Handover] Grasp done → move_tcp to "
                               f"({_hpos[0]:.3f}, {_hpos[1]:.3f}, {_hpos[2]:.3f})")
+                        _T_dbg = np.eye(4)
+                        _T_dbg[:3, 3]  = _hpos
+                        _T_dbg[:3, :3] = ScipyR.from_quat(_hquat).as_matrix()
+                        self._tcp_target_T = _T_dbg
                         self.robot.move_tcp(
                             _hpos.tolist(), _hquat,
                             on_complete=self._on_handover_arrived,
@@ -2767,16 +2742,14 @@ class MainScene:
                                                * ScipyR.from_euler('z', 180, degrees=True)
                                                ).as_quat()
                             self._track_palm_target_pos = target_pos
-                            _track_now = time.perf_counter()
-                            _track_dt  = (min(_track_now - self._last_hand_track_time, 0.1)
-                                          if self._last_hand_track_time is not None
-                                          else 1.0 / 30.0)
-                            self._last_hand_track_time = _track_now
-                            self.robot.step_hand_track(target_pos.tolist(), target_quat,
-                                                       _track_dt)
+                            _T_dbg = np.eye(4)
+                            _T_dbg[:3, 3]  = target_pos
+                            _T_dbg[:3, :3] = ScipyR.from_quat(target_quat).as_matrix()
+                            self._tcp_target_T = _T_dbg
+                            # Server keeps stepping toward this target on its own
+                            # fixed-rate loop until track_hand_stop() is sent below.
+                            self.robot.track_hand(target_pos.tolist(), target_quat)
                         # else: hand lost this frame — hold last commanded pose
-                    else:
-                        self.robot.tick(_dt)   # force monitor + move_tcp + sim grasp
 
                     # ── Robot state poll ───────────────────────────────────────
                     self._T_world_tcp = self.robot.tcp_pose
@@ -2798,6 +2771,8 @@ class MainScene:
                             _tracked = self._tracked_hand_side
                             self._track_proximity_enter_t = None
                             self._track_palm_target_pos   = None
+                            self._tcp_target_T = None
+                            self.robot.track_hand_stop()
                             if self.simulation or self.robot is None:
                                 # Sim: no gripper/force — skip reached_hand, go straight to grabbed
                                 self._grip_state = 'grabbed'
@@ -2829,42 +2804,42 @@ class MainScene:
                     # ── Grip-state publishing + target-pose move ──────────────
                     if self._grip_state is not None and self._T_world_tcp is not None:
                         self.grip_pub.publish(self._grip_state, self._T_world_tcp)
-                    if self._grip_state in ('grabbed', 'moving_to_pose'):
+                    if self._grip_state in ('grabbed', 'moving'):
                         T_target = self.target_recv.poll()
                         if T_target is not None:
                             self._last_ar_board_T = T_target
                             _grip_z  = T_target[:3, :3] @ np.array([0., 0., 1.])
                             _tcp_pos = T_target[:3, 3] - _BOX_FORWARD_OFFSET * _grip_z
                             _hw = 'sim' if self.simulation else 'real'
-                            _has_cbf = getattr(self.robot, '_frax', None) is not None
+                            _has_cbf = self.robot.has_cbf
                             print(f"[User] Board manipulated → move_tcp  "
                                   f"[{_hw}] {'IK+CBF' if _has_cbf else 'IK only'} → "
                                   f"{'update_robot' if self.simulation else 'servoJ'}  "
                                   f"target=({_tcp_pos[0]:.3f}, {_tcp_pos[1]:.3f}, {_tcp_pos[2]:.3f})")
+                            _T_dbg = np.eye(4)
+                            _T_dbg[:3, 3]  = _tcp_pos
+                            _T_dbg[:3, :3] = T_target[:3, :3]
+                            self._tcp_target_T = _T_dbg
                             self.robot.move_tcp(
                                 _tcp_pos.tolist(),
                                 ScipyR.from_matrix(T_target[:3, :3]).as_quat(),
                                 on_complete=lambda ok: (
                                     setattr(self, '_grip_state', 'grabbed'),
+                                    setattr(self, '_tcp_target_T', None),
                                     print(f"[Robot] move_tcp done → back to 'grabbed'"),
                                 ),
                             )
-                            self._grip_state = 'moving_to_pose'
+                            self._grip_state = 'moving'
 
                     # ── Visualizer update ─────────────────────────────────────
                     if self._T_world_tcp is not None:
                         self.vis.update_tcp(self._T_world_tcp)
+                    self.vis.update_tcp_target(self._tcp_target_T)
                     if _link_poses is not None:
                         self.vis.update_robot(_link_poses)
-                    _frax = getattr(self.robot, '_frax', None)
-                    _q_snap = self.robot.q if self.robot is not None else None
-                    if (_frax is not None and _q_snap is not None
-                            and not np.any(np.isnan(_q_snap))):
-                        try:
-                            _sp, _sr = _frax.link_spheres_world(_q_snap)
-                            self.vis.update_collision_spheres(_sp, _sr)
-                        except Exception:
-                            self.vis.update_collision_spheres(None, None)
+                    _sp, _sr = self.robot.collision_spheres()
+                    if _sp is not None and _sr is not None:
+                        self.vis.update_collision_spheres(_sp, _sr)
                     else:
                         self.vis.update_collision_spheres(None, None)
                     if self._T_world_tcp is not None and self._tcp_synth is not None:
@@ -2962,7 +2937,7 @@ class MainScene:
                 if key == 27:
                     break
                 elif key == ord('r') or key == ord('R'):
-                    if (self.pb_scene is not None
+                    if (self.robot is not None
                             and self.anchor.T_pegboard_in_world is not None):
                         T_wp = self.anchor.T_pegboard_in_world
                         _reach_quat = _tool_grasp_quat(T_wp[:3, :3])
@@ -2972,8 +2947,10 @@ class MainScene:
                               f"({_base_pos[0]:+.3f}, {_base_pos[1]:+.3f}, {_base_pos[2]:+.3f})  "
                               f"pegboard @ ({_peg_pos[0]:+.3f}, {_peg_pos[1]:+.3f}, {_peg_pos[2]:+.3f})  "
                               f"dist={np.linalg.norm(_peg_pos - _base_pos):.3f} m")
+                        # Blocking request/response to robot_control_server.py —
+                        # rare, user-triggered, was already a blocking call.
                         _, _, _reach_pts, _reach_flags = \
-                            self.pb_scene.check_reachability(
+                            self.robot.check_reachability(
                                 T_wp, target_quat_xyzw=_reach_quat)
                         if len(_reach_pts):
                             _board_normal = T_wp[:3, 2]
@@ -2983,8 +2960,8 @@ class MainScene:
                     else:
                         print("[R] Pegboard not locked yet — lock it first.")
                 elif key == 13:  # ENTER
-                    if self.simulation and self.pb_scene is not None:
-                        self.pb_scene.set_scene_origin(np.eye(4))
+                    if self.simulation and self.robot is not None:
+                        self.robot.set_scene_origin(np.eye(4))
                     if self.cam.camera_T is None:
                         if not self.simulation:
                             print("[ENTER] No camera pose — skipping.")
@@ -2999,8 +2976,8 @@ class MainScene:
                                 print(f"[ENTER] Relocked world to marker "
                                       f"#{self.anchor_marker_id}")
                                 self._last_proximity_relock_time = _now
-                                if self.pb_scene is not None:
-                                    self.pb_scene.set_scene_origin(np.eye(4))
+                                if self.robot is not None:
+                                    self.robot.set_scene_origin(np.eye(4))
                                 if self._load_pegboard_from_file:
                                     self._try_load_pegboard_from_file()
                             else:

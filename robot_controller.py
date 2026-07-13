@@ -85,27 +85,31 @@ except ImportError:
 class _PbJointRunner:
     """Direct joint-space linear interpolation — sim equivalent of moveJ.
 
-    No IK. Interpolates start_q → target_q in _INTERP_STEPS equal steps,
-    calling resetJointState each frame so the PyBullet scene reflects the motion.
+    No IK. Interpolates start_q → target_q over _DURATION_S seconds of
+    wall-clock time (using the caller's dt), calling resetJointState each
+    tick so the PyBullet scene reflects the motion. Time-based rather than
+    step-count-based so the motion's speed is independent of tick()'s call
+    rate — at a fixed step count, raising the control loop's Hz would make
+    every sim moveJ/grasp waypoint complete proportionally faster.
     """
-    _INTERP_STEPS = 60
+    _DURATION_S = 3.0
 
     def __init__(self, start_q: np.ndarray, target_q: np.ndarray):
         self.start_q  = np.asarray(start_q, dtype=float)
         self.target_q = np.asarray(target_q, dtype=float)
-        self._step    = 0
+        self._elapsed = 0.0
         self.done     = False
 
-    def update(self, robot_id: int, arm_indices: "list[int]") -> None:
+    def update(self, robot_id: int, arm_indices: "list[int]", dt: float) -> None:
         if self.done:
             return
         import pybullet as p
-        self._step += 1
-        t = min(self._step / self._INTERP_STEPS, 1.0)
+        self._elapsed += dt
+        t = min(self._elapsed / self._DURATION_S, 1.0)
         q = self.start_q + t * (self.target_q - self.start_q)
         for j_idx, q_j in zip(arm_indices, q):
             p.resetJointState(robot_id, j_idx, float(q_j))
-        if self._step >= self._INTERP_STEPS:
+        if t >= 1.0:
             self.done = True
 
 # ── Grasp orientation helper ────────────────────────────────────────────────────
@@ -476,6 +480,12 @@ class RobotController:
     joint_pub_port : ZMQ PUB port for joint angles (default 5001).
     approach_dist  : Real-robot approach standoff in metres (default 0.30).
     speed / accel  : Default moveJ speed (rad/s) and acceleration (rad/s²).
+    speed_scale    : Multiplies real-hardware speed/accel and the pre-CBF
+                     joint-delta rate limit (moveJ, servoJ-driven tracking,
+                     grasp-sequence moveJs). 1.0 = full speed. Has no effect
+                     on simulation. Intended as a temporary, blanket "slow
+                     everything down" safety knob while testing on real
+                     hardware.
     """
 
     # -90° yaw between the PyBullet URDF convention and Unity's URDF asset.
@@ -492,6 +502,7 @@ class RobotController:
         approach_dist:  float = 0.30,
         speed:          float = 0.15,
         accel:          float = 0.10,
+        speed_scale:    float = 1.0,           # real-hardware speed/accel multiplier — see class docstring
         urdf_path:      "str | None" = None,   # enables frax OSC+CBF (real robot only)
         frax_q_min:     "list | None" = None,  # joint lower limits (rad) for CBF
         frax_q_max:     "list | None" = None,  # joint upper limits (rad) for CBF
@@ -505,8 +516,9 @@ class RobotController:
         self._pb_scene     = pb_scene
         self._T_world_base = np.array(T_world_base, dtype=float)
         self._approach_dist = approach_dist
-        self._speed        = speed
-        self._accel        = accel
+        self._speed_scale   = float(speed_scale)
+        self._speed         = speed * self._speed_scale
+        self._accel         = accel * self._speed_scale
         self._last_q: "np.ndarray | None" = None
 
         # Real-robot only: lazy RTDE + gripper connections
@@ -525,6 +537,7 @@ class RobotController:
         self._sim_runner:       None                  = None
         self._sim_phase:        "str | None"          = None
         self._sim_on_complete:  "Callable | None"     = None
+        self._sim_on_phase:     "Callable | None"     = None
         self._sim_grasp_joints: "np.ndarray | None"   = None
         self._sim_q_approach:   "np.ndarray | None"   = None
         self._sim_q_above:      "np.ndarray | None"   = None
@@ -631,8 +644,16 @@ class RobotController:
         if q is None:
             return
         # Sim has no hardware constraint — run 4× faster so tracking feels responsive
-        max_step  = (max_joint_speed * 4.0 * dt) if self.simulation else (max_joint_speed * dt)
+        max_step  = (max_joint_speed * 4.0 * dt) if self.simulation \
+                    else (max_joint_speed * self._speed_scale * dt)
         q_ik      = self.query_ik_joints(target_pos, target_quat, seed_q=q)
+        # calculateInverseKinematics doesn't enforce joint limits, and the
+        # wrist joints (wide/near-continuous range) can come back wrapped by
+        # a full ±2π or more relative to q — unwrap to the nearest equivalent
+        # before rate-limiting, or the rate limiter chases the far solution
+        # and winds the wrist past its intended range instead of converging
+        # to the correct (short-path) configuration.
+        q_ik      = _wrap_nearest(q_ik, q)
         q_limited = q + np.clip(q_ik - q, -max_step, max_step)
         if self._frax is not None:
             qdot = (q_limited - q) / max(dt, 1e-6)
@@ -697,7 +718,7 @@ class RobotController:
                 max_step = np.deg2rad(720.0) * dt
                 conv_thr = 0.01
             else:
-                max_step = np.deg2rad(180.0) * dt
+                max_step = np.deg2rad(180.0) * self._speed_scale * dt
                 conv_thr = 0.005
             if self._frax is not None:
                 if np.linalg.norm(self._frax.ee_world_pos(q_cur) - tgt_pos) < conv_thr:
@@ -712,6 +733,9 @@ class RobotController:
                         cb(True)
                     return
             q_ik      = self.query_ik_joints(tgt_pos, tgt_quat, seed_q=q_cur)
+            # See step_hand_track's comment — unwrap to the nearest equivalent
+            # before rate-limiting so the wrist joints take the short path.
+            q_ik      = _wrap_nearest(q_ik, q_cur)
             q_limited = q_cur + np.clip(q_ik - q_cur, -max_step, max_step)
             if self._frax is not None:
                 qdot = (q_limited - q_cur) / max(dt, 1e-6)
@@ -750,7 +774,7 @@ class RobotController:
             return
         if not self._sim_runner.done:
             self._sim_runner.update(self._pb_scene.robot_id,
-                                    self._pb_scene.arm_indices)
+                                    self._pb_scene.arm_indices, dt)
             return
         # Phase complete — transition or finish.
         # Tool:  approach → grasp → retract
@@ -765,19 +789,24 @@ class RobotController:
                 self._sim_runner = _PbJointRunner(cq, self._sim_grasp_joints)
                 self._sim_phase  = 'grasp'
                 print("[Robot sim] At approach → moveJ to grasp")
+                self._fire_phase(self._sim_on_phase, "grasping")
         elif self._sim_phase == 'above':
             self._sim_runner = _PbJointRunner(cq, self._sim_grasp_joints)
             self._sim_phase  = 'grasp'
             print("[Robot sim] At above → moveJ to grasp")
+            self._fire_phase(self._sim_on_phase, "grasping")
         elif self._sim_phase == 'grasp':
+            self._fire_phase(self._sim_on_phase, "grasped")
             if self._sim_q_above is not None:
                 self._sim_runner = _PbJointRunner(cq, self._sim_q_above)
                 self._sim_phase  = 'ret_above'
                 print("[Robot sim] Grasp done → lifting to above")
+                self._fire_phase(self._sim_on_phase, "retracting")
             elif self._sim_q_approach is not None:
                 self._sim_runner = _PbJointRunner(cq, self._sim_q_approach)
                 self._sim_phase  = 'retract'
                 print("[Robot sim] Grasp done → retracting to approach")
+                self._fire_phase(self._sim_on_phase, "retracting")
             else:
                 self._sim_finish(True)
         elif self._sim_phase == 'ret_above':
@@ -1095,12 +1124,17 @@ class RobotController:
         self,
         grasp_joints: "list | np.ndarray",
         on_complete:  "Callable[[bool], None] | None" = None,
+        on_phase:     "Callable[[str], None] | None"  = None,
         q_approach:   "list | np.ndarray | None"      = None,
         q_above:      "list | np.ndarray | None"      = None,
         category:     str                              = "tool",
         board_normal: "list | np.ndarray | None"      = None,
     ) -> None:
         """Grasp sequence in both modes.
+
+        on_phase(name), if given, fires as the sequence progresses through
+        "approaching" -> "grasping" -> "grasped" -> "retracting" (in
+        addition to the terminal on_complete(ok)).
 
         Tool  (q_above=None): approach → grasp → retract
         Part  (q_above given): approach → above → grasp → above → retract
@@ -1150,6 +1184,7 @@ class RobotController:
                     on_complete(False)
                 return
             self._sim_on_complete  = on_complete
+            self._sim_on_phase     = on_phase
             self._sim_grasp_joints = np.array(grasp_joints, dtype=float)
             self._sim_q_approach   = (np.array(q_approach, dtype=float)
                                       if q_approach is not None else None)
@@ -1162,6 +1197,7 @@ class RobotController:
                 )
                 self._sim_phase = 'approach'
                 print("[Robot sim] moveJ → approach")
+                self._fire_phase(on_phase, "approaching")
             else:
                 self._sim_runner = _PbJointRunner(
                     self._pb_scene.current_q.copy(),
@@ -1169,6 +1205,7 @@ class RobotController:
                 )
                 self._sim_phase = 'grasp'
                 print("[Robot sim] moveJ → grasp_joints")
+                self._fire_phase(on_phase, "grasping")
         else:
             if not _RTDE_AVAILABLE:
                 print("[Robot] rtde_control not installed.")
@@ -1180,10 +1217,19 @@ class RobotController:
                 args=(np.array(grasp_joints, dtype=float),
                       (np.array(q_approach, dtype=float) if q_approach is not None else None),
                       (np.array(q_above,    dtype=float) if q_above    is not None else None),
-                      on_complete),
+                      on_complete, on_phase),
                 daemon=True,
             )
             self._grasp_thread.start()
+
+    @staticmethod
+    def _fire_phase(on_phase: "Callable[[str], None] | None", name: str) -> None:
+        if on_phase is None:
+            return
+        try:
+            on_phase(name)
+        except Exception as e:
+            print(f"[Robot] on_phase callback error: {e}")
 
     def cancel_motion(self) -> None:
         """Abort any running grasp/move and stop the arm."""
@@ -1322,32 +1368,38 @@ class RobotController:
     def _grasp_sequence(self, grasp_joints: np.ndarray,
                         q_approach: "np.ndarray | None",
                         q_above:    "np.ndarray | None",
-                        on_complete: "Callable[[bool], None] | None") -> None:
+                        on_complete: "Callable[[bool], None] | None",
+                        on_phase:    "Callable[[str], None] | None" = None) -> None:
         def _check():
             if self._grasp_cancel.is_set():
                 raise InterruptedError("Grasp cancelled.")
         success = False
         _ctrl = self._rtde_ctrl_conn()
         self._grasp_ctrl = _ctrl
+        _sc = self._speed_scale
         try:
             _check()
+            self._fire_phase(on_phase, "approaching")
             self.open_gripper()
             _check()
             if q_approach is not None:
-                _ctrl.moveJ(list(q_approach), 0.5, 0.5); _check()
+                _ctrl.moveJ(list(q_approach), 0.5 * _sc, 0.5 * _sc); _check()
             if q_above is not None:
-                _ctrl.moveJ(list(q_above), 0.3, 0.3); _check()
-            _ctrl.moveJ(list(grasp_joints), 0.2, 0.2); _check()
+                _ctrl.moveJ(list(q_above), 0.3 * _sc, 0.3 * _sc); _check()
+            _ctrl.moveJ(list(grasp_joints), 0.2 * _sc, 0.2 * _sc); _check()
+            self._fire_phase(on_phase, "grasping")
             self.close_gripper()
             time.sleep(1.0)   # 1 s visual check — gripper opens if object resists
+            self._fire_phase(on_phase, "grasped")
             self.open_gripper()
             _check()
             # Retract (reverse)
+            self._fire_phase(on_phase, "retracting")
             if q_above is not None:
-                _ctrl.moveJ(list(q_above),    0.2, 0.2); _check()
-                _ctrl.moveJ(list(q_approach), 0.3, 0.3)
+                _ctrl.moveJ(list(q_above),    0.2 * _sc, 0.2 * _sc); _check()
+                _ctrl.moveJ(list(q_approach), 0.3 * _sc, 0.3 * _sc)
             elif q_approach is not None:
-                _ctrl.moveJ(list(q_approach), 0.5, 0.5)
+                _ctrl.moveJ(list(q_approach), 0.5 * _sc, 0.5 * _sc)
             success = True
         except InterruptedError:
             print("[Robot] Grasp cancelled.")
