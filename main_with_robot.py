@@ -45,13 +45,6 @@ import open3d as o3d
 import zmq
 from scipy.spatial.transform import Rotation as ScipyR
 
-try:
-    from pybullet_ik import IKScene as PyBulletScene
-    _PYBULLET_AVAILABLE = True
-except ImportError:
-    _PYBULLET_AVAILABLE = False
-    print("[main_with_robot] pybullet_ik import failed — IK/FK disabled.")
-
 _FILE_DIR = Path(__file__).resolve().parent
 if str(_FILE_DIR) not in sys.path:
     sys.path.insert(0, str(_FILE_DIR))
@@ -63,19 +56,19 @@ from utils.unity_conversion import (
     open3d_to_unity_quaternion,
 )
 from utils.pose_helpers import (
-    _unity_pose_to_T, _T_to_unity_pose, _adapt_cx_cy, _transform_point,
+    _unity_pose_to_T, _adapt_cx_cy, _transform_point,
     _BONES_NP, _N_JOINTS, _HIDDEN_PT, _JOINT_GROUP_ORDER,
     _unity_to_o3d, _to_world, _unit, _palm_quat, _tool_grasp_quat, _extract_joints,
-    BOARD_SIZE, T_BOARD_FROM_MARKER_A, T_BOARD_FROM_MARKER_B,
+    BOARD_SIZE, T_BOARD_FROM_MARKER_A, T_BOARD_FROM_MARKER_B, T_UNITY_BOARD_ROOT_FROM_ORIGIN,
 )
 import main_setting as cfg
 
 try:
-    from robot_controller import RobotController as _RobotController
+    from robot_client import RobotClient as _RobotController
     _ROBOT_CTRL_AVAILABLE = True
 except ImportError as _e:
     _ROBOT_CTRL_AVAILABLE = False
-    print(f"[main_with_robot] RobotController not available: {_e}")
+    print(f"[main_with_robot] RobotClient not available: {_e}")
 
 
 # =============================================================================
@@ -184,6 +177,22 @@ class _ArUcoWorker:
 # =============================================================================
 # ArUco pose estimator — marker 100 (anchor) + marker 101 (pegboard)
 # =============================================================================
+
+def _load_prescan_marker_ids() -> tuple[int, ...]:
+    """Secondary relock-marker IDs, read straight from the prescan file so it is
+    the single source of truth: whatever was registered in
+    world_markers_T_ref_from_marker.json is what the detector looks for and what
+    gets a click-to-relock cube. Returns () if the file is absent/unreadable."""
+    try:
+        if not cfg.WORLD_MARKERS_FILE.exists():
+            return ()
+        data = json.loads(cfg.WORLD_MARKERS_FILE.read_text())
+        return tuple(sorted(int(mid) for mid in data.get("markers", {})))
+    except Exception as e:
+        print(f"[Prescan] Could not read marker IDs from "
+              f"{cfg.WORLD_MARKERS_FILE.name}: {e}")
+        return ()
+
 
 class _ArucoPoseEstimator:
     def __init__(self, anchor_marker_id: int, pegboard_marker_id: int,
@@ -340,6 +349,20 @@ class _HandDataReceiver:
 
         return _resolve("LeftHand", "LeftHandSynth"), _resolve("RightHand", "RightHandSynth")
 
+    def pinch_strength(self, hand: str) -> "float | None":
+        """Index-finger pinch strength (0-1) for hand ('LeftHand'/'RightHand'), as
+        reported by Unity's Hand.GetFingerPinchStrength(HandFinger.Index) — already
+        sent alongside joint data, just not surfaced elsewhere. Falls back to the
+        synthetic hand (e.g. 'LeftHandSynth') if the real one isn't currently tracked.
+        """
+        if self.data is None:
+            return None
+        hands = self.data.get("hands") or {}
+        block = hands.get(hand) or hands.get(hand + "Synth")
+        if not block:
+            return None
+        return block.get("indexPinchStrength")
+
     def close(self):
         try:
             self._sub.close(0)
@@ -363,6 +386,7 @@ class _WorldAnchor:
         self._T_world_pegboard: np.ndarray | None = None
         self._T_world_board: np.ndarray | None = None
         self._T_eye_offset: np.ndarray | None = None
+        self._T_world_marker: dict[int, np.ndarray] = {}  # secondary marker relocking: id -> T_ref_from_marker
         ctx = zmq.Context()
         self._pub = ctx.socket(zmq.PUB)
         self._pub.connect(f"tcp://{pub_ip}:{pub_port}")
@@ -372,6 +396,7 @@ class _WorldAnchor:
         self._pub_board.connect(f"tcp://{pub_ip}:{board_pub_port}")
         time.sleep(0.2)
         self._load_eye_offset()
+        self._load_world_markers()
 
     def _load_eye_offset(self):
         if not self._EYE_OFFSET_FILE.exists():
@@ -383,6 +408,21 @@ class _WorldAnchor:
             print(f"[Anchor] Eye offset loaded from {self._EYE_OFFSET_FILE.name}")
         except Exception as e:
             print(f"[Anchor] Eye offset load failed: {e}")
+
+    def _load_world_markers(self):
+        """Load prescan registration transforms for secondary markers."""
+        if not cfg.WORLD_MARKERS_FILE.exists():
+            return
+        try:
+            data = json.loads(cfg.WORLD_MARKERS_FILE.read_text())
+            for mid_str, T_flat in data.get("markers", {}).items():
+                mid = int(mid_str)
+                T = np.array(T_flat, dtype=np.float64).reshape(4, 4)
+                self._T_world_marker[mid] = T
+            if self._T_world_marker:
+                print(f"[Anchor] World markers loaded: {sorted(self._T_world_marker.keys())}")
+        except Exception as e:
+            print(f"[Anchor] World marker load failed: {e}")
 
     def _save_eye_offset(self):
         try:
@@ -397,19 +437,6 @@ class _WorldAnchor:
         if self._T_eye_offset is not None and center_T is not None:
             return center_T @ self._T_eye_offset
         return cam_T
-
-    def center_eye_override_pose(self, cam_T: "np.ndarray | None",
-                                 raw_pos, raw_rot_xyzw):
-        """Return (pos_xyz, rot_xyzw) in Unity space to drive CenterEyeAnchor to
-        the true center-eye pose — i.e. cam_T with the calibrated camera tilt
-        (T_eye_offset) undone, since cam_T = center_T @ T_eye_offset.
-        Falls back to the raw cam_left pose when no calibration is loaded yet.
-        """
-        if self._T_eye_offset is None or cam_T is None:
-            return raw_pos, raw_rot_xyzw
-        T_center = cam_T @ np.linalg.inv(self._T_eye_offset)
-        return _T_to_unity_pose(T_center)
-
 
     def set_offset(self, pos_offset, yaw_deg: float):
         T = np.eye(4, dtype=np.float64)
@@ -436,6 +463,30 @@ class _WorldAnchor:
         if T_cam_anchor is None or cam_T is None or not self.locked:
             return False
         self._T_wt = np.linalg.inv(cam_T @ T_cam_anchor)
+        return True
+
+    def relock_from_world_marker(self, marker_id: int, T_cam_marker: np.ndarray,
+                                  cam_T: np.ndarray) -> bool:
+        """Relock from a secondary marker (104-107) using prescan registration.
+
+        T_cam_marker: camera → marker (OpenCV convention)
+        cam_T: camera pose in tracking frame
+        Returns True if relock succeeded.
+        """
+        if marker_id not in self._T_world_marker or not self.locked:
+            return False
+        if T_cam_marker is None or cam_T is None:
+            return False
+
+        # Compute reference marker pose in camera frame
+        # T_ref_from_marker[id] maps marker-local points to reference frame
+        # inv(T_ref_from_marker) maps reference frame to marker-local
+        # Composing with T_cam_marker gives reference marker in camera frame
+        T_ref_from_marker = self._T_world_marker[marker_id]
+        T_cam_ref = T_cam_marker @ np.linalg.inv(T_ref_from_marker)
+
+        # Update tracking frame to world transform
+        self._T_wt = np.linalg.inv(cam_T @ T_cam_ref)
         return True
 
     def set_pegboard(self, T_world_pegboard: np.ndarray) -> None:
@@ -556,7 +607,11 @@ class _WorldAnchor:
     def publish_board(self) -> bool:
         if self._T_world_board is None:
             return False
-        return self._publish_T(self._T_offset @ self._T_world_board,
+        T_board = (self._T_offset @ self._T_world_board) @ T_UNITY_BOARD_ROOT_FROM_ORIGIN
+        # pos, rot_xyzw, _ = self._to_unity_pose(T_board)
+        # euler = ScipyR.from_quat(rot_xyzw).as_euler("xyz", degrees=True)
+        # print(f"[BoardRoot] pos={pos}, rot_euler_xyz={euler.tolist()}")
+        return self._publish_T(T_board,
                                self._pub_board, "BoardRoot",
                                "board_root_position",
                                "board_root_rotation_xyzw",
@@ -573,54 +628,6 @@ class _WorldAnchor:
             pass
         try:
             self._pub_board.close(0)
-        except Exception:
-            pass
-
-
-# =============================================================================
-# CenterEye override publisher
-# =============================================================================
-
-class _CenterEyeOverridePublisher:
-    """Publishes a pose override for CenterEyeAnchor in Unity.
-
-    When OVR position tracking is disabled, Unity's CenterEyeAnchor stops
-    being driven by SLAM.  This publisher lets Python set its pose directly —
-    e.g. to match the left passthrough camera so the rendering camera is
-    physically accurate.
-
-    Takes the raw Unity-space position/quaternion straight from the cam_left
-    feed (_CamFeedReceiver.raw_pos / raw_rot_xyzw) — NOT _CamFeedReceiver.camera_T,
-    which has an extra -90 deg X rotation baked in for OpenCV/ArUco solvePnP
-    conventions. Feeding that CV-convention matrix back to Unity as-is would
-    misalign the override by that same 90 deg every frame.
-    """
-
-    def __init__(self, pub_ip: str, port: int = cfg.CENTER_EYE_OVERRIDE_PORT):
-        ctx = zmq.Context()
-        self._pub = ctx.socket(zmq.PUB)
-        self._pub.connect(f"tcp://{pub_ip}:{port}")
-        time.sleep(0.2)
-
-    def publish(self, pos_xyz, rot_xyzw) -> None:
-        if pos_xyz is None or rot_xyzw is None:
-            return
-        T = np.eye(4, dtype=np.float64)
-        T[:3, :3] = ScipyR.from_quat(list(rot_xyzw)).as_matrix()
-        T[:3, 3]  = pos_xyz
-        mat = T.T.flatten().tolist()   # column-major, matches Unity Matrix4x4 layout
-        try:
-            self._pub.send_string(json.dumps({
-                "center_eye_position":      [float(v) for v in pos_xyz],
-                "center_eye_rotation_xyzw": [float(v) for v in rot_xyzw],
-                "center_eye_matrix":        mat,
-            }))
-        except Exception as e:
-            print(f"[CenterEyeOverride] Publish error: {e}")
-
-    def close(self):
-        try:
-            self._pub.close(0)
         except Exception:
             pass
 
@@ -690,6 +697,96 @@ class _SyntheticObjectPublisher:
             self._pub.send_string(json.dumps(payload))
         except Exception as e:
             print(f"[SynthObjects] Publish error: {e}")
+
+    def close(self):
+        try:
+            self._pub.close(0)
+        except Exception:
+            pass
+
+
+class _RelockCubePublisher:
+    """Publishes the secondary relock cubes' world poses to Unity (PUB, port 5017).
+
+    Positions come from the prescan registration (anchor._T_world_marker) and are
+    static, but are republished periodically so a late-joining Unity receiver still
+    gets them. Poses are sent in Unity coordinates; Unity's RelockCubePoseReceiver
+    matches each cube to the interactable whose ToolClickPublisher.toolId == id and
+    sets its localPosition (the cubes are children of WorldRoot).
+
+    Each cube is lifted along Unity world up (+Y) by half its edge so its bottom
+    face sits on top of the marker rather than the cube centre on the marker."""
+
+    CUBE_EDGE_M = 0.10   # cube side length (metres) — keep in sync with the Unity localScale
+
+    def __init__(self, ip: str, port: int = cfg.RELOCK_CUBE_PORT):
+        ctx = zmq.Context.instance()
+        self._pub = ctx.socket(zmq.PUB)
+        self._pub.connect(f"tcp://{ip}:{port}")
+        time.sleep(0.2)
+        self._payload: "str | None" = None
+        print(f"[RelockCubes] Connected to tcp://{ip}:{port}")
+
+    def set_markers(self, T_world_marker: dict) -> None:
+        """Build the payload from {marker_id: T_world_marker (4x4, Open3D frame)}."""
+        cubes = []
+        for mid, T in sorted(T_world_marker.items()):
+            pos, rot_xyzw, _ = _WorldAnchor._to_unity_pose(np.asarray(T, dtype=np.float64))
+            # Lift along Unity world up (+Y is up/down in Unity) so the cube's
+            # bottom face sits on top of the marker instead of centred on it.
+            pos = [pos[0], pos[1] + self.CUBE_EDGE_M / 2.0, pos[2]]
+            cubes.append({"id": int(mid), "position": pos, "rotation_xyzw": rot_xyzw})
+        self._payload = json.dumps({"cubes": cubes})
+        print(f"[RelockCubes] Prepared {len(cubes)} cube pose(s): "
+              f"{sorted(int(m) for m in T_world_marker)}")
+
+    def publish(self) -> None:
+        if self._payload is None:
+            return
+        try:
+            self._pub.send_string(self._payload)
+        except Exception as e:
+            print(f"[RelockCubes] Publish error: {e}")
+
+    def close(self):
+        try:
+            self._pub.close(0)
+        except Exception:
+            pass
+
+
+class _HandoverSpherePublisher:
+    """Publishes the chosen handover centroid to Unity (PUB, port 5018) so the
+    person in the headset sees a sphere at the compromise delivery point.
+
+    The position is sent in the WorldRoot (marker-100) frame in Unity coordinates,
+    exactly like the relock cubes, so Unity's HandoverSphereReceiver can set it as
+    a localPosition on a sphere GameObject parented under WorldRoot. `visible`
+    toggles the renderer; the sphere is hidden once the robot arrives."""
+
+    def __init__(self, ip: str, port: int = cfg.HANDOVER_SPHERE_PORT):
+        ctx = zmq.Context.instance()
+        self._pub = ctx.socket(zmq.PUB)
+        self._pub.connect(f"tcp://{ip}:{port}")
+        time.sleep(0.2)
+        self._payload = json.dumps({"position": [0.0, 0.0, 0.0], "visible": False})
+        print(f"[HandoverSphere] Connected to tcp://{ip}:{port}")
+
+    def show(self, centroid_o3d) -> None:
+        """centroid_o3d = (3,) world point in the Open3D/world frame."""
+        T = np.eye(4, dtype=np.float64)
+        T[:3, 3] = np.asarray(centroid_o3d, dtype=np.float64)
+        pos, _, _ = _WorldAnchor._to_unity_pose(T)
+        self._payload = json.dumps({"position": pos, "visible": True})
+
+    def hide(self) -> None:
+        self._payload = json.dumps({"position": [0.0, 0.0, 0.0], "visible": False})
+
+    def publish(self) -> None:
+        try:
+            self._pub.send_string(self._payload)
+        except Exception as e:
+            print(f"[HandoverSphere] Publish error: {e}")
 
     def close(self):
         try:
@@ -1163,6 +1260,10 @@ class _SceneVis:
 
     _WORKSPACE_COLOR = np.array([0.4, 0.7, 1.0])  # light blue — workspace boundary box
 
+    _HANDOVER_GRID_COLOR   = np.array([0.45, 0.45, 0.90])  # handover voxels outside the workspace
+    _HANDOVER_VALID_COLOR  = np.array([0.20, 0.90, 0.40])  # handover voxels fully inside the workspace
+    _HANDOVER_SPHERE_COLOR = (1.0, 0.85, 0.10)             # chosen delivery centroid
+
     # ── Static geometry helpers ───────────────────────────────────────────────
 
     @staticmethod
@@ -1244,6 +1345,7 @@ class _SceneVis:
         self._head_frustum           = None
         self._passthrough_cam_frustum = None
         self._tcp_axes      = None          # lazy — added on first update_tcp() call
+        self._tcp_target_ls = None          # lazy — added on first update_tcp_target() call (debug: commanded move_tcp/step_hand_track target)
         self._tool_box_linesets: list = []  # lazy — grows to match number of tool boxes
 
         # Collision sphere wireframe (toggle with show_collision_spheres)
@@ -1273,6 +1375,12 @@ class _SceneVis:
         self._workspace_box_lineset = o3d.geometry.LineSet()
         self.vis.add_geometry(self._workspace_box_lineset)
 
+        # Handover compromise grid + chosen-centroid sphere (frozen at tool grasp)
+        self._handover_grid_lineset = o3d.geometry.LineSet()
+        self.vis.add_geometry(self._handover_grid_lineset)
+        self._handover_sphere_lineset = o3d.geometry.LineSet()
+        self.vis.add_geometry(self._handover_sphere_lineset)
+
         # Reachability arrows (shown for 5 s after pressing R, then hidden)
         self._reach_lineset = o3d.geometry.LineSet()
         self.vis.add_geometry(self._reach_lineset)
@@ -1288,46 +1396,46 @@ class _SceneVis:
         self.vis.add_geometry(self._tracking_sphere)
         self._tracking_T = self._hidden_T()
 
-        # Tracked board (coordinate frame + baseboard mesh)
+        # World baseboard at the calibrated world origin, plus tracked board mesh.
         self._board_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.10)
         self._board_frame.transform(self._hidden_T())
         self.vis.add_geometry(self._board_frame)
+        self._world_baseboard_mesh = None
         self._board_mesh       = None
         self._board_manip_mesh = None
-        _baseboard_path = cfg.SCENE_LAYOUT_DIR.parent / "robot_assets" / "baseboard.obj"
+
+        _asset_dir = cfg.SCENE_LAYOUT_DIR.parent / "robot_assets"
+        _baseboard_path = _asset_dir / "baseboard.obj"
         if _baseboard_path.exists():
-            # Mesh raw: X=201mm, Y=250mm, Z=25mm(face normal), geometric centre at [0,0,-11.5mm].
-            # _board_mesh      (ArUco):  Rz(+90°) — swaps X↔Y so board X=250mm; face normal stays Z.
-            # _board_manip_mesh (AR box): Ry(-90°) after Rz(+90°) — rotates face-normal (Z) to X
-            #   so that board X (250mm) aligns with grip_z (TCP approach direction from the edge).
-            _RAW_CENTER = np.array([0.0, 0.0, -0.0115])  # mesh geometric centre before any rotation
+            _mesh = o3d.io.read_triangle_mesh(str(_baseboard_path))
+            _mesh.compute_vertex_normals()
+            _mesh.paint_uniform_color([0.45, 0.45, 0.45])
+            # Identity placement: this reference board is authored in world coordinates.
+            self.vis.add_geometry(_mesh)
+            self._world_baseboard_mesh = _mesh
+            print(f"[SceneVis] baseboard.obj loaded at world origin ({len(_mesh.vertices)} verts)")
+        else:
+            print(f"[SceneVis] baseboard.obj not found at {_baseboard_path}")
 
-            def _T_fix(euler_seq: str, *deg_angles) -> np.ndarray:
-                R = ScipyR.from_euler(euler_seq, list(deg_angles), degrees=True).as_matrix()
-                # auto-centre: translate so rotated mesh centre lands at origin
-                centre_after = R @ _RAW_CENTER
-                T = np.eye(4, dtype=np.float64)
-                T[:3, :3] = R
-                T[:3, 3]  = -centre_after
-                return T
-
-            def _load_baseboard(color, euler_seq, *deg_angles):
-                _bm = o3d.io.read_triangle_mesh(str(_baseboard_path))
+        _tracked_board_path = _asset_dir / "NewBaseBoard.obj"
+        if _tracked_board_path.exists():
+            def _load_tracked_board(color):
+                _bm = o3d.io.read_triangle_mesh(str(_tracked_board_path))
                 _bm.compute_vertex_normals()
                 _bm.paint_uniform_color(color)
-                _bm.transform(_T_fix(euler_seq, *deg_angles))
+                # Hidden until markers 102/103 produce a board pose. The OBJ local
+                # frame is interpreted as board-local, whose origin is marker 102.
                 _bm.transform(self._hidden_T())
                 self.vis.add_geometry(_bm)
                 return _bm
 
-            self._board_mesh       = _load_baseboard([0.9, 0.75, 0.5], 'z',  90.0)        # warm tan  — ArUco
-            self._board_manip_mesh = _load_baseboard([0.5, 0.75, 0.9], 'zy', 90.0, -90.0) # steel blue — AR box
-            print(f"[SceneVis] baseboard.obj loaded ({len(self._board_mesh.vertices)} verts)")
+            self._board_mesh = _load_tracked_board([0.9, 0.75, 0.5])
+            self._board_manip_mesh = _load_tracked_board([0.5, 0.75, 0.9])
+            print(f"[SceneVis] NewBaseBoard.obj loaded for tracked board ({len(self._board_mesh.vertices)} verts)")
         else:
-            print(f"[SceneVis] baseboard.obj not found at {_baseboard_path}")
+            print(f"[SceneVis] NewBaseBoard.obj not found at {_tracked_board_path}")
         self._board_T       = self._hidden_T()
         self._board_manip_T = self._hidden_T()
-
         # Gripper mesh — loaded once, placed at TCP pose each frame via delta
         # transforms. OBJ tool axis is mesh-Y; Rx(+90°) is baked into vertices
         # at load time so mesh-Y aligns with TCP-Z (standard robot convention).
@@ -1548,6 +1656,56 @@ class _SceneVis:
         self._workspace_box_lineset.colors = new_ls.colors
         self.vis.update_geometry(self._workspace_box_lineset)
 
+    def update_handover(self, result):
+        """Draw the handover voxel grid (valid vs invalid coloured) plus a
+        wireframe sphere at the chosen centroid. `result` comes from
+        MainScene._compute_handover; None hides everything."""
+        if result is None:
+            self.clear_handover()
+            return
+        cents = np.asarray(result['centroids'])
+        R     = np.asarray(result['R'])
+        cw, cd, ch = result['cell']
+        valid = np.asarray(result['valid_mask'])
+        hx, hy, hz = cw / 2.0, cd / 2.0, ch / 2.0
+        local = np.array([[-hx,-hy,-hz],[hx,-hy,-hz],[hx,hy,-hz],[-hx,hy,-hz],
+                          [-hx,-hy, hz],[hx,-hy, hz],[hx,hy, hz],[-hx,hy, hz]])
+        rot_corners = local @ R.T                        # (8,3), identical for every cell
+        edges = [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],
+                 [0,4],[1,5],[2,6],[3,7]]
+        pts, lines, cols = [], [], []
+        off = 0
+        for cen, v in zip(cents, valid):
+            pts.append(rot_corners + cen)
+            lines.extend([[off + a, off + b] for a, b in edges])
+            col = self._HANDOVER_VALID_COLOR if v else self._HANDOVER_GRID_COLOR
+            cols.extend([col] * len(edges))
+            off += 8
+        ls = self._handover_grid_lineset
+        ls.points = o3d.utility.Vector3dVector(np.vstack(pts))
+        ls.lines  = o3d.utility.Vector2iVector(np.asarray(lines, dtype=np.int32))
+        ls.colors = o3d.utility.Vector3dVector(np.asarray(cols, dtype=np.float64))
+        self.vis.update_geometry(ls)
+
+        sc  = result.get('sphere_center')
+        sph = self._handover_sphere_lineset
+        if sc is not None:
+            new_s = self.make_sphere_wireframe(np.asarray([sc], dtype=np.float64),
+                                               np.array([0.04]),
+                                               color=self._HANDOVER_SPHERE_COLOR)
+            sph.points = new_s.points
+            sph.lines  = new_s.lines
+            sph.colors = new_s.colors
+            self.vis.update_geometry(sph)
+
+    def clear_handover(self):
+        """Hide the handover grid + sphere (empty geometry)."""
+        for ls in (self._handover_grid_lineset, self._handover_sphere_lineset):
+            ls.points = o3d.utility.Vector3dVector(np.zeros((0, 3)))
+            ls.lines  = o3d.utility.Vector2iVector(np.zeros((0, 2), dtype=np.int32))
+            ls.colors = o3d.utility.Vector3dVector(np.zeros((0, 3)))
+            self.vis.update_geometry(ls)
+
     def update_tracking(self, T: np.ndarray | None):
         T_new = T if T is not None else self._hidden_T()
         delta = T_new @ np.linalg.inv(self._tracking_T)
@@ -1587,6 +1745,24 @@ class _SceneVis:
             self._tcp_gripper_mesh.transform(delta)
             self.vis.update_geometry(self._tcp_gripper_mesh)
         self._tcp_T = T_new
+
+    def update_tcp_target(self, T: "np.ndarray | None"):
+        """Debug: draw the commanded move_tcp/step_hand_track target — a
+        magenta wireframe sphere at the target position, distinct from the
+        RGB-axes actual TCP drawn by update_tcp(), so target vs. arrived
+        pose can be compared visually."""
+        T_new = T if T is not None else self._hidden_T()
+        new_ls = self.make_sphere_wireframe(
+            np.array([T_new[:3, 3]]), np.array([0.035]),
+            color=(1.0, 0.0, 1.0))
+        if self._tcp_target_ls is None:
+            self._tcp_target_ls = new_ls
+            self.vis.add_geometry(self._tcp_target_ls)
+        else:
+            self._tcp_target_ls.points = new_ls.points
+            self._tcp_target_ls.lines  = new_ls.lines
+            self._tcp_target_ls.colors = new_ls.colors
+            self.vis.update_geometry(self._tcp_target_ls)
 
     def update_tool_boxes(self, boxes):
         """Update wireframe box linesets for all tool bounding boxes.
@@ -1836,8 +2012,8 @@ class MainScene:
     _TCP_TOOL_ID     = 200    # must match ToolClickPublisher tool_id in Unity
     _SYNTH_INTERVAL  = 1.0 / 30.0
     _RELOCK_COOLDOWN = 2.0
-    _AUTO_LOCK_MAX_DIST     = 0.5    # metres — auto-lock-on-sight only within this range
-    _AUTO_LOCK_MAX_TILT_DEG = 20.0   # degrees — max tilt from vertical to auto-lock
+    _AUTO_LOCK_MAX_DIST     = 1.0    # metres — auto-lock-on-sight only within this range
+    _AUTO_LOCK_MAX_TILT_DEG = 45.0   # degrees — max tilt from vertical to auto-lock
     _TRACK_DIST_THRESHOLD = 0.075   # metres — TCP-to-target distance considered "arrived"
     _TRACK_HOLD_SECS      = 0.2   # seconds continuously under threshold before locking grip
 
@@ -1880,89 +2056,54 @@ class MainScene:
         }
         self._sim_q = np.deg2rad(self._SIM_Q_DEG)
 
-        # ── PyBullet IK scene (headless) ──────────────────────────────────────
-        _calib_dir = _FILE_DIR / "calibration_data" / "results"
-        self.pb_scene: "PyBulletScene | None" = None
-        if _PYBULLET_AVAILABLE:
-            if simulation:
-                if use_calibrated_robot_base and _calib_dir.exists():
-                    try:
-                        _p1 = np.load(_calib_dir / "phase1_results.npz")
-                        self.pb_scene = PyBulletScene(
-                            T_world_base=_p1["T_world_base"])
-                        self.pb_scene.build()
-                        self.pb_scene.update_robot(self._sim_q)
-                        print("[PyBullet] Simulation + calibrated base pose (headless).")
-                    except Exception as e:
-                        print(f"[MainScene] PyBullet (calibrated) failed: {e}")
-                        self.pb_scene = None
-                else:
-                    _T_world_base_sim = np.eye(4, dtype=float)
-                    _T_world_base_sim[:3, 3] = [-0.4, -0.8, 0.4]
-                    try:
-                        self.pb_scene = PyBulletScene(
-                            T_world_base=_T_world_base_sim)
-                        self.pb_scene.build()
-                        self.pb_scene.update_robot(self._sim_q)
-                        print("[PyBullet] Simulation — hardcoded base pose (headless).")
-                    except Exception as e:
-                        print(f"[MainScene] PyBullet scene failed to build: {e}")
-                        self.pb_scene = None
-            else:
-                if _calib_dir.exists():
-                    try:
-                        self.pb_scene = PyBulletScene.from_calibration(_calib_dir)
-                        self.pb_scene.build()
-                        self.pb_scene.update_robot(self._sim_q)
-                    except Exception as e:
-                        print(f"[MainScene] PyBullet scene failed to build: {e}")
-                        self.pb_scene = None
-                else:
-                    print(f"[MainScene] Calibration dir not found: {_calib_dir}")
-
-
         # ── Receivers / publishers ────────────────────────────────────────────
         self.cam          = _CamFeedReceiver(quest_ip)
+        # Secondary relock markers come from the prescan file (single source of
+        # truth) — the detector, the relock loop, and the Unity cubes all follow it.
+        self._world_marker_ids = _load_prescan_marker_ids()
         self.aruco        = _ArucoPoseEstimator(
                                 anchor_marker_id       = anchor_marker_id,
                                 pegboard_marker_id     = pegboard_marker_id,
                                 anchor_marker_size_m   = anchor_marker_size_m,
                                 pegboard_marker_size_m = pegboard_marker_size_m,
-                                board_marker_ids       = (board_marker_a, board_marker_b),
-                                board_marker_size_m    = board_marker_size_m)
+                                board_marker_ids       = (*((board_marker_a, board_marker_b)), *self._world_marker_ids),
+                                board_marker_size_m    = cfg.WORLD_MARKER_SIZE)
         self.aruco_worker = _ArUcoWorker(self.cam, self.aruco)
         self.hands        = _HandDataReceiver(quest_ip, hand_port)
-        self.robot: "_RobotController | None" = None
-        if _ROBOT_CTRL_AVAILABLE and self.pb_scene is not None:
-            # Apply conservative joint limits to PyBullet IK
-            self.pb_scene.set_joint_limits(
-                cfg.JOINT_MIN_DEG, cfg.JOINT_MAX_DEG, degrees=True)
-            _urdf = cfg.SCENE_LAYOUT_DIR.parent / "robot_assets" / "ur10e.urdf"
-            self.robot = _RobotController(
-                unity_ip               = quest_ip,
-                pb_scene               = self.pb_scene,
-                T_world_base           = self.pb_scene.T_world_base,
-                robot_ip               = robot_ip if not simulation else None,
-                urdf_path              = str(_urdf) if _urdf.exists() else None,
-                frax_q_min             = list(np.deg2rad(cfg.JOINT_MIN_DEG)),
-                frax_q_max             = list(np.deg2rad(cfg.JOINT_MAX_DEG)),
-                frax_ws_lo             = cfg.WORKSPACE_LO,
-                frax_ws_hi             = cfg.WORKSPACE_HI,
-                frax_gripper_collision = gripper_collision,
-            )
 
-        if simulation:
-            print(f"[Robot] Simulation mode — RobotController ready (no hardware)")
-        elif self.robot is not None:
-            print(f"[Robot] Live mode — RobotController ready ({robot_ip})")
-            threading.Thread(target=self.robot.connect_gripper, daemon=True,
-                             name="gripper-preconnect").start()
+        # ── Robot control client (talks to robot_control_server.py) ────────────
+        # Real IK/FK for hardware control, RTDE, the gripper, and the frax CBF
+        # filter all live in the dedicated robot_control_server.py process —
+        # see that file's docstring. self.pb_scene here is the client's local,
+        # IK-free visualization scene (robot mesh + reachability arrows only).
+        self.robot: "_RobotController | None" = None
+        self.pb_scene = None
+        if _ROBOT_CTRL_AVAILABLE:
+            try:
+                self.robot = _RobotController(
+                    simulation                = simulation,
+                    use_calibrated_robot_base = use_calibrated_robot_base,
+                )
+                self.pb_scene = self.robot.pb_scene
+            except Exception as e:
+                print(f"[MainScene] RobotClient failed to connect: {e}")
+                self.robot = None
+
+        if self.robot is not None:
+            print(f"[Robot] {'Simulation' if simulation else f'Live ({robot_ip})'} mode — "
+                  f"RobotClient connected to robot_control_server.py")
+        else:
+            print("[Robot] No robot control — is robot_control_server.py running?")
 
         self.anchor      = _WorldAnchor(quest_ip)
-        self.center_eye_pub = _CenterEyeOverridePublisher(quest_ip)
         self.tools       = _ToolSelectionManager(quest_ip)
         self.tuner       = _OffsetTuner()
         self.synth       = _SyntheticObjectPublisher(quest_ip)
+        # Secondary relock-cube poses → Unity (positions the click cubes on their
+        # physical markers using the prescan registration).
+        self.relock_cubes = _RelockCubePublisher(quest_ip)
+        self.relock_cubes.set_markers(self.anchor._T_world_marker)
+        self.handover_sphere = _HandoverSpherePublisher(quest_ip)
         self.tool_layout = _ToolLayoutManager(
                                cfg.SCENE_LAYOUT_DIR / "tool_layout1.json", quest_ip)
         self.grip_pub    = _GripStatePublisher(quest_ip)
@@ -1994,10 +2135,23 @@ class MainScene:
         # ── Per-iteration state ───────────────────────────────────────────────
         self._prev_relock_available = False  # previous relock-available flag; drives anchor-marker color change
         self._anchor_highlight_until           = 0.0   # time until anchor marker highlight reverts to normal color
+        self._tcp_target_T: "np.ndarray | None" = None   # debug: most recently commanded move_tcp/step_hand_track target, drawn by vis.update_tcp_target()
         self._last_proximity_relock_time = 0.0   # timestamp of last auto-relock; enforces _RELOCK_COOLDOWN between relocks
+        # Per secondary marker (104-107, …) click-to-relock state — mirrors the
+        # anchor marker's relock-cube flow, keyed by marker id. Driven by the
+        # prescan file: one entry per marker whose pose was loaded.
+        self._world_relock_prev_available:  dict[int, bool]  = {}   # last relock-available flag per marker (drives hover-color swap)
+        self._world_relock_highlight_until: dict[int, float] = {}   # time until the SELECTED flash reverts, per marker
+        self._last_world_relock_time:       dict[int, float] = {}   # timestamp of last relock per marker; enforces WORLD_MARKERS_RELOCK_COOLDOWN
+        for _mid in self.anchor._T_world_marker:
+            self._world_relock_prev_available[_mid]  = False
+            self._world_relock_highlight_until[_mid] = 0.0
+            self._last_world_relock_time[_mid]       = 0.0
         self._reachability_arrows_hide_at           = 0.0   # timestamp after which reachability arrows are hidden; set to now+5s on R keypress
         self._T_world_tcp: "np.ndarray | None"          = None   # current TCP pose in world; polled each frame from robot
-        self._grip_state: "str | None"              = None   # None | 'moving_to_hand' | 'grabbed' | 'moving_to_pose'
+        self._grip_state: "str | None"              = None   # None | 'moving_to_hand' | 'reached_hand' | 'grabbed' | 'approaching' | 'grasping' | 'grasped' | 'retracting' | 'moving' | 'handover_release'
+        self._handover: "dict | None"               = None   # frozen compromise-handover result (grid/target/sphere), set on tool grasp
+        self._pending_handover_move                 = False  # set by grasp on_complete; main thread then issues the handover move_tcp
         self._last_ar_board_T: "np.ndarray | None"    = None   # last AR box pose from _TargetPoseReceiver; persists between polls
         self._pending_grasp_tool_id: "int | None"           = None   # tool ID being grasped (set on click, not yet read back)
         self._tracked_hand_side: "str | None"        = None   # which hand is being tracked: 'left' or 'right'
@@ -2022,6 +2176,11 @@ class MainScene:
               f"distance) — later re-locks need ENTER or the relock cube")
         print(f"  ENTER with marker #{pegboard_marker_id} visible (after locking)"
               f" → lock pegboard")
+        _secondary = sorted(self.anchor._T_world_marker) or "none (no prescan file)"
+        print(f"  Secondary relock cubes {_secondary}: click one for drift "
+              f"correction when it lights up (proximity <{cfg.WORLD_MARKERS_PROXIMITY_MAX}m, "
+              f"looking within {cfg.WORLD_MARKERS_TILT_MAX_DEG}° of face-on, "
+              f"cooldown {cfg.WORLD_MARKERS_RELOCK_COOLDOWN}s)")
         print("  ESC = quit\n")
 
     # ── Helpers ───────────────────────────────────────────────────────────────
@@ -2072,10 +2231,166 @@ class MainScene:
         ENTER handler and by the auto-lock-on-sight check in run()."""
         self.anchor.lock(T_cam_anchor, self.cam.camera_T, center_T=center_T)
         self._last_proximity_relock_time = time.time()
-        if self.pb_scene is not None:
-            self.pb_scene.set_scene_origin(np.eye(4))
+        if self.robot is not None:
+            self.robot.set_scene_origin(np.eye(4))
         if self._load_pegboard_from_file:
             self._try_load_pegboard_from_file()
+
+    # ── Compromise handover ────────────────────────────────────────────────────
+
+    def _compute_handover(self, T_world_center, opp_pts, is_left):
+        """Build a headset-yaw-aligned voxel grid in front of the human, keep the
+        voxels whose 8 vertices all lie inside the robot workspace, and pick the
+        one that minimises a weighted blend of human distance (to the receiving
+        palm, z-clamped to the vertical bounds) and robot joint travel.
+
+        Returns a dict with `target_pos`, `target_quat`, `sphere_center`,
+        `centroids`, `R`, `cell`, `valid_mask` for the move + Open3D vis, or None
+        if inputs are missing or no voxel is valid. Computed once (frozen) at
+        tool-grasp time — the per-voxel IK therefore runs only once, not per frame.
+        """
+        if T_world_center is None or opp_pts is None or self.robot is None:
+            return None
+        p_head = np.asarray(T_world_center[:3, 3], dtype=np.float64)
+
+        # Headset yaw frame: forward = camera +Z (look dir) projected onto world XY.
+        fwd_full = T_world_center[:3, :3] @ np.array([0., 0., 1.])
+        fwd = np.array([fwd_full[0], fwd_full[1], 0.0])
+        if np.linalg.norm(fwd) < 1e-6:
+            return None
+        fwd  = fwd / np.linalg.norm(fwd)
+        up    = np.array([0., 0., 1.])
+        right = np.cross(fwd, up)
+        right = right / (np.linalg.norm(right) + 1e-9)
+        R = np.column_stack([right, fwd, up])   # local (x=right, y=fwd, z=up) → world
+
+        # Vertical bounds (dynamic). Marker 100 is the world origin, so its world z
+        # is 0 by construction — it acts as a floor guard on the lower bound.
+        anchor_world_z = 0.0
+        lower = max(anchor_world_z, cfg.HANDOVER_LOWER_FRAC * p_head[2])
+        upper = p_head[2] - cfg.HANDOVER_UPPER_LIMIT_M
+        if upper <= lower:
+            print(f"[Handover] DIAG bounds invalid: head_z={p_head[2]:.3f} "
+                  f"lower={lower:.3f} upper={upper:.3f} (upper<=lower)")
+            return None
+
+        # Grid centre: offset forward from the head, vertically centred on bounds.
+        c = p_head + fwd * cfg.HANDOVER_OFFSET_M
+        c[2] = 0.5 * (lower + upper)
+
+        n  = int(cfg.HANDOVER_RESOLUTION)
+        cw = cfg.HANDOVER_WIDTH_M / n
+        cd = cfg.HANDOVER_DEPTH_M / n
+        ch = (upper - lower) / n
+        sx = (np.arange(n) - (n - 1) / 2.0) * cw          # symmetric offsets along right
+        sy = (np.arange(n) - (n - 1) / 2.0) * cd          # symmetric offsets along fwd
+        sz = (lower + (np.arange(n) + 0.5) * ch) - c[2]   # lower→upper, as offset from centre
+        centroids = np.array([c + right * ix + fwd * iy + up * iz
+                              for iz in sz for iy in sy for ix in sx])
+
+        # Validity: all 8 vertices inside the axis-aligned workspace box.
+        hx, hy, hz = cw / 2.0, cd / 2.0, ch / 2.0
+        local_v = np.array([[-hx,-hy,-hz],[hx,-hy,-hz],[hx,hy,-hz],[-hx,hy,-hz],
+                            [-hx,-hy, hz],[hx,-hy, hz],[hx,hy, hz],[-hx,hy, hz]])
+        rot_v = local_v @ R.T                              # (8,3)
+        lo, hi = self.WORKSPACE_BOUNDS_LO, self.WORKSPACE_BOUNDS_HI
+        valid = np.array([bool(np.all((rot_v + cen >= lo) & (rot_v + cen <= hi)))
+                          for cen in centroids])
+        print(f"[Handover] DIAG head_z={p_head[2]:.3f} bounds=[{lower:.3f},{upper:.3f}] "
+              f"grid_centre=({c[0]:.2f},{c[1]:.2f},{c[2]:.2f}) "
+              f"valid={int(valid.sum())}/{len(centroids)} "
+              f"WS_lo={np.round(lo, 2).tolist()} WS_hi={np.round(hi, 2).tolist()}")
+
+        result = {'centroids': centroids, 'R': R, 'cell': [cw, cd, ch],
+                  'valid_mask': valid, 'sphere_center': None,
+                  'target_pos': None, 'target_quat': None}
+        if not valid.any():
+            return None
+
+        vcents = centroids[valid]
+
+        # Delivery orientation from the receiving palm (mirror moving_to_hand flip).
+        quat = _palm_quat(opp_pts, is_left=is_left)
+        if ScipyR.from_quat(quat).apply([0., 1., 0.])[2] > 0:
+            quat = (ScipyR.from_quat(quat)
+                    * ScipyR.from_euler('z', 180, degrees=True)).as_quat()
+
+        # Human term: distance to receiving palm, z clamped to [lower, upper].
+        human_ref = np.asarray(opp_pts[1], dtype=np.float64).copy()
+        human_ref[2] = float(np.clip(human_ref[2], lower, upper))
+        d_human = np.linalg.norm(vcents - human_ref, axis=1)
+
+        # Robot term: wrapped joint travel from current config to each centroid's IK.
+        q_cur  = self.robot.q
+        travel = np.full(len(vcents), np.inf)
+        if q_cur is not None and not np.any(np.isnan(q_cur)):
+            q_cur = np.asarray(q_cur, dtype=np.float64)
+            for i, cen in enumerate(vcents):
+                try:
+                    q_t = self.robot.query_ik_joints(cen.tolist(), quat, seed_q=q_cur)
+                except Exception:
+                    q_t = None
+                if q_t is None:
+                    continue
+                dq = (np.asarray(q_t, dtype=np.float64) - q_cur + np.pi) % (2 * np.pi) - np.pi
+                travel[i] = float(np.linalg.norm(dq))
+        finite = np.isfinite(travel)
+        if not finite.any():
+            travel[:] = 0.0
+        else:
+            travel[~finite] = travel[finite].max()
+
+        def _norm(a):
+            span = a.max() - a.min()
+            return (a - a.min()) / span if span > 1e-9 else np.zeros_like(a)
+        cost = (cfg.HANDOVER_WEIGHT_HUMAN * _norm(d_human)
+                + cfg.HANDOVER_WEIGHT_ROBOT * _norm(travel))
+        target = vcents[int(np.argmin(cost))]
+
+        # Standoff: stop the TCP short of the point along the gripper approach axis
+        # (+Z), so the tool is presented at the point rather than driving the TCP
+        # onto it (mirrors the moving_to_hand palm standoff). The sphere stays on
+        # the true point; only the TCP target is pulled back.
+        gripper_z  = ScipyR.from_quat(quat).apply([0., 0., 1.])
+        tcp_target = target - gripper_z * cfg.HANDOVER_STANDOFF_M
+
+        result['sphere_center'] = target        # the compromise handover point (shown to the user)
+        result['target_pos']    = tcp_target    # where the TCP is actually commanded (pulled back)
+        result['target_quat']   = quat
+        return result
+
+    def _on_handover_arrived(self, ok: bool) -> None:
+        """Callback when the robot reaches the compromise point holding the tool.
+
+        Sim / no robot: no force sensor — just present it and go idle.
+        Real robot: keep clamping the tool and arm a 'release' force monitor; when
+        the human tugs it (> _FORCE_RELEASE_THRESHOLD, mirrors the reached_hand
+        workholding handshake) the gripper opens to let go, then we idle."""
+        print(f"[Handover] Reached point — {'OK' if ok else 'FAILED'}")
+        self._tcp_target_T = None
+
+        def _clear_and_idle():
+            self._grip_state = None
+            self.handover_sphere.hide()
+            self.vis.clear_handover()
+
+        if not ok or self.simulation or self.robot is None:
+            _clear_and_idle()
+            return
+
+        # Real robot: hold the tool until the human pulls it out.
+        self._grip_state = 'handover_release'
+
+        def _on_tool_pulled():
+            print("[Handover] Tug detected → opening gripper, releasing tool")
+            self.robot.open_gripper_async(on_done=lambda: (
+                _clear_and_idle(),
+                print("[Handover] Tool released → idle"),
+            ))
+
+        self.robot.start_force_monitor('release', _on_tool_pulled,
+                                       threshold=cfg.HANDOVER_RELEASE_THRESHOLD_N)
+        print(f"[Handover] Presenting tool — pull ({cfg.HANDOVER_RELEASE_THRESHOLD_N:.0f} N) to release.")
 
     # ── Main loop ─────────────────────────────────────────────────────────────
 
@@ -2087,6 +2402,8 @@ class MainScene:
                 # ── Poll streams ──────────────────────────────────────────────
                 self.tools.poll(timeout_ms=0)
                 self.hands.poll()
+                if self.robot is not None:
+                    self.robot.poll()   # drain robot_control_server.py state/events
 
                 # ── ArUco results (background thread) ─────────────────────────
                 T_cam_anchor, T_cam_pegboard, T_cam_board, det_vis = \
@@ -2106,11 +2423,6 @@ class MainScene:
                 # ── CenterEye pose ────────────────────────────────────────────
                 _center_T = self.hands.center_eye_T()
 
-                # ── Override CenterEyeAnchor pose with left cam_T ─────────────
-                _override_pos, _override_rot = self.anchor.center_eye_override_pose(
-                    self.cam.camera_T, self.cam.raw_pos, self.cam.raw_rot_xyzw)
-                self.center_eye_pub.publish(_override_pos, _override_rot)
-
                 # ── Tracked board (markers A/B) — constantly updated ──────────
                 if self.anchor.locked and board_ok:
                     self.anchor.update_board_from_tracking(
@@ -2119,21 +2431,18 @@ class MainScene:
                         self._T_BOARD_FROM_MARKER[board_marker_seen])
 
                 # ── Publish world root + pegboard to Unity ────────────────────
+                # (robot base/joint publishing to Unity is now handled by
+                # robot_control_server.py itself, on its own steady cadence)
                 if self.anchor.locked:
                     self.anchor.publish()
                     self.anchor.publish_pegboard()
                     self.anchor.publish_board()
-                    if self.pb_scene is not None:
-                        if self.robot is not None:
-                            self.robot.publish_base(self.pb_scene.T_world_base)
                     _now = time.time()
                     if _now - self._last_synth_pub_time >= self._SYNTH_INTERVAL:
                         self.synth.publish()
+                        self.relock_cubes.publish()
+                        self.handover_sphere.publish()
                         self._last_synth_pub_time = _now
-
-                if self.pb_scene is not None:
-                    if self.robot is not None:
-                        self.robot.publish_joints(self.pb_scene.current_q)
 
                 T_wt            = self.anchor.T_world_tracking
                 _eff_cam_T      = self.anchor._effective_cam_T(None, _center_T)
@@ -2241,6 +2550,58 @@ class MainScene:
                     print("[AutoRelock] Relocked via proximity click")
                 self.tools.deselect(self.anchor_marker_id)
 
+                # ── Secondary marker click-to-relock (cube logic, per marker) ──
+                # Each prescanned marker (104-107, …) has an authored relock cube
+                # in Unity tagged with its marker id. Same flow as the anchor cube:
+                # the cube lights up (HOVER_COLOR) when you are looking nearly
+                # face-on at the physical marker within range, and clicking it
+                # relocks the world frame from that marker's prescan registration.
+                for mid in self.anchor._T_world_marker:
+                    T_cam_mid = T_cam_board.get(mid)
+                    _available = False
+                    _dist = _angle_deg = 0.0
+                    if (self.anchor.locked and self.cam.camera_T is not None
+                            and T_cam_mid is not None):
+                        _dist = float(np.linalg.norm(T_cam_mid[:3, 3]))
+                        # Obliquity: T_cam_mid[2, 2] is the marker normal's component
+                        # along the camera optical axis — |value| ≈ 1 → face-on (0°),
+                        # ≈ 0 → edge-on/grazing (90°).
+                        _cos_obliq = abs(float(T_cam_mid[2, 2]))
+                        _min_cos   = np.cos(np.deg2rad(cfg.WORLD_MARKERS_TILT_MAX_DEG))
+                        _angle_deg = float(np.degrees(np.arccos(np.clip(_cos_obliq, -1, 1))))
+                        _available = (_dist <= cfg.WORLD_MARKERS_PROXIMITY_MAX
+                                      and _cos_obliq >= _min_cos)
+
+                    # Revert the post-relock SELECTED flash once it expires
+                    if (self._world_relock_highlight_until[mid] > 0.0
+                            and _now >= self._world_relock_highlight_until[mid]):
+                        self._world_relock_highlight_until[mid] = 0.0
+                        self._world_relock_prev_available[mid] = not _available
+
+                    # Swap the cube colour when availability changes (hover-on / reset)
+                    if (self._world_relock_highlight_until[mid] == 0.0
+                            and _available != self._world_relock_prev_available[mid]):
+                        self.tools.send_color(
+                            mid,
+                            _ToolSelectionManager.HOVER_COLOR if _available
+                            else _ToolSelectionManager.RESET_COLOR)
+                        self._world_relock_prev_available[mid] = _available
+
+                    # Click on the cube while available → relock world from this marker
+                    if (self.tools.active_tool_id == mid
+                            and _available
+                            and _now - self._last_world_relock_time[mid]
+                                >= cfg.WORLD_MARKERS_RELOCK_COOLDOWN):
+                        if self.anchor.relock_from_world_marker(
+                                mid, T_cam_mid, self.cam.camera_T):
+                            self.tools.send_color(mid, _ToolSelectionManager.SELECTED_COLOR)
+                            self._world_relock_highlight_until[mid] = _now + 1.0
+                            self._world_relock_prev_available[mid]  = True
+                            self._last_world_relock_time[mid]       = _now
+                            print(f"[WorldRelock] marker #{mid}, {_dist:.3f}m, "
+                                  f"{_angle_deg:.1f}° off-normal (click)")
+                    self.tools.deselect(mid)
+
                 # ── TCP click → toggle continuous hand tracking ────────────────
                 if (self.tools.active_tool_id == self._TCP_TOOL_ID
                         and self.anchor.locked
@@ -2251,6 +2612,7 @@ class MainScene:
                         self._last_ar_board_T = None
                         self._tracked_hand_side = None
                         self._track_proximity_enter_t = None
+                        self._tcp_target_T = None
                         self.vis.clear_board_manip_debug()
                         if self.robot is not None:
                             self.robot.cancel_motion()
@@ -2298,13 +2660,46 @@ class MainScene:
                         if _gj is not None:
                             print(f"[User] Clicked {_cat} id={_tid} → grasp sequence  "
                                   f"[{_hw}] joint-space moveJ  |  {_seq}")
+                            # ── Compromise handover: snapshot + freeze the target ──
+                            self._handover = None
+                            self.vis.clear_handover()
+                            _click_hand = self.tools.active_hand
+                            _opp_hand   = {"left": "right", "right": "left"}.get(_click_hand)
+                            _opp_pts    = (left_pts  if _opp_hand == "left"
+                                           else right_pts if _opp_hand == "right" else None)
+                            if _opp_pts is not None and T_world_center is not None:
+                                self._handover = self._compute_handover(
+                                    T_world_center, _opp_pts, is_left=(_opp_hand == "left"))
+                                if self._handover is not None:
+                                    self.vis.update_handover(self._handover)
+                                    self.handover_sphere.show(self._handover['target_pos'])
+                                    _hp = self._handover['target_pos']
+                                    print(f"[Handover] {_click_hand} clicked → deliver toward "
+                                          f"{_opp_hand} hand; point=({_hp[0]:.3f}, {_hp[1]:.3f}, "
+                                          f"{_hp[2]:.3f})")
+                                else:
+                                    self.handover_sphere.hide()
+                                    print("[Handover] No valid voxel in workspace — grasp only.")
+                            else:
+                                self.handover_sphere.hide()
+                                print(f"[Handover] {_opp_hand} hand not visible — grasp only.")
+                            self._grip_state = 'approaching'
                             self.robot.execute_grasp(
                                 _gj,
                                 category     = _cat,
                                 board_normal = _T_wp[:3, 2] if _T_wp is not None else None,
+                                on_phase     = lambda phase: setattr(self, '_grip_state', phase),
                                 on_complete  = lambda ok, tid=_grasp_tid: (
                                     self.tools.send_color(tid, _ToolSelectionManager.RESET_COLOR),
                                     self._pending_vis_clears.append(tid),
+                                    setattr(self, '_pending_handover_move',
+                                            bool(ok) and self._handover is not None),
+                                    # No handover follows → grasp sequence is
+                                    # done, back to idle. Otherwise leave
+                                    # _grip_state as-is; the handover trigger
+                                    # below picks it up and sets 'moving'.
+                                    (setattr(self, '_grip_state', None)
+                                     if not self._pending_handover_move else None),
                                     print(f"[Robot] Grasp id={tid} — {'OK ✓' if ok else 'FAILED ✗'}"),
                                 ),
                             )
@@ -2313,18 +2708,27 @@ class MainScene:
                     self.tools.deselect(_tid)
 
                 # ── PyBullet scene update ─────────────────────────────────────
+                # (joint-state sync + tick()/force-monitor/move_tcp/grasp
+                # progression now run inside robot_control_server.py's own
+                # fixed-rate loop — self.robot.poll() above just keeps the
+                # local visualization scene's joint state up to date)
                 if self.robot is not None:
-                    # Real robot: poll fresh joint state every frame so frax OSC always
-                    # has an accurate q_current (not just the state from when tracking started).
-                    if not self.simulation:
-                        _q_fresh = self.robot.poll_q()
-                        if _q_fresh is not None:
-                            self.pb_scene.update_robot(_q_fresh)
-
-                    _now = time.perf_counter()
-                    _dt  = (min(_now - self._last_tick_time, 0.1)
-                            if self._last_tick_time is not None else 1.0 / 30.0)
-                    self._last_tick_time = _now
+                    # ── Handover: grasp finished → move to the frozen compromise point ──
+                    if self._pending_handover_move and self._handover is not None:
+                        self._pending_handover_move = False
+                        self._grip_state = 'moving'
+                        _hpos  = self._handover['target_pos']
+                        _hquat = self._handover['target_quat']
+                        print(f"[Handover] Grasp done → move_tcp to "
+                              f"({_hpos[0]:.3f}, {_hpos[1]:.3f}, {_hpos[2]:.3f})")
+                        _T_dbg = np.eye(4)
+                        _T_dbg[:3, 3]  = _hpos
+                        _T_dbg[:3, :3] = ScipyR.from_quat(_hquat).as_matrix()
+                        self._tcp_target_T = _T_dbg
+                        self.robot.move_tcp(
+                            _hpos.tolist(), _hquat,
+                            on_complete=self._on_handover_arrived,
+                        )
                     if self._grip_state == 'moving_to_hand':
                         target_pts = (left_pts if self._tracked_hand_side == "left"
                                       else right_pts)
@@ -2338,16 +2742,14 @@ class MainScene:
                                                * ScipyR.from_euler('z', 180, degrees=True)
                                                ).as_quat()
                             self._track_palm_target_pos = target_pos
-                            _track_now = time.perf_counter()
-                            _track_dt  = (min(_track_now - self._last_hand_track_time, 0.1)
-                                          if self._last_hand_track_time is not None
-                                          else 1.0 / 30.0)
-                            self._last_hand_track_time = _track_now
-                            self.robot.step_hand_track(target_pos.tolist(), target_quat,
-                                                       _track_dt)
+                            _T_dbg = np.eye(4)
+                            _T_dbg[:3, 3]  = target_pos
+                            _T_dbg[:3, :3] = ScipyR.from_quat(target_quat).as_matrix()
+                            self._tcp_target_T = _T_dbg
+                            # Server keeps stepping toward this target on its own
+                            # fixed-rate loop until track_hand_stop() is sent below.
+                            self.robot.track_hand(target_pos.tolist(), target_quat)
                         # else: hand lost this frame — hold last commanded pose
-                    else:
-                        self.robot.tick(_dt)   # force monitor + move_tcp + sim grasp
 
                     # ── Robot state poll ───────────────────────────────────────
                     self._T_world_tcp = self.robot.tcp_pose
@@ -2369,6 +2771,8 @@ class MainScene:
                             _tracked = self._tracked_hand_side
                             self._track_proximity_enter_t = None
                             self._track_palm_target_pos   = None
+                            self._tcp_target_T = None
+                            self.robot.track_hand_stop()
                             if self.simulation or self.robot is None:
                                 # Sim: no gripper/force — skip reached_hand, go straight to grabbed
                                 self._grip_state = 'grabbed'
@@ -2400,42 +2804,42 @@ class MainScene:
                     # ── Grip-state publishing + target-pose move ──────────────
                     if self._grip_state is not None and self._T_world_tcp is not None:
                         self.grip_pub.publish(self._grip_state, self._T_world_tcp)
-                    if self._grip_state in ('grabbed', 'moving_to_pose'):
+                    if self._grip_state in ('grabbed', 'moving'):
                         T_target = self.target_recv.poll()
                         if T_target is not None:
                             self._last_ar_board_T = T_target
                             _grip_z  = T_target[:3, :3] @ np.array([0., 0., 1.])
                             _tcp_pos = T_target[:3, 3] - _BOX_FORWARD_OFFSET * _grip_z
                             _hw = 'sim' if self.simulation else 'real'
-                            _has_cbf = getattr(self.robot, '_frax', None) is not None
+                            _has_cbf = self.robot.has_cbf
                             print(f"[User] Board manipulated → move_tcp  "
                                   f"[{_hw}] {'IK+CBF' if _has_cbf else 'IK only'} → "
                                   f"{'update_robot' if self.simulation else 'servoJ'}  "
                                   f"target=({_tcp_pos[0]:.3f}, {_tcp_pos[1]:.3f}, {_tcp_pos[2]:.3f})")
+                            _T_dbg = np.eye(4)
+                            _T_dbg[:3, 3]  = _tcp_pos
+                            _T_dbg[:3, :3] = T_target[:3, :3]
+                            self._tcp_target_T = _T_dbg
                             self.robot.move_tcp(
                                 _tcp_pos.tolist(),
                                 ScipyR.from_matrix(T_target[:3, :3]).as_quat(),
                                 on_complete=lambda ok: (
                                     setattr(self, '_grip_state', 'grabbed'),
+                                    setattr(self, '_tcp_target_T', None),
                                     print(f"[Robot] move_tcp done → back to 'grabbed'"),
                                 ),
                             )
-                            self._grip_state = 'moving_to_pose'
+                            self._grip_state = 'moving'
 
                     # ── Visualizer update ─────────────────────────────────────
                     if self._T_world_tcp is not None:
                         self.vis.update_tcp(self._T_world_tcp)
+                    self.vis.update_tcp_target(self._tcp_target_T)
                     if _link_poses is not None:
                         self.vis.update_robot(_link_poses)
-                    _frax = getattr(self.robot, '_frax', None)
-                    _q_snap = self.robot.q if self.robot is not None else None
-                    if (_frax is not None and _q_snap is not None
-                            and not np.any(np.isnan(_q_snap))):
-                        try:
-                            _sp, _sr = _frax.link_spheres_world(_q_snap)
-                            self.vis.update_collision_spheres(_sp, _sr)
-                        except Exception:
-                            self.vis.update_collision_spheres(None, None)
+                    _sp, _sr = self.robot.collision_spheres()
+                    if _sp is not None and _sr is not None:
+                        self.vis.update_collision_spheres(_sp, _sr)
                     else:
                         self.vis.update_collision_spheres(None, None)
                     if self._T_world_tcp is not None and self._tcp_synth is not None:
@@ -2533,12 +2937,20 @@ class MainScene:
                 if key == 27:
                     break
                 elif key == ord('r') or key == ord('R'):
-                    if (self.pb_scene is not None
+                    if (self.robot is not None
                             and self.anchor.T_pegboard_in_world is not None):
                         T_wp = self.anchor.T_pegboard_in_world
                         _reach_quat = _tool_grasp_quat(T_wp[:3, :3])
+                        _base_pos = self.pb_scene.T_world_base[:3, 3]
+                        _peg_pos  = T_wp[:3, 3]
+                        print(f"[Reachability] robot base @ "
+                              f"({_base_pos[0]:+.3f}, {_base_pos[1]:+.3f}, {_base_pos[2]:+.3f})  "
+                              f"pegboard @ ({_peg_pos[0]:+.3f}, {_peg_pos[1]:+.3f}, {_peg_pos[2]:+.3f})  "
+                              f"dist={np.linalg.norm(_peg_pos - _base_pos):.3f} m")
+                        # Blocking request/response to robot_control_server.py —
+                        # rare, user-triggered, was already a blocking call.
                         _, _, _reach_pts, _reach_flags = \
-                            self.pb_scene.check_reachability(
+                            self.robot.check_reachability(
                                 T_wp, target_quat_xyzw=_reach_quat)
                         if len(_reach_pts):
                             _board_normal = T_wp[:3, 2]
@@ -2548,8 +2960,8 @@ class MainScene:
                     else:
                         print("[R] Pegboard not locked yet — lock it first.")
                 elif key == 13:  # ENTER
-                    if self.simulation and self.pb_scene is not None:
-                        self.pb_scene.set_scene_origin(np.eye(4))
+                    if self.simulation and self.robot is not None:
+                        self.robot.set_scene_origin(np.eye(4))
                     if self.cam.camera_T is None:
                         if not self.simulation:
                             print("[ENTER] No camera pose — skipping.")
@@ -2564,8 +2976,8 @@ class MainScene:
                                 print(f"[ENTER] Relocked world to marker "
                                       f"#{self.anchor_marker_id}")
                                 self._last_proximity_relock_time = _now
-                                if self.pb_scene is not None:
-                                    self.pb_scene.set_scene_origin(np.eye(4))
+                                if self.robot is not None:
+                                    self.robot.set_scene_origin(np.eye(4))
                                 if self._load_pegboard_from_file:
                                     self._try_load_pegboard_from_file()
                             else:
@@ -2615,7 +3027,7 @@ class MainScene:
                 _elapsed  = time.perf_counter() - self._fps_ref_time
                 if _elapsed >= 2.0:
                     _avg_hz = self._fps_frame_count / _elapsed
-                    # print(f"[perf] loop {_avg_hz:.1f} Hz | last iter {_iter_ms:.1f} ms")
+                    print(f"[perf] loop {_avg_hz:.1f} Hz | last iter {_iter_ms:.1f} ms")
                     self._fps_ref_time    = time.perf_counter()
                     self._fps_frame_count = 0
 
@@ -2634,8 +3046,9 @@ class MainScene:
         cv.destroyAllWindows()
         self.tuner.close()
         self.anchor.close()
-        self.center_eye_pub.close()
         self.synth.close()
+        self.relock_cubes.close()
+        self.handover_sphere.close()
         self.tool_layout.close()
         self.grip_pub.close()
         self.target_recv.close()

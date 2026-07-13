@@ -108,12 +108,12 @@ public class GripStateReceiver : MonoBehaviour
         while (_queue.TryDequeue(out var d)) latest = d;
         if (latest == null) return;
 
-        bool handleActive = latest.gripState == "grabbed" || latest.gripState == "moving_to_pose";
+        bool handleActive = latest.gripState == "grabbed" || latest.gripState == "moving";
         bool grabbed      = manipulationHandle != null && manipulationHandle.IsGrabbed;
-        bool moveComplete = latest.gripState == "grabbed" && _prevGripState == "moving_to_pose";
+        bool moveComplete = latest.gripState == "grabbed" && _prevGripState == "moving";
         bool cancelled    = latest.gripState == "idle";
 
-        // Freeze the box the instant the user releases — before Python even transitions to 'moving_to_pose'
+        // Freeze the box the instant the user releases — before Python even transitions to 'moving'
         if (_prevIsGrabbed && !grabbed) _boxFrozen = true;
         if (moveComplete || cancelled)  _boxFrozen = false;
 
@@ -146,7 +146,7 @@ public class GripStateReceiver : MonoBehaviour
             arHandle.SetActive(handleActive);
             bool firstArrival = latest.gripState == "grabbed"
                                 && _prevGripState != "grabbed"
-                                && _prevGripState != "moving_to_pose";
+                                && _prevGripState != "moving";
             if (firstArrival && !grabbed && arBox != null)
             {
                 arHandle.transform.SetParent(worldRoot, false);
