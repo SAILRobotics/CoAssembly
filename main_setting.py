@@ -12,7 +12,7 @@ _HERE = Path(__file__).resolve().parent
 SCENE_LAYOUT_DIR = _HERE / "scene_layout"
 
 # ── Machine IPs ───────────────────────────────────────────────────────────────
-UNITY_IP   = "192.168.50.167"   # Quest / Windows machine running Unity
+UNITY_IP   = "192.168.50.103"   # Quest / Windows machine running Unity
 ROBOT_IP   = "192.168.50.70"    # UR10e robot controller
 
 # ── Ports (Unity → Python) ────────────────────────────────────────────────────
@@ -52,7 +52,7 @@ WORLD_MARKER_SIZE    = 0.100   # markers 104-107: 10 cm
 # ── World marker click-to-relock (secondary markers) ──────────────────────────
 WORLD_MARKERS_FILE         = SCENE_LAYOUT_DIR / "world_markers_T_ref_from_marker.json"
 WORLD_MARKERS_PROXIMITY_MAX = 1.0                    # metres — max distance to relock
-WORLD_MARKERS_TILT_MAX_DEG = 20.0                    # max degrees off face-on to relock
+WORLD_MARKERS_TILT_MAX_DEG = 45.0                    # max degrees off face-on to relock
 WORLD_MARKERS_RELOCK_COOLDOWN = 1.0                  # seconds between secondary relocks
 
 # ── Robot workspace boundary (world frame, metres) ────────────────────────────
@@ -81,12 +81,12 @@ HANDOVER_RELEASE_THRESHOLD_N = 15.0  # N — pull force to release the tool at t
 # Applied to both PyBullet IK and the frax CBF safety filter.
 # Adjust to match your actual robot range / mounting pose.
 #            J1      J2     J3     J4      J5      J6
-# JOINT_MIN_DEG = [-162.00, -90,  50,  -160,  0,  0]
-# JOINT_MAX_DEG = [ -90,    -20,  150,   60,   360,   360]
+JOINT_MIN_DEG = [-180.00, -90.00,  50,  -160,  0,  0]
+JOINT_MAX_DEG = [ -90.00, -20.00,  150,   60,   360,   360]
 
 
-JOINT_MIN_DEG = [-162.00, -90,  50,  -360,  -360,  -360]
-JOINT_MAX_DEG = [ -90,    -20,  150,   360,   360,   360]
+# JOINT_MIN_DEG = [-360.00, -360,  -360,  -360,  -360,  -360]
+# JOINT_MAX_DEG = [ 360,    360,  360,   360,   360,   360]
 
 # ── Runtime defaults ──────────────────────────────────────────────────────────
 SIMULATION = True   # True → fixed joint angles; False → live RTDE

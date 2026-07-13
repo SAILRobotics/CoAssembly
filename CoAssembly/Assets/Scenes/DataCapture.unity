@@ -2232,7 +2232,7 @@ MonoBehaviour:
   centerEyeAnchor: {fileID: 337580216}
   leftCamera: {fileID: 1005247602}
   overrideRotation: 0
-  overrideYOnly: 1
+  overrideYOnly: 0
   smoothPosition: 0
   positionSmoothTime: 0.2
   verboseLogs: 0

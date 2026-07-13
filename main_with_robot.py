@@ -2000,8 +2000,8 @@ class MainScene:
     _TCP_TOOL_ID     = 200    # must match ToolClickPublisher tool_id in Unity
     _SYNTH_INTERVAL  = 1.0 / 30.0
     _RELOCK_COOLDOWN = 2.0
-    _AUTO_LOCK_MAX_DIST     = 0.5    # metres — auto-lock-on-sight only within this range
-    _AUTO_LOCK_MAX_TILT_DEG = 20.0   # degrees — max tilt from vertical to auto-lock
+    _AUTO_LOCK_MAX_DIST     = 1.0    # metres — auto-lock-on-sight only within this range
+    _AUTO_LOCK_MAX_TILT_DEG = 45.0   # degrees — max tilt from vertical to auto-lock
     _TRACK_DIST_THRESHOLD = 0.075   # metres — TCP-to-target distance considered "arrived"
     _TRACK_HOLD_SECS      = 0.2   # seconds continuously under threshold before locking grip
 
@@ -2966,6 +2966,12 @@ class MainScene:
                             and self.anchor.T_pegboard_in_world is not None):
                         T_wp = self.anchor.T_pegboard_in_world
                         _reach_quat = _tool_grasp_quat(T_wp[:3, :3])
+                        _base_pos = self.pb_scene.T_world_base[:3, 3]
+                        _peg_pos  = T_wp[:3, 3]
+                        print(f"[Reachability] robot base @ "
+                              f"({_base_pos[0]:+.3f}, {_base_pos[1]:+.3f}, {_base_pos[2]:+.3f})  "
+                              f"pegboard @ ({_peg_pos[0]:+.3f}, {_peg_pos[1]:+.3f}, {_peg_pos[2]:+.3f})  "
+                              f"dist={np.linalg.norm(_peg_pos - _base_pos):.3f} m")
                         _, _, _reach_pts, _reach_flags = \
                             self.pb_scene.check_reachability(
                                 T_wp, target_quat_xyzw=_reach_quat)
@@ -3044,7 +3050,7 @@ class MainScene:
                 _elapsed  = time.perf_counter() - self._fps_ref_time
                 if _elapsed >= 2.0:
                     _avg_hz = self._fps_frame_count / _elapsed
-                    # print(f"[perf] loop {_avg_hz:.1f} Hz | last iter {_iter_ms:.1f} ms")
+                    print(f"[perf] loop {_avg_hz:.1f} Hz | last iter {_iter_ms:.1f} ms")
                     self._fps_ref_time    = time.perf_counter()
                     self._fps_frame_count = 0
 
