@@ -1606,8 +1606,14 @@ class MainScene:
                 # ── Poll streams ──────────────────────────────────────────────
                 self.tools.poll(timeout_ms=0)
                 self.hands.poll()
+                _link_poses = None
                 if self.robot is not None:
                     self.robot.poll()   # drain robot_control_server.py state/events
+                    self._T_world_tcp = self.robot.tcp_pose
+                    _link_poses       = self.robot.arm_link_poses()
+                    if self._T_world_tcp is not None and self._tcp_synth is not None:
+                        self._tcp_synth.centroid = self._T_world_tcp[:3, 3]
+                        self._tcp_synth.R_o3d    = self._T_world_tcp[:3, :3]
 
                 # ── ArUco results (background thread) ─────────────────────────
                 T_cam_anchor, T_cam_pegboard, T_cam_board, det_vis = \
@@ -1841,6 +1847,11 @@ class MainScene:
                 #             print(f"[TCP click] Unknown hand '{clicking_hand}' — ignoring click.")
                 #     self.tools.deselect(self._TCP_TOOL_ID)
 
+                # ── TCP click (tool_id 200) ───────────────────────────────────
+                if self.tools.active_tool_id == self._TCP_TOOL_ID:
+                    print(f"[TCP] Gripper clicked (hand={self.tools.active_hand})")
+                    self.tools.deselect(self._TCP_TOOL_ID)
+
                 # ── Tool click → grasp ────────────────────────────────────────
                 _tid = self.tools.active_tool_id
                 if (_tid is not None
@@ -1931,9 +1942,7 @@ class MainScene:
                 #             self.robot.track_hand(target_pos.tolist(), target_quat)
                 #         # else: hand lost this frame — hold last commanded pose
 
-                    # ── Robot state poll ───────────────────────────────────────
-                    self._T_world_tcp = self.robot.tcp_pose
-                    _link_poses = self.robot.arm_link_poses()
+
 
                 #     # ── Hand-track proximity check → 'reached_hand' ──────────
                 #     if (self._robot_state == 'moving_to_hand' and self._T_world_tcp is not None
@@ -2011,22 +2020,6 @@ class MainScene:
                 #             )
                 #             self._robot_state = 'moving'
 
-                    # ── Visualizer update ─────────────────────────────────────
-                    if self._T_world_tcp is not None:
-                        self.vis.update_tcp(self._T_world_tcp)
-                    self.vis.update_tcp_target(self._tcp_target_T)
-                    if _link_poses is not None:
-                        self.vis.update_robot(_link_poses)
-                    # _sp, _sr = self.robot.collision_spheres()
-                    # if _sp is not None and _sr is not None:
-                    #     self.vis.update_collision_spheres(_sp, _sr)
-                    # else:
-                    #     self.vis.update_collision_spheres(None, None)
-                    if self._T_world_tcp is not None and self._tcp_synth is not None:
-                        self._tcp_synth.centroid = self._T_world_tcp[:3, 3]
-                        self._tcp_synth.R_o3d    = self._T_world_tcp[:3, :3]
-                    if self._last_ar_board_T is not None:
-                        self.vis.update_board_manip_debug(self._last_ar_board_T)
 
                 # ── Update Open3D visualizer ───────────────────────────────────
                 if self.cam.fx is not None:
@@ -2047,6 +2040,13 @@ class MainScene:
                 self.vis.update_tracking(T_wt)
                 self.vis.update_head(T_world_center)
                 self.vis.update_hands(left_pts, right_pts)
+                if self._T_world_tcp is not None:
+                    self.vis.update_tcp(self._T_world_tcp)
+                self.vis.update_tcp_target(self._tcp_target_T)
+                if _link_poses is not None:
+                    self.vis.update_robot(_link_poses)
+                if self._last_ar_board_T is not None:
+                    self.vis.update_board_manip_debug(self._last_ar_board_T)
                 # # Palm quat debug — always visible; prefer right hand, fall back to left
                 # if self._robot_state == 'moving_to_hand':
                 #     _dbg_pts  = left_pts  if self._tracked_hand_side == "left"  else right_pts
