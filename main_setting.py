@@ -43,12 +43,12 @@ ROBOT_EVENT_PORT = 5021   # robot_control_server.py → main_with_robot.py: stat
 
 # ── Robot-control process tuning ──────────────────────────────────────────────
 ROBOT_CONTROL_HZ      = 120   # fixed-rate hardware loop, simulation
-ROBOT_CONTROL_HZ_REAL = 30    # real hardware — intentionally slower for now (safety while testing)
+ROBOT_CONTROL_HZ_REAL = 120   # real hardware control rate (matches RTDE max ~125 Hz)
 
 # Real-hardware speed cap (temporary safety measure while testing) — multiplies
 # moveJ/servoJ speed & acceleration and the pre-CBF joint-delta rate limit.
 # 1.0 = full speed. Simulation is unaffected.
-REAL_ROBOT_SPEED_SCALE = 0.3
+REAL_ROBOT_SPEED_SCALE = 0.6
 
 # ── ArUco marker IDs ──────────────────────────────────────────────────────────
 ANCHOR_MARKER_ID   = 100   # world frame + PyBullet scene origin
@@ -64,6 +64,7 @@ WORLD_MARKER_SIZE    = 0.100   # markers 104-107: 10 cm
 
 # ── World marker click-to-relock (secondary markers) ──────────────────────────
 WORLD_MARKERS_FILE         = SCENE_LAYOUT_DIR / "world_markers_T_ref_from_marker.json"
+EYE_OFFSET_FILE            = SCENE_LAYOUT_DIR / "eye_offset_calibration.json"
 WORLD_MARKERS_PROXIMITY_MAX = 1.0                    # metres — max distance to relock
 WORLD_MARKERS_TILT_MAX_DEG = 45.0                    # max degrees off face-on to relock
 WORLD_MARKERS_RELOCK_COOLDOWN = 1.0                  # seconds between secondary relocks
@@ -100,6 +101,10 @@ JOINT_MAX_DEG = [ -90.00, -20.00,  150,   360,   360,   360]
 
 # JOINT_MIN_DEG = [-360.00, -360,  -360,  -360,  -360,  -360]
 # JOINT_MAX_DEG = [ 360,    360,  360,   360,   360,   360]
+
+# ── Gripper / box geometry ────────────────────────────────────────────────────
+BOX_FORWARD_OFFSET = 0.17          # metres from TCP to box centre along gripper Z
+BOX_SIZE           = [0.0254, 0.20, 0.25]   # metres (X, Y, Z in pegboard frame)
 
 # ── Runtime defaults ──────────────────────────────────────────────────────────
 SIMULATION = True   # True → fixed joint angles; False → live RTDE

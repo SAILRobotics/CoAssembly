@@ -19,7 +19,6 @@ Usage
 
 import argparse
 import json
-import threading
 import time
 from pathlib import Path
 
@@ -119,8 +118,7 @@ class RobotControlServer:
             frax_gripper_collision  = gripper_collision,
         )
         if not simulation:
-            threading.Thread(target=self.robot.connect_gripper, daemon=True,
-                             name="gripper-preconnect").start()
+            self.robot.connect_gripper()
 
         # Base pose is only meaningful (and only published to Unity) once the
         # vision side has actually locked the world anchor and told us where
@@ -238,6 +236,7 @@ class RobotControlServer:
                     "move_tcp_done", rid, ok=bool(ok)))
 
         elif cmd == "execute_grasp":
+            self._track_target = None   # stop hand-tracking servoJ before grasp moveJ starts
             self.robot.execute_grasp(
                 msg["grasp_joints"],
                 category      = msg.get("category", "tool"),
@@ -252,14 +251,18 @@ class RobotControlServer:
             self.robot.cancel_motion()
 
         elif cmd == "open_gripper":
-            self.robot.open_gripper_async(
-                on_done=lambda rid=rid: self._publish_event(
-                    "gripper_done", rid, action="open"))
+            try:
+                self.robot.open_gripper()
+            except Exception as e:
+                print(f"[RobotServer] open_gripper error: {e}")
+            self._publish_event("gripper_done", rid, action="open")
 
         elif cmd == "close_gripper":
-            self.robot.close_gripper_async(
-                on_done=lambda rid=rid: self._publish_event(
-                    "gripper_done", rid, action="close"))
+            try:
+                self.robot.close_gripper()
+            except Exception as e:
+                print(f"[RobotServer] close_gripper error: {e}")
+            self._publish_event("gripper_done", rid, action="close")
 
         elif cmd == "servo_stop":
             self.robot.servoStop()
