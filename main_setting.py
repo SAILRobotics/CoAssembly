@@ -95,8 +95,10 @@ HANDOVER_RELEASE_THRESHOLD_N = 15.0  # N — pull force to release the tool at t
 # Applied to both PyBullet IK and the frax CBF safety filter.
 # Adjust to match your actual robot range / mounting pose.
 #            J1      J2     J3     J4      J5      J6
-JOINT_MIN_DEG = [-180.00, -90.00,  50,  -360,  -360,  -360]
-JOINT_MAX_DEG = [ -90.00, -20.00,  150,   360,   360,   360]
+JOINT_MIN_DEG  = [-180.00, -90.00,  50,  -360,  -360,  -360]
+JOINT_MAX_DEG  = [ -90.00, -20.00,  150,   360,   360,   360]
+#                   J1       J2      J3     J4     J5      J6
+JOINT_REST_DEG = [-116.76, -38.40, 101.14, -62.16, 95.94, -177.66]
 
 
 # JOINT_MIN_DEG = [-360.00, -360,  -360,  -360,  -360,  -360]

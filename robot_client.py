@@ -62,9 +62,8 @@ def _build_local_viz_scene(simulation: bool, use_calibrated_robot_base: bool,
             return None
         scene.build()
         scene.update_robot(sim_q)
-        # Same conservative limits as the server, so local scoring-only IK
-        # queries (handover voxel scoring) stay consistent with real motion.
         scene.set_joint_limits(cfg.JOINT_MIN_DEG, cfg.JOINT_MAX_DEG, degrees=True)
+        scene.set_rest_poses(cfg.JOINT_REST_DEG, degrees=True)
     except Exception as e:
         print(f"[RobotClient] Local viz pb_scene failed to build: {e}")
         return None
@@ -78,8 +77,7 @@ class RobotClient:
                  use_calibrated_robot_base: bool = cfg.USE_CALIBRATED_ROBOT_BASE_POSE,
                  host: str = "127.0.0.1",
                  cmd_port: int = cfg.ROBOT_CMD_PORT,
-                 event_port: int = cfg.ROBOT_EVENT_PORT,
-                 reachability_timeout: float = 5.0):
+                 event_port: int = cfg.ROBOT_EVENT_PORT):
         if not _PYBULLET_AVAILABLE:
             raise RuntimeError("pybullet_ik not available")
         self.simulation = simulation
@@ -89,11 +87,7 @@ class RobotClient:
         if self.pb_scene is None:
             raise RuntimeError("local visualization pb_scene failed to build")
 
-        self._reachability_timeout = reachability_timeout
         self._tool_grasp_running   = False
-        self._has_cbf              = False
-        self._collision_spheres    = (None, None)   # (positions Nx3, radii N), from server state
-        self._last_q_debug_t       = 0.0
 
         ctx = zmq.Context.instance()
         self._cmd_pub = ctx.socket(zmq.PUB)
@@ -117,32 +111,12 @@ class RobotClient:
         except Exception as e:
             print(f"[RobotClient] Send error: {e}")
 
-    def _new_request(self, on_done: "Callable | None") -> "int | None":
-        if on_done is None:
-            return None
-        rid = self._next_request_id
-        self._next_request_id += 1
-        self._callbacks[rid] = on_done
-        return rid
-
     def _handle_event(self, msg: dict) -> None:
         if msg.get("type") == "state":
             q = msg.get("q")
             if q is not None:
-                q_arr = np.array(q, dtype=float)
-                self.pb_scene.update_robot(q_arr)
-                # _now = time.time()
-                # if _now - self._last_q_debug_t >= 1.0:
-                #     self._last_q_debug_t = _now
-                #     print(f"[RobotClient] q(deg) = {np.round(np.degrees(q_arr), 1).tolist()}")
+                self.pb_scene.update_robot(np.array(q, dtype=float))
             self._tool_grasp_running = bool(msg.get("tool_grasp_running", False))
-            self._has_cbf = bool(msg.get("has_cbf", False))
-            cs  = msg.get("collision_spheres") or {}
-            pos = cs.get("positions")
-            rad = cs.get("radii")
-            self._collision_spheres = (
-                (np.array(pos, dtype=float), np.array(rad, dtype=float))
-                if pos is not None and rad is not None else (None, None))
             return
         if msg.get("type") != "event":
             return
@@ -186,16 +160,6 @@ class RobotClient:
         return self._tool_grasp_running
 
     @property
-    def has_cbf(self) -> bool:
-        """Whether the server's RobotController has a live frax CBF filter."""
-        return self._has_cbf
-
-    def collision_spheres(self):
-        """(positions Nx3, radii N) for the CBF collision model, computed
-        server-side and relayed via state broadcasts; (None, None) if no CBF."""
-        return self._collision_spheres
-
-    @property
     def q(self) -> "np.ndarray | None":
         """Latest joint angles (radians), kept in sync from state broadcasts."""
         return self.pb_scene.current_q
@@ -213,60 +177,17 @@ class RobotClient:
         except Exception:
             return None
 
-    def query_ik_joints(self, pos_world, quat_xyzw, seed_q=None) -> "np.ndarray | None":
-        """Scoring-only IK query (e.g. handover voxel joint-travel scoring).
-
-        Solved locally against the client's own PyBullet client — independent
-        physics state from the server's, so this never touches real hardware
-        or the safety-critical control loop; it's purely a same-limits
-        estimate used to rank candidate points.
-        """
-        import pybullet as p
-        pb = self.pb_scene
-        if seed_q is None:
-            seed_q = pb.current_q.copy()
-        try:
-            arm_q_map  = dict(zip(pb.arm_indices, seed_q))
-            rest_poses = [float(arm_q_map.get(j, 0.0)) for j in pb._movable]
-            joint_q = p.calculateInverseKinematics(
-                pb.robot_id, pb.tool0_link_idx,
-                list(pos_world), list(quat_xyzw),
-                lowerLimits=pb._lower_limits, upperLimits=pb._upper_limits,
-                jointRanges=pb._joint_ranges, restPoses=rest_poses,
-                maxNumIterations=200, residualThreshold=1e-5)
-            return np.array(joint_q[:len(pb.arm_indices)], dtype=np.float64)
-        except Exception as e:
-            print(f"[RobotClient] query_ik_joints failed: {e}")
-            return None
-
     # ── Scene origin ─────────────────────────────────────────────────────────
 
-    def set_scene_origin(self, T_world_marker10: np.ndarray) -> None:
+    def set_scene_origin(self, T_world_anchor: np.ndarray) -> None:
         """Update the local visualization scene immediately (no round-trip
         needed for rendering) and forward the same update to the
         authoritative hardware scene owned by the server."""
-        self.pb_scene.set_scene_origin(T_world_marker10)
+        self.pb_scene.set_scene_origin(T_world_anchor)
         self._send({"cmd": "set_scene_origin",
-                    "T": np.asarray(T_world_marker10, dtype=float).flatten().tolist()})
+                    "T": np.asarray(T_world_anchor, dtype=float).flatten().tolist()})
 
     # ── Motion commands ──────────────────────────────────────────────────────
-
-    def track_hand(self, target_pos, target_quat) -> None:
-        self._send({"cmd": "track_hand",
-                    "target_pos":  [float(v) for v in target_pos],
-                    "target_quat": [float(v) for v in target_quat]})
-
-    def track_hand_stop(self) -> None:
-        self._send({"cmd": "track_hand_stop"})
-
-    def move_tcp(self, pos, quat,
-                 on_complete: "Callable[[bool], None] | None" = None) -> None:
-        rid = self._new_request(
-            (lambda msg: on_complete(bool(msg.get("ok", False)))) if on_complete else None)
-        self._send({"cmd": "move_tcp",
-                    "pos":  [float(v) for v in pos],
-                    "quat": [float(v) for v in quat],
-                    "request_id": rid})
 
     def execute_grasp(self, grasp_joints, on_complete: "Callable[[bool], None] | None" = None,
                       on_phase: "Callable[[str], None] | None" = None,
@@ -291,67 +212,9 @@ class RobotClient:
     def cancel_motion(self) -> None:
         self._send({"cmd": "cancel"})
 
-    def servoStop(self) -> None:
-        self._send({"cmd": "servo_stop"})
-
-    # ── Gripper ──────────────────────────────────────────────────────────────
-
-    def open_gripper_async(self, on_done: "Callable | None" = None) -> None:
-        rid = self._new_request((lambda msg: on_done()) if on_done else None)
-        self._send({"cmd": "open_gripper", "request_id": rid})
-
-    def close_gripper_async(self, on_done: "Callable | None" = None) -> None:
-        rid = self._new_request((lambda msg: on_done()) if on_done else None)
-        self._send({"cmd": "close_gripper", "request_id": rid})
-
-    # ── Force monitor ────────────────────────────────────────────────────────
-
-    def start_force_monitor(self, mode: str, on_trigger: "Callable",
-                            threshold: "float | None" = None) -> None:
-        rid = self._new_request(lambda msg: on_trigger())
-        self._send({"cmd": "start_force_monitor", "mode": mode,
-                    "threshold": threshold, "request_id": rid})
-
-    def stop_force_monitor(self) -> None:
-        self._send({"cmd": "stop_force_monitor"})
-
-    # ── Reachability (blocking request/response — rare, user-triggered) ────────
-
-    def check_reachability(self, T_pegboard_world: np.ndarray, target_quat_xyzw=None):
-        """Blocks (up to `reachability_timeout`) for the server's result,
-        mirroring the previous direct/blocking pb_scene call so the 'R'-key
-        handler in main_with_robot.py needs no restructuring.
-
-        Returns (n_reachable, n_total, points_world Nx3, reachable_flags N bool).
-        """
-        rid = self._next_request_id
-        self._next_request_id += 1
-        self._send({
-            "cmd":               "check_reachability",
-            "T_pegboard_world":  np.asarray(T_pegboard_world, dtype=float).flatten().tolist(),
-            "target_quat_xyzw":  (np.asarray(target_quat_xyzw, dtype=float).tolist()
-                                  if target_quat_xyzw is not None else None),
-            "request_id":        rid,
-        })
-        deadline = time.time() + self._reachability_timeout
-        while time.time() < deadline:
-            try:
-                raw = self._event_sub.recv_string(flags=zmq.NOBLOCK)
-            except zmq.Again:
-                time.sleep(0.005)
-                continue
-            try:
-                msg = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-            if (msg.get("type") == "event" and msg.get("name") == "reachability_result"
-                    and msg.get("request_id") == rid):
-                return (msg["n_reachable"], msg["n_total"],
-                        np.array(msg["points"], dtype=np.float64),
-                        np.array(msg["flags"], dtype=bool))
-            self._handle_event(msg)   # don't drop state/other events while waiting
-        print("[RobotClient] check_reachability timed out.")
-        return (0, 0, np.zeros((0, 3)), np.zeros(0, dtype=bool))
+    def cancel_grasp(self) -> None:
+        """Cancel mid-grasp and retract to approach position."""
+        self._send({"cmd": "cancel_grasp"})
 
     def close(self) -> None:
         try:

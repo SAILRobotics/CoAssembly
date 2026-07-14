@@ -1,15 +1,17 @@
 """robot_control_server.py — Dedicated process owning the UR10e hardware link.
 
-Runs the robot's real-time control loop (RTDE servoJ streaming, the frax CBF
-safety filter, gripper actuation, force-triggered contact/release detection)
-on its own fixed-rate timer (cfg.ROBOT_CONTROL_HZ), independent of
-main_with_robot.py's vision-loop rate. Owns the single RTDE connection, the
-single gripper connection, and the PyBullet IK scene used for real IK/FK —
-none of that is touched from any other process.
+Merged from the former robot_control_server.py (ZMQ loop) and
+robot_controller.py (hardware abstraction). Handles only what is needed for
+tool grasping:
+  - PyBullet scene (IK + sim grasp animation)
+  - RTDE receive / control (real robot only)
+  - Gripper actuation (real robot only)
+  - Grasp sequence: approach → grasp → retract (sim + real)
+  - Unity publishing: base pose + joint angles
 
 Talks to main_with_robot.py (via robot_client.RobotClient) over ZMQ:
-    SUB cfg.ROBOT_CMD_PORT   (bind) — commands in, one JSON dict per message
-    PUB cfg.ROBOT_EVENT_PORT (bind) — periodic state + one-shot events out
+    SUB cfg.ROBOT_CMD_PORT   (bind) — commands in
+    PUB cfg.ROBOT_EVENT_PORT (bind) — state + events out
 
 Usage
 -----
@@ -17,13 +19,17 @@ Usage
     python robot_control_server.py --robot-ip 192.168.50.70 --no-simulation
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import time
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 import zmq
+from scipy.spatial.transform import Rotation as ScipyR
 
 try:
     from pybullet_ik import IKScene as PyBulletScene
@@ -32,22 +38,73 @@ except ImportError:
     _PYBULLET_AVAILABLE = False
     print("[robot_control_server] pybullet_ik import failed — cannot run.")
 
-from robot_controller import RobotController
+try:
+    from rtde_receive import RTDEReceiveInterface
+    from rtde_control import RTDEControlInterface
+    _RTDE_AVAILABLE = True
+except ImportError:
+    RTDEReceiveInterface = None   # type: ignore[assignment,misc]
+    RTDEControlInterface = None   # type: ignore[assignment,misc]
+    _RTDE_AVAILABLE = False
+
+try:
+    from robot_controller.robotiq_gripper import RobotiqGripper
+    _GRIPPER_AVAILABLE = True
+except ImportError:
+    RobotiqGripper = None         # type: ignore[assignment,misc]
+    _GRIPPER_AVAILABLE = False
+
+try:
+    from utils.unity_conversion import open3d_to_unity_vector, open3d_to_unity_quaternion
+except ImportError:
+    def open3d_to_unity_vector(v):       # type: ignore[misc]
+        return np.array([v[0], v[2], v[1]], dtype=float)
+    def open3d_to_unity_quaternion(q):   # type: ignore[misc]
+        return np.array([q[0], q[2], q[1], -q[3]], dtype=float)
 
 import main_setting as cfg
 
 _FILE_DIR = Path(__file__).resolve().parent
 
-# Mirrors MainScene._SIM_Q_DEG in main_with_robot.py — the resting pose the
-# arm is shown/initialised at before any real tracking/grasp is commanded.
 _SIM_Q_DEG = [-105.97, -29.43, 87.53, 33.17, 92.40, 168.95]
 
 
+# ── Simulation waypoint runner ────────────────────────────────────────────────
+
+class _PbJointRunner:
+    """Linear joint interpolation over time — sim equivalent of moveJ."""
+    _DURATION_S = 3.0
+
+    def __init__(self, start_q: np.ndarray, target_q: np.ndarray):
+        self.start_q  = np.asarray(start_q, dtype=float)
+        self.target_q = np.asarray(target_q, dtype=float)
+        self._elapsed = 0.0
+        self.done     = False
+
+    def update(self, robot_id: int, arm_indices: list, dt: float) -> None:
+        if self.done:
+            return
+        import pybullet as p
+        self._elapsed += dt
+        t = min(self._elapsed / self._DURATION_S, 1.0)
+        q = self.start_q + t * (self.target_q - self.start_q)
+        for j_idx, q_j in zip(arm_indices, q):
+            p.resetJointState(robot_id, j_idx, float(q_j))
+        if t >= 1.0:
+            self.done = True
+
+
+def _wrap_nearest(q_target: np.ndarray, q_ref: np.ndarray) -> np.ndarray:
+    """Shift q_target by ±n·2π per joint to minimise travel from q_ref."""
+    TWO_PI = 2.0 * np.pi
+    q = q_target - TWO_PI * np.round((q_target - q_ref) / TWO_PI)
+    q = np.where(q < -TWO_PI, q + TWO_PI, q)
+    q = np.where(q >  TWO_PI, q - TWO_PI, q)
+    return q
+
+
 def _build_pb_scene(simulation: bool, use_calibrated_robot_base: bool,
-                     sim_q: np.ndarray) -> "PyBulletScene | None":
-    """Mirrors MainScene's pb_scene construction (main_with_robot.py) exactly,
-    so the server's robot pose/behaviour matches what main_with_robot.py used
-    to build in-process."""
+                    sim_q: np.ndarray) -> "PyBulletScene | None":
     calib_dir = _FILE_DIR / "calibration_data" / "results"
     scene: "PyBulletScene | None" = None
     if simulation:
@@ -57,21 +114,19 @@ def _build_pb_scene(simulation: bool, use_calibrated_robot_base: bool,
                 scene = PyBulletScene(T_world_base=p1["T_world_base"])
                 scene.build()
                 scene.update_robot(sim_q)
-                print("[RobotServer] Simulation + calibrated base pose (headless).")
+                print("[RobotServer] Simulation + calibrated base pose.")
             except Exception as e:
                 print(f"[RobotServer] PyBullet (calibrated) failed: {e}")
-                scene = None
         else:
-            T_world_base_sim = np.eye(4, dtype=float)
-            T_world_base_sim[:3, 3] = [-0.4, -0.8, 0.4]
+            T = np.eye(4, dtype=float)
+            T[:3, 3] = [-0.4, -0.8, 0.4]
             try:
-                scene = PyBulletScene(T_world_base=T_world_base_sim)
+                scene = PyBulletScene(T_world_base=T)
                 scene.build()
                 scene.update_robot(sim_q)
-                print("[RobotServer] Simulation — hardcoded base pose (headless).")
+                print("[RobotServer] Simulation — hardcoded base pose.")
             except Exception as e:
-                print(f"[RobotServer] PyBullet scene failed to build: {e}")
-                scene = None
+                print(f"[RobotServer] PyBullet scene failed: {e}")
     else:
         if calib_dir.exists():
             try:
@@ -79,61 +134,71 @@ def _build_pb_scene(simulation: bool, use_calibrated_robot_base: bool,
                 scene.build()
                 scene.update_robot(sim_q)
             except Exception as e:
-                print(f"[RobotServer] PyBullet scene failed to build: {e}")
-                scene = None
+                print(f"[RobotServer] PyBullet scene failed: {e}")
         else:
             print(f"[RobotServer] Calibration dir not found: {calib_dir}")
     return scene
 
 
+# ── Main server class (merged controller + ZMQ loop) ─────────────────────────
+
 class RobotControlServer:
-    _STATE_INTERVAL = 1.0 / 30.0   # Hz — state broadcast rate (independent of control Hz)
-    _Q_DEBUG_INTERVAL = 1.0        # seconds between "[RobotServer] q(deg)" debug prints
+    _STATE_INTERVAL          = 1.0 / 30.0
+    _BASE_YAW_CORRECTION_DEG = -90.0
 
     def __init__(self, quest_ip: str, robot_ip: "str | None", simulation: bool,
                  use_calibrated_robot_base: bool, gripper_collision: bool):
-        self._sim_q = np.deg2rad(_SIM_Q_DEG)
-        self._last_q_debug_t = 0.0
-        # Real hardware runs slower for now (safety while testing) — separate
-        # loop Hz and a blanket speed/accel multiplier. Sim is unaffected.
-        self.control_hz = cfg.ROBOT_CONTROL_HZ if simulation else cfg.ROBOT_CONTROL_HZ_REAL
+        self.simulation   = simulation
+        self._robot_ip    = robot_ip
+        self.control_hz   = cfg.ROBOT_CONTROL_HZ if simulation else cfg.ROBOT_CONTROL_HZ_REAL
 
-        self.pb_scene = _build_pb_scene(simulation, use_calibrated_robot_base, self._sim_q)
+        sim_q = np.deg2rad(_SIM_Q_DEG)
+        self.pb_scene = _build_pb_scene(simulation, use_calibrated_robot_base, sim_q)
         if self.pb_scene is None:
             raise RuntimeError("[RobotServer] pb_scene failed to build — cannot run.")
         self.pb_scene.set_joint_limits(cfg.JOINT_MIN_DEG, cfg.JOINT_MAX_DEG, degrees=True)
+        self.pb_scene.set_rest_poses(cfg.JOINT_REST_DEG, degrees=True)
 
-        urdf = cfg.SCENE_LAYOUT_DIR.parent / "robot_assets" / "ur10e.urdf"
-        self.robot = RobotController(
-            unity_ip               = quest_ip,
-            pb_scene               = self.pb_scene,
-            T_world_base           = self.pb_scene.T_world_base,
-            robot_ip               = robot_ip if not simulation else None,
-            speed_scale             = 1.0 if simulation else cfg.REAL_ROBOT_SPEED_SCALE,
-            urdf_path               = str(urdf) if urdf.exists() else None,
-            frax_q_min              = list(np.deg2rad(cfg.JOINT_MIN_DEG)),
-            frax_q_max              = list(np.deg2rad(cfg.JOINT_MAX_DEG)),
-            frax_ws_lo               = cfg.WORKSPACE_LO,
-            frax_ws_hi               = cfg.WORKSPACE_HI,
-            frax_gripper_collision  = gripper_collision,
-        )
-        if not simulation:
-            self.robot.connect_gripper()
+        self._T_world_base  = np.array(self.pb_scene.T_world_base, dtype=float)
+        self._approach_dist = 0.30
+        speed_scale         = 1.0 if simulation else cfg.REAL_ROBOT_SPEED_SCALE
+        self._speed_scale   = float(speed_scale)
+        self._last_q: "np.ndarray | None" = None
 
-        # Base pose is only meaningful (and only published to Unity) once the
-        # vision side has actually locked the world anchor and told us where
-        # it is via set_scene_origin — mirrors the old main_with_robot.py
-        # behavior of gating publish_base on `self.anchor.locked`. Publishing
-        # unconditionally from server startup sent a stale/premature base
-        # pose into an unlocked WorldRoot, which looked like the robot mesh
-        # jumping/swimming around before the anchor lock settled.
+        # Real-robot hardware (lazy connections)
+        self._recv:      "RTDEReceiveInterface | None" = None
+        self._rtde_ctrl: "RTDEControlInterface | None" = None
+        self._gripper:   "RobotiqGripper | None"       = None
+        self._in_servo   = False
+
+        # Grasp state machine (shared by sim and real)
+        self._grasp_phase:        "str | None"        = None
+        self._grasp_on_complete:  "Callable | None"   = None
+        self._grasp_on_phase:     "Callable | None"   = None
+        self._grasp_joints: "np.ndarray | None" = None
+        self._grasp_q_approach:   "np.ndarray | None" = None
+        self._grasp_q_above:      "np.ndarray | None" = None
+        self._grasp_runner       = None          # sim only: _PbJointRunner
+        self._grasp_move_sent:    bool           = False   # real only: async moveJ sent
+        self._grasp_settle_start: "float | None" = None    # real only: close+settle timer
+        self._grasp_ok:             bool           = False   # real only: object detected
+        self._grasp_cancel_pending: bool           = False   # cancel in progress; all phases
+
+        # Gate publish_base until vision side has locked the anchor and called set_scene_origin
         self._scene_origin_set = False
 
-        # Latest hand-tracking target; server keeps stepping toward it every
-        # loop iteration until a track_hand_stop / cancel command clears it.
-        self._track_target: "tuple | None" = None
+        if not simulation:
+            self.connect_gripper()
 
         ctx = zmq.Context.instance()
+
+        # Unity publishers
+        self._base_pub  = ctx.socket(zmq.PUB)
+        self._base_pub.connect(f"tcp://{quest_ip}:{cfg.ROBOT_BASE_PORT}")
+        self._joint_pub = ctx.socket(zmq.PUB)
+        self._joint_pub.connect(f"tcp://{quest_ip}:{cfg.ROBOT_JOINT_PORT}")
+
+        # main_with_robot.py ↔ server
         self._cmd_sub = ctx.socket(zmq.SUB)
         self._cmd_sub.setsockopt_string(zmq.SUBSCRIBE, "")
         self._cmd_sub.bind(f"tcp://127.0.0.1:{cfg.ROBOT_CMD_PORT}")
@@ -143,8 +208,7 @@ class RobotControlServer:
 
         self._running = True
         print(f"[RobotServer] Ready — {'simulation' if simulation else f'live ({robot_ip})'}, "
-              f"cmd:{cfg.ROBOT_CMD_PORT} event:{cfg.ROBOT_EVENT_PORT} "
-              f"@ {self.control_hz} Hz"
+              f"cmd:{cfg.ROBOT_CMD_PORT} event:{cfg.ROBOT_EVENT_PORT} @ {self.control_hz} Hz"
               + ("" if simulation else f"  (speed_scale={cfg.REAL_ROBOT_SPEED_SCALE})"))
 
     # ── ZMQ I/O ──────────────────────────────────────────────────────────────
@@ -159,40 +223,14 @@ class RobotControlServer:
         self._publish({"type": "event", "name": name, "request_id": request_id, **kw})
 
     def _publish_state(self) -> None:
-        # pb_scene.current_q mirrors reality in both modes: sim writes it
-        # directly, real hardware is synced into it via poll_q() each
-        # iteration in run() below — matches main_with_robot.py's prior
-        # `self.robot.publish_joints(self.pb_scene.current_q)` usage.
         q = self.pb_scene.current_q
-        self.robot.publish_joints(q)
+        self.publish_joints(q)
         if self._scene_origin_set:
-            self.robot.publish_base(self.pb_scene.T_world_base)
-
-        # _now = time.time()
-        # if _now - self._last_q_debug_t >= self._Q_DEBUG_INTERVAL:
-        #     self._last_q_debug_t = _now
-        #     print(f"[RobotServer] q(deg) = "
-        #           f"{np.round(np.degrees(q), 1).tolist()}  "
-        #           f"track_target={'set' if self._track_target is not None else 'None'}  "
-        #           f"sim_phase={self.robot._sim_phase!r}")
-
-        frax = self.robot._frax
-        positions = radii = None
-        if frax is not None:
-            try:
-                positions, radii = frax.link_spheres_world(q)
-            except Exception as e:
-                print(f"[RobotServer] link_spheres_world failed: {e}")
-
+            self.publish_base(self.pb_scene.T_world_base)
         self._publish({
             "type":               "state",
             "q":                  q.tolist(),
-            "tool_grasp_running": bool(self.robot.tool_grasp_running),
-            "has_cbf":            frax is not None,
-            "collision_spheres": {
-                "positions": positions.tolist() if positions is not None else None,
-                "radii":     radii.tolist()     if radii     is not None else None,
-            },
+            "tool_grasp_running": bool(self.tool_grasp_running),
         })
 
     def _poll_commands(self) -> None:
@@ -211,8 +249,6 @@ class RobotControlServer:
             except Exception as e:
                 print(f"[RobotServer] Command '{msg.get('cmd')}' failed: {e}")
 
-    # ── Command dispatch ─────────────────────────────────────────────────────
-
     def _handle_cmd(self, msg: dict) -> None:
         cmd = msg.get("cmd")
         rid = msg.get("request_id")
@@ -220,82 +256,29 @@ class RobotControlServer:
         if cmd == "set_scene_origin":
             T = np.array(msg["T"], dtype=float).reshape(4, 4)
             self.pb_scene.set_scene_origin(T)
+            self._T_world_base = np.array(self.pb_scene.T_world_base, dtype=float)
             self._scene_origin_set = True
-            self.robot.publish_base(self.pb_scene.T_world_base)
-
-        elif cmd == "track_hand":
-            self._track_target = (msg["target_pos"], msg["target_quat"])
-
-        elif cmd == "track_hand_stop":
-            self._track_target = None
-
-        elif cmd == "move_tcp":
-            self.robot.move_tcp(
-                msg["pos"], msg["quat"],
-                on_complete=lambda ok, rid=rid: self._publish_event(
-                    "move_tcp_done", rid, ok=bool(ok)))
+            self.publish_base(self.pb_scene.T_world_base)
 
         elif cmd == "execute_grasp":
-            self._track_target = None   # stop hand-tracking servoJ before grasp moveJ starts
-            self.robot.execute_grasp(
+            self.execute_grasp(
                 msg["grasp_joints"],
-                category      = msg.get("category", "tool"),
-                board_normal  = msg.get("board_normal"),
-                on_complete   = lambda ok, rid=rid: self._publish_event(
+                category     = msg.get("category", "tool"),
+                board_normal = msg.get("board_normal"),
+                on_complete  = lambda ok, rid=rid: self._publish_event(
                     "grasp_done", rid, ok=bool(ok)),
-                on_phase      = lambda phase, rid=rid: self._publish_event(
+                on_phase     = lambda phase, rid=rid: self._publish_event(
                     "grasp_phase", rid, phase=phase))
 
         elif cmd == "cancel":
-            self._track_target = None
-            self.robot.cancel_motion()
-
-        elif cmd == "open_gripper":
-            try:
-                self.robot.open_gripper()
-            except Exception as e:
-                print(f"[RobotServer] open_gripper error: {e}")
-            self._publish_event("gripper_done", rid, action="open")
-
-        elif cmd == "close_gripper":
-            try:
-                self.robot.close_gripper()
-            except Exception as e:
-                print(f"[RobotServer] close_gripper error: {e}")
-            self._publish_event("gripper_done", rid, action="close")
-
-        elif cmd == "servo_stop":
-            self.robot.servoStop()
-
-        elif cmd == "start_force_monitor":
-            mode      = msg["mode"]
-            threshold = msg.get("threshold")
-            self.robot.start_force_monitor(
-                mode,
-                lambda rid=rid, mode=mode: self._publish_event(
-                    "force_triggered", rid, mode=mode),
-                threshold=threshold)
-
-        elif cmd == "stop_force_monitor":
-            self.robot.stop_force_monitor()
-
-        elif cmd == "check_reachability":
-            # User-triggered ('R' key), rare — run inline (blocks the control
-            # loop briefly, same as it did in-process before this refactor).
-            T = np.array(msg["T_pegboard_world"], dtype=float).reshape(4, 4)
-            quat = msg.get("target_quat_xyzw")
-            quat = np.array(quat, dtype=float) if quat is not None else None
-            n_reach, n_total, pts, flags = self.pb_scene.check_reachability(
-                T, target_quat_xyzw=quat)
-            self._publish_event(
-                "reachability_result", rid,
-                n_reachable=n_reach, n_total=n_total,
-                points=pts.tolist(), flags=flags.tolist())
+            self.cancel_motion()
+        elif cmd == "cancel_grasp":
+            self.cancel_grasp()
 
         else:
             print(f"[RobotServer] Unknown command: {cmd!r}")
 
-    # ── Main loop ────────────────────────────────────────────────────────────
+    # ── Main loop ─────────────────────────────────────────────────────────────
 
     def run(self) -> None:
         target_dt      = 1.0 / self.control_hz
@@ -310,32 +293,630 @@ class RobotControlServer:
 
                 self._poll_commands()
 
-                if not self.robot.simulation:
-                    q_fresh = self.robot.poll_q()
+                if not self.simulation:
+                    q_fresh = self.poll_q()
                     if q_fresh is not None:
                         self.pb_scene.update_robot(q_fresh)
 
-                if self._track_target is not None:
-                    pos, quat = self._track_target
-                    self.robot.step_hand_track(pos, quat, dt)
-                else:
-                    self.robot.tick(dt)
+                self.tick(dt)
 
                 now = time.time()
                 if now - last_state_pub >= self._STATE_INTERVAL:
                     self._publish_state()
                     last_state_pub = now
 
-                elapsed = time.perf_counter() - iter_t0
+                elapsed    = time.perf_counter() - iter_t0
                 sleep_left = target_dt - elapsed
                 if sleep_left > 0:
                     time.sleep(sleep_left)
         except KeyboardInterrupt:
             pass
         finally:
-            self.robot.close()
+            self.close()
             self.pb_scene.disconnect()
             print("[RobotServer] Shutting down.")
+
+    # ── Grasp state (property + tick) ─────────────────────────────────────────
+
+    @property
+    def tool_grasp_running(self) -> bool:
+        return self._grasp_phase is not None
+
+    def tick(self, dt: float = 1.0 / 60.0) -> None:
+        if not self.simulation:
+            if self._grasp_phase is not None:
+                self._tick_real_grasp(dt)
+            return
+        if self._grasp_runner is None:
+            return
+        if not self._grasp_runner.done:
+            self._grasp_runner.update(self.pb_scene.robot_id,
+                                    self.pb_scene.arm_indices, dt)
+            return
+        cq = self.pb_scene.current_q.copy()
+        if self._grasp_phase == 'approach':
+            if self._grasp_q_above is not None:
+                self._grasp_runner = _PbJointRunner(cq, self._grasp_q_above)
+                self._grasp_phase  = 'above'
+                print("[Robot sim] At approach → moveJ to above")
+            else:
+                self._grasp_runner = _PbJointRunner(cq, self._grasp_joints)
+                self._grasp_phase  = 'grasp'
+                print("[Robot sim] At approach → moveJ to grasp")
+                self._fire_phase(self._grasp_on_phase, "grasping")
+        elif self._grasp_phase == 'above':
+            self._grasp_runner = _PbJointRunner(cq, self._grasp_joints)
+            self._grasp_phase  = 'grasp'
+            print("[Robot sim] At above → moveJ to grasp")
+            self._fire_phase(self._grasp_on_phase, "grasping")
+        elif self._grasp_phase == 'grasp':
+            self._fire_phase(self._grasp_on_phase, "grasped")
+            if self._grasp_q_above is not None:
+                self._grasp_runner = _PbJointRunner(cq, self._grasp_q_above)
+                self._grasp_phase  = 'ret_above'
+                print("[Robot sim] Grasp done → lifting to above")
+                self._fire_phase(self._grasp_on_phase, "retracting")
+            elif self._grasp_q_approach is not None:
+                self._grasp_runner = _PbJointRunner(cq, self._grasp_q_approach)
+                self._grasp_phase  = 'retract'
+                print("[Robot sim] Grasp done → retracting to approach")
+                self._fire_phase(self._grasp_on_phase, "retracting")
+            else:
+                self._finish_grasp(True)
+        elif self._grasp_phase == 'ret_above':
+            self._grasp_runner = _PbJointRunner(cq, self._grasp_q_approach)
+            self._grasp_phase  = 'retract'
+            print("[Robot sim] At above → retracting to approach")
+        else:
+            self._finish_grasp(True)
+
+    def _finish_grasp(self, success: bool) -> None:
+        cb = self._grasp_on_complete
+        self._grasp_runner       = None
+        self._grasp_phase        = None
+        self._grasp_on_complete  = None
+        self._grasp_joints = None
+        self._grasp_q_approach   = None
+        self._grasp_q_above      = None
+        if cb is not None:
+            try:
+                cb(success)
+            except Exception:
+                pass
+
+    # ── Grasp command ─────────────────────────────────────────────────────────
+
+    def execute_grasp(
+        self,
+        grasp_joints: "list | np.ndarray",
+        on_complete:  "Callable[[bool], None] | None" = None,
+        on_phase:     "Callable[[str], None] | None"  = None,
+        q_approach:   "list | np.ndarray | None"      = None,
+        q_above:      "list | np.ndarray | None"      = None,
+        category:     str                              = "tool",
+        board_normal: "list | np.ndarray | None"      = None,
+    ) -> None:
+        if self.tool_grasp_running:
+            print("[Robot] Grasp already running — cancel first.")
+            return
+
+        # Auto-compute approach waypoint from board_normal when not pre-supplied
+        if board_normal is not None and q_approach is None and self.pb_scene is not None:
+            gj_arr  = np.array(grasp_joints, dtype=float)
+            is_part = (category == "part")
+            saved_q = self.pb_scene.current_q.copy()
+            bn      = np.array(board_normal, float)
+            bn     /= (np.linalg.norm(bn) + 1e-9)
+            try:
+                self.pb_scene.update_robot(gj_arr)
+                grasp_T = self.pb_scene.update_tcp_bodies()
+            finally:
+                self.pb_scene.update_robot(saved_q)
+            if grasp_T is not None:
+                tcp_pos  = grasp_T[:3, 3]
+                tcp_quat = ScipyR.from_matrix(grasp_T[:3, :3]).as_quat().tolist()
+                if is_part:
+                    pos_above    = tcp_pos + np.array([0., 0., 0.05])
+                    pos_approach = pos_above + self._approach_dist * bn
+                else:
+                    pos_approach = tcp_pos + self._approach_dist * bn
+                q_approach = _wrap_nearest(
+                    self.solve_ik_from_config(gj_arr, pos_approach, tcp_quat), saved_q)
+                if is_part:
+                    q_above = _wrap_nearest(
+                        self.solve_ik_from_config(gj_arr, pos_above, tcp_quat), q_approach)
+                    grasp_joints = _wrap_nearest(gj_arr, q_above)
+                else:
+                    grasp_joints = _wrap_nearest(gj_arr, q_approach)
+
+        if self.simulation:
+            self._grasp_on_complete  = on_complete
+            self._grasp_on_phase     = on_phase
+            self._grasp_joints = np.array(grasp_joints, dtype=float)
+            self._grasp_q_approach   = (np.array(q_approach, dtype=float)
+                                      if q_approach is not None else None)
+            self._grasp_q_above      = (np.array(q_above, dtype=float)
+                                      if q_above is not None else None)
+            if self._grasp_q_approach is not None:
+                self._grasp_runner = _PbJointRunner(
+                    self.pb_scene.current_q.copy(), self._grasp_q_approach)
+                self._grasp_phase  = 'approach'
+                print("[Robot sim] moveJ → approach")
+                self._fire_phase(on_phase, "approaching")
+            else:
+                self._grasp_runner = _PbJointRunner(
+                    self.pb_scene.current_q.copy(), self._grasp_joints)
+                self._grasp_phase  = 'grasp'
+                print("[Robot sim] moveJ → grasp_joints")
+                self._fire_phase(on_phase, "grasping")
+        else:
+            if not _RTDE_AVAILABLE:
+                print("[Robot] rtde_control not installed.")
+                if on_complete:
+                    on_complete(False)
+                return
+            self.servoStop()
+            self._grasp_phase         = None
+            self._grasp_joints = np.array(grasp_joints, dtype=float)
+            self._grasp_q_approach   = (np.array(q_approach, dtype=float)
+                                       if q_approach is not None else None)
+            self._grasp_q_above      = (np.array(q_above, dtype=float)
+                                       if q_above is not None else None)
+            self._grasp_on_complete  = on_complete
+            self._grasp_on_phase     = on_phase
+            self._grasp_move_sent    = False
+            self._grasp_settle_start = None
+            self._grasp_phase         = 'open_pre'
+            print("[Robot] Starting real grasp state machine")
+
+    def cancel_grasp(self) -> None:
+        """Cancel at any grasp phase. Action depends on how far along the grasp is:
+        - open_pre/approach/above: stop and retract immediately (gripper stays open)
+        - grasp: reach position first, then close+open+retract
+        - close/settle: let settle finish, then open gripper and retract
+        - ret_above/retract: stop, go back to board, open gripper, re-retract
+        - open_post/put_back/put_back_open: already releasing — ignore
+        """
+        phase = self._grasp_phase
+        if phase is None:
+            return
+        if self._grasp_cancel_pending:
+            print(f"[Robot] Cancel already in progress (phase='{phase}')")
+            return
+        if phase in ('open_post', 'put_back', 'put_back_open'):
+            print(f"[Robot] Cancel ignored — already releasing tool (phase='{phase}')")
+            return
+
+        self._grasp_cancel_pending = True
+
+        if self.simulation:
+            self._finish_grasp(False)
+            return
+
+        if phase == 'grasp':
+            print("[Robot] Cancel queued — will close+open gripper then retract")
+            return
+
+        if phase in ('close', 'settle'):
+            print("[Robot] Cancel queued — will open gripper then retract")
+            return
+
+        if phase in ('open_pre', 'approach', 'above'):
+            if self._grasp_move_sent:
+                try:
+                    self._rtde_ctrl_conn().stopJ(2.0)
+                except Exception as e:
+                    print(f"[Robot] cancel_grasp stopJ failed: {e}")
+                self._grasp_move_sent = False
+            if self._grasp_q_above is not None:
+                self._grasp_phase = 'ret_above'
+            elif self._grasp_q_approach is not None:
+                self._grasp_phase = 'retract'
+            else:
+                self._grasp_cancel_pending = False
+                self.cancel_motion()
+                return
+            self._fire_phase(self._grasp_on_phase, "retracting")
+            print("[Robot] Grasp cancelled — retracting")
+            return
+
+        if phase in ('ret_above', 'retract'):
+            if self._grasp_move_sent:
+                try:
+                    self._rtde_ctrl_conn().stopJ(2.0)
+                except Exception as e:
+                    print(f"[Robot] cancel_grasp stopJ failed: {e}")
+                self._grasp_move_sent = False
+            self._grasp_phase = 'put_back'
+            print("[Robot] Grasp cancelled — returning tool to board")
+
+    def cancel_motion(self) -> None:
+        phase              = self._grasp_phase
+        cb                 = self._grasp_on_complete
+        self._grasp_phase          = None
+        self._grasp_on_complete    = None
+        self._grasp_on_phase       = None
+        self._grasp_runner         = None
+        self._grasp_joints         = None
+        self._grasp_q_approach     = None
+        self._grasp_q_above        = None
+        self._grasp_cancel_pending = False
+        if not self.simulation:
+            if phase is not None and self._grasp_move_sent:
+                try:
+                    self._rtde_ctrl_conn().stopJ(2.0)
+                except Exception as e:
+                    print(f"[Robot] cancel stopJ failed: {e}")
+            else:
+                self.servoStop()
+        if cb is not None:
+            try:
+                cb(False)
+            except Exception:
+                pass
+
+    @staticmethod
+    def _fire_phase(on_phase: "Callable[[str], None] | None", name: str) -> None:
+        if on_phase is None:
+            return
+        try:
+            on_phase(name)
+        except Exception as e:
+            print(f"[Robot] on_phase callback error: {e}")
+
+    # ── IK solving ────────────────────────────────────────────────────────────
+
+    def solve_ik_from_config(self, start_q: np.ndarray,
+                             target_pos, target_quat_xyzw,
+                             n_steps: int = 20) -> np.ndarray:
+        """IK that walks incrementally from start_q to avoid wrist flips."""
+        import pybullet as p
+        pb      = self.pb_scene
+        saved_q = pb.current_q.copy()
+        try:
+            pb.update_robot(start_q)
+            T0 = pb.update_tcp_bodies()
+            if T0 is None:
+                raise RuntimeError("FK failed at start_q.")
+            start_pos  = T0[:3, 3].copy()
+            target_pos = np.asarray(target_pos, float)
+            tgt_quat   = list(target_quat_xyzw)
+            q = np.array(start_q, float)
+            for step in range(n_steps):
+                alpha      = (step + 1) / n_steps
+                interp_pos = ((1.0 - alpha) * start_pos + alpha * target_pos).tolist()
+                arm_q_map  = dict(zip(pb.arm_indices, q))
+                rest_poses = [float(arm_q_map.get(j, 0.0)) for j in pb._movable]
+                joint_q    = p.calculateInverseKinematics(
+                    pb.robot_id, pb.tool0_link_idx,
+                    interp_pos, tgt_quat,
+                    lowerLimits=pb._lower_limits, upperLimits=pb._upper_limits,
+                    jointRanges=pb._joint_ranges, restPoses=rest_poses,
+                    maxNumIterations=200, residualThreshold=1e-5)
+                q = np.array(joint_q[:len(pb.arm_indices)], dtype=float)
+            return q
+        finally:
+            pb.update_robot(saved_q)
+
+    # ── Joint state ───────────────────────────────────────────────────────────
+
+    def poll_q(self) -> "np.ndarray | None":
+        if self.simulation:
+            q = self.pb_scene.current_q.copy()
+            self._last_q = q
+            return q
+        try:
+            q = np.array(self._recv_conn().getActualQ(), dtype=float)
+            self._last_q = q
+            return q
+        except Exception as e:
+            print(f"[Robot] poll_q failed: {e}")
+            return None
+
+    # ── Low-level control (real robot) ────────────────────────────────────────
+
+    def servoJ(self, q: np.ndarray, dt: float,
+               speed: float = 1.0, accel: float = 1.0,
+               lookahead: float = 0.15, gain: int = 300) -> None:
+        t  = max(min(float(dt),        0.2), 0.03)
+        la = max(min(float(lookahead), 0.2), 0.03)
+        try:
+            self._rtde_ctrl_conn().servoJ(list(q), speed, accel, t, la, gain)
+            self._in_servo = True
+        except Exception as e:
+            print(f"[Robot] servoJ failed ({e})")
+            self._rtde_ctrl = None
+
+    def servoStop(self) -> None:
+        if self._in_servo and self._rtde_ctrl is not None:
+            try:
+                self._rtde_ctrl.servoStop()
+            except Exception:
+                pass
+            self._in_servo = False
+
+    # ── Gripper ───────────────────────────────────────────────────────────────
+
+    def open_gripper(self, speed: int = 255, force: int = 10) -> None:
+        g = self._gripper_conn()
+        g.move_and_wait_for_pos(g.get_open_position(), speed, force)
+
+    def close_gripper(self, speed: int = 255, force: int = 100) -> bool:
+        """Close gripper and return True if an object was detected."""
+        g = self._gripper_conn()
+        _, status = g.move_and_wait_for_pos(g.get_closed_position(), speed, force)
+        return status != RobotiqGripper.ObjectStatus.AT_DEST
+
+    def connect_gripper(self) -> None:
+        if self.simulation or not _GRIPPER_AVAILABLE:
+            return
+        try:
+            self._gripper_conn()
+        except Exception as e:
+            print(f"[Robot] Gripper pre-connect failed: {e}")
+
+    # ── Unity publishing ──────────────────────────────────────────────────────
+
+    def publish_base(self, T_world_base: "np.ndarray | None" = None) -> None:
+        T      = T_world_base if T_world_base is not None else self._T_world_base
+        R_o3d  = T[:3, :3] @ ScipyR.from_euler(
+            'z', self._BASE_YAW_CORRECTION_DEG, degrees=True).as_matrix()
+        q_xyzw = ScipyR.from_matrix(R_o3d).as_quat()
+        q_wxyz = [q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]]
+        q_u    = open3d_to_unity_quaternion(q_wxyz)
+        t_u    = open3d_to_unity_vector(T[:3, 3])
+        q_u_xyzw = [float(q_u[1]), float(q_u[2]), float(q_u[3]), float(q_u[0])]
+        R_u    = ScipyR.from_quat(q_u_xyzw).as_matrix()
+        T_u    = np.eye(4, dtype=float)
+        T_u[:3, :3] = R_u
+        T_u[:3, 3]  = t_u
+        try:
+            self._base_pub.send_string(
+                json.dumps({"robot_matrix": T_u.T.flatten().tolist()}))
+        except Exception as e:
+            print(f"[Robot] publish_base error: {e}")
+
+    def publish_joints(self, q: np.ndarray) -> None:
+        try:
+            self._joint_pub.send_string(
+                json.dumps({"joint_values": [float(v) for v in q]}))
+        except Exception as e:
+            print(f"[Robot] publish_joints error: {e}")
+
+    # ── Internal: lazy real-robot connections ─────────────────────────────────
+
+    def _recv_conn(self):
+        if not _RTDE_AVAILABLE:
+            raise RuntimeError("rtde_receive not installed.")
+        if self._recv is None:
+            self._recv = RTDEReceiveInterface(self._robot_ip)
+            print(f"[Robot] RTDE receive → {self._robot_ip}")
+        return self._recv
+
+    def _rtde_ctrl_conn(self):
+        if not _RTDE_AVAILABLE:
+            raise RuntimeError("rtde_control not installed.")
+        if self._rtde_ctrl is None:
+            self._rtde_ctrl = RTDEControlInterface(self._robot_ip)
+            print(f"[Robot] RTDE control → {self._robot_ip}")
+        return self._rtde_ctrl
+
+    def _gripper_conn(self):
+        if not _GRIPPER_AVAILABLE:
+            raise RuntimeError("RobotiqGripper not available.")
+        if self._gripper is None:
+            g = RobotiqGripper()
+            g.connect(self._robot_ip, 63352)
+            try:
+                g.activate()
+            except Exception as e:
+                print(f"[Robot] Gripper activation warning: {e}")
+            self._gripper = g
+            print("[Robot] Gripper ready.")
+        return self._gripper
+
+    # ── Real-robot grasp state machine (driven by tick()) ─────────────────────
+
+    def _tick_real_grasp(self, dt: float) -> None:
+        phase = self._grasp_phase
+        sc    = self._speed_scale
+
+        def _next(new_phase: str) -> None:
+            self._grasp_phase      = new_phase
+            self._grasp_move_sent = False
+
+        def _done(ok: bool) -> None:
+            result = False if self._grasp_cancel_pending else ok
+            self._grasp_phase          = None
+            self._grasp_on_phase       = None
+            self._grasp_cancel_pending = False
+            cb = self._grasp_on_complete
+            self._grasp_on_complete = None
+            if cb is not None:
+                try:
+                    cb(result)
+                except Exception as e:
+                    print(f"[Robot] grasp on_complete error: {e}")
+
+        def _ctrl():
+            try:
+                return self._rtde_ctrl_conn()
+            except Exception as e:
+                print(f"[Robot] RTDE connect failed in grasp: {e}")
+                _done(False)
+                return None
+
+        if phase == 'open_pre':
+            try:
+                self.open_gripper()
+            except Exception as e:
+                print(f"[Robot] open_gripper failed: {e}")
+            self._fire_phase(self._grasp_on_phase, "approaching")
+            if self._grasp_q_approach is not None:
+                _next('approach')
+            elif self._grasp_q_above is not None:
+                _next('above')
+            else:
+                _next('grasp')
+
+        elif phase in ('approach', 'above', 'grasp',
+                       'ret_above', 'retract'):
+            target = {
+                'approach':  self._grasp_q_approach,
+                'above':     self._grasp_q_above,
+                'grasp':      self._grasp_joints,
+                'ret_above': self._grasp_q_above,
+                'retract':   self._grasp_q_approach,
+            }[phase]
+            speed = {
+                'approach':  0.5 * sc,
+                'above':     0.3 * sc,
+                'grasp':      0.2 * sc,
+                'ret_above': 0.2 * sc,
+                'retract':   (0.3 * sc if self._grasp_q_above is not None
+                                   else 0.5 * sc),
+            }[phase]
+            if not self._grasp_move_sent:
+                c = _ctrl()
+                if c is None:
+                    return
+                try:
+                    c.moveJ(list(target), float(speed), float(speed), asynchronous=True)
+                    self._grasp_move_sent = True
+                    print(f"[Robot] async moveJ → {phase}")
+                except Exception as e:
+                    print(f"[Robot] async moveJ failed ({phase}): {e}")
+                    self._rtde_ctrl = None
+                    _done(False)
+            else:
+                c = _ctrl()
+                if c is None:
+                    return
+                try:
+                    if c.isSteady():
+                        if phase == 'approach':
+                            _next('above' if self._grasp_q_above is not None
+                                  else 'grasp')
+                        elif phase == 'above':
+                            _next('grasp')
+                        elif phase == 'grasp':
+                            self._fire_phase(self._grasp_on_phase, "grasping")
+                            _next('close')
+                        elif phase == 'ret_above':
+                            _next('retract')
+                        elif phase == 'retract':
+                            _done(self._grasp_ok)
+                except Exception as e:
+                    print(f"[Robot] isSteady failed ({phase}): {e}")
+                    self._rtde_ctrl = None
+                    _done(False)
+
+        elif phase == 'close':
+            try:
+                self._grasp_ok = self.close_gripper()
+            except Exception as e:
+                print(f"[Robot] close_gripper failed: {e}")
+                self._grasp_ok = False
+            print(f"[Robot] Gripper closed — object="
+                  f"{'detected' if self._grasp_ok else 'NOT detected'}")
+            self._grasp_settle_start = time.perf_counter()
+            _next('settle')
+
+        elif phase == 'settle':
+            if time.perf_counter() - (self._grasp_settle_start or 0.0) >= 1.0:
+                if self._grasp_cancel_pending:
+                    _next('open_post')
+                else:
+                    self._fire_phase(self._grasp_on_phase,
+                                     "grasped" if self._grasp_ok else "grasp_failed")
+                    self._fire_phase(self._grasp_on_phase, "retracting")
+                    if self._grasp_q_above is not None:
+                        _next('ret_above')
+                    elif self._grasp_q_approach is not None:
+                        _next('retract')
+                    else:
+                        _done(self._grasp_ok)
+
+        elif phase == 'open_post':
+            try:
+                self.open_gripper()
+            except Exception as e:
+                print(f"[Robot] open_gripper (cancel) failed: {e}")
+            self._fire_phase(self._grasp_on_phase, "retracting")
+            if self._grasp_q_above is not None:
+                _next('ret_above')
+            elif self._grasp_q_approach is not None:
+                _next('retract')
+            else:
+                _done(False)
+
+        elif phase == 'put_back':
+            # Cancelled during ret_above/retract — drive back to the tool's
+            # grasp joint position before opening the gripper.
+            target = self._grasp_joints
+            if not self._grasp_move_sent:
+                c = _ctrl()
+                if c is None:
+                    return
+                try:
+                    c.moveJ(list(target), 0.2 * sc, 0.2 * sc, asynchronous=True)
+                    self._grasp_move_sent = True
+                    print("[Robot] async moveJ → put_back (returning tool)")
+                except Exception as e:
+                    print(f"[Robot] async moveJ failed (put_back): {e}")
+                    self._rtde_ctrl = None
+                    _done(False)
+            else:
+                c = _ctrl()
+                if c is None:
+                    return
+                try:
+                    if c.isSteady():
+                        _next('put_back_open')
+                except Exception as e:
+                    print(f"[Robot] isSteady failed (put_back): {e}")
+                    self._rtde_ctrl = None
+                    _done(False)
+
+        elif phase == 'put_back_open':
+            try:
+                self.open_gripper()
+            except Exception as e:
+                print(f"[Robot] open_gripper (put_back) failed: {e}")
+            self._fire_phase(self._grasp_on_phase, "retracting")
+            if self._grasp_q_above is not None:
+                _next('ret_above')
+            elif self._grasp_q_approach is not None:
+                _next('retract')
+            else:
+                _done(False)
+
+    # ── Cleanup ───────────────────────────────────────────────────────────────
+
+    def close(self) -> None:
+        self.cancel_motion()
+        if not self.simulation:
+            self.servoStop()
+            for attr in ("_recv", "_rtde_ctrl"):
+                conn = getattr(self, attr)
+                if conn is not None:
+                    try:
+                        conn.disconnect()
+                    except Exception:
+                        pass
+                    setattr(self, attr, None)
+            if self._gripper is not None:
+                try:
+                    self._gripper.disconnect()
+                except Exception:
+                    pass
+                self._gripper = None
+        for sock in (self._base_pub, self._joint_pub,
+                     self._cmd_sub, self._event_pub):
+            try:
+                sock.close(0)
+            except Exception:
+                pass
 
 
 def main():
@@ -346,13 +927,11 @@ def main():
     ap.add_argument("--robot-ip", default=cfg.ROBOT_IP,
                     help="UR robot controller IP for live RTDE control")
     ap.add_argument("--simulation", action=argparse.BooleanOptionalAction,
-                    default=cfg.SIMULATION,
-                    help="Fixed default joint angles (--simulation) or live RTDE (--no-simulation)")
+                    default=cfg.SIMULATION)
     ap.add_argument("--calibrated-robot-base", action=argparse.BooleanOptionalAction,
-                    default=cfg.USE_CALIBRATED_ROBOT_BASE_POSE,
-                    help="Load robot base pose from calibration_data/ even in simulation mode")
-    ap.add_argument("--gripper-collision", action=argparse.BooleanOptionalAction, default=False,
-                    help="Include gripper spheres in CBF self-collision model")
+                    default=cfg.USE_CALIBRATED_ROBOT_BASE_POSE)
+    ap.add_argument("--gripper-collision", action=argparse.BooleanOptionalAction,
+                    default=False)
     args = ap.parse_args()
 
     if not _PYBULLET_AVAILABLE:
