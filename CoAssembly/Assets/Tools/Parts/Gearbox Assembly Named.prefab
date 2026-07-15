@@ -1,0 +1,403 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1001 &1071775591596924511
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 0}
+    m_Modifications:
+    - target: {fileID: -9076310118636327342, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: GearRow2Right
+      objectReference: {fileID: 0}
+    - target: {fileID: -9048207354158268345, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: StandRow1Left
+      objectReference: {fileID: 0}
+    - target: {fileID: -8956275880129755012, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of GearRow2Right
+      objectReference: {fileID: 0}
+    - target: {fileID: -8887980718992591318, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of ScrewRow2Right
+      objectReference: {fileID: 0}
+    - target: {fileID: -8667926499550517149, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of ScrewRow3Left
+      objectReference: {fileID: 0}
+    - target: {fileID: -8662976283591942051, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: ScrewRow1Right
+      objectReference: {fileID: 0}
+    - target: {fileID: -8440475532003653035, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of GearRodRow1
+      objectReference: {fileID: 0}
+    - target: {fileID: -8387668606479589352, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of GearRodRow2
+      objectReference: {fileID: 0}
+    - target: {fileID: -8323736676874872840, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: GearRow2Left
+      objectReference: {fileID: 0}
+    - target: {fileID: -8288476693295664914, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of GearRodRow4
+      objectReference: {fileID: 0}
+    - target: {fileID: -8244594798119160651, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: PinRow1Right
+      objectReference: {fileID: 0}
+    - target: {fileID: -7154161293687267353, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: BearingRow3Left
+      objectReference: {fileID: 0}
+    - target: {fileID: -7123243030568653568, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: PinRow1Left
+      objectReference: {fileID: 0}
+    - target: {fileID: -6949449407862542593, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: PinRow3Left
+      objectReference: {fileID: 0}
+    - target: {fileID: -6896893071326690273, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of GearRow3Left
+      objectReference: {fileID: 0}
+    - target: {fileID: -6767353513720078026, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: StandRow1Right
+      objectReference: {fileID: 0}
+    - target: {fileID: -5941532765314716427, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: BearingRow4Right
+      objectReference: {fileID: 0}
+    - target: {fileID: -5827558714000682874, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: PinRow2Left
+      objectReference: {fileID: 0}
+    - target: {fileID: -5698557506364121756, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: BearingRow3Right
+      objectReference: {fileID: 0}
+    - target: {fileID: -5503181912596583142, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: Gearbox Assembly Named
+      objectReference: {fileID: 0}
+    - target: {fileID: -5263806425105000057, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: StandRow3Left
+      objectReference: {fileID: 0}
+    - target: {fileID: -5252722567324510266, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: GearRow3Left
+      objectReference: {fileID: 0}
+    - target: {fileID: -5192309261777702985, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of ScrewRow4Left
+      objectReference: {fileID: 0}
+    - target: {fileID: -5192263880246646272, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: BearingRow1Right
+      objectReference: {fileID: 0}
+    - target: {fileID: -5161719548835530953, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of StandRow2Right
+      objectReference: {fileID: 0}
+    - target: {fileID: -4924199052982836246, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: GearRodRow1
+      objectReference: {fileID: 0}
+    - target: {fileID: -4721818727874754597, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: GearRodRow2
+      objectReference: {fileID: 0}
+    - target: {fileID: -4701572834641038716, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of PinRow1Right
+      objectReference: {fileID: 0}
+    - target: {fileID: -4681819880969330007, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: CrankHandle
+      objectReference: {fileID: 0}
+    - target: {fileID: -4532409026205208864, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: PinRow2Right
+      objectReference: {fileID: 0}
+    - target: {fileID: -4435458086567647179, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: GearRow4Left
+      objectReference: {fileID: 0}
+    - target: {fileID: -3932883186841384181, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: GearRow1Left
+      objectReference: {fileID: 0}
+    - target: {fileID: -3746656588209351374, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of StandRow4Right
+      objectReference: {fileID: 0}
+    - target: {fileID: -3627472314255136228, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of StandRow2Left
+      objectReference: {fileID: 0}
+    - target: {fileID: -3431259565394198478, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: BearingRow1Left
+      objectReference: {fileID: 0}
+    - target: {fileID: -3388650375478068124, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of PinRow2Right
+      objectReference: {fileID: 0}
+    - target: {fileID: -3313850355715487050, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: GearRodRow3
+      objectReference: {fileID: 0}
+    - target: {fileID: -3088518668505834143, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of BearingRow3Left
+      objectReference: {fileID: 0}
+    - target: {fileID: -2818600510756050537, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of ScrewRow1Left
+      objectReference: {fileID: 0}
+    - target: {fileID: -2783111489400677109, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of PinRow3Left
+      objectReference: {fileID: 0}
+    - target: {fileID: -2634387015171161045, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of BearingRow2Right
+      objectReference: {fileID: 0}
+    - target: {fileID: -2545512787968851828, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of GearRow2Left
+      objectReference: {fileID: 0}
+    - target: {fileID: -2486323697417205642, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: GearRow3Right
+      objectReference: {fileID: 0}
+    - target: {fileID: -2299314814854537515, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of BearingRow1Right
+      objectReference: {fileID: 0}
+    - target: {fileID: -2097061607035831408, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: BearingRow2Right
+      objectReference: {fileID: 0}
+    - target: {fileID: -1423804085902921239, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of StandRow3Right
+      objectReference: {fileID: 0}
+    - target: {fileID: -1292026634953935968, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: BearingRow4Left
+      objectReference: {fileID: 0}
+    - target: {fileID: -1153924460367925275, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of ScrewRow2Left
+      objectReference: {fileID: 0}
+    - target: {fileID: -600047429049205724, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of ScrewRow3Right
+      objectReference: {fileID: 0}
+    - target: {fileID: -592758854580891581, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: ScrewRow2Right
+      objectReference: {fileID: 0}
+    - target: {fileID: -123684870655915525, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of StandRow3Left
+      objectReference: {fileID: 0}
+    - target: {fileID: 226758587441970683, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: BaseBoard
+      objectReference: {fileID: 0}
+    - target: {fileID: 375616273341499234, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of GearRow3Right
+      objectReference: {fileID: 0}
+    - target: {fileID: 528116182471137696, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of StandRow1Left
+      objectReference: {fileID: 0}
+    - target: {fileID: 938864378942475688, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: StandRow2Right
+      objectReference: {fileID: 0}
+    - target: {fileID: 1524880755091056130, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of BearingRow4Right
+      objectReference: {fileID: 0}
+    - target: {fileID: 2161542005306330650, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of PinRow1Left
+      objectReference: {fileID: 0}
+    - target: {fileID: 2296111286632972817, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of PinRow3Right
+      objectReference: {fileID: 0}
+    - target: {fileID: 2313788074822883634, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of BearingRow1Left
+      objectReference: {fileID: 0}
+    - target: {fileID: 2682562889685050078, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: StandRow2Left
+      objectReference: {fileID: 0}
+    - target: {fileID: 2763647321797341010, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: GearRodRow4
+      objectReference: {fileID: 0}
+    - target: {fileID: 3188122812592064744, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: StandRow3Right
+      objectReference: {fileID: 0}
+    - target: {fileID: 3317097390417310451, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: PinRow3Right
+      objectReference: {fileID: 0}
+    - target: {fileID: 3414499976198011858, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of BearingRow4Left
+      objectReference: {fileID: 0}
+    - target: {fileID: 3791198009790539081, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: ScrewRow3Right
+      objectReference: {fileID: 0}
+    - target: {fileID: 3924653395317566352, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of GearRow1Left
+      objectReference: {fileID: 0}
+    - target: {fileID: 4103680746250533849, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: ScrewRow2Left
+      objectReference: {fileID: 0}
+    - target: {fileID: 4327332259803420955, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: ScrewRow4Left
+      objectReference: {fileID: 0}
+    - target: {fileID: 4645355600478538452, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 0.23201612
+      objectReference: {fileID: 0}
+    - target: {fileID: 4645355600478538452, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0.18450001
+      objectReference: {fileID: 0}
+    - target: {fileID: 4645355600478538452, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: -0.121908545
+      objectReference: {fileID: 0}
+    - target: {fileID: 4645355600478538452, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 0.7071068
+      objectReference: {fileID: 0}
+    - target: {fileID: 4645355600478538452, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: -0.7071068
+      objectReference: {fileID: 0}
+    - target: {fileID: 4645355600478538452, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 4645355600478538452, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 4645355600478538452, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: -90
+      objectReference: {fileID: 0}
+    - target: {fileID: 4645355600478538452, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 4645355600478538452, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 5094230521836740919, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of PinRow2Left
+      objectReference: {fileID: 0}
+    - target: {fileID: 5151720719606776377, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of GearRodRow3
+      objectReference: {fileID: 0}
+    - target: {fileID: 5243231028232498260, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of CrankHandle
+      objectReference: {fileID: 0}
+    - target: {fileID: 5360278206317742359, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: ScrewRow4Right
+      objectReference: {fileID: 0}
+    - target: {fileID: 5839758320675264215, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of GearRow4Left
+      objectReference: {fileID: 0}
+    - target: {fileID: 6003619060259314668, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of PinRow4Left
+      objectReference: {fileID: 0}
+    - target: {fileID: 6232026623064406363, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of ScrewRow1Right
+      objectReference: {fileID: 0}
+    - target: {fileID: 6282674909512437084, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: ScrewRow1Left
+      objectReference: {fileID: 0}
+    - target: {fileID: 6353158144846487451, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of BearingRow3Right
+      objectReference: {fileID: 0}
+    - target: {fileID: 7021961119287462742, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of StandRow4Right
+      objectReference: {fileID: 0}
+    - target: {fileID: 7213105285594449515, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of BaseBoard
+      objectReference: {fileID: 0}
+    - target: {fileID: 7640469541617266035, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: BearingRow2Left
+      objectReference: {fileID: 0}
+    - target: {fileID: 7972895662784244041, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of BearingRow2Left
+      objectReference: {fileID: 0}
+    - target: {fileID: 8098056134642335899, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: StandRow4Left
+      objectReference: {fileID: 0}
+    - target: {fileID: 8214078030879146556, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: StandRow4Right
+      objectReference: {fileID: 0}
+    - target: {fileID: 8265454202564049732, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: ScrewRow3Left
+      objectReference: {fileID: 0}
+    - target: {fileID: 8496751389063337546, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: PinRow4Left
+      objectReference: {fileID: 0}
+    - target: {fileID: 8508876368755914199, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of StandRow1Right
+      objectReference: {fileID: 0}
+    - target: {fileID: 9119335606731160495, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
+      propertyPath: m_Name
+      value: occurrence of ScrewRow4Right
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 3198623641788530785, guid: 4e7aafa6f0bfa7248b999429f36d39cb, type: 3}
