@@ -7,7 +7,7 @@ Handles all robot-related concerns in both simulation and real-robot modes:
   - Gripper            : Robotiq 2F-85 open / close (real only)
   - Grasp sequence     : approach → grasp → retract
                          sim  → PyBullet waypoint runner, driven by tick()
-                         real → RTDE moveJ in a background thread
+                         real → async RTDE moveJ state machine, driven by tick()
   - Unity publish      : base pose (port 5000) and joint angles (port 5001)
 
 Typical usage in main_with_robot.py
@@ -36,7 +36,6 @@ from __future__ import annotations
 
 import json
 import sys
-import threading
 import time
 from pathlib import Path
 from typing import Callable
@@ -73,13 +72,6 @@ _FORCE_DEBOUNCE_HITS     =  5    # consecutive over-threshold ticks before actin
 _FORCE_POLL_HZ           = 20    # Hz — force polling rate
 
 # ── Simulation waypoint runner ──────────────────────────────────────────────────
-
-try:
-    from pybullet_scene import RobotController as _PbWaypointRunner
-    _PB_RUNNER_AVAILABLE = True
-except ImportError:
-    _PbWaypointRunner = None      # type: ignore[assignment,misc]
-    _PB_RUNNER_AVAILABLE = False
 
 
 class _PbJointRunner:
@@ -134,8 +126,6 @@ except ImportError:
 
 try:
     from ur_collision_model import (
-        positions_list        as _UR_POSITIONS,
-        radii_list            as _UR_RADII,
         pairs_sc              as _UR_SC_PAIRS,
         pairs_sc_with_gripper as _UR_SC_PAIRS_WG,
         make_collision_data   as _ur_make_collision_data,
@@ -298,13 +288,13 @@ if _FRAX_AVAILABLE:
             self,
             urdf_path:         str,
             T_world_base:      np.ndarray,
-            kp_pos:            float = 100.0,
-            kp_ori:            float = 50.0,
-            qdot_max:          float = 1.5,
+            kp_pos:            float = 200.0,
+            kp_ori:            float = 200.0,
+            qdot_max:          float = 3.0,
             q_min:             "list | None" = None,
             q_max:             "list | None" = None,
             cbf_alpha:         float = 10.0,
-            z_min:             float = -0.05,
+            z_min:             float = 0.15,
             ws_lo:             "list | None" = None,
             ws_hi:             "list | None" = None,
             obstacle_boxes:    "list | None" = None,
@@ -459,9 +449,18 @@ if _FRAX_AVAILABLE:
 
 # =============================================================================
 def _wrap_nearest(q_target: np.ndarray, q_ref: np.ndarray) -> np.ndarray:
-    """Shift q_target by ±n·2π per joint to minimise travel from q_ref."""
+    """Shift q_target by ±n·2π per joint to minimise travel from q_ref.
+
+    If the shortest-path equivalent still falls outside ±2π (i.e. the robot has
+    wound past 360°), adds another ±2π to bring it back inside the UR's hard
+    range.  The result may be farther than the raw shortest path but is always
+    within [-2π, 2π] so the UR controller won't reject the moveJ.
+    """
     TWO_PI = 2.0 * np.pi
-    return q_target - TWO_PI * np.round((q_target - q_ref) / TWO_PI)
+    q = q_target - TWO_PI * np.round((q_target - q_ref) / TWO_PI)
+    q = np.where(q < -TWO_PI, q + TWO_PI, q)
+    q = np.where(q >  TWO_PI, q - TWO_PI, q)
+    return q
 
 
 # RobotController
@@ -526,12 +525,15 @@ class RobotController:
         self._rtde_ctrl: "RTDEControlInterface | None" = None
         self._gripper: "RobotiqGripper | None"       = None
         self._in_servo = False
-        self._rtde_lock = threading.Lock()   # serialises all RTDE ctrl calls
 
-        # Real-robot grasp thread
-        self._grasp_thread: "threading.Thread | None" = None
-        self._grasp_cancel  = threading.Event()
-        self._grasp_ctrl:   "RTDEControlInterface | None" = None
+        # Real-robot grasp state machine (driven by tick())
+        self._real_grasp_joints: "np.ndarray | None" = None
+        self._real_q_approach:   "np.ndarray | None" = None
+        self._real_q_above:      "np.ndarray | None" = None
+        self._real_on_complete:  "Callable | None"   = None
+        self._real_on_phase:     "Callable | None"   = None
+        self._real_move_sent:    bool                 = False
+        self._real_settle_start: "float | None"       = None
 
         # Simulation motion state machine
         self._sim_runner:       None                  = None
@@ -764,11 +766,13 @@ class RobotController:
                 else:
                     self._move_tcp_smooth = (0.25 * q_target
                                              + 0.75 * self._move_tcp_smooth)
-                self.servoJ(self._move_tcp_smooth, dt, lookahead=0.15, gain=200)
+                self.servoJ(self._move_tcp_smooth, dt, lookahead=0.195, gain=100)
             return
 
         if not self.simulation:
-            return   # grasp state machine is sim-only below
+            if self._sim_phase is not None and self._sim_phase.startswith('real_'):
+                self._tick_real_grasp(dt)
+            return
 
         if self._sim_runner is None:
             return
@@ -848,123 +852,41 @@ class RobotController:
             self._tracked_tcp_quat = np.array(list(quat), float)
             self._tracked_tcp_cb   = on_complete
             self._sim_phase        = 'move_tcp'
-        elif self._frax is not None:
-            # Store target — tick() sends servoJ each frame, no thread needed
+        else:
+            # Store target — tick() sends servoJ each frame via frax CBF
             self._tracked_tcp_pos  = np.array(pos, float)
             self._tracked_tcp_quat = np.array(list(quat), float)
             self._tracked_tcp_cb   = on_complete
             self._move_tcp_smooth  = None   # reset EMA on new target
             self._sim_phase        = 'move_tcp'
-        else:
-            def _move():
-                try:
-                    q = self.solve_ik(np.array(pos), list(quat), self._last_q)
-                    self.moveJ(q)
-                    if on_complete:
-                        on_complete(True)
-                except Exception as e:
-                    print(f"[Robot] move_tcp failed: {e}")
-                    if on_complete:
-                        on_complete(False)
-            threading.Thread(target=_move, daemon=True).start()
 
     # ── Low-level control (real robot) ────────────────────────────────────────
 
     def servoJ(self, q: np.ndarray, dt: float,
                speed: float = 1.0, accel: float = 1.0,
-               lookahead: float = 0.1, gain: int = 300) -> None:
+               lookahead: float = 0.15, gain: int = 300) -> None:
         """Stream one servoJ command to the robot."""
-        with self._rtde_lock:
-            try:
-                self._rtde_ctrl_conn().servoJ(list(q), speed, accel, dt, lookahead, gain)
-                self._in_servo = True
-            except Exception as e:
-                # Reset so the next tick attempts a fresh reconnect.
-                # "registers already in use" happens when the robot hasn't yet
-                # released the previous connection's RTDE registers; retrying
-                # next tick is sufficient.
-                print(f"[Robot] servoJ failed ({e}); will retry next tick")
-                self._rtde_ctrl = None
+        # UR firmware requires both time and lookahead_time ∈ [0.03, 0.2] s.
+        t  = max(min(float(dt),       0.2), 0.03)
+        la = max(min(float(lookahead), 0.2), 0.03)
+        try:
+            self._rtde_ctrl_conn().servoJ(list(q), speed, accel, t, la, gain)
+            self._in_servo = True
+        except Exception as e:
+            # Reset so the next tick attempts a fresh reconnect.
+            print(f"[Robot] servoJ failed ({e}); will retry next tick")
+            self._rtde_ctrl = None
 
     def servoStop(self) -> None:
         """Exit servoJ mode so moveJ can be accepted."""
-        with self._rtde_lock:
-            if self._in_servo and self._rtde_ctrl is not None:
-                try:
-                    self._rtde_ctrl.servoStop()
-                except Exception:
-                    pass
-                self._in_servo = False
-
-    def moveJ(self, q: "list | np.ndarray",
-              speed: "float | None" = None,
-              accel: "float | None" = None) -> None:
-        """Blocking joint-space move (real robot only).
-
-        Lock only covers the servoStop transition; the blocking moveJ itself
-        runs outside the lock so stopJ / cancel_motion can still interrupt it.
-        """
-        with self._rtde_lock:
-            if self._in_servo and self._rtde_ctrl is not None:
-                try:
-                    self._rtde_ctrl.servoStop()
-                except Exception:
-                    pass
-                self._in_servo = False
-        self._rtde_ctrl_conn().moveJ(
-            list(q),
-            speed if speed is not None else self._speed,
-            accel if accel is not None else self._accel,
-        )
-
-    def stopJ(self, decel: float = 2.0) -> None:
-        with self._rtde_lock:
-            if self._rtde_ctrl is not None:
-                try:
-                    self._rtde_ctrl.stopJ(decel)
-                except Exception:
-                    pass
+        if self._in_servo and self._rtde_ctrl is not None:
+            try:
+                self._rtde_ctrl.servoStop()
+            except Exception:
+                pass
             self._in_servo = False
 
     # ── IK solving ────────────────────────────────────────────────────────────
-
-    def solve_ik(self, pos_world: np.ndarray, quat_xyzw: list,
-                 seed_q: "np.ndarray | None" = None,
-                 tol: float = 0.005) -> np.ndarray:
-        """Single-shot IK via PyBullet's calculateInverseKinematics.
-
-        Uses seed_q as the rest-pose bias so the solver prefers a configuration
-        near the current robot state. Raises RuntimeError if residual > 50 mm.
-        """
-        import pybullet as p
-        if self._pb_scene is None:
-            raise RuntimeError("No PyBullet scene — IK unavailable.")
-        if seed_q is None:
-            seed_q = self._last_q if self._last_q is not None else np.zeros(6)
-
-        pb = self._pb_scene
-        arm_q_map  = dict(zip(pb.arm_indices, seed_q))
-        rest_poses = [float(arm_q_map.get(j, 0.0)) for j in pb._movable]
-
-        joint_q = p.calculateInverseKinematics(
-            pb.robot_id, pb.tool0_link_idx,
-            list(pos_world), list(quat_xyzw),
-            lowerLimits=pb._lower_limits, upperLimits=pb._upper_limits,
-            jointRanges=pb._joint_ranges, restPoses=rest_poses,
-            maxNumIterations=200, residualThreshold=1e-5)
-        q = np.array(joint_q[:len(pb.arm_indices)], dtype=np.float64)
-
-        # Verify via FK
-        pb.update_robot(q)
-        T_fk = pb.update_tcp_bodies()
-        err = (np.linalg.norm(T_fk[:3, 3] - pos_world) if T_fk is not None else float('inf'))
-        if err > tol:
-            print(f"[Robot IK] WARNING — residual {err*1000:.1f} mm")
-        if err > 0.05:
-            raise RuntimeError(
-                f"IK failed: residual {err*1000:.0f} mm > 50 mm. "
-                f"Target {np.round(pos_world, 3).tolist()} may be unreachable.")
-        return q
 
     def solve_ik_from_config(self, start_q: np.ndarray,
                              target_pos, target_quat_xyzw,
@@ -1035,36 +957,6 @@ class RobotController:
         g = self._gripper_conn()
         g.move_and_wait_for_pos(g.get_closed_position(), speed, force)
 
-    def open_gripper_async(self, on_done: "Callable | None" = None) -> None:
-        """Non-blocking gripper open — dispatched to a daemon thread."""
-        def _do():
-            try:
-                self.open_gripper()
-            except Exception as e:
-                print(f"[Robot] open_gripper_async error: {e}")
-            finally:
-                if on_done:
-                    try:
-                        on_done()
-                    except Exception:
-                        pass
-        threading.Thread(target=_do, daemon=True).start()
-
-    def close_gripper_async(self, on_done: "Callable | None" = None) -> None:
-        """Non-blocking gripper close — dispatched to a daemon thread."""
-        def _do():
-            try:
-                self.close_gripper()
-            except Exception as e:
-                print(f"[Robot] close_gripper_async error: {e}")
-            finally:
-                if on_done:
-                    try:
-                        on_done()
-                    except Exception:
-                        pass
-        threading.Thread(target=_do, daemon=True).start()
-
     # ── Force monitoring ──────────────────────────────────────────────────────
 
     def poll_tcp_force(self) -> "np.ndarray | None":
@@ -1118,7 +1010,7 @@ class RobotController:
     def tool_grasp_running(self) -> bool:
         if self.simulation:
             return self._sim_phase is not None
-        return self._grasp_thread is not None and self._grasp_thread.is_alive()
+        return self._sim_phase is not None and self._sim_phase.startswith('real_')
 
     def execute_grasp(
         self,
@@ -1209,18 +1101,44 @@ class RobotController:
         else:
             if not _RTDE_AVAILABLE:
                 print("[Robot] rtde_control not installed.")
+                if on_complete:
+                    on_complete(False)
                 return
-            self._grasp_cancel.clear()
+            # Stop servoJ and clear any active move_tcp before starting grasp
             self.servoStop()
-            self._grasp_thread = threading.Thread(
-                target=self._grasp_sequence,
-                args=(np.array(grasp_joints, dtype=float),
-                      (np.array(q_approach, dtype=float) if q_approach is not None else None),
-                      (np.array(q_above,    dtype=float) if q_above    is not None else None),
-                      on_complete, on_phase),
-                daemon=True,
-            )
-            self._grasp_thread.start()
+            self._sim_phase        = None
+            self._tracked_tcp_pos  = None
+            self._tracked_tcp_quat = None
+            self._tracked_tcp_cb   = None
+            self._move_tcp_smooth  = None
+            # Arm the real-robot grasp state machine — tick() drives it
+            self._real_grasp_joints = np.array(grasp_joints, dtype=float)
+            self._real_q_approach   = (np.array(q_approach, dtype=float)
+                                       if q_approach is not None else None)
+            self._real_q_above      = (np.array(q_above, dtype=float)
+                                       if q_above is not None else None)
+            self._real_on_complete  = on_complete
+            self._real_on_phase     = on_phase
+            self._real_move_sent    = False
+            self._real_settle_start = None
+            self._sim_phase         = 'real_open_pre'
+            # Print current joints vs limits so we can spot near-limit starts
+            q_now = self._last_q
+            if q_now is not None and self._frax is not None:
+                cfg  = self._frax._cbf_cfg
+                lo   = np.degrees(cfg.q_min_t)
+                hi   = np.degrees(cfg.q_max_t)
+                qd   = np.degrees(q_now)
+                names = ["Base","Shoulder","Elbow","Wrist1","Wrist2","Wrist3"]
+                print("[Robot] Grasp start — joint positions vs CBF limits (deg):")
+                for i, (n, v, l, h) in enumerate(zip(names, qd, lo, hi)):
+                    margin_lo = v - l
+                    margin_hi = h - v
+                    warn = " *** CLOSE ***" if min(margin_lo, margin_hi) < 10 else ""
+                    print(f"  J{i+1} {n:8s}: {v:7.2f}  [{l:.1f}, {h:.1f}]"
+                          f"  margins +{margin_hi:.1f} / -{margin_lo:.1f}{warn}")
+                print(f"  Target grasp joints (deg): {np.round(np.degrees(self._real_grasp_joints), 1).tolist()}")
+            print("[Robot] Starting real grasp state machine")
 
     @staticmethod
     def _fire_phase(on_phase: "Callable[[str], None] | None", name: str) -> None:
@@ -1235,7 +1153,6 @@ class RobotController:
         """Abort any running grasp/move and stop the arm."""
         self.stop_force_monitor()
         if self.simulation:
-            self._grasp_cancel.set()   # stops grasp runner and move_tcp tracking thread
             cb = self._sim_on_complete
             self._sim_runner          = None
             self._sim_phase           = None
@@ -1243,29 +1160,37 @@ class RobotController:
             self._sim_grasp_joints    = None
             self._sim_q_approach      = None
             self._sim_q_above         = None
-            self._tracked_tcp_pos  = None
-            self._tracked_tcp_quat = None
-            self._tracked_tcp_cb   = None
+            self._tracked_tcp_pos     = None
+            self._tracked_tcp_quat    = None
+            self._tracked_tcp_cb      = None
             if cb is not None:
                 try:
                     cb(False)
                 except Exception:
                     pass
         else:
-            self._sim_phase        = None
-            self._tracked_tcp_pos  = None
-            self._tracked_tcp_quat = None
-            self._tracked_tcp_cb   = None
-            self._move_tcp_smooth  = None
-            self._grasp_cancel.set()
-            _gc = self._grasp_ctrl
-            if _gc is not None:
+            phase = self._sim_phase
+            self._sim_phase         = None
+            self._tracked_tcp_pos   = None
+            self._tracked_tcp_quat  = None
+            self._tracked_tcp_cb    = None
+            self._move_tcp_smooth   = None
+            cb = self._real_on_complete
+            self._real_on_complete  = None
+            self._real_on_phase     = None
+            # Stop robot: if async moveJ was in flight, issue stopJ; otherwise servoStop
+            if phase is not None and phase.startswith('real_') and self._real_move_sent:
                 try:
-                    _gc.stopJ(2.0)
+                    self._rtde_ctrl_conn().stopJ(2.0)
+                except Exception as e:
+                    print(f"[Robot] cancel stopJ failed: {e}")
+            else:
+                self.servoStop()
+            if cb is not None:
+                try:
+                    cb(False)
                 except Exception:
                     pass
-            else:
-                self.stopJ()
 
     # ── Unity publishing ──────────────────────────────────────────────────────
 
@@ -1344,7 +1269,7 @@ class RobotController:
 
     def connect_gripper(self) -> None:
         """Pre-connect and calibrate the gripper at startup so the first grasp
-        has no calibration delay. Safe to call from a background thread."""
+        has no calibration delay. Called blocking during server init."""
         if self.simulation or not _GRIPPER_AVAILABLE:
             return
         try:
@@ -1358,57 +1283,141 @@ class RobotController:
         if self._gripper is None:
             g = RobotiqGripper()
             g.connect(self._robot_ip, 63352)
-            g.activate()
+            try:
+                g.activate()
+            except Exception as e:
+                print(f"[Robot] Gripper activation warning (continuing): {e}")
             self._gripper = g
             print("[Robot] Gripper ready.")
         return self._gripper
 
-    # ── Internal: real-robot grasp sequence ───────────────────────────────────
+    # ── Internal: real-robot grasp state machine (driven by tick()) ─────────────
 
-    def _grasp_sequence(self, grasp_joints: np.ndarray,
-                        q_approach: "np.ndarray | None",
-                        q_above:    "np.ndarray | None",
-                        on_complete: "Callable[[bool], None] | None",
-                        on_phase:    "Callable[[str], None] | None" = None) -> None:
-        def _check():
-            if self._grasp_cancel.is_set():
-                raise InterruptedError("Grasp cancelled.")
-        success = False
-        _ctrl = self._rtde_ctrl_conn()
-        self._grasp_ctrl = _ctrl
-        _sc = self._speed_scale
-        try:
-            _check()
-            self._fire_phase(on_phase, "approaching")
-            self.open_gripper()
-            _check()
-            if q_approach is not None:
-                _ctrl.moveJ(list(q_approach), 0.5 * _sc, 0.5 * _sc); _check()
-            if q_above is not None:
-                _ctrl.moveJ(list(q_above), 0.3 * _sc, 0.3 * _sc); _check()
-            _ctrl.moveJ(list(grasp_joints), 0.2 * _sc, 0.2 * _sc); _check()
-            self._fire_phase(on_phase, "grasping")
-            self.close_gripper()
-            time.sleep(1.0)   # 1 s visual check — gripper opens if object resists
-            self._fire_phase(on_phase, "grasped")
-            self.open_gripper()
-            _check()
-            # Retract (reverse)
-            self._fire_phase(on_phase, "retracting")
-            if q_above is not None:
-                _ctrl.moveJ(list(q_above),    0.2 * _sc, 0.2 * _sc); _check()
-                _ctrl.moveJ(list(q_approach), 0.3 * _sc, 0.3 * _sc)
-            elif q_approach is not None:
-                _ctrl.moveJ(list(q_approach), 0.5 * _sc, 0.5 * _sc)
-            success = True
-        except InterruptedError:
-            print("[Robot] Grasp cancelled.")
-        except Exception as e:
-            print(f"[Robot] Grasp error: {e}")
-        finally:
-            self._grasp_ctrl = None
-        if on_complete is not None:
+    def _tick_real_grasp(self, dt: float) -> None:
+        """Advance the real-robot grasp state machine one tick.
+
+        All RTDE access happens here, on the server's single loop thread —
+        no concurrent access is possible, eliminating the 'another thread is
+        controlling the robot' UR error.
+
+        States: real_open_pre → real_approach? → real_above? → real_down
+                → real_close → real_settle → real_open_post
+                → real_ret_above? → real_retract? → done
+        """
+        phase = self._sim_phase
+        sc    = self._speed_scale
+
+        def _next(new_phase: str) -> None:
+            self._sim_phase      = new_phase
+            self._real_move_sent = False
+
+        def _done(ok: bool) -> None:
+            self._sim_phase        = None
+            self._real_on_phase    = None
+            cb = self._real_on_complete
+            self._real_on_complete = None
+            if cb is not None:
+                try:
+                    cb(ok)
+                except Exception as e:
+                    print(f"[Robot] grasp on_complete error: {e}")
+
+        def _ctrl():
             try:
-                on_complete(success)
-            except Exception:
-                pass
+                return self._rtde_ctrl_conn()
+            except Exception as e:
+                print(f"[Robot] RTDE connect failed in grasp: {e}")
+                _done(False)
+                return None
+
+        if phase == 'real_open_pre':
+            try:
+                self.open_gripper()
+            except Exception as e:
+                print(f"[Robot] open_gripper failed: {e}")
+            self._fire_phase(self._real_on_phase, "approaching")
+            if self._real_q_approach is not None:
+                _next('real_approach')
+            elif self._real_q_above is not None:
+                _next('real_above')
+            else:
+                _next('real_down')
+
+        elif phase in ('real_approach', 'real_above', 'real_down',
+                       'real_ret_above', 'real_retract'):
+            target = {
+                'real_approach':  self._real_q_approach,
+                'real_above':     self._real_q_above,
+                'real_down':      self._real_grasp_joints,
+                'real_ret_above': self._real_q_above,
+                'real_retract':   self._real_q_approach,
+            }[phase]
+            speed = {
+                'real_approach':  0.5 * sc,
+                'real_above':     0.3 * sc,
+                'real_down':      0.2 * sc,
+                'real_ret_above': 0.2 * sc,
+                'real_retract':   (0.3 * sc if self._real_q_above is not None
+                                   else 0.5 * sc),
+            }[phase]
+
+            if not self._real_move_sent:
+                c = _ctrl()
+                if c is None:
+                    return
+                try:
+                    c.moveJ(list(target), float(speed), float(speed), asynchronous=True)
+                    self._real_move_sent = True
+                    print(f"[Robot] async moveJ → {phase}")
+                except Exception as e:
+                    print(f"[Robot] async moveJ failed ({phase}): {e}")
+                    self._rtde_ctrl = None
+                    _done(False)
+            else:
+                c = _ctrl()
+                if c is None:
+                    return
+                try:
+                    if c.isSteady():
+                        if phase == 'real_approach':
+                            _next('real_above' if self._real_q_above is not None
+                                  else 'real_down')
+                        elif phase == 'real_above':
+                            _next('real_down')
+                        elif phase == 'real_down':
+                            self._fire_phase(self._real_on_phase, "grasping")
+                            _next('real_close')
+                        elif phase == 'real_ret_above':
+                            _next('real_retract')
+                        elif phase == 'real_retract':
+                            _done(True)
+                except Exception as e:
+                    print(f"[Robot] isSteady failed ({phase}): {e}")
+                    self._rtde_ctrl = None
+                    _done(False)
+
+        elif phase == 'real_close':
+            try:
+                self.close_gripper()
+            except Exception as e:
+                print(f"[Robot] close_gripper failed: {e}")
+            self._real_settle_start = time.perf_counter()
+            _next('real_settle')
+
+        elif phase == 'real_settle':
+            if time.perf_counter() - (self._real_settle_start or 0.0) >= 1.0:
+                self._fire_phase(self._real_on_phase, "grasped")
+                _next('real_open_post')
+
+        elif phase == 'real_open_post':
+            try:
+                self.open_gripper()
+            except Exception as e:
+                print(f"[Robot] open_gripper failed: {e}")
+            self._fire_phase(self._real_on_phase, "retracting")
+            if self._real_q_above is not None:
+                _next('real_ret_above')
+            elif self._real_q_approach is not None:
+                _next('real_retract')
+            else:
+                _done(True)

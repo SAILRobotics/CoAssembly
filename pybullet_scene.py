@@ -104,7 +104,7 @@ class PyBulletScene:
         self.T_world_deskcam = np.array(T_world_deskcam, dtype=float)
         self.T_tcp_handcam   = None if T_tcp_handcam is None else np.array(T_tcp_handcam, dtype=float)
 
-        # Calibration-time poses (marker 10 frame) — preserved for set_scene_origin()
+        # Calibration-time poses (anchor marker frame) — preserved for set_scene_origin()
         self._T_calib_base    = self.T_world_base.copy()
         self._T_calib_deskcam = self.T_world_deskcam.copy()
         self.K_desk = K_desk
@@ -220,17 +220,17 @@ class PyBulletScene:
             p.disconnect()
             self.connected = False
 
-    def set_scene_origin(self, T_world_marker10: np.ndarray):
-        """Reposition robot and desk-cam relative to the runtime marker 10 pose.
+    def set_scene_origin(self, T_world_anchor: np.ndarray):
+        """Reposition robot and desk-cam relative to the runtime anchor marker pose.
 
-        Calibration was captured with marker 10 as origin, so at runtime:
-            T_runtime_X = T_world_marker10 @ T_calib_X
+        Calibration was captured with the anchor marker as origin, so at runtime:
+            T_runtime_X = T_world_anchor @ T_calib_X
         """
         if not self.connected:
             return
-        T_m10 = np.array(T_world_marker10, dtype=float)
-        self.T_world_base    = T_m10 @ self._T_calib_base
-        self.T_world_deskcam = T_m10 @ self._T_calib_deskcam
+        T_anchor = np.array(T_world_anchor, dtype=float)
+        self.T_world_base    = T_anchor @ self._T_calib_base
+        self.T_world_deskcam = T_anchor @ self._T_calib_deskcam
 
         if self.robot_id is not None:
             T_robot = self.T_world_base.copy()
@@ -239,8 +239,8 @@ class PyBulletScene:
             p.resetBasePositionAndOrientation(self.robot_id, pos, quat)
 
         if self._table_id is not None:
-            T_table = T_m10.copy()
-            T_table[:3, 3] = T_table[:3, 3] + T_m10[:3, :3] @ [0.0, 0.0, -self._table_half_z]
+            T_table = T_anchor.copy()
+            T_table[:3, 3] = T_table[:3, 3] + T_anchor[:3, :3] @ [0.0, 0.0, -self._table_half_z]
             self._teleport(self._table_id, T_table)
 
         p.removeAllUserDebugItems()

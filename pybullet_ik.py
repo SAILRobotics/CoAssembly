@@ -55,6 +55,7 @@ class IKScene:
         self._lower_limits: list = []
         self._upper_limits: list = []
         self._joint_ranges: list = []
+        self._rest_poses:   list = []   # preferred arm config bias for solve_ik; empty → limit midpoints
 
     @classmethod
     def from_calibration(
@@ -80,12 +81,12 @@ class IKScene:
             p.disconnect()
             self.connected = False
 
-    def set_scene_origin(self, T_world_marker10: np.ndarray):
-        """Reposition the robot when marker 10 is locked at runtime."""
+    def set_scene_origin(self, T_world_anchor: np.ndarray):
+        """Reposition the robot when the anchor marker is locked at runtime."""
         if not self.connected:
             return
-        T_m10 = np.array(T_world_marker10, dtype=float)
-        self.T_world_base = T_m10 @ self._T_calib_base
+        T_anchor = np.array(T_world_anchor, dtype=float)
+        self.T_world_base = T_anchor @ self._T_calib_base
         if self.robot_id is not None:
             T_robot = self.T_world_base.copy()
             T_robot[:3, :3] = (T_robot[:3, :3]
@@ -115,6 +116,12 @@ class IKScene:
         self._upper_limits = [float(conv(v)) for v in upper]
         self._joint_ranges = [u - l for l, u in zip(self._lower_limits, self._upper_limits)]
 
+    def set_rest_poses(self, q: list, degrees: bool = False) -> None:
+        """Set the preferred arm configuration used as the bias seed in solve_ik.
+        Pass 6 values (one per arm joint). Empty → falls back to limit midpoints."""
+        conv = np.deg2rad if degrees else float
+        self._rest_poses = [float(conv(v)) for v in q]
+
     def update_robot(self, q_rad: np.ndarray):
         for idx, q in zip(self.arm_indices, q_rad):
             p.resetJointState(self.robot_id, idx, float(q))
@@ -131,31 +138,43 @@ class IKScene:
             return None
 
     def solve_ik(self, current_q: np.ndarray, target_pos,
-                 target_quat_xyzw, pos_tol: float = 0.005) -> np.ndarray:
+                 target_quat_xyzw=None, pos_tol: float = 0.005,
+                 orient_tol: "float | None" = None) -> np.ndarray:
         """Solve IK and return joint angles immediately (no rate limiting).
         Use for one-shot moves (moveJ); use step_ik for streaming servo loops.
 
+        target_quat_xyzw: target orientation; None → position-only IK.
+        pos_tol:    warn if FK position error exceeds this (metres).
+        orient_tol: warn if FK orientation error exceeds this (radians); ignored
+                    when target_quat_xyzw is None.
+
         Tries two seeds and picks the solution with smaller FK position error:
-          1. current_q  — stays close to the current configuration
-          2. midpoints of joint limits — biases toward the preferred arm pose
-             (with limits [-360,-180,0,...] the midpoint is [0,-90,90,...] deg,
-             i.e. a natural elbow-down configuration)
-        Prints a warning if the best solution's FK error exceeds pos_tol (m)."""
-        mid_rest = [(l + u) / 2.0 for l, u in
-                    zip(self._lower_limits, self._upper_limits)]
+          1. current_q    — stays close to the current configuration
+          2. _rest_poses  — biases toward the preferred arm pose (set via
+                            set_rest_poses); falls back to limit midpoints."""
+        if self._rest_poses:
+            bias_map  = dict(zip(self.arm_indices, self._rest_poses))
+            bias_rest = [float(bias_map.get(j, (l + u) / 2.0))
+                         for j, l, u in zip(self._movable,
+                                            self._lower_limits, self._upper_limits)]
+        else:
+            bias_rest = [(l + u) / 2.0
+                         for l, u in zip(self._lower_limits, self._upper_limits)]
 
         best_q, best_err = None, float('inf')
-        for seed_q in (current_q, None):   # None → use midpoint seed
+        for seed_q in (current_q, None):   # None → use bias_rest seed
             arm_q_map  = (dict(zip(self.arm_indices, seed_q))
                           if seed_q is not None else {})
-            rest_poses = [float(arm_q_map.get(j, mid_rest[i]))
+            rest_poses = [float(arm_q_map.get(j, bias_rest[i]))
                           for i, j in enumerate(self._movable)]
-            joint_q = p.calculateInverseKinematics(
-                self.robot_id, self.tool0_link_idx, target_pos,
-                targetOrientation=target_quat_xyzw,
+            ik_kwargs  = dict(
                 lowerLimits=self._lower_limits, upperLimits=self._upper_limits,
                 jointRanges=self._joint_ranges, restPoses=rest_poses,
                 maxNumIterations=_IK_ITER, residualThreshold=1e-5)
+            if target_quat_xyzw is not None:
+                ik_kwargs["targetOrientation"] = target_quat_xyzw
+            joint_q = p.calculateInverseKinematics(
+                self.robot_id, self.tool0_link_idx, target_pos, **ik_kwargs)
             q = np.array(joint_q[:len(self.arm_indices)], dtype=np.float64)
             for idx, qi in zip(self.arm_indices, q):
                 p.resetJointState(self.robot_id, idx, float(qi))
@@ -164,24 +183,35 @@ class IKScene:
             err = np.linalg.norm(np.array(fk[4]) - np.array(target_pos))
             if err < best_err:
                 best_q, best_err = q, err
+                best_fk = fk
 
         for idx, qi in zip(self.arm_indices, best_q):
             p.resetJointState(self.robot_id, idx, float(qi))
 
         # Report convergence
         arm_limit_idx = [self._movable.index(j) for j in self.arm_indices]
-        lower = np.array([self._lower_limits[i] for i in arm_limit_idx])
-        upper = np.array([self._upper_limits[i] for i in arm_limit_idx])
+        lower      = np.array([self._lower_limits[i] for i in arm_limit_idx])
+        upper      = np.array([self._upper_limits[i] for i in arm_limit_idx])
         violations = np.sum((best_q < lower) | (best_q > upper))
         if best_err > pos_tol:
-            print(f"[IK] WARNING: did not converge — pos error {best_err*1000:.1f} mm  "
+            print(f"[IK] WARNING: pos error {best_err*1000:.1f} mm > tol  "
                   f"target={[round(v*1000,1) for v in target_pos]} mm")
         else:
-            print(f"[IK] Converged  pos error {best_err*1000:.1f} mm", end="")
+            print(f"[IK] Converged  pos err {best_err*1000:.1f} mm", end="")
             if violations:
                 print(f"  ({violations} joint(s) outside soft limits)")
             else:
                 print()
+
+        if orient_tol is not None and target_quat_xyzw is not None:
+            q_achieved = np.array(best_fk[5])
+            q_target   = np.array(target_quat_xyzw)
+            dot        = float(np.clip(abs(np.dot(q_achieved, q_target)), 0.0, 1.0))
+            orient_err = 2.0 * np.arccos(dot)
+            if orient_err > orient_tol:
+                print(f"[IK] WARNING: orient error {np.rad2deg(orient_err):.1f}° "
+                      f"> tol {np.rad2deg(orient_tol):.1f}°")
+
         return best_q
 
     def step_ik(self, current_q: np.ndarray, target_pos, target_quat_xyzw,
