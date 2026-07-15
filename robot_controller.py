@@ -298,7 +298,7 @@ if _FRAX_AVAILABLE:
             ws_lo:             "list | None" = None,
             ws_hi:             "list | None" = None,
             obstacle_boxes:    "list | None" = None,
-            gripper_collision: bool = False,
+            gripper_collision: bool = True,
         ) -> None:
             self._qdot_max = float(qdot_max)
 
@@ -508,7 +508,7 @@ class RobotController:
         frax_ws_lo:            "list | None" = None,  # workspace lower corner [x,y,z] (world)
         frax_ws_hi:            "list | None" = None,  # workspace upper corner [x,y,z] (world)
         frax_z_min:            float = 0.15,          # floor clearance for link collision spheres (m)
-        frax_gripper_collision: bool = False,          # include gripper spheres in CBF
+        frax_gripper_collision: bool = True,           # include gripper spheres in CBF
     ) -> None:
         self.simulation    = (robot_ip is None)
         self._robot_ip     = robot_ip

@@ -87,7 +87,8 @@ class RobotClient:
         if self.pb_scene is None:
             raise RuntimeError("local visualization pb_scene failed to build")
 
-        self._tool_grasp_running   = False
+        self._tool_grasp_running = False
+        self._move_running       = False
 
         ctx = zmq.Context.instance()
         self._cmd_pub = ctx.socket(zmq.PUB)
@@ -117,6 +118,7 @@ class RobotClient:
             if q is not None:
                 self.pb_scene.update_robot(np.array(q, dtype=float))
             self._tool_grasp_running = bool(msg.get("tool_grasp_running", False))
+            self._move_running       = bool(msg.get("move_running", False))
             return
         if msg.get("type") != "event":
             return
@@ -158,6 +160,10 @@ class RobotClient:
     @property
     def tool_grasp_running(self) -> bool:
         return self._tool_grasp_running
+
+    @property
+    def move_running(self) -> bool:
+        return self._move_running
 
     @property
     def q(self) -> "np.ndarray | None":
@@ -208,6 +214,25 @@ class RobotClient:
                               if board_normal is not None else None),
             "request_id":    rid,
         })
+
+    def move_to_pose(self, pos, quat=None,
+                     on_complete: "Callable[[bool], None] | None" = None) -> None:
+        """Stream IK+CBF toward a fixed Cartesian target; fires on_complete(ok) on arrival."""
+        rid = None
+        if on_complete is not None:
+            rid = self._next_request_id
+            self._next_request_id += 1
+            self._callbacks[rid] = lambda msg: on_complete(bool(msg.get("ok", False)))
+        self._send({
+            "cmd":        "move_to_pose",
+            "pos":        np.asarray(pos, float).tolist(),
+            "quat":       np.asarray(quat, float).tolist() if quat is not None else None,
+            "request_id": rid,
+        })
+
+    def cancel_move(self) -> None:
+        """Cancel an in-progress move_to_pose."""
+        self._send({"cmd": "cancel_move"})
 
     def cancel_motion(self) -> None:
         self._send({"cmd": "cancel"})

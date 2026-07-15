@@ -65,8 +65,19 @@ except ImportError:
 import main_setting as cfg
 
 _FILE_DIR = Path(__file__).resolve().parent
+_URDF_PATH = _FILE_DIR / "robot_assets" / "ur10e.urdf"
 
 _SIM_Q_DEG = [-105.97, -29.43, 87.53, 33.17, 92.40, 168.95]
+
+# ── frax / CBF (optional) ─────────────────────────────────────────────────────
+try:
+    from robot_controller import _FraxController as _RobotFraxController
+    import jax.numpy as _jnp
+    _HAS_FRAX = True
+except Exception:
+    _RobotFraxController = None   # type: ignore[assignment,misc]
+    _jnp = None
+    _HAS_FRAX = False
 
 
 # ── Simulation waypoint runner ────────────────────────────────────────────────
@@ -184,6 +195,31 @@ class RobotControlServer:
         self._grasp_ok:             bool           = False   # real only: object detected
         self._grasp_cancel_pending: bool           = False   # cancel in progress; all phases
 
+        # Move-to-pose state machine (IK + CBF servo loop, driven by tick())
+        self._move_phase:       "str | None"        = None
+        self._move_target_pos:  "np.ndarray | None" = None
+        self._move_target_quat: "np.ndarray | None" = None
+        self._move_on_complete: "Callable | None"   = None
+        self._move_smooth_q:    "np.ndarray | None" = None
+        self._move_conv_start:  "float | None"      = None  # perf_counter when TCP first entered 5cm zone
+
+        # frax CBF controller (optional — falls back to rate-limited IK)
+        self._frax = None
+        if _HAS_FRAX and _URDF_PATH.exists():
+            try:
+                self._frax = _RobotFraxController(
+                    urdf_path          = str(_URDF_PATH),
+                    T_world_base       = self._T_world_base,
+                    q_min              = np.deg2rad(cfg.JOINT_MIN_DEG).tolist(),
+                    q_max              = np.deg2rad(cfg.JOINT_MAX_DEG).tolist(),
+                    ws_lo              = list(cfg.WORKSPACE_LO),
+                    ws_hi              = list(cfg.WORKSPACE_HI),
+                    gripper_collision  = gripper_collision,
+                )
+                print("[RobotServer] frax CBF ready.")
+            except Exception as e:
+                print(f"[RobotServer] frax init failed: {e}")
+
         # Gate publish_base until vision side has locked the anchor and called set_scene_origin
         self._scene_origin_set = False
 
@@ -231,6 +267,7 @@ class RobotControlServer:
             "type":               "state",
             "q":                  q.tolist(),
             "tool_grasp_running": bool(self.tool_grasp_running),
+            "move_running":       bool(self._move_phase is not None),
         })
 
     def _poll_commands(self) -> None:
@@ -269,6 +306,16 @@ class RobotControlServer:
                     "grasp_done", rid, ok=bool(ok)),
                 on_phase     = lambda phase, rid=rid: self._publish_event(
                     "grasp_phase", rid, phase=phase))
+
+        elif cmd == "move_to_pose":
+            self.move_to_pose(
+                pos  = msg["pos"],
+                quat = msg.get("quat"),
+                on_complete = lambda ok, rid=rid: self._publish_event(
+                    "move_done", rid, ok=bool(ok)))
+
+        elif cmd == "cancel_move":
+            self.cancel_move()
 
         elif cmd == "cancel":
             self.cancel_motion()
@@ -323,6 +370,9 @@ class RobotControlServer:
         return self._grasp_phase is not None
 
     def tick(self, dt: float = 1.0 / 60.0) -> None:
+        if self._move_phase is not None:
+            self._tick_move_to_pose(dt)
+            return
         if not self.simulation:
             if self._grasp_phase is not None:
                 self._tick_real_grasp(dt)
@@ -383,6 +433,110 @@ class RobotControlServer:
                 cb(success)
             except Exception:
                 pass
+
+    # ── Move-to-pose (IK + CBF servo loop) ───────────────────────────────────
+
+    def move_to_pose(self, pos, quat=None,
+                     on_complete: "Callable[[bool], None] | None" = None) -> None:
+        """Stream IK+CBF servoJ toward a fixed Cartesian target until convergence."""
+        if self._grasp_phase is not None:
+            print("[Robot] move_to_pose blocked — grasp in progress")
+            if on_complete:
+                on_complete(False)
+            return
+        if not self.simulation:
+            self.servoStop()
+        self._move_target_pos  = np.asarray(pos, float)
+        self._move_target_quat = np.asarray(quat, float) if quat is not None else None
+        self._move_on_complete = on_complete
+        self._move_smooth_q    = None
+        self._move_conv_start  = None
+        self._move_phase       = 'moving_to_pose'
+        print(f"[Robot] move_to_pose start → {np.round(self._move_target_pos, 3).tolist()}")
+
+    def cancel_move(self) -> None:
+        if self._move_phase is None:
+            return
+        print("[Robot] move_to_pose cancelled")
+        self._finish_move(False)
+
+    def _finish_move(self, ok: bool) -> None:
+        self._move_phase       = None
+        self._move_target_pos  = None
+        self._move_target_quat = None
+        self._move_smooth_q    = None
+        self._move_conv_start  = None
+        if not self.simulation:
+            self.servoStop()
+        cb = self._move_on_complete
+        self._move_on_complete = None
+        if cb is not None:
+            try:
+                cb(ok)
+            except Exception as e:
+                print(f"[Robot] move_on_complete error: {e}")
+
+    def _tick_move_to_pose(self, dt: float) -> None:
+        target_pos  = self._move_target_pos
+        target_quat = self._move_target_quat
+        if target_pos is None:
+            self._move_phase = None
+            return
+
+        q_cur = self.pb_scene.current_q.copy()
+
+        # Convergence check: TCP within 5 cm for at least 0.5 s continuously
+        T_tcp = self.pb_scene.update_tcp_bodies()
+        if T_tcp is not None:
+            dist = float(np.linalg.norm(T_tcp[:3, 3] - target_pos))
+            if dist < 0.050:
+                if self._move_conv_start is None:
+                    self._move_conv_start = time.perf_counter()
+                elif time.perf_counter() - self._move_conv_start >= 0.5:
+                    print(f"[Robot] move_to_pose converged ({dist * 100:.1f} cm, 0.5 s dwell) → idle")
+                    self._finish_move(True)
+                    return
+            else:
+                self._move_conv_start = None
+
+        # IK
+        q_ik = self.pb_scene.solve_ik(q_cur, target_pos, target_quat)
+        q_ik = _wrap_nearest(q_ik, q_cur)
+
+        # Rate-limit
+        sc       = self._speed_scale
+        max_step = np.deg2rad(360.0) * (4.0 if self.simulation else sc) * dt
+        q_limited = q_cur + np.clip(q_ik - q_cur, -max_step, max_step)
+
+        # CBF safety filter (when frax is loaded)
+        if self._frax is not None:
+            qdot = (q_limited - q_cur) / max(dt, 1e-6)
+            try:
+                qdot_safe = np.asarray(
+                    self._frax._cbf.safety_filter(_jnp.array(q_cur), _jnp.array(qdot)))
+            except Exception:
+                qdot_safe = (q_limited - q_cur) / max(dt, 1e-6)
+            q_target = q_cur + qdot_safe * dt
+        else:
+            q_target = q_limited
+            # Without CBF: treat stall as convergence
+            if np.linalg.norm(q_target - q_cur) < 1e-4:
+                print("[Robot] move_to_pose stalled (no CBF) → idle")
+                self._finish_move(True)
+                return
+
+        if np.any(np.isnan(q_target)):
+            return
+
+        if self.simulation:
+            self.pb_scene.update_robot(q_target)
+        else:
+            # EMA smoothing to damp servoJ jitter
+            if self._move_smooth_q is None:
+                self._move_smooth_q = q_target.copy()
+            else:
+                self._move_smooth_q = 0.25 * q_target + 0.75 * self._move_smooth_q
+            self.servoJ(self._move_smooth_q, dt, lookahead=0.195, gain=100)
 
     # ── Grasp command ─────────────────────────────────────────────────────────
 

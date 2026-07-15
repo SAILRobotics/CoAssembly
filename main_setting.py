@@ -48,7 +48,7 @@ ROBOT_CONTROL_HZ_REAL = 120   # real hardware control rate (matches RTDE max ~12
 # Real-hardware speed cap (temporary safety measure while testing) — multiplies
 # moveJ/servoJ speed & acceleration and the pre-CBF joint-delta rate limit.
 # 1.0 = full speed. Simulation is unaffected.
-REAL_ROBOT_SPEED_SCALE = 0.6
+REAL_ROBOT_SPEED_SCALE = 1.0
 
 # ── ArUco marker IDs ──────────────────────────────────────────────────────────
 ANCHOR_MARKER_ID   = 100   # world frame + PyBullet scene origin
