@@ -160,8 +160,10 @@ class RobotControlServer:
     _BASE_YAW_CORRECTION_DEG = -90.0
 
     def __init__(self, quest_ip: str, robot_ip: "str | None", simulation: bool,
-                 use_calibrated_robot_base: bool, gripper_collision: bool):
+                 use_calibrated_robot_base: bool, gripper_collision: bool,
+                 use_diff_ik: bool = True):
         self.simulation   = simulation
+        self.use_diff_ik  = use_diff_ik
         self._robot_ip    = robot_ip
         self.control_hz   = cfg.ROBOT_CONTROL_HZ if simulation else cfg.ROBOT_CONTROL_HZ_REAL
 
@@ -221,6 +223,14 @@ class RobotControlServer:
                 print("[RobotServer] frax CBF ready.")
             except Exception as e:
                 print(f"[RobotServer] frax init failed: {e}")
+
+        _GRN = "\033[92m"; _YLW = "\033[93m"; _RST = "\033[0m"
+        if self.use_diff_ik and self._frax is not None:
+            print(f"{_GRN}[RobotServer] Motion mode: OSC + CBF differential IK{_RST}")
+        elif self._frax is not None:
+            print(f"{_YLW}[RobotServer] Motion mode: PyBullet IK + CBF filter (--no-diff-ik){_RST}")
+        else:
+            print(f"{_YLW}[RobotServer] Motion mode: PyBullet IK only (frax not loaded){_RST}")
 
         # Gate publish_base until vision side has locked the anchor and called set_scene_origin
         self._scene_origin_set = False
@@ -494,41 +504,45 @@ class RobotControlServer:
             dist = float(np.linalg.norm(T_tcp[:3, 3] - target_pos))
             R_err = T_tcp[:3, :3].T @ ScipyR.from_quat(target_quat).as_matrix()
             angle_err = float(ScipyR.from_matrix(R_err).magnitude())
-            if dist < 0.050 and angle_err < np.deg2rad(10.0):
+            if dist < 0.080 and angle_err < np.deg2rad(10.0):
                 if self._move_conv_start is None:
                     self._move_conv_start = time.perf_counter()
                 elif time.perf_counter() - self._move_conv_start >= 0.5:
-                    print(f"[Robot] move_to_pose converged ({dist*100:.1f} cm, {np.rad2deg(angle_err):.1f}°, 0.5 s dwell) → idle")
+                    print(f"[Robot] move_to_pose converged ({dist*100:.1f} cm < 8 cm, {np.rad2deg(angle_err):.1f}° < 10°, 0.5 s dwell) → idle")
                     self._finish_move(True)
                     return
             else:
                 self._move_conv_start = None
 
-        # IK
-        q_ik = self.pb_scene.solve_ik(q_cur, target_pos, target_quat)
-        q_ik = _wrap_nearest(q_ik, q_cur)
-
-        # Rate-limit with proximity damping: scale speed down linearly inside 10 cm
-        # so the robot glides to a stop rather than oscillating around the IK solution.
-        sc         = self._speed_scale
-        dist_scale = min(dist / 0.10, 1.0) if T_tcp is not None else 1.0
-        max_step   = np.deg2rad(90.0 if self.simulation else 180.0) * (1.0 if self.simulation else sc) * dt * dist_scale
-        q_limited  = q_cur + np.clip(q_ik - q_cur, -max_step, max_step)
-
-        # CBF safety filter (when frax is loaded)
-        if self._frax is not None:
-            qdot = (q_limited - q_cur) / max(dt, 1e-6)
+        # Velocity command
+        if self.use_diff_ik and self._frax is not None:
+            # OSC + CBF: Cartesian-space differential IK — deterministic, no PyBullet IK needed
+            target_rot = ScipyR.from_quat(target_quat).as_matrix()
             try:
-                qdot_safe = np.asarray(
-                    self._frax._cbf.safety_filter(_jnp.array(q_cur), _jnp.array(qdot)))
+                q_target = self._frax.servo_step(target_pos, target_rot, q_cur, dt)
             except Exception:
-                qdot_safe = (q_limited - q_cur) / max(dt, 1e-6)
-            q_target = q_cur + qdot_safe * dt
+                q_target = q_cur
+            # Proximity damping: scale step down linearly inside 15 cm so robot decelerates into target
+            dist_scale = min(dist / 0.25, 1.0) if T_tcp is not None else 1.0
+            q_target = q_cur + (q_target - q_cur) * dist_scale
         else:
-            q_target = q_limited
-            # Without CBF: treat stall as convergence
+            # PyBullet IK + rate-limit (fallback or --no-diff-ik)
+            q_ik = self.pb_scene.solve_ik(q_cur, target_pos, target_quat)
+            q_ik = _wrap_nearest(q_ik, q_cur)
+            sc        = self._speed_scale
+            dist_scale = min(dist / 0.10, 1.0) if T_tcp is not None else 1.0
+            max_step  = np.deg2rad(90.0 if self.simulation else 180.0) * (1.0 if self.simulation else sc) * dt * dist_scale
+            q_target  = q_cur + np.clip(q_ik - q_cur, -max_step, max_step)
+            if self._frax is not None:
+                # Still apply CBF safety filter even in IK mode
+                qdot = (q_target - q_cur) / max(dt, 1e-6)
+                try:
+                    q_target = q_cur + np.asarray(
+                        self._frax._cbf.safety_filter(_jnp.array(q_cur), _jnp.array(qdot))) * dt
+                except Exception:
+                    pass
             if np.linalg.norm(q_target - q_cur) < 1e-4:
-                print("[Robot] move_to_pose stalled (no CBF) → idle")
+                print("[Robot] move_to_pose stalled → idle")
                 self._finish_move(True)
                 return
 
@@ -536,7 +550,11 @@ class RobotControlServer:
             return
 
         if self.simulation:
-            self.pb_scene.update_robot(q_target)
+            if self._move_smooth_q is None:
+                self._move_smooth_q = q_target.copy()
+            else:
+                self._move_smooth_q = 0.3 * q_target + 0.7 * self._move_smooth_q
+            self.pb_scene.update_robot(self._move_smooth_q)
         else:
             # EMA smoothing to damp servoJ jitter
             if self._move_smooth_q is None:
@@ -1093,6 +1111,8 @@ def main():
                     default=cfg.USE_CALIBRATED_ROBOT_BASE_POSE)
     ap.add_argument("--gripper-collision", action=argparse.BooleanOptionalAction,
                     default=True)
+    ap.add_argument("--diff-ik", action=argparse.BooleanOptionalAction,
+                    default=True, help="Use OSC+CBF differential IK (default). --no-diff-ik falls back to PyBullet IK.")
     args = ap.parse_args()
 
     if not _PYBULLET_AVAILABLE:
@@ -1104,6 +1124,7 @@ def main():
         simulation                = args.simulation,
         use_calibrated_robot_base = args.calibrated_robot_base,
         gripper_collision         = args.gripper_collision,
+        use_diff_ik               = args.diff_ik,
     )
     server.run()
 
