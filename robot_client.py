@@ -230,6 +230,14 @@ class RobotClient:
             "request_id": rid,
         })
 
+    def update_move_target(self, pos, quat=None) -> None:
+        """Update the target of an in-progress move_to_pose without restarting it."""
+        self._send({
+            "cmd":  "update_move_target",
+            "pos":  np.asarray(pos, float).tolist(),
+            "quat": np.asarray(quat, float).tolist() if quat is not None else None,
+        })
+
     def cancel_move(self) -> None:
         """Cancel an in-progress move_to_pose."""
         self._send({"cmd": "cancel_move"})

@@ -286,7 +286,7 @@ if _FRAX_AVAILABLE:
             urdf_path:         str,
             T_world_base:      np.ndarray,
             kp_pos:            float = 200.0,
-            kp_ori:            float = 200.0,
+            kp_ori:            float = 30.0,
             qdot_max:          float = 3.0,
             q_min:             "list | None" = None,
             q_max:             "list | None" = None,

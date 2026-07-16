@@ -206,6 +206,7 @@ class RobotControlServer:
         self._move_on_complete: "Callable | None"   = None
         self._move_smooth_q:    "np.ndarray | None" = None
         self._move_conv_start:  "float | None"      = None  # perf_counter when TCP first entered 5cm zone
+        self._move_diag_t:      float               = 0.0   # last convergence-status print time
 
         # frax CBF controller (optional — falls back to rate-limited IK)
         self._frax = None
@@ -325,6 +326,9 @@ class RobotControlServer:
                 quat = msg.get("quat"),
                 on_complete = lambda ok, rid=rid: self._publish_event(
                     "move_done", rid, ok=bool(ok)))
+
+        elif cmd == "update_move_target":
+            self.update_move_target(msg["pos"], msg.get("quat"))
 
         elif cmd == "cancel_move":
             self.cancel_move()
@@ -463,8 +467,17 @@ class RobotControlServer:
         self._move_on_complete = on_complete
         self._move_smooth_q    = None
         self._move_conv_start  = None
+        self._move_diag_t      = 0.0
         self._move_phase       = 'moving_to_pose'
         print(f"[Robot] move_to_pose start → {np.round(self._move_target_pos, 3).tolist()}")
+
+    def update_move_target(self, pos, quat=None) -> None:
+        """Update the Cartesian target of an in-progress move without restarting the controller."""
+        if self._move_phase is None:
+            return
+        self._move_target_pos = np.asarray(pos, float)
+        if quat is not None:
+            self._move_target_quat = np.asarray(quat, float)
 
     def cancel_move(self) -> None:
         if self._move_phase is None:
@@ -497,14 +510,37 @@ class RobotControlServer:
 
         q_cur = self.pb_scene.current_q.copy()
 
-        # Convergence check: TCP within 5 cm AND within 10° for at least 0.5 s
+        _GRN = "\033[92m"; _RED = "\033[91m"; _RST = "\033[0m"
+
+        # One-shot: compare frax FK vs PyBullet FK to detect frame mismatch
+        if not getattr(self, '_fk_check_done', False) and self._frax is not None:
+            self._fk_check_done = True
+            _pb_tcp  = self.pb_scene.update_tcp_bodies()
+            _fr_tcp  = self._frax.ee_world_pos(q_cur)
+            if _pb_tcp is not None:
+                print(f"[Robot] FK check  PyBullet TCP: {np.round(_pb_tcp[:3, 3], 3).tolist()}")
+                print(f"[Robot] FK check    frax TCP:   {np.round(_fr_tcp, 3).tolist()}")
+                print(f"[Robot] FK check    target:     {np.round(target_pos, 3).tolist()}")
+
+        # Convergence check: TCP within 8 cm for at least 0.5 s (position only)
         T_tcp = self.pb_scene.update_tcp_bodies()
         dist = float('inf')
+        angle_err = float('inf')
         if T_tcp is not None:
             dist = float(np.linalg.norm(T_tcp[:3, 3] - target_pos))
             R_err = T_tcp[:3, :3].T @ ScipyR.from_quat(target_quat).as_matrix()
             angle_err = float(ScipyR.from_matrix(R_err).magnitude())
-            if dist < 0.080 and angle_err < np.deg2rad(10.0):
+
+            # Throttled colored status print at ~2 Hz
+            _now = time.perf_counter()
+            if _now - self._move_diag_t >= 0.5:
+                self._move_diag_t = _now
+                _dc = _GRN if dist      < 0.080          else _RED
+                _ac = _GRN if angle_err < np.deg2rad(10) else _RED
+                print(f"[Robot] dist: {_dc}{dist*100:5.1f} cm{_RST}  "
+                      f"angle: {_ac}{np.rad2deg(angle_err):5.1f}°{_RST}")
+
+            if dist < 0.080:
                 if self._move_conv_start is None:
                     self._move_conv_start = time.perf_counter()
                 elif time.perf_counter() - self._move_conv_start >= 0.5:
@@ -520,7 +556,8 @@ class RobotControlServer:
             target_rot = ScipyR.from_quat(target_quat).as_matrix()
             try:
                 q_target = self._frax.servo_step(target_pos, target_rot, q_cur, dt)
-            except Exception:
+            except Exception as _e:
+                print(f"[Robot] servo_step error: {_e}")
                 q_target = q_cur
             # Proximity damping: scale step down linearly inside 15 cm so robot decelerates into target
             dist_scale = min(dist / 0.25, 1.0) if T_tcp is not None else 1.0

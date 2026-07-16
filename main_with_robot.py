@@ -1362,7 +1362,8 @@ class MainScene:
         self._T_world_tcp: "np.ndarray | None"          = None   # current TCP pose in world; polled each frame from robot
         self._tcp_target_T: "np.ndarray | None"         = None   # visualised TCP target pose (None = no target shown)
         self.flat_tcp_ori: bool                          = flat_tcp_ori  # True → gripper horizontal (XY-plane); False → match palm normal via _palm_quat
-        self._robot_state: "str | None"                  = None   # None | 'moving_to_pose' | 'approaching' | grasp phases
+        self._robot_state: "str | None"                  = None   # None | 'tracking' | 'approaching' | grasp phases
+        self._tracking_hand_side: "str | None"           = None   # 'left' | 'right' while tracking
         # self._handover: "dict | None"               = None   # frozen compromise-handover result (grid/target/sphere), set on tool grasp
         # self._pending_handover_move                 = False  # set by grasp on_complete; main thread then issues the handover move_tcp
         self._last_ar_board_T: "np.ndarray | None"    = None   # last AR box pose from _TargetPoseReceiver; persists between polls
@@ -1865,7 +1866,8 @@ class MainScene:
                     if self.robot is not None and self.robot.move_running:
                         print("[TCP] Gripper clicked — cancelling move_to_pose")
                         self.robot.cancel_move()
-                        self._robot_state = None
+                        self._robot_state        = None
+                        self._tracking_hand_side = None
                     elif (self.robot is not None
                           and not self.robot.tool_grasp_running
                           and self.anchor.locked):
@@ -1898,20 +1900,26 @@ class MainScene:
                                                    * ScipyR.from_euler('z', 180, degrees=True)
                                                    ).as_quat()
                                 gripper_z   = ScipyR.from_quat(target_quat).apply([0., 0., 1.])
-                                target_pos  = palm_pos - gripper_z * 0.185
+                                centroid    = (np.asarray(hand_pts[3], float)
+                                               + np.asarray(hand_pts[1], float)
+                                               + np.asarray(hand_pts[6], float)) / 3.0
+                                # Standoff along _palm_quat Z axis (jaw×wrist-to-palm); 10 cm + 18.5 cm tip offset
+                                target_pos  = centroid - gripper_z * (0.10 + 0.185)
                                 target_quat = target_quat.tolist()
                             print(f"[TCP] Move to {opposing} hand "
                                   f"(palm={np.round(palm_pos, 3).tolist()}, "
                                   f"target={np.round(target_pos, 3).tolist()})")
-                            self._robot_state  = 'moving_to_pose'
-                            _T_tgt             = np.eye(4)
-                            _T_tgt[:3, 3]      = target_pos
-                            _T_tgt[:3, :3]     = ScipyR.from_quat(target_quat).as_matrix()
-                            self._tcp_target_T = _T_tgt
+                            self._robot_state       = 'tracking'
+                            self._tracking_hand_side = opposing
+                            _T_tgt                 = np.eye(4)
+                            _T_tgt[:3, 3]          = target_pos
+                            _T_tgt[:3, :3]         = ScipyR.from_quat(target_quat).as_matrix()
+                            self._tcp_target_T     = _T_tgt
                             self.robot.move_to_pose(
                                 target_pos, target_quat,
                                 on_complete=lambda ok: (
                                     setattr(self, '_robot_state', None),
+                                    setattr(self, '_tracking_hand_side', None),
                                     print(f"[Robot] move_to_pose "
                                           f"{'arrived → idle' if ok else 'cancelled'}"),
                                 ),
@@ -2078,6 +2086,45 @@ class MainScene:
                 #             )
                 #             self._robot_state = 'moving'
 
+                # ── Hand tracking update ──────────────────────────────────────
+                if (self._robot_state == 'tracking'
+                        and self._tracking_hand_side is not None
+                        and self.robot is not None):
+                    _track_pts = (left_pts if self._tracking_hand_side == 'left'
+                                  else right_pts)
+                    if _track_pts is not None:
+                        _palm = np.asarray(_track_pts[1], float)
+                        if self.flat_tcp_ori:
+                            _tcp_pos     = self._T_world_tcp[:3, 3] if self._T_world_tcp is not None else _palm
+                            _app         = _palm - _tcp_pos
+                            _app_norm    = float(np.linalg.norm(_app))
+                            _hz          = _app / _app_norm if _app_norm > 1e-3 else np.array([1., 0., 0.])
+                            _hz          = np.array([_hz[0], _hz[1], 0.])
+                            _hz_n        = float(np.linalg.norm(_hz))
+                            _hz          = _hz / _hz_n if _hz_n > 1e-3 else np.array([1., 0., 0.])
+                            _hy          = np.array([0., 0., 1.])
+                            _hx          = np.cross(_hy, _hz)
+                            _tq          = ScipyR.from_matrix(np.column_stack([_hx, _hy, _hz])).as_quat().tolist()
+                            _tp          = (_palm - 0.185 * _hz).tolist()
+                        else:
+                            _is_left = (self._tracking_hand_side == 'left')
+                            _tq      = _palm_quat(_track_pts, is_left=_is_left)
+                            if ScipyR.from_quat(_tq).apply([0., 1., 0.])[2] > 0:
+                                _tq = (ScipyR.from_quat(_tq)
+                                       * ScipyR.from_euler('z', 180, degrees=True)).as_quat()
+                            _gz       = ScipyR.from_quat(_tq).apply([0., 0., 1.])
+                            _centroid = (np.asarray(_track_pts[3], float)
+                                         + np.asarray(_track_pts[1], float)
+                                         + np.asarray(_track_pts[6], float)) / 3.0
+                            # _tp  = (_centroid - _gz * (0.10 + 0.185)).tolist()
+                            _tp  = (_centroid - _gz * (0.0)).tolist()
+                            _tq  = _tq.tolist()
+                        self.robot.update_move_target(_tp, _tq)
+                        _T_tgt              = np.eye(4)
+                        _T_tgt[:3, 3]       = _tp
+                        _T_tgt[:3, :3]      = ScipyR.from_quat(_tq).as_matrix()
+                        self._tcp_target_T  = _T_tgt
+
                 # ── Visualizer update ─────────────────────────────────────────
                 if self._T_world_tcp is not None:
                     self.vis.update_tcp(self._T_world_tcp)
@@ -2107,6 +2154,7 @@ class MainScene:
                 self.vis.update_tracking(T_wt)
                 self.vis.update_head(T_world_center)
                 self.vis.update_hands(left_pts, right_pts)
+                self.vis.update_palm_triangles(left_pts, right_pts)
                 # Palm quat debug — always visible; prefer right hand, fall back to left
                 if self._robot_state == 'moving_to_hand':
                     _dbg_pts  = left_pts  if self._tracked_hand_side == "left"  else right_pts

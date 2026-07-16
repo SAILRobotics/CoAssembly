@@ -85,7 +85,7 @@ link_6_radii = (
 # Appended to link_6 when with_gripper=True.
 # Tuned for Robotiq 85: palm body + mid-finger + fingertip region.
 gripper_positions = (
-    (0, -0.080, 0.00),   # palm / top of body   r=0.055
+    # (0, -0.080, 0.00),   # palm / top of body   r=0.055
     (0, 0, 0.05),   # palm / top of body   r=0.055
     (0, 0, 0.11),   # mid body              r=0.050
     (0, 0.05, 0.15),   # mid body              r=0.050
@@ -94,7 +94,9 @@ gripper_positions = (
     (0.05, 0, 0.095),   # finger region         r=0.040
     (-0.05, 0, 0.095),   # finger region         r=0.040
 )
-gripper_radii = (0.040, 0.055, 0.06, 0.040, 0.040, 0.040, 0.040, 0.040)
+# gripper_radii = (0.040, 0.055, 0.06, 0.040, 0.040, 0.040, 0.040, 0.040)
+
+gripper_radii = (0.045, 0.45, 0.040, 0.040, 0.040, 0.040, 0.040)
 
 # (Still here if you need them elsewhere)
 positions = {
