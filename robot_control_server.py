@@ -71,13 +71,15 @@ _SIM_Q_DEG = [-105.97, -29.43, 87.53, 33.17, 92.40, 168.95]
 
 # ── frax / CBF (optional) ─────────────────────────────────────────────────────
 try:
-    from robot_controller import _FraxController as _RobotFraxController
+    from frax_controller import _FraxController as _RobotFraxController
     import jax.numpy as _jnp
     _HAS_FRAX = True
-except Exception:
+    print("[RobotServer] frax/CBF loaded OK.")
+except Exception as _e:
     _RobotFraxController = None   # type: ignore[assignment,misc]
     _jnp = None
     _HAS_FRAX = False
+    print(f"[RobotServer] frax/CBF NOT loaded — CBF inactive: {_e}")
 
 
 # ── Simulation waypoint runner ────────────────────────────────────────────────
@@ -485,15 +487,18 @@ class RobotControlServer:
 
         q_cur = self.pb_scene.current_q.copy()
 
-        # Convergence check: TCP within 5 cm for at least 0.5 s continuously
+        # Convergence check: TCP within 5 cm AND within 10° for at least 0.5 s
         T_tcp = self.pb_scene.update_tcp_bodies()
+        dist = float('inf')
         if T_tcp is not None:
             dist = float(np.linalg.norm(T_tcp[:3, 3] - target_pos))
-            if dist < 0.050:
+            R_err = T_tcp[:3, :3].T @ ScipyR.from_quat(target_quat).as_matrix()
+            angle_err = float(ScipyR.from_matrix(R_err).magnitude())
+            if dist < 0.050 and angle_err < np.deg2rad(10.0):
                 if self._move_conv_start is None:
                     self._move_conv_start = time.perf_counter()
                 elif time.perf_counter() - self._move_conv_start >= 0.5:
-                    print(f"[Robot] move_to_pose converged ({dist * 100:.1f} cm, 0.5 s dwell) → idle")
+                    print(f"[Robot] move_to_pose converged ({dist*100:.1f} cm, {np.rad2deg(angle_err):.1f}°, 0.5 s dwell) → idle")
                     self._finish_move(True)
                     return
             else:
@@ -503,10 +508,12 @@ class RobotControlServer:
         q_ik = self.pb_scene.solve_ik(q_cur, target_pos, target_quat)
         q_ik = _wrap_nearest(q_ik, q_cur)
 
-        # Rate-limit
-        sc       = self._speed_scale
-        max_step = np.deg2rad(360.0) * (4.0 if self.simulation else sc) * dt
-        q_limited = q_cur + np.clip(q_ik - q_cur, -max_step, max_step)
+        # Rate-limit with proximity damping: scale speed down linearly inside 10 cm
+        # so the robot glides to a stop rather than oscillating around the IK solution.
+        sc         = self._speed_scale
+        dist_scale = min(dist / 0.10, 1.0) if T_tcp is not None else 1.0
+        max_step   = np.deg2rad(90.0 if self.simulation else 180.0) * (1.0 if self.simulation else sc) * dt * dist_scale
+        q_limited  = q_cur + np.clip(q_ik - q_cur, -max_step, max_step)
 
         # CBF safety filter (when frax is loaded)
         if self._frax is not None:
@@ -1085,7 +1092,7 @@ def main():
     ap.add_argument("--calibrated-robot-base", action=argparse.BooleanOptionalAction,
                     default=cfg.USE_CALIBRATED_ROBOT_BASE_POSE)
     ap.add_argument("--gripper-collision", action=argparse.BooleanOptionalAction,
-                    default=False)
+                    default=True)
     args = ap.parse_args()
 
     if not _PYBULLET_AVAILABLE:

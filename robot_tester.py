@@ -40,7 +40,7 @@ except ImportError:
     print("[tester] pybullet_ik not found — IK unavailable.")
 
 try:
-    from robot_controller import RobotController as _RobotController
+    from frax_controller import RobotController as _RobotController
     _RC_AVAILABLE = True
 except ImportError:
     _RC_AVAILABLE = False

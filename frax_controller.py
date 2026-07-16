@@ -140,16 +140,13 @@ except ImportError:
 # ── frax / CBF (optional) ─────────────────────────────────────────────────────
 
 try:
-    import sys as _sys
-    _sys.path.insert(0, str(Path(__file__).parent / "frax"))
-    _sys.path.insert(0, str(Path(__file__).parent / "frax" / "examples"))
     import jax
     import jax.numpy as jnp
     jax.config.update("jax_enable_x64", True)
     jax.config.update("jax_platforms", "cpu")
     from frax.robots.ur10e import load_ur10e
     from frax.utils.rotation_utils import orientation_error_3D
-    from cbf_utils import OSCBFVelocityConfig
+    from frax.utils.cbf_utils import OSCBFVelocityConfig
     from cbfpy import CBF
     _FRAX_AVAILABLE = True
 except Exception:

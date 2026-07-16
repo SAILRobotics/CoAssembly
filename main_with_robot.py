@@ -1360,8 +1360,9 @@ class MainScene:
             self._last_world_relock_time[_mid]       = 0.0
         self._reachability_arrows_hide_at           = 0.0   # timestamp after which reachability arrows are hidden; set to now+5s on R keypress
         self._T_world_tcp: "np.ndarray | None"          = None   # current TCP pose in world; polled each frame from robot
+        self._tcp_target_T: "np.ndarray | None"         = None   # visualised TCP target pose (None = no target shown)
         self.flat_tcp_ori: bool                          = flat_tcp_ori  # True → gripper horizontal (XY-plane); False → match palm normal via _palm_quat
-        # self._robot_state: "str | None"              = None   # None | 'moving_to_hand' | 'reached_hand' | 'grabbed' | 'approaching' | 'grasping' | 'grasped' | 'retracting' | 'moving' | 'handover_release'
+        self._robot_state: "str | None"                  = None   # None | 'moving_to_pose' | 'approaching' | grasp phases
         # self._handover: "dict | None"               = None   # frozen compromise-handover result (grid/target/sphere), set on tool grasp
         # self._pending_handover_move                 = False  # set by grasp on_complete; main thread then issues the handover move_tcp
         self._last_ar_board_T: "np.ndarray | None"    = None   # last AR box pose from _TargetPoseReceiver; persists between polls
@@ -1608,8 +1609,14 @@ class MainScene:
                 # ── Poll streams ──────────────────────────────────────────────
                 self.tools.poll(timeout_ms=0)
                 self.hands.poll()
+                _link_poses = None
                 if self.robot is not None:
                     self.robot.poll()   # drain robot_control_server.py state/events
+                    self._T_world_tcp = self.robot.tcp_pose
+                    _link_poses       = self.robot.arm_link_poses()
+                    if self._T_world_tcp is not None and self._tcp_synth is not None:
+                        self._tcp_synth.centroid = self._T_world_tcp[:3, 3]
+                        self._tcp_synth.R_o3d    = self._T_world_tcp[:3, :3]
 
                 # ── ArUco results (background thread) ─────────────────────────
                 T_cam_anchor, T_cam_pegboard, T_cam_board, det_vis = \
@@ -1847,6 +1854,14 @@ class MainScene:
                 if self.tools.active_tool_id == self._TCP_TOOL_ID:
                     clicking_hand = self.tools.active_hand
                     self.tools.deselect(self._TCP_TOOL_ID)
+                    print(f"[TCP] Gripper clicked (hand={clicking_hand})"
+                          f"  robot={self.robot is not None}"
+                          f"  move_running={self.robot.move_running if self.robot else 'N/A'}"
+                          f"  grasp_running={self.robot.tool_grasp_running if self.robot else 'N/A'}"
+                          f"  anchor_locked={self.anchor.locked}"
+                          f"  left_pts={'yes' if left_pts is not None else 'NO'}"
+                          f"  right_pts={'yes' if right_pts is not None else 'NO'}"
+                          f"  tcp={'yes' if self._T_world_tcp is not None else 'NO'}")
                     if self.robot is not None and self.robot.move_running:
                         print("[TCP] Gripper clicked — cancelling move_to_pose")
                         self.robot.cancel_move()
@@ -1872,17 +1887,27 @@ class MainScene:
                                 hx = np.cross(hy, hz)
                                 target_quat = ScipyR.from_matrix(
                                     np.column_stack([hx, hy, hz])).as_quat().tolist()
-                                target_pos = palm_pos - 0.20 * hz
+                                target_pos = palm_pos - 0.185 * hz
                             else:
                                 # Palm-normal mode: gripper aligns with actual palm face
                                 is_left     = (opposing == "left")
-                                target_quat = _palm_quat(hand_pts, is_left=is_left).tolist()
+                                target_quat = _palm_quat(hand_pts, is_left=is_left)
+                                # If gripper Y points up, flip 180° around approach axis
+                                if ScipyR.from_quat(target_quat).apply([0., 1., 0.])[2] > 0:
+                                    target_quat = (ScipyR.from_quat(target_quat)
+                                                   * ScipyR.from_euler('z', 180, degrees=True)
+                                                   ).as_quat()
                                 gripper_z   = ScipyR.from_quat(target_quat).apply([0., 0., 1.])
-                                target_pos  = palm_pos - gripper_z * 0.20
+                                target_pos  = palm_pos - gripper_z * 0.185
+                                target_quat = target_quat.tolist()
                             print(f"[TCP] Move to {opposing} hand "
                                   f"(palm={np.round(palm_pos, 3).tolist()}, "
                                   f"target={np.round(target_pos, 3).tolist()})")
-                            self._robot_state = 'moving_to_pose'
+                            self._robot_state  = 'moving_to_pose'
+                            _T_tgt             = np.eye(4)
+                            _T_tgt[:3, 3]      = target_pos
+                            _T_tgt[:3, :3]     = ScipyR.from_quat(target_quat).as_matrix()
+                            self._tcp_target_T = _T_tgt
                             self.robot.move_to_pose(
                                 target_pos, target_quat,
                                 on_complete=lambda ok: (
@@ -1977,10 +2002,6 @@ class MainScene:
                 #             self.robot.track_hand(target_pos.tolist(), target_quat)
                 #         # else: hand lost this frame — hold last commanded pose
 
-                    # ── Robot state poll ───────────────────────────────────────
-                    self._T_world_tcp = self.robot.tcp_pose
-                    _link_poses = self.robot.arm_link_poses()
-
                 #     # ── Hand-track proximity check → 'reached_hand' ──────────
                 #     if (self._robot_state == 'moving_to_hand' and self._T_world_tcp is not None
                 #             and self._track_palm_target_pos is not None):
@@ -2057,22 +2078,15 @@ class MainScene:
                 #             )
                 #             self._robot_state = 'moving'
 
-                    # ── Visualizer update ─────────────────────────────────────
-                    if self._T_world_tcp is not None:
-                        self.vis.update_tcp(self._T_world_tcp)
-                    self.vis.update_tcp_target(self._tcp_target_T)
-                    if _link_poses is not None:
-                        self.vis.update_robot(_link_poses)
-                    # _sp, _sr = self.robot.collision_spheres()
-                    # if _sp is not None and _sr is not None:
-                    #     self.vis.update_collision_spheres(_sp, _sr)
-                    # else:
-                    #     self.vis.update_collision_spheres(None, None)
-                    if self._T_world_tcp is not None and self._tcp_synth is not None:
-                        self._tcp_synth.centroid = self._T_world_tcp[:3, 3]
-                        self._tcp_synth.R_o3d    = self._T_world_tcp[:3, :3]
-                    if self._last_ar_board_T is not None:
-                        self.vis.update_board_manip_debug(self._last_ar_board_T)
+                # ── Visualizer update ─────────────────────────────────────────
+                if self._T_world_tcp is not None:
+                    self.vis.update_tcp(self._T_world_tcp)
+                self.vis.update_tcp_target(self._tcp_target_T)
+                self.vis.update_gripper_tip_target(self._tcp_target_T)
+                if _link_poses is not None:
+                    self.vis.update_robot(_link_poses)
+                if self._last_ar_board_T is not None:
+                    self.vis.update_board_manip_debug(self._last_ar_board_T)
 
                 # ── Update Open3D visualizer ───────────────────────────────────
                 if self.cam.fx is not None:
@@ -2093,15 +2107,15 @@ class MainScene:
                 self.vis.update_tracking(T_wt)
                 self.vis.update_head(T_world_center)
                 self.vis.update_hands(left_pts, right_pts)
-                # # Palm quat debug — always visible; prefer right hand, fall back to left
-                # if self._robot_state == 'moving_to_hand':
-                #     _dbg_pts  = left_pts  if self._tracked_hand_side == "left"  else right_pts
-                #     _dbg_left = self._tracked_hand_side == "left"
-                # else:
-                #     _dbg_pts  = right_pts if right_pts is not None else left_pts
-                #     _dbg_left = (right_pts is None and left_pts is not None)
-                # self.vis.update_palm_quat_debug(_dbg_pts, is_left=_dbg_left)
-                # self.vis.tick(self._pending_vis_clears)
+                # Palm quat debug — always visible; prefer right hand, fall back to left
+                if self._robot_state == 'moving_to_hand':
+                    _dbg_pts  = left_pts  if self._tracked_hand_side == "left"  else right_pts
+                    _dbg_left = self._tracked_hand_side == "left"
+                else:
+                    _dbg_pts  = right_pts if right_pts is not None else left_pts
+                    _dbg_left = (right_pts is None and left_pts is not None)
+                self.vis.update_palm_quat_debug(_dbg_pts, is_left=_dbg_left)
+                self.vis.tick()
 
                 # ── OpenCV display ────────────────────────────────────────────
                 disp = cv.resize(

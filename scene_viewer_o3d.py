@@ -32,8 +32,10 @@ class SceneVis:
     # ── Static geometry helpers ───────────────────────────────────────────────
 
     @staticmethod
-    def make_axes_lineset(T: np.ndarray, size: float = 0.10) -> o3d.geometry.LineSet:
-        """RGB XYZ axes as a LineSet at the given 4×4 pose."""
+    def make_axes_lineset(T: np.ndarray, size: float = 0.10,
+                          color=None) -> o3d.geometry.LineSet:
+        """RGB XYZ axes as a LineSet at the given 4×4 pose.
+        Pass color=(r,g,b) to draw all three axes in a single colour."""
         o = T[:3, 3]
         pts = np.array([o,
                         o + T[:3, 0] * size,
@@ -42,7 +44,10 @@ class SceneVis:
         ls = o3d.geometry.LineSet()
         ls.points = o3d.utility.Vector3dVector(pts)
         ls.lines  = o3d.utility.Vector2iVector([[0, 1], [0, 2], [0, 3]])
-        ls.colors = o3d.utility.Vector3dVector([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+        if color is None:
+            ls.colors = o3d.utility.Vector3dVector([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+        else:
+            ls.colors = o3d.utility.Vector3dVector([color, color, color])
         return ls
 
     @staticmethod
@@ -109,8 +114,10 @@ class SceneVis:
         self._cam_frustum            = None
         self._head_frustum           = None
         self._passthrough_cam_frustum = None
-        self._tcp_axes      = None
-        self._tcp_target_ls = None
+        self._tcp_axes        = None
+        self._tcp_target_ls         = None
+        self._tcp_target_axes       = None
+        self._gripper_tip_target_axes = None
         self._tool_box_linesets: list = []
 
         self.show_collision_spheres = True
@@ -490,9 +497,10 @@ class SceneVis:
         self._tcp_T = T_new
 
     def update_tcp_target(self, T: "np.ndarray | None"):
-        """Debug: draw the commanded move_tcp/step_hand_track target — a
-        magenta wireframe sphere at the target position."""
+        """Draw the move_to_pose target as a magenta sphere + RGB axes frame."""
         T_new = T if T is not None else self._hidden_T()
+
+        # Magenta wireframe sphere at target position
         new_ls = self.make_sphere_wireframe(
             np.array([T_new[:3, 3]]), np.array([0.035]),
             color=(1.0, 0.0, 1.0))
@@ -504,6 +512,37 @@ class SceneVis:
             self._tcp_target_ls.lines  = new_ls.lines
             self._tcp_target_ls.colors = new_ls.colors
             self.vis.update_geometry(self._tcp_target_ls)
+
+        # RGB axes frame showing target orientation
+        new_axes = self.make_axes_lineset(T_new, size=0.07)
+        if self._tcp_target_axes is None:
+            self._tcp_target_axes = new_axes
+            self.vis.add_geometry(self._tcp_target_axes)
+        else:
+            self._tcp_target_axes.points = new_axes.points
+            self._tcp_target_axes.lines  = new_axes.lines
+            self._tcp_target_axes.colors = new_axes.colors
+            self.vis.update_geometry(self._tcp_target_axes)
+
+    _GRIPPER_TIP_OFFSET = 0.185  # metres from TCP along TCP Z axis
+
+    def update_gripper_tip_target(self, T_tcp: "np.ndarray | None"):
+        """Draw the gripper fingertip target (18.5 cm along TCP Z) as a cyan axes frame."""
+        if T_tcp is not None:
+            T_tip = T_tcp.copy()
+            T_tip[:3, 3] += T_tcp[:3, :3] @ np.array([0.0, 0.0, self._GRIPPER_TIP_OFFSET])
+        else:
+            T_tip = self._hidden_T()
+
+        new_axes = self.make_axes_lineset(T_tip, size=0.07, color=(0.0, 1.0, 1.0))
+        if self._gripper_tip_target_axes is None:
+            self._gripper_tip_target_axes = new_axes
+            self.vis.add_geometry(self._gripper_tip_target_axes)
+        else:
+            self._gripper_tip_target_axes.points = new_axes.points
+            self._gripper_tip_target_axes.lines  = new_axes.lines
+            self._gripper_tip_target_axes.colors = new_axes.colors
+            self.vis.update_geometry(self._gripper_tip_target_axes)
 
     def update_tool_boxes(self, boxes):
         """Update wireframe box linesets for all tool bounding boxes.
