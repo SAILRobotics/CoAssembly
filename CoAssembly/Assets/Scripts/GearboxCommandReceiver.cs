@@ -108,9 +108,10 @@ public class GearboxCommandReceiver : MonoBehaviour
         public Vector3              restLocalPos;  // authored local position (the slide target)
     }
 
-    private readonly List<PartEntry>                 parts        = new();
-    private readonly Dictionary<string, PartEntry>   partsByName  = new();
-    private readonly Dictionary<string, PartEntry>   partsByLower = new();
+    private readonly List<PartEntry>                 parts          = new();
+    private readonly Dictionary<string, PartEntry>   partsByName    = new();
+    private readonly Dictionary<string, PartEntry>   partsByLower   = new();
+    private readonly Dictionary<string, PartEntry>   partsByStripped = new();  // underscores removed, lowercased
 
     // Checkbox tint state (resolved in Start).
     private int                   checkboxColorID;
@@ -180,7 +181,10 @@ public class GearboxCommandReceiver : MonoBehaviour
                 Debug.LogWarning($"[GearboxCommandReceiver] '{t.name}' has no known base-color " +
                                  $"property (shader '{mat.shader.name}'); color toggle disabled for it.");
 
-            int rowIdx = t.name.IndexOf("Row");   // guaranteed >= 0 by the Contains check above
+            // Underscore-agnostic: "Bearing_Row3_Left" and "BearingRow3Left" parse identically.
+            string clean  = t.name.Replace("_", "");
+            int    rowIdx = clean.IndexOf("Row");
+            if (rowIdx < 0) continue;
 
             var entry = new PartEntry
             {
@@ -190,14 +194,15 @@ public class GearboxCommandReceiver : MonoBehaviour
                 colorID       = colorID,
                 originalColor = colorID != 0 ? mat.GetColor(colorID) : Color.white,
                 highlighted   = false,
-                type          = t.name.Substring(0, rowIdx),   // "GearRod", "Gear", "Bearing", ...
-                rowNum        = ParseRow(t.name, rowIdx),
+                type          = clean.Substring(0, rowIdx),   // "GearRod", "Gear", "Bearing", ...
+                rowNum        = ParseRow(clean, rowIdx),
                 restLocalPos  = t.localPosition,
             };
 
             parts.Add(entry);
-            partsByName[t.name]              = entry;
-            partsByLower[t.name.ToLower()]   = entry;
+            partsByName[t.name]                = entry;
+            partsByLower[t.name.ToLower()]     = entry;
+            partsByStripped[clean.ToLower()]   = entry;
         }
     }
 
@@ -278,10 +283,9 @@ public class GearboxCommandReceiver : MonoBehaviour
     private void ShowOnlyRow(int row)
     {
         CancelAssembly();
-        string tag = $"Row{row}";
         foreach (var p in parts)
-            p.go.SetActive(p.go.name.Contains(tag));
-        Debug.Log($"[GearboxCommandReceiver] 👁 Showing only {tag}");
+            p.go.SetActive(p.rowNum == row);
+        Debug.Log($"[GearboxCommandReceiver] 👁 Showing only Row{row}");
     }
 
     private void ShowAll()
@@ -447,8 +451,11 @@ public class GearboxCommandReceiver : MonoBehaviour
     {
         if (string.IsNullOrEmpty(name)) return;
 
-        if (!partsByName.TryGetValue(name, out PartEntry entry))
-            partsByLower.TryGetValue(name.ToLower(), out entry);
+        // Match exact, then case-insensitive, then underscore-agnostic — so "BearingRow3Left"
+        // and "Bearing_Row3_Left" both resolve regardless of how the part is named.
+        if (!partsByName.TryGetValue(name, out PartEntry entry)
+            && !partsByLower.TryGetValue(name.ToLower(), out entry))
+            partsByStripped.TryGetValue(name.Replace("_", "").ToLower(), out entry);
 
         if (entry == null)
         {

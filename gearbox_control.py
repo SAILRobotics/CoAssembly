@@ -64,13 +64,15 @@ RESET_NAME    = "__reset__"
 
 
 def parse_part(name: str):
-    """'BearingRow3Left' -> ('Bearing', 3). Returns (None, None) if it isn't a Row part."""
-    idx = name.find("Row")
+    """'BearingRow3Left' or 'Bearing_Row3_Left' -> ('Bearing', 3).
+    Underscore-agnostic. Returns (None, None) if it isn't a Row part."""
+    clean = name.replace("_", "")
+    idx = clean.find("Row")
     if idx < 0:
         return None, None
-    ptype = name[:idx]
+    ptype = clean[:idx]
     digits = ""
-    for ch in name[idx + 3:]:
+    for ch in clean[idx + 3:]:
         if ch.isdigit():
             digits += ch
         else:
