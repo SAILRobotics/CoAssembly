@@ -11,11 +11,15 @@ using Newtonsoft.Json;
 /// Drives the gearbox visualization from an external Python process over NetMQ.
 /// Attach this to the "Gearbox Assembly Named" root GameObject.
 ///
-/// Commands (JSON, sent by gearbox_control.py):
-///   {"command":"row","row":N}      → show only parts whose name contains "RowN"
-///   {"command":"toggle","part":".."}→ flip a single part between highlight and original color
-///   {"command":"show_all"}          → make every row visible again
-///   {"command":"reset"}             → clear all color highlights
+/// Commands (JSON, sent by gearbox_control.py and gearbox_click_handler.py):
+///   {"command":"row","row":N}                       → show only parts whose name contains "RowN"
+///   {"command":"toggle","part":".."}                → flip a single part's highlight color
+///   {"command":"show_all"}                          → make every row visible again
+///   {"command":"reset"}                             → clear all color highlights
+///   {"command":"show_subset","row":N,"types":[..]}  → show only the given part types of row N
+///   {"command":"ui","show":bool,"row":N,"checked":bool}
+///                                                   → show/hide + place the checkbox & reset X
+///                                                     near row N; tint the checkbox
 ///
 /// Mirrors the established receiver pattern in ToolColorReceiver.cs: bind a SubscriberSocket,
 /// receive JSON on a background thread into a ConcurrentQueue, apply on the main thread in Update().
@@ -32,12 +36,29 @@ public class GearboxCommandReceiver : MonoBehaviour
     [Tooltip("Root of the gearbox hierarchy. Leave empty to use this GameObject's transform.")]
     [SerializeField] private Transform gearboxRoot;
 
+    [Header("State UI (checkbox + reset X)")]
+    [Tooltip("The 'completed' checkbox object (a clickable 3D quad/cube). Optional.")]
+    [SerializeField] private Transform checkboxObject;
+    [Tooltip("The reset 'X' object (a clickable 3D quad/cube). Optional.")]
+    [SerializeField] private Transform resetObject;
+    [Tooltip("Renderer on the checkbox whose color reflects checked/unchecked. Optional.")]
+    [SerializeField] private Renderer  checkboxRenderer;
+    [SerializeField] private Color   checkedColor   = new Color(0.15f, 0.80f, 0.20f, 1f);  // green
+    [SerializeField] private Color   uncheckedColor = new Color(0.80f, 0.80f, 0.80f, 1f);  // grey
+    [Tooltip("Offset of the checkbox from the active row's bounds center; the X sits beside it.")]
+    [SerializeField] private Vector3 uiOffset = new Vector3(0f, 0.15f, 0f);
+    [SerializeField] private Vector3 resetOffsetFromCheckbox = new Vector3(0.08f, 0f, 0f);
+
     [Serializable]
     private class GearboxCommand
     {
-        public string command;   // "row" | "toggle" | "show_all" | "reset"
-        public int    row;       // used when command == "row"
-        public string part;      // used when command == "toggle"
+        public string   command;   // "row"|"toggle"|"show_all"|"reset"|"show_subset"|"ui"
+        public int      row;       // "row" | "show_subset" | "ui"
+        public string   part;      // "toggle"
+        public string[] types;     // "show_subset"
+        public bool     show;      // "ui"
+        [JsonProperty("checked")]
+        public bool     isChecked; // "ui"
     }
 
     // ── Per-part cached state ────────────────────────────────────────────────
@@ -49,11 +70,17 @@ public class GearboxCommandReceiver : MonoBehaviour
         public int                  colorID;
         public Color                originalColor;
         public bool                 highlighted;
+        public string               type;    // parsed prefix before "Row" (e.g. "GearRod", "Bearing")
+        public int                  rowNum;  // parsed row number, or -1
     }
 
     private readonly List<PartEntry>                 parts        = new();
     private readonly Dictionary<string, PartEntry>   partsByName  = new();
     private readonly Dictionary<string, PartEntry>   partsByLower = new();
+
+    // Checkbox tint state (resolved in Start).
+    private int                   checkboxColorID;
+    private MaterialPropertyBlock checkboxBlock;
 
     // ── Socket + dispatcher ──────────────────────────────────────────────────
     private SubscriberSocket socket;
@@ -66,6 +93,15 @@ public class GearboxCommandReceiver : MonoBehaviour
         if (gearboxRoot == null) gearboxRoot = transform;
 
         BuildPartIndex();
+
+        if (checkboxRenderer != null && checkboxRenderer.sharedMaterial != null)
+        {
+            checkboxColorID = ResolveColorID(checkboxRenderer.sharedMaterial);
+            checkboxBlock   = new MaterialPropertyBlock();
+        }
+        // Start with the UI hidden.
+        if (checkboxObject) checkboxObject.gameObject.SetActive(false);
+        if (resetObject)    resetObject.gameObject.SetActive(false);
 
         AsyncIO.ForceDotNet.Force();
         socket = new SubscriberSocket();
@@ -103,6 +139,8 @@ public class GearboxCommandReceiver : MonoBehaviour
                 Debug.LogWarning($"[GearboxCommandReceiver] '{t.name}' has no known base-color " +
                                  $"property (shader '{mat.shader.name}'); color toggle disabled for it.");
 
+            int rowIdx = t.name.IndexOf("Row");   // guaranteed >= 0 by the Contains check above
+
             var entry = new PartEntry
             {
                 go            = t.gameObject,
@@ -111,6 +149,8 @@ public class GearboxCommandReceiver : MonoBehaviour
                 colorID       = colorID,
                 originalColor = colorID != 0 ? mat.GetColor(colorID) : Color.white,
                 highlighted   = false,
+                type          = t.name.Substring(0, rowIdx),   // "GearRod", "Gear", "Bearing", ...
+                rowNum        = ParseRow(t.name, rowIdx),
             };
 
             parts.Add(entry);
@@ -160,10 +200,12 @@ public class GearboxCommandReceiver : MonoBehaviour
         {
             switch (cmd.command)
             {
-                case "row":       ShowOnlyRow(cmd.row); break;
-                case "show_all":  ShowAll();            break;
-                case "toggle":    TogglePart(cmd.part); break;
-                case "reset":     ResetHighlights();    break;
+                case "row":         ShowOnlyRow(cmd.row);              break;
+                case "show_all":    ShowAll();                         break;
+                case "toggle":      TogglePart(cmd.part);              break;
+                case "reset":       ResetHighlights();                 break;
+                case "show_subset": ShowSubset(cmd.row, cmd.types);    break;
+                case "ui":          ShowUi(cmd.row, cmd.show, cmd.isChecked); break;
                 default:
                     Debug.LogWarning($"[GearboxCommandReceiver] Unknown command '{cmd.command}'");
                     break;
@@ -184,6 +226,70 @@ public class GearboxCommandReceiver : MonoBehaviour
         foreach (var p in parts)
             p.go.SetActive(true);
         Debug.Log("[GearboxCommandReceiver] 👁 Showing all rows");
+    }
+
+    // Show only the given part types of a single row (a "state"); hide everything else.
+    private void ShowSubset(int row, string[] types)
+    {
+        var set = new HashSet<string>(types ?? Array.Empty<string>());
+        int shown = 0;
+        foreach (var p in parts)
+        {
+            bool visible = p.rowNum == row && set.Contains(p.type);
+            p.go.SetActive(visible);
+            if (visible) shown++;
+        }
+        Debug.Log($"[GearboxCommandReceiver] 👁 Row{row} subset [{string.Join(",", set)}] → {shown} parts");
+    }
+
+    // Show/hide + place the checkbox and reset-X near the active row, and tint the checkbox.
+    private void ShowUi(int row, bool show, bool isChecked)
+    {
+        if (!show)
+        {
+            if (checkboxObject) checkboxObject.gameObject.SetActive(false);
+            if (resetObject)    resetObject.gameObject.SetActive(false);
+            return;
+        }
+
+        // Combined bounds center of the row's currently-visible parts.
+        Bounds? bounds = null;
+        foreach (var p in parts)
+        {
+            if (p.rowNum != row || !p.go.activeInHierarchy) continue;
+            if (bounds == null) bounds = p.renderer.bounds;
+            else { Bounds b = bounds.Value; b.Encapsulate(p.renderer.bounds); bounds = b; }
+        }
+        Vector3 basePos = (bounds?.center ?? gearboxRoot.position) + uiOffset;
+
+        if (checkboxObject)
+        {
+            checkboxObject.position = basePos;
+            checkboxObject.gameObject.SetActive(true);
+        }
+        if (resetObject)
+        {
+            resetObject.position = basePos + resetOffsetFromCheckbox;
+            resetObject.gameObject.SetActive(true);
+        }
+        ApplyCheckboxVisual(isChecked);
+    }
+
+    private void ApplyCheckboxVisual(bool isChecked)
+    {
+        if (checkboxRenderer == null || checkboxColorID == 0 || checkboxBlock == null) return;
+        checkboxRenderer.GetPropertyBlock(checkboxBlock);
+        checkboxBlock.SetColor(checkboxColorID, isChecked ? checkedColor : uncheckedColor);
+        checkboxRenderer.SetPropertyBlock(checkboxBlock);
+    }
+
+    // Parse the row number that follows "Row" in a part name (e.g. "GearRodRow1" → 1).
+    private static int ParseRow(string name, int rowIdx)
+    {
+        int i = rowIdx + 3;   // skip "Row"
+        int start = i;
+        while (i < name.Length && char.IsDigit(name[i])) i++;
+        return i > start ? int.Parse(name.Substring(start, i - start)) : -1;
     }
 
     private void TogglePart(string name)
