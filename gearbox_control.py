@@ -50,6 +50,14 @@ DEFAULT_CLICK_PORT = 5020   # Unity -> Python (clicks), GearboxClickPublisher.
 # Part-type -> assembly-state membership. Types are the prefix before "Row" in a part name.
 STATE1_TYPES = {"GearRod", "Gear", "Pin"}
 STATE2_TYPES = {"Stand", "Bearing", "Screw"}
+ALL_TYPES    = STATE1_TYPES | STATE2_TYPES
+
+# Assembly order of part types, shared by every row. This is the "how it's assembled" script:
+# when a state is shown, its parts slide into place one type at a time in this order.
+# Edit this list to change the sequence.
+ASSEMBLY_ORDER = ["Stand", "Bearing", "GearRod", "Gear", "Pin", "Screw"]
+STEP_DELAY     = 0.35   # seconds between one type finishing and the next starting
+SLIDE_SECONDS  = 0.50   # per-part slide duration
 
 CHECKBOX_NAME = "__checkbox__"
 RESET_NAME    = "__reset__"
@@ -153,19 +161,25 @@ class GearboxStateMachine:
         # which shows its own checkbox (marks the whole row complete) and close button.
         if self.done[row][1] and self.done[row][2]:
             self.current_row, self.current_state = row, 3
-            self._send({"command": "row", "row": row})
+            self._assemble(row, ALL_TYPES)
             self._send({"command": "ui", "show": True, "row": row,
                         "checked": self.done[row][3]})
             print(f"  row {row}: state 3 (whole row)  done3={self.done[row][3]}")
             return
 
-        # Otherwise show the clicked part's state and its checkbox.
+        # Otherwise assemble the clicked part's state and show its checkbox.
         self.current_row, self.current_state = row, state
-        types = sorted(STATE1_TYPES) if state == 1 else sorted(STATE2_TYPES)
-        self._send({"command": "show_subset", "row": row, "types": types})
+        self._assemble(row, STATE1_TYPES if state == 1 else STATE2_TYPES)
         self._send({"command": "ui", "show": True, "row": row,
                     "checked": self.done[row][state]})
         print(f"  row {row}: state {state}  (done={self.done[row]})")
+
+    def _assemble(self, row, types):
+        """Tell Unity to isolate `row` and slide its parts of the given types into place,
+        in the shared assembly order (staggered)."""
+        order = [t for t in ASSEMBLY_ORDER if t in types]
+        self._send({"command": "assemble", "row": row, "order": order,
+                    "step_delay": STEP_DELAY, "slide_seconds": SLIDE_SECONDS})
 
     def _handle_checkbox(self):
         if self.current_row is None or self.current_state not in (1, 2, 3):

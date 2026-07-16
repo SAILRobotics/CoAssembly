@@ -9370,6 +9370,19 @@ MonoBehaviour:
   uncheckedColor: {r: 0.8, g: 0.8, b: 0.8, a: 1}
   uiOffset: {x: 0, y: 0.15, z: 0}
   resetOffsetFromCheckbox: {x: 0.08, y: 0, z: 0}
+  assembleOffset: {x: 0, y: 0.2, z: 0}
+  assembleOverrides:
+  - key: ScrewRow1Left
+    offset: {x: 0, y: -0.2, z: 0}
+  - key: ScrewRow1Right
+    offset: {x: 0, y: -0.2, z: 0}
+  - key: BearingRow1Left
+    offset: {x: 0, y: 0, z: 0.15}
+  - key: BearingRow1Right
+    offset: {x: 0, y: 0, z: -0.15}
+  subStaggerSeconds: 0.12
+  defaultStepDelay: 0.35
+  defaultSlideSeconds: 0.5
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

@@ -3,6 +3,7 @@ using NetMQ;
 using NetMQ.Sockets;
 using System;
 using System.Threading;
+using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using Newtonsoft.Json;
@@ -20,6 +21,10 @@ using Newtonsoft.Json;
 ///   {"command":"ui","show":bool,"row":N,"checked":bool}
 ///                                                   → show/hide + place the checkbox & reset X
 ///                                                     near row N; tint the checkbox
+///   {"command":"assemble","row":N,"order":[types],"step_delay":s,"slide_seconds":s}
+///                                                   → isolate row N and slide its parts into
+///                                                     place one type at a time (staggered),
+///                                                     in the given type order
 ///
 /// Mirrors the established receiver pattern in ToolColorReceiver.cs: bind a SubscriberSocket,
 /// receive JSON on a background thread into a ConcurrentQueue, apply on the main thread in Update().
@@ -49,16 +54,44 @@ public class GearboxCommandReceiver : MonoBehaviour
     [SerializeField] private Vector3 uiOffset = new Vector3(0f, 0.15f, 0f);
     [SerializeField] private Vector3 resetOffsetFromCheckbox = new Vector3(0.08f, 0f, 0f);
 
+    [Header("Assembly animation")]
+    [Tooltip("Default world-space offset a part starts at before sliding into its final place " +
+             "(drops in from above). Used for any part without an override below.")]
+    [SerializeField] private Vector3 assembleOffset = new Vector3(0f, 0.20f, 0f);
+    [Tooltip("Per-type or per-part start-offset overrides, so components can come from different " +
+             "directions. Key = a part TYPE (e.g. \"Screw\") or an exact part NAME (e.g. " +
+             "\"ScrewRow1Left\"). A name match wins over a type match; both win over the default.")]
+    [SerializeField] private List<AssembleOverride> assembleOverrides = new();
+    [Tooltip("Delay between two parts of the SAME type sliding in (e.g. Left then Right gear).")]
+    [SerializeField] private float subStaggerSeconds = 0.12f;
+    [Tooltip("Fallbacks used when the Python 'assemble' command omits timing.")]
+    [SerializeField] private float defaultStepDelay    = 0.35f;
+    [SerializeField] private float defaultSlideSeconds  = 0.50f;
+
+    [Serializable]
+    public struct AssembleOverride
+    {
+        [Tooltip("A part type (\"Screw\", \"GearRod\", …) or an exact part name (\"ScrewRow1Left\").")]
+        public string  key;
+        [Tooltip("World-space offset this part starts at before sliding home.")]
+        public Vector3 offset;
+    }
+
     [Serializable]
     private class GearboxCommand
     {
-        public string   command;   // "row"|"toggle"|"show_all"|"reset"|"show_subset"|"ui"
-        public int      row;       // "row" | "show_subset" | "ui"
+        public string   command;   // "row"|"toggle"|"show_all"|"reset"|"show_subset"|"ui"|"assemble"
+        public int      row;       // "row" | "show_subset" | "ui" | "assemble"
         public string   part;      // "toggle"
         public string[] types;     // "show_subset"
         public bool     show;      // "ui"
         [JsonProperty("checked")]
         public bool     isChecked; // "ui"
+        public string[] order;     // "assemble" — part types, in assembly order
+        [JsonProperty("step_delay")]
+        public float    stepDelay;    // "assemble" — delay between types (0 → use default)
+        [JsonProperty("slide_seconds")]
+        public float    slideSeconds; // "assemble" — per-part slide duration (0 → use default)
     }
 
     // ── Per-part cached state ────────────────────────────────────────────────
@@ -72,6 +105,7 @@ public class GearboxCommandReceiver : MonoBehaviour
         public bool                 highlighted;
         public string               type;    // parsed prefix before "Row" (e.g. "GearRod", "Bearing")
         public int                  rowNum;  // parsed row number, or -1
+        public Vector3              restLocalPos;  // authored local position (the slide target)
     }
 
     private readonly List<PartEntry>                 parts        = new();
@@ -81,6 +115,12 @@ public class GearboxCommandReceiver : MonoBehaviour
     // Checkbox tint state (resolved in Start).
     private int                   checkboxColorID;
     private MaterialPropertyBlock checkboxBlock;
+
+    // Assembly-animation state. Bumping the generation invalidates any in-flight slide coroutines.
+    private int assembleGen = 0;
+    // Resolved start-offset overrides (built in Start): exact part name, then part type.
+    private readonly Dictionary<string, Vector3> offsetByName = new();
+    private readonly Dictionary<string, Vector3> offsetByType = new();
 
     // ── Socket + dispatcher ──────────────────────────────────────────────────
     private SubscriberSocket socket;
@@ -93,6 +133,7 @@ public class GearboxCommandReceiver : MonoBehaviour
         if (gearboxRoot == null) gearboxRoot = transform;
 
         BuildPartIndex();
+        BuildOffsetOverrides();
 
         if (checkboxRenderer != null && checkboxRenderer.sharedMaterial != null)
         {
@@ -151,12 +192,32 @@ public class GearboxCommandReceiver : MonoBehaviour
                 highlighted   = false,
                 type          = t.name.Substring(0, rowIdx),   // "GearRod", "Gear", "Bearing", ...
                 rowNum        = ParseRow(t.name, rowIdx),
+                restLocalPos  = t.localPosition,
             };
 
             parts.Add(entry);
             partsByName[t.name]              = entry;
             partsByLower[t.name.ToLower()]   = entry;
         }
+    }
+
+    // Route each override to the name map or the type map based on whether its key is an
+    // actual part name (a name match then takes priority over a type match at resolve time).
+    private void BuildOffsetOverrides()
+    {
+        foreach (var o in assembleOverrides)
+        {
+            if (string.IsNullOrEmpty(o.key)) continue;
+            if (partsByName.ContainsKey(o.key)) offsetByName[o.key] = o.offset;
+            else                                offsetByType[o.key] = o.offset;
+        }
+    }
+
+    private Vector3 ResolveOffset(PartEntry p)
+    {
+        if (offsetByName.TryGetValue(p.go.name, out Vector3 v)) return v;
+        if (offsetByType.TryGetValue(p.type,    out v))         return v;
+        return assembleOffset;
     }
 
     private void ReceiveLoop()
@@ -206,6 +267,7 @@ public class GearboxCommandReceiver : MonoBehaviour
                 case "reset":       ResetHighlights();                 break;
                 case "show_subset": ShowSubset(cmd.row, cmd.types);    break;
                 case "ui":          ShowUi(cmd.row, cmd.show, cmd.isChecked); break;
+                case "assemble":    StartAssemble(cmd.row, cmd.order, cmd.stepDelay, cmd.slideSeconds); break;
                 default:
                     Debug.LogWarning($"[GearboxCommandReceiver] Unknown command '{cmd.command}'");
                     break;
@@ -215,6 +277,7 @@ public class GearboxCommandReceiver : MonoBehaviour
 
     private void ShowOnlyRow(int row)
     {
+        CancelAssembly();
         string tag = $"Row{row}";
         foreach (var p in parts)
             p.go.SetActive(p.go.name.Contains(tag));
@@ -223,6 +286,7 @@ public class GearboxCommandReceiver : MonoBehaviour
 
     private void ShowAll()
     {
+        CancelAssembly();
         foreach (var p in parts)
             p.go.SetActive(true);
         Debug.Log("[GearboxCommandReceiver] 👁 Showing all rows");
@@ -231,6 +295,7 @@ public class GearboxCommandReceiver : MonoBehaviour
     // Show only the given part types of a single row (a "state"); hide everything else.
     private void ShowSubset(int row, string[] types)
     {
+        CancelAssembly();
         var set = new HashSet<string>(types ?? Array.Empty<string>());
         int shown = 0;
         foreach (var p in parts)
@@ -252,15 +317,19 @@ public class GearboxCommandReceiver : MonoBehaviour
             return;
         }
 
-        // Combined bounds center of the row's currently-visible parts.
-        Bounds? bounds = null;
+        // Centroid of the row's parts at their REST positions — stable even while parts are
+        // still mid-slide during an assembly animation.
+        Vector3 sum = Vector3.zero;
+        int n = 0;
         foreach (var p in parts)
         {
-            if (p.rowNum != row || !p.go.activeInHierarchy) continue;
-            if (bounds == null) bounds = p.renderer.bounds;
-            else { Bounds b = bounds.Value; b.Encapsulate(p.renderer.bounds); bounds = b; }
+            if (p.rowNum != row) continue;
+            sum += p.go.transform.parent != null
+                ? p.go.transform.parent.TransformPoint(p.restLocalPos)
+                : p.restLocalPos;
+            n++;
         }
-        Vector3 basePos = (bounds?.center ?? gearboxRoot.position) + uiOffset;
+        Vector3 basePos = (n > 0 ? sum / n : gearboxRoot.position) + uiOffset;
 
         if (checkboxObject)
         {
@@ -273,6 +342,88 @@ public class GearboxCommandReceiver : MonoBehaviour
             resetObject.gameObject.SetActive(true);
         }
         ApplyCheckboxVisual(isChecked);
+    }
+
+    // ── Assembly animation ───────────────────────────────────────────────────
+    // Isolate row `row` and slide its parts into place, one type at a time (in `order`),
+    // sub-staggering multiple parts of the same type (e.g. Left then Right).
+    private void StartAssemble(int row, string[] order, float stepDelay, float slideSeconds)
+    {
+        CancelAssembly();                       // invalidate any running slide + snap to rest
+        int gen = assembleGen;
+
+        float step  = stepDelay    > 0f ? stepDelay    : defaultStepDelay;
+        float slide = slideSeconds > 0f ? slideSeconds : defaultSlideSeconds;
+        var typeOrder = new List<string>(order ?? Array.Empty<string>());
+
+        // Hide everything; the target parts will be revealed progressively by the coroutine.
+        foreach (var p in parts)
+            p.go.SetActive(false);
+
+        StartCoroutine(AssembleRoutine(gen, row, typeOrder, step, slide));
+    }
+
+    private IEnumerator AssembleRoutine(int gen, int row, List<string> typeOrder,
+                                        float stepDelay, float slideSeconds)
+    {
+        foreach (string type in typeOrder)
+        {
+            // Parts of this type in this row, sorted by name for a deterministic Left→Right order.
+            var group = new List<PartEntry>();
+            foreach (var p in parts)
+                if (p.rowNum == row && p.type == type)
+                    group.Add(p);
+            if (group.Count == 0) continue;
+            group.Sort((a, b) => string.CompareOrdinal(a.go.name, b.go.name));
+
+            for (int i = 0; i < group.Count; i++)
+            {
+                if (gen != assembleGen) yield break;   // superseded — stop
+                StartCoroutine(SlideIn(gen, group[i], slideSeconds));
+                if (i < group.Count - 1)
+                    yield return new WaitForSeconds(subStaggerSeconds);
+            }
+            yield return new WaitForSeconds(stepDelay);
+        }
+    }
+
+    private IEnumerator SlideIn(int gen, PartEntry p, float duration)
+    {
+        Transform tr = p.go.transform;
+        Vector3 offset = ResolveOffset(p);   // per-part / per-type direction, else the default
+
+        // Position at the start pose BEFORE activating, so there's no one-frame flash at rest.
+        Vector3 rest0 = tr.parent != null ? tr.parent.TransformPoint(p.restLocalPos) : p.restLocalPos;
+        tr.position = rest0 + offset;
+        p.go.SetActive(true);
+
+        float t = 0f;
+        while (t < duration)
+        {
+            if (gen != assembleGen)          // superseded: snap home and bail
+            {
+                tr.localPosition = p.restLocalPos;
+                yield break;
+            }
+            t += Time.deltaTime;
+            float k = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(t / duration));
+
+            // Recompute each frame so the slide stays correct even if the gearbox root moves.
+            Vector3 restWorld = tr.parent != null ? tr.parent.TransformPoint(p.restLocalPos)
+                                                  : p.restLocalPos;
+            Vector3 startWorld = restWorld + offset;
+            tr.position = Vector3.Lerp(startWorld, restWorld, k);
+            yield return null;
+        }
+        tr.localPosition = p.restLocalPos;   // land exactly on the authored pose
+    }
+
+    // Invalidate any in-flight slide coroutines and restore every part to its rest position.
+    private void CancelAssembly()
+    {
+        assembleGen++;
+        foreach (var p in parts)
+            p.go.transform.localPosition = p.restLocalPos;
     }
 
     private void ApplyCheckboxVisual(bool isChecked)
