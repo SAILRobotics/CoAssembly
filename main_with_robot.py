@@ -1218,6 +1218,107 @@ class _OffsetTuner:
             pass
 
 # =============================================================================
+# Jog GUI
+# =============================================================================
+
+class _JogGUI:
+    """OpenCV jog panel: 6 trackbars (XYZ pos + RPY ori) and a Start/Stop button.
+
+    Sliders are the single source of truth for the jog target.  MainScene.run()
+    detects the active-state transition and issues robot commands accordingly.
+    """
+    WIN    = "Jog Controller"
+    _POS_R = 300      # max trackbar value; centre=150 → ±1.50 m at 1 cm/step
+    _ORI_R = 360      # centre=180 → ±180° at 1°/step
+    _BTN   = (10, 8, 170, 50)
+
+    def __init__(self):
+        cv.namedWindow(self.WIN, cv.WINDOW_NORMAL)
+        cv.resizeWindow(self.WIN, 540, 300)
+        for lbl, maxv, dflt in [
+            ("X  pos  (cm)",  self._POS_R, 150),
+            ("Y  pos  (cm)",  self._POS_R, 150),
+            ("Z  pos  (cm)",  self._POS_R, 150),
+            ("Roll   (deg)", self._ORI_R, 180),
+            ("Pitch  (deg)", self._ORI_R, 180),
+            ("Yaw    (deg)", self._ORI_R, 180),
+        ]:
+            cv.createTrackbar(lbl, self.WIN, dflt, maxv, lambda _: None)
+        self._active = False
+        cv.setMouseCallback(self.WIN, self._on_mouse)
+
+    def _on_mouse(self, event, x, y, *_):
+        if event == cv.EVENT_LBUTTONDOWN:
+            x0, y0, x1, y1 = self._BTN
+            if x0 <= x <= x1 and y0 <= y <= y1:
+                self._active = not self._active
+
+    @property
+    def active(self) -> bool:
+        return self._active
+
+    def set_active(self, v: bool) -> None:
+        self._active = bool(v)
+
+    def get_pos(self) -> np.ndarray:
+        x = (cv.getTrackbarPos("X  pos  (cm)", self.WIN) - 150) * 0.01
+        y = (cv.getTrackbarPos("Y  pos  (cm)", self.WIN) - 150) * 0.01
+        z = (cv.getTrackbarPos("Z  pos  (cm)", self.WIN) - 150) * 0.01
+        return np.array([x, y, z])
+
+    def get_quat(self) -> list:
+        roll  = cv.getTrackbarPos("Roll   (deg)", self.WIN) - 180
+        pitch = cv.getTrackbarPos("Pitch  (deg)", self.WIN) - 180
+        yaw   = cv.getTrackbarPos("Yaw    (deg)", self.WIN) - 180
+        return ScipyR.from_euler('xyz', [roll, pitch, yaw], degrees=True).as_quat().tolist()
+
+    def snap_to(self, pos: np.ndarray, quat) -> None:
+        """Initialise sliders to a given pose so jog starts from the current TCP."""
+        for lbl, val, ctr in [
+            ("X  pos  (cm)", pos[0] * 100, 150),
+            ("Y  pos  (cm)", pos[1] * 100, 150),
+            ("Z  pos  (cm)", pos[2] * 100, 150),
+        ]:
+            cv.setTrackbarPos(lbl, self.WIN, int(np.clip(round(val) + ctr, 0, self._POS_R)))
+        euler = ScipyR.from_quat(quat).as_euler('xyz', degrees=True)
+        for lbl, val in [
+            ("Roll   (deg)", euler[0]),
+            ("Pitch  (deg)", euler[1]),
+            ("Yaw    (deg)", euler[2]),
+        ]:
+            cv.setTrackbarPos(lbl, self.WIN, int(np.clip(round(val) + 180, 0, self._ORI_R)))
+
+    def draw(self) -> None:
+        img = np.zeros((70, 540, 3), dtype=np.uint8)
+        x0, y0, x1, y1 = self._BTN
+        if self._active:
+            bg, border, label = (20, 30, 160), (80, 120, 255), "STOP JOG"
+        else:
+            bg, border, label = (30, 110, 40), (80, 200, 80), "START JOG"
+        cv.rectangle(img, (x0, y0), (x1, y1), bg, -1)
+        cv.rectangle(img, (x0, y0), (x1, y1), border, 2)
+        cv.putText(img, label, (x0 + 6, y0 + 28),
+                   cv.FONT_HERSHEY_SIMPLEX, 0.72, (255, 255, 255), 2, cv.LINE_AA)
+        pos = self.get_pos()
+        roll  = cv.getTrackbarPos("Roll   (deg)", self.WIN) - 180
+        pitch = cv.getTrackbarPos("Pitch  (deg)", self.WIN) - 180
+        yaw   = cv.getTrackbarPos("Yaw    (deg)", self.WIN) - 180
+        cv.putText(img,
+                   f"X={pos[0]*100:+.0f}cm  Y={pos[1]*100:+.0f}cm  Z={pos[2]*100:+.0f}cm",
+                   (185, 28), cv.FONT_HERSHEY_SIMPLEX, 0.52, (200, 200, 200), 1)
+        cv.putText(img,
+                   f"R={roll:+d}°  P={pitch:+d}°  Yaw={yaw:+d}°",
+                   (185, 56), cv.FONT_HERSHEY_SIMPLEX, 0.52, (200, 200, 200), 1)
+        cv.imshow(self.WIN, img)
+
+    def close(self) -> None:
+        try:
+            cv.destroyWindow(self.WIN)
+        except Exception:
+            pass
+
+
+# =============================================================================
 # MainScene
 # =============================================================================
 
@@ -1309,6 +1410,7 @@ class MainScene:
         self.anchor      = _WorldAnchor(quest_ip)
         self.tools       = _ToolSelectionManager(quest_ip)
         self.tuner       = _OffsetTuner()
+        self.jog_gui     = _JogGUI()
         self.synth       = _SyntheticObjectPublisher(quest_ip)
         # Secondary relock-cube poses → Unity (positions the click cubes on their
         # physical markers using the prescan registration).
@@ -1376,6 +1478,8 @@ class MainScene:
         self._last_synth_pub_time        = 0.0   # timestamp of last synth-object publish; throttled to _SYNTH_INTERVAL
         self._fps_ref_time         = time.perf_counter()  # reference time for FPS averaging
         self._fps_frame_count      = 0                    # frame counter since last FPS print
+        self._prev_jog_active:    bool                  = False   # tracks jog_gui.active edge
+        self._jog_last_pos: "np.ndarray | None"         = None    # last pos issued to move_to_pose in jog mode
 
         print(f"\n[Running]  quest_ip={quest_ip}  "
               f"anchor_marker=#{anchor_marker_id}  "
@@ -1633,6 +1737,35 @@ class MainScene:
                 self.tuner.draw()
                 pos_off, yaw_off = self.tuner.get()
                 self.anchor.set_offset(pos_off, yaw_off)
+
+                # ── Jog GUI — draw + button-state sync ───────────────────────
+                self.jog_gui.draw()
+                _jog_now = self.jog_gui.active
+                if _jog_now and not self._prev_jog_active:
+                    # Button just pressed → enter jog mode
+                    if self.robot is not None and self._T_world_tcp is not None:
+                        if self.robot.move_running:
+                            self.robot.cancel_move()
+                            self._robot_state        = None
+                            self._tracking_hand_side = None
+                        self.jog_gui.snap_to(
+                            self._T_world_tcp[:3, 3],
+                            ScipyR.from_matrix(self._T_world_tcp[:3, :3]).as_quat())
+                        self._jog_last_pos = None   # force re-issue next frame
+                        print("[Jog] Entered — sliders snapped to current TCP")
+                    else:
+                        self.jog_gui.set_active(False)
+                        print("[Jog] Robot not ready (no TCP pose yet)")
+                elif not _jog_now and self._prev_jog_active:
+                    # Button just released → exit jog mode
+                    if self._robot_state == 'jog':
+                        self._robot_state  = None
+                        self._tcp_target_T = None
+                        if self.robot is not None:
+                            self.robot.cancel_move()
+                    self._jog_last_pos = None
+                    print("[Jog] Exited")
+                self._prev_jog_active = _jog_now
 
                 # ── CenterEye pose ────────────────────────────────────────────
                 _center_T = self.hands.center_eye_T()
@@ -2213,17 +2346,29 @@ class MainScene:
                            f"Board: {board_status}",
                            (12, 170), cv.FONT_HERSHEY_SIMPLEX, 0.60,
                            (0, 255, 200) if board_ok else (100, 100, 100), 2)
-                cv.putText(disp,
-                           f"ENTER: lock #{self.anchor_marker_id} (world+scene)  or"
-                           f"  lock #{self.pegboard_marker_id} (pegboard)    ESC = quit",
-                           (12, disp.shape[0] - 14),
-                           cv.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
+                if self.jog_gui.active:
+                    _jp = self.jog_gui.get_pos()
+                    cv.putText(disp,
+                               f"JOG  ({_jp[0]*100:+.0f}, {_jp[1]*100:+.0f}, {_jp[2]*100:+.0f}) cm"
+                               f"  use sliders to move target  |  M or button = stop",
+                               (12, disp.shape[0] - 14),
+                               cv.FONT_HERSHEY_SIMPLEX, 0.52, (0, 220, 255), 2)
+                else:
+                    cv.putText(disp,
+                               f"ENTER: lock #{self.anchor_marker_id} (world+scene)  or"
+                               f"  lock #{self.pegboard_marker_id} (pegboard)  "
+                               f"  M=jog  ESC=quit",
+                               (12, disp.shape[0] - 14),
+                               cv.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
                 cv.imshow(self._win, disp)
 
                 # ── Key handling ──────────────────────────────────────────────
                 key = cv.waitKey(1) & 0xFF
                 if key == 27:
                     break
+                elif key == ord('m') or key == ord('M'):
+                    # Toggle jog mode — the GUI sync block handles robot commands
+                    self.jog_gui.set_active(not self.jog_gui.active)
                 elif key == ord('r') or key == ord('R'):
                     if (self.robot is not None
                             and self.anchor.T_pegboard_in_world is not None):
@@ -2307,6 +2452,32 @@ class MainScene:
                             print(f"[ENTER] Marker #{self.pegboard_marker_id} visible, "
                                   f"but lock marker #{self.anchor_marker_id} first.")
 
+                # ── Jog slider control ────────────────────────────────────────
+                if self.jog_gui.active and self.robot is not None:
+                    _jp = self.jog_gui.get_pos()
+                    _jq = self.jog_gui.get_quat()
+                    _changed = (self._jog_last_pos is None
+                                or np.linalg.norm(_jp - self._jog_last_pos) > 0.004
+                                or self._robot_state != 'jog')
+                    if _changed:
+                        # Target moved (or move completed) — (re)issue move_to_pose
+                        self._robot_state  = 'jog'
+                        self._jog_last_pos = _jp.copy()
+                        self.robot.move_to_pose(
+                            _jp.tolist(), _jq,
+                            on_complete=lambda ok: (
+                                setattr(self, '_robot_state', None),
+                                print(f"[Jog] reached target"),
+                            ),
+                        )
+                    else:
+                        # Target unchanged and move in progress — stream update
+                        self.robot.update_move_target(_jp.tolist(), _jq)
+                    _T_tgt = np.eye(4)
+                    _T_tgt[:3, 3]  = _jp
+                    _T_tgt[:3, :3] = ScipyR.from_quat(_jq).as_matrix()
+                    self._tcp_target_T = _T_tgt
+
                 # ── Perf stats ────────────────────────────────────────────────
                 self._fps_frame_count += 1
                 _iter_ms = (time.perf_counter() - _iter_t0) * 1000.0
@@ -2331,6 +2502,7 @@ class MainScene:
             self.pb_scene.disconnect()
         cv.destroyAllWindows()
         self.tuner.close()
+        self.jog_gui.close()
         self.anchor.close()
         self.synth.close()
         self.relock_cubes.close()
