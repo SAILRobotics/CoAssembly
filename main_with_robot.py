@@ -1480,7 +1480,6 @@ class MainScene:
         self._fps_frame_count      = 0                    # frame counter since last FPS print
         self._prev_jog_active:    bool                  = False   # tracks jog_gui.active edge
         self._jog_last_pos: "np.ndarray | None"         = None    # last pos issued to move_to_pose in jog mode
-        self._jog_diag_t:   float                       = 0.0     # throttle for jog diagnostic prints
 
         print(f"\n[Running]  quest_ip={quest_ip}  "
               f"anchor_marker=#{anchor_marker_id}  "
@@ -2478,23 +2477,6 @@ class MainScene:
                     _T_tgt[:3, 3]  = _jp
                     _T_tgt[:3, :3] = ScipyR.from_quat(_jq).as_matrix()
                     self._tcp_target_T = _T_tgt
-
-                    # Diagnostic: every 2 s print target vs actual TCP in world + base frames
-                    _now_diag = time.perf_counter()
-                    if self._T_world_tcp is not None and _now_diag - self._jog_diag_t >= 2.0:
-                        self._jog_diag_t = _now_diag
-                        _tcp_now  = self._T_world_tcp[:3, 3]
-                        _err      = _jp - _tcp_now
-                        _T_wb     = self.robot.pb_scene.T_world_base
-                        _base_p   = _T_wb[:3, 3]
-                        _Rz180m   = ScipyR.from_euler('z', np.pi).as_matrix()
-                        _base_R   = _T_wb[:3, :3] @ _Rz180m
-                        _tgt_base = _base_R.T @ (_jp - _base_p)  # frax des_pos
-                        _tcp_base = _base_R.T @ (_tcp_now - _base_p)
-                        print(f"[Jog diag] world  tgt={np.round(_jp,3)}  tcp={np.round(_tcp_now,3)}"
-                              f"  err={np.round(_err*100,1)} cm")
-                        print(f"[Jog diag] base   tgt={np.round(_tgt_base,3)}  tcp={np.round(_tcp_base,3)}"
-                              f"  base_pos(world)={np.round(_base_p,3)}")
 
                 # ── Perf stats ────────────────────────────────────────────────
                 self._fps_frame_count += 1

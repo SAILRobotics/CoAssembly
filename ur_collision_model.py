@@ -94,7 +94,9 @@ gripper_positions = (
     (0.05, 0, 0.095),   # finger region         r=0.040
     (-0.05, 0, 0.095),   # finger region         r=0.040
 )
-gripper_radii = (0.045, 0.050, 0.040, 0.040, 0.040, 0.040, 0.040)
+# gripper_radii = (0.040, 0.055, 0.06, 0.040, 0.040, 0.040, 0.040, 0.040)
+
+gripper_radii = (0.045, 0.45, 0.040, 0.040, 0.040, 0.040, 0.040)
 
 # (Still here if you need them elsewhere)
 positions = {
@@ -177,13 +179,13 @@ link5_range = range(link_start_indices[4], link_start_indices[4] + link_sphere_c
 link6_range = range(link_start_indices[5], link_start_indices[5] + link_sphere_counts[5])  # link_6
 
 # For reference (with current numbers):
-# link_1: 2 spheres  -> indices [0..1]
-# link_2: 10 spheres -> indices [2..11]
-# link_3: 7 spheres  -> indices [12..18]
-# link_4: 1 sphere   -> index  [19]
-# link_5: 1 sphere   -> index  [20]
-# link_6: 1 sphere   -> index  [21]
-# Total = 22 spheres
+# link_1: 1 sphere  -> indices [0]
+# link_2: 10 spheres -> indices [1..10]
+# link_3: 7 spheres  -> indices [11..17]
+# link_4: 1 sphere   -> index  [18]
+# link_5: 1 sphere   -> index  [19]
+# link_6: 1 sphere   -> index  [20]
+# Total = 21 spheres
 
 pairs_sc_list = []
 
@@ -213,10 +215,10 @@ pairs_sc = tuple(pairs_sc_list)
 # With gripper the flat indices are:
 #   link_1: 2  → 0-1   link_2: 10 → 2-11   link_3: 7 → 12-18
 #   link_4: 1  → 19    link_5:  1 → 20      link_6: 1 → 21
-#   gripper: 7 → 22-28   (total 29 spheres)
+#   gripper: 8 → 22-29   (total 30 spheres)
 _gripper_wg_start = link_start_indices[5] + link_sphere_counts[5]   # = 22
 _gripper_wg_range = range(_gripper_wg_start,
-                          _gripper_wg_start + len(gripper_positions))  # 22-28
+                          _gripper_wg_start + len(gripper_positions))  # 22-29
 pairs_sc_with_gripper = pairs_sc + tuple(
     (gi, lj)
     for gi in _gripper_wg_range
@@ -250,7 +252,7 @@ ur_base_self_collision_data = {
 # Interactive visualiser
 # ─────────────────────────────────────────────────────────────────────────────
 
-def visualize(q=None, T_world_base=None, with_gripper: bool = True) -> None:
+def visualize(q=None, T_world_base=None, with_gripper: bool = False) -> None:
     """Open an interactive Open3D + DearPyGui window.
 
     Shows the UR10e URDF meshes and the collision spheres defined in this file.
@@ -399,46 +401,6 @@ def visualize(q=None, T_world_base=None, with_gripper: bool = True) -> None:
                 result.append((T[:3, :3] @ np.array(lp) + T[:3, 3], r, "gripper"))
         return result
 
-    def _gripper_pair_lines(spheres_tagged, grip):
-        """Draw configured gripper-to-arm self-collision constraints.
-
-        Each line joins the surfaces of its two collision spheres.  Its color
-        shows the current signed clearance: cyan is safe, orange is within
-        3 cm, and red means the spheres intersect.
-        """
-        ls = o3d.geometry.LineSet()
-        gripper_pairs = pairs_sc_with_gripper[len(pairs_sc):]
-        if not grip or not gripper_pairs:
-            ls.points = o3d.utility.Vector3dVector(np.zeros((0, 3)))
-            ls.lines = o3d.utility.Vector2iVector(np.zeros((0, 2), dtype=int))
-            ls.colors = o3d.utility.Vector3dVector(np.zeros((0, 3)))
-            return ls
-
-        points, lines, colors = [], [], []
-        for pair_i, (i, j) in enumerate(gripper_pairs):
-            ci, ri, _ = spheres_tagged[i]
-            cj, rj, _ = spheres_tagged[j]
-            delta = np.asarray(cj) - np.asarray(ci)
-            distance = float(np.linalg.norm(delta))
-            direction = delta / distance if distance > 1e-9 else np.array([1.0, 0.0, 0.0])
-            clearance = distance - float(ri) - float(rj)
-
-            # Surface-to-surface line, rather than a center-to-center line.
-            points.extend((np.asarray(ci) + direction * ri,
-                           np.asarray(cj) - direction * rj))
-            lines.append((2 * pair_i, 2 * pair_i + 1))
-            if clearance <= 0.0:
-                colors.append([1.0, 0.1, 0.1])       # intersecting
-            elif clearance < 0.03:
-                colors.append([1.0, 0.65, 0.05])     # close
-            else:
-                colors.append([0.1, 0.75, 1.0])      # safe
-
-        ls.points = o3d.utility.Vector3dVector(np.asarray(points))
-        ls.lines = o3d.utility.Vector2iVector(np.asarray(lines, dtype=int))
-        ls.colors = o3d.utility.Vector3dVector(np.asarray(colors))
-        return ls
-
     # ── DearPyGui thread ──────────────────────────────────────────────────────
     def _dpg_thread():
         try:
@@ -473,8 +435,6 @@ def visualize(q=None, T_world_base=None, with_gripper: bool = True) -> None:
             dpg.add_checkbox(label="With gripper", tag="grip_cb",
                              default_value=with_gripper,
                              callback=lambda: _on_joint_change())
-            dpg.add_text("Gripper pair lines: cyan=safe, orange=near, red=collision",
-                         color=(120, 210, 255), wrap=300)
             dpg.add_separator()
             dpg.add_text("Highlight links", color=(255, 220, 100))
             for hl_name in _ALL_HL_NAMES:
@@ -530,8 +490,6 @@ def visualize(q=None, T_world_base=None, with_gripper: bool = True) -> None:
 
     col_ls = o3d.geometry.LineSet()
     vis.add_geometry(col_ls)
-    pair_ls = o3d.geometry.LineSet()
-    vis.add_geometry(pair_ls)
 
     # Initial render pass (set camera)
     vis.poll_events(); vis.update_renderer()
@@ -576,17 +534,10 @@ def visualize(q=None, T_world_base=None, with_gripper: bool = True) -> None:
                 col_ls.points = new_ls.points
                 col_ls.lines  = new_ls.lines
                 col_ls.colors = new_ls.colors
-                new_pair_ls = _gripper_pair_lines(spheres, cur_grip)
-                pair_ls.points = new_pair_ls.points
-                pair_ls.lines = new_pair_ls.lines
-                pair_ls.colors = new_pair_ls.colors
             else:
                 col_ls.points = o3d.utility.Vector3dVector(np.zeros((0, 3)))
                 col_ls.lines  = o3d.utility.Vector2iVector(np.zeros((0, 2), int))
-                pair_ls.points = o3d.utility.Vector3dVector(np.zeros((0, 3)))
-                pair_ls.lines = o3d.utility.Vector2iVector(np.zeros((0, 2), int))
             vis.update_geometry(col_ls)
-            vis.update_geometry(pair_ls)
 
         vis.update_renderer()
         time.sleep(0.033)
@@ -598,8 +549,7 @@ def visualize(q=None, T_world_base=None, with_gripper: bool = True) -> None:
 if __name__ == "__main__":
     import argparse, numpy as np
     parser = argparse.ArgumentParser(description="UR10e collision model viewer")
-    parser.add_argument("--gripper", action=argparse.BooleanOptionalAction,
-                        default=True, help="Show gripper spheres and collision pairs")
+    parser.add_argument("--gripper", action="store_true", help="Show gripper spheres")
     parser.add_argument("--q", nargs=6, type=float, metavar="DEG",
                         default=[0, -90, 90, -90, -90, 0],
                         help="Initial joint angles in degrees (6 values)")
