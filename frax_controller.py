@@ -286,8 +286,9 @@ if _FRAX_AVAILABLE:
             urdf_path:         str,
             T_world_base:      np.ndarray,
             kp_pos:            float = 200.0,
-            kp_ori:            float = 150.0,
+            kp_ori:            float = 100.0,
             qdot_max:          float = 3.0,
+            qddot_max:         float = 20.0,
             q_min:             "list | None" = None,
             q_max:             "list | None" = None,
             cbf_alpha:         float = 10.0,
@@ -298,6 +299,11 @@ if _FRAX_AVAILABLE:
             gripper_collision: bool = True,
         ) -> None:
             self._qdot_max = float(qdot_max)
+            self._qddot_max = float(qddot_max)
+            self._prev_qdot_nominal: "np.ndarray | None" = None
+            print(f"[FraxController] Servo tuning: kp_pos={kp_pos:g}, "
+                  f"kp_ori={kp_ori:g}, qdot_max={qdot_max:g} rad/s, "
+                  f"qddot_max={qddot_max:g} rad/s^2")
 
             # Base frame: frax URDF convention has a Rz(180°) offset
             _Rz180       = ScipyR.from_euler('z', np.pi).as_matrix()
@@ -397,6 +403,31 @@ if _FRAX_AVAILABLE:
 
         # ── Public API ────────────────────────────────────────────────────────
 
+        def reset_servo_state(self) -> None:
+            """Reset state used to acceleration-limit the nominal command."""
+            self._prev_qdot_nominal = None
+
+        def filter_joint_velocity(self,
+                                  q_current: np.ndarray,
+                                  qdot_nominal: np.ndarray,
+                                  dt: float) -> np.ndarray:
+            """Rate-limit the nominal velocity, then give CBF final authority.
+
+            Filtering before the CBF avoids reintroducing an unsafe velocity
+            after the safety QP has projected the command.
+            """
+            qdot = np.clip(np.asarray(qdot_nominal, dtype=float),
+                           -self._qdot_max, self._qdot_max)
+            if self._prev_qdot_nominal is None:
+                self._prev_qdot_nominal = np.zeros_like(qdot)
+            max_delta = self._qddot_max * max(float(dt), 1e-6)
+            qdot = np.clip(qdot,
+                           self._prev_qdot_nominal - max_delta,
+                           self._prev_qdot_nominal + max_delta)
+            self._prev_qdot_nominal = qdot.copy()
+            return np.asarray(self._cbf.safety_filter(
+                jnp.asarray(q_current), jnp.asarray(qdot)))
+
         def servo_step(self,
                        target_pos_world: np.ndarray,
                        target_rot_world: np.ndarray,
@@ -408,12 +439,11 @@ if _FRAX_AVAILABLE:
             des_rot = jnp.array(self._base_R.T @ target_rot_world)
 
             M_inv, J, ee_t = self.robot.dynamically_consistent_velocity_control_matrices(q)
-            qdot      = self._osc(ee_t[:3, 3], ee_t[:3, :3],
-                                  des_pos, des_rot,
-                                  jnp.zeros(3), jnp.zeros(3), J, M_inv)
-            qdot_safe = np.asarray(self._cbf.safety_filter(q, qdot))
-            qdot_np   = np.clip(qdot_safe, -self._qdot_max, self._qdot_max)
-            return q_current + qdot_np * dt
+            qdot = np.asarray(self._osc(ee_t[:3, 3], ee_t[:3, :3],
+                                        des_pos, des_rot,
+                                        jnp.zeros(3), jnp.zeros(3), J, M_inv))
+            qdot_safe = self.filter_joint_velocity(q_current, qdot, dt)
+            return q_current + qdot_safe * dt
 
         def ee_world_pos(self, q_current: np.ndarray) -> np.ndarray:
             """End-effector position in world frame."""
@@ -658,8 +688,7 @@ class RobotController:
         if self._frax is not None:
             qdot = (q_limited - q) / max(dt, 1e-6)
             try:
-                qdot_safe = np.asarray(
-                    self._frax._cbf.safety_filter(jnp.array(q), jnp.array(qdot)))
+                qdot_safe = self._frax.filter_joint_velocity(q, qdot, dt)
             except Exception:
                 qdot_safe = qdot
             q_target = q + qdot_safe * dt
@@ -740,8 +769,7 @@ class RobotController:
             if self._frax is not None:
                 qdot = (q_limited - q_cur) / max(dt, 1e-6)
                 try:
-                    qdot_safe = np.asarray(
-                        self._frax._cbf.safety_filter(jnp.array(q_cur), jnp.array(qdot)))
+                    qdot_safe = self._frax.filter_joint_velocity(q_cur, qdot, dt)
                 except Exception:
                     qdot_safe = qdot
                 q_target = q_cur + qdot_safe * dt
@@ -759,12 +787,7 @@ class RobotController:
             if self.simulation:
                 self._pb_scene.update_robot(q_target)
             else:
-                if self._move_tcp_smooth is None:
-                    self._move_tcp_smooth = q_target.copy()
-                else:
-                    self._move_tcp_smooth = (0.25 * q_target
-                                             + 0.75 * self._move_tcp_smooth)
-                self.servoJ(self._move_tcp_smooth, dt, lookahead=0.195, gain=100)
+                self.servoJ(q_target, dt, lookahead=0.10, gain=300)
             return
 
         if not self.simulation:
@@ -857,15 +880,18 @@ class RobotController:
             self._tracked_tcp_cb   = on_complete
             self._move_tcp_smooth  = None   # reset EMA on new target
             self._sim_phase        = 'move_tcp'
+            if self._frax is not None:
+                self._frax.reset_servo_state()
 
     # ── Low-level control (real robot) ────────────────────────────────────────
 
     def servoJ(self, q: np.ndarray, dt: float,
                speed: float = 1.0, accel: float = 1.0,
-               lookahead: float = 0.15, gain: int = 300) -> None:
+               lookahead: float = 0.10, gain: int = 300) -> None:
         """Stream one servoJ command to the robot."""
-        # UR firmware requires both time and lookahead_time ∈ [0.03, 0.2] s.
-        t  = max(min(float(dt),       0.2), 0.03)
+        # `time` is the blocking servo period; the [0.03, 0.2] restriction is
+        # for lookahead_time, not for this command duration.
+        t  = max(min(float(dt),      0.02), 0.002)
         la = max(min(float(lookahead), 0.2), 0.03)
         try:
             self._rtde_ctrl_conn().servoJ(list(q), speed, accel, t, la, gain)
