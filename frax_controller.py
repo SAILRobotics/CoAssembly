@@ -286,7 +286,7 @@ if _FRAX_AVAILABLE:
             urdf_path:         str,
             T_world_base:      np.ndarray,
             kp_pos:            float = 200.0,
-            kp_ori:            float = 30.0,
+            kp_ori:            float = 150.0,
             qdot_max:          float = 3.0,
             q_min:             "list | None" = None,
             q_max:             "list | None" = None,
@@ -301,6 +301,7 @@ if _FRAX_AVAILABLE:
 
             # Base frame: frax URDF convention has a Rz(180°) offset
             _Rz180       = ScipyR.from_euler('z', np.pi).as_matrix()
+            # _Rz180       = ScipyR.from_euler('z', 0).as_matrix()
             self._base_pos = np.array(T_world_base[:3, 3], float)
             self._base_R   = np.array(T_world_base[:3, :3], float) @ _Rz180
 

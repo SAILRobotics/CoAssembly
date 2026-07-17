@@ -81,7 +81,7 @@ except Exception as _e:
     _HAS_FRAX = False
     print(f"[RobotServer] frax/CBF NOT loaded — CBF inactive: {_e}")
 
-
+# _HAS_FRAX = False
 # ── Simulation waypoint runner ────────────────────────────────────────────────
 
 class _PbJointRunner:
