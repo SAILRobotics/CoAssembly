@@ -9700,14 +9700,42 @@ MonoBehaviour:
   resetOffsetFromCheckbox: {x: 0.08, y: 0, z: 0}
   assembleOffset: {x: 0, y: 0.2, z: 0}
   assembleOverrides:
-  - key: ScrewRow1Left
+  - type: Bearing
+    row: 0
+    side: 1
+    offset: {x: 0, y: 0, z: 0.1}
+  - type: Bearing
+    row: 0
+    side: 2
+    offset: {x: 0, y: 0, z: -0.1}
+  - type: Screw
+    row: 0
+    side: 0
     offset: {x: 0, y: -0.2, z: 0}
-  - key: ScrewRow1Right
+  - type: Gear
+    row: 0
+    side: 1
+    offset: {x: 0, y: 0, z: -0.2}
+  - type: Gear
+    row: 0
+    side: 2
+    offset: {x: 0, y: 0, z: 0.2}
+  - type: Pin
+    row: 2
+    side: 0
     offset: {x: 0, y: -0.2, z: 0}
-  - key: BearingRow1Left
-    offset: {x: 0, y: 0, z: 0.15}
-  - key: BearingRow1Right
-    offset: {x: 0, y: 0, z: -0.15}
+  - type: Pin
+    row: 3
+    side: 0
+    offset: {x: -0.2, y: 0, z: 0}
+  - type: Pin
+    row: 4
+    side: 0
+    offset: {x: -0.2, y: 0, z: 0}
+  - type: Pin
+    row: 1
+    side: 0
+    offset: {x: 0, y: -0.2, z: 0}
   subStaggerSeconds: 0.12
   defaultStepDelay: 0.35
   defaultSlideSeconds: 0.5

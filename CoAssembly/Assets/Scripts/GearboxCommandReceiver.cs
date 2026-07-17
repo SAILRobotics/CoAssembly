@@ -58,9 +58,11 @@ public class GearboxCommandReceiver : MonoBehaviour
     [Tooltip("Default world-space offset a part starts at before sliding into its final place " +
              "(drops in from above). Used for any part without an override below.")]
     [SerializeField] private Vector3 assembleOffset = new Vector3(0f, 0.20f, 0f);
-    [Tooltip("Per-type or per-part start-offset overrides, so components can come from different " +
-             "directions. Key = a part TYPE (e.g. \"Screw\") or an exact part NAME (e.g. " +
-             "\"ScrewRow1Left\"). A name match wins over a type match; both win over the default.")]
+    [Tooltip("Start-offset overrides so components can come from different directions. Each rule " +
+             "matches by any mix of Type / Row / Side (empty Type, Row 0, or Side Any = 'any'). " +
+             "E.g. Type=Screw, Row=0, Side=Any => ALL screws come from one direction; " +
+             "Type=empty, Side=Left => all left-hand parts. Most specific matching rule wins; " +
+             "ties go to the rule higher in the list; unmatched parts use the default offset above.")]
     [SerializeField] private List<AssembleOverride> assembleOverrides = new();
     [Tooltip("Delay between two parts of the SAME type sliding in (e.g. Left then Right gear).")]
     [SerializeField] private float subStaggerSeconds = 0.12f;
@@ -68,12 +70,18 @@ public class GearboxCommandReceiver : MonoBehaviour
     [SerializeField] private float defaultStepDelay    = 0.35f;
     [SerializeField] private float defaultSlideSeconds  = 0.50f;
 
+    public enum Side { Any, Left, Right }
+
     [Serializable]
     public struct AssembleOverride
     {
-        [Tooltip("A part type (\"Screw\", \"GearRod\", …) or an exact part name (\"ScrewRow1Left\").")]
-        public string  key;
-        [Tooltip("World-space offset this part starts at before sliding home.")]
+        [Tooltip("Part type to match (e.g. \"Screw\", \"GearRod\"). Empty = ANY type.")]
+        public string  type;
+        [Tooltip("Row to match (1–4). 0 = ANY row.")]
+        public int     row;
+        [Tooltip("Side to match. Any = both sides (and side-less parts like GearRod).")]
+        public Side    side;
+        [Tooltip("World-space offset matching parts start at before sliding home.")]
         public Vector3 offset;
     }
 
@@ -105,6 +113,7 @@ public class GearboxCommandReceiver : MonoBehaviour
         public bool                 highlighted;
         public string               type;    // parsed prefix before "Row" (e.g. "GearRod", "Bearing")
         public int                  rowNum;  // parsed row number, or -1
+        public string               side;    // "Left" / "Right" / "" (side-less, e.g. GearRod)
         public Vector3              restLocalPos;  // authored local position (the slide target)
     }
 
@@ -119,9 +128,6 @@ public class GearboxCommandReceiver : MonoBehaviour
 
     // Assembly-animation state. Bumping the generation invalidates any in-flight slide coroutines.
     private int assembleGen = 0;
-    // Resolved start-offset overrides (built in Start): exact part name, then part type.
-    private readonly Dictionary<string, Vector3> offsetByName = new();
-    private readonly Dictionary<string, Vector3> offsetByType = new();
 
     // ── Socket + dispatcher ──────────────────────────────────────────────────
     private SubscriberSocket socket;
@@ -134,7 +140,6 @@ public class GearboxCommandReceiver : MonoBehaviour
         if (gearboxRoot == null) gearboxRoot = transform;
 
         BuildPartIndex();
-        BuildOffsetOverrides();
 
         if (checkboxRenderer != null && checkboxRenderer.sharedMaterial != null)
         {
@@ -186,6 +191,10 @@ public class GearboxCommandReceiver : MonoBehaviour
             int    rowIdx = clean.IndexOf("Row");
             if (rowIdx < 0) continue;
 
+            int di = rowIdx + 3;                                   // skip "Row"
+            while (di < clean.Length && char.IsDigit(clean[di])) di++;
+            string side = clean.Substring(di);                    // "Left" / "Right" / ""
+
             var entry = new PartEntry
             {
                 go            = t.gameObject,
@@ -196,6 +205,7 @@ public class GearboxCommandReceiver : MonoBehaviour
                 highlighted   = false,
                 type          = clean.Substring(0, rowIdx),   // "GearRod", "Gear", "Bearing", ...
                 rowNum        = ParseRow(clean, rowIdx),
+                side          = side,
                 restLocalPos  = t.localPosition,
             };
 
@@ -206,23 +216,32 @@ public class GearboxCommandReceiver : MonoBehaviour
         }
     }
 
-    // Route each override to the name map or the type map based on whether its key is an
-    // actual part name (a name match then takes priority over a type match at resolve time).
-    private void BuildOffsetOverrides()
-    {
-        foreach (var o in assembleOverrides)
-        {
-            if (string.IsNullOrEmpty(o.key)) continue;
-            if (partsByName.ContainsKey(o.key)) offsetByName[o.key] = o.offset;
-            else                                offsetByType[o.key] = o.offset;
-        }
-    }
-
+    // Pick the start offset for a part: the most specific matching override (by type/row/side),
+    // ties broken by list order; the default offset if nothing matches.
     private Vector3 ResolveOffset(PartEntry p)
     {
-        if (offsetByName.TryGetValue(p.go.name, out Vector3 v)) return v;
-        if (offsetByType.TryGetValue(p.type,    out v))         return v;
-        return assembleOffset;
+        int bestScore = -1;
+        Vector3 best = assembleOffset;
+        foreach (var o in assembleOverrides)
+        {
+            if (!string.IsNullOrEmpty(o.type) &&
+                !string.Equals(o.type, p.type, StringComparison.OrdinalIgnoreCase)) continue;
+            if (o.row != 0 && o.row != p.rowNum) continue;
+            if (o.side != Side.Any && !SideMatches(o.side, p.side)) continue;
+
+            int score = (string.IsNullOrEmpty(o.type) ? 0 : 1)
+                      + (o.row  != 0        ? 1 : 0)
+                      + (o.side != Side.Any ? 1 : 0);
+            if (score > bestScore) { bestScore = score; best = o.offset; }
+        }
+        return best;
+    }
+
+    private static bool SideMatches(Side s, string partSide)
+    {
+        if (s == Side.Left)  return string.Equals(partSide, "Left",  StringComparison.OrdinalIgnoreCase);
+        if (s == Side.Right) return string.Equals(partSide, "Right", StringComparison.OrdinalIgnoreCase);
+        return true;   // Any
     }
 
     private void ReceiveLoop()
