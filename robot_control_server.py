@@ -158,6 +158,14 @@ def _build_pb_scene(simulation: bool, use_calibrated_robot_base: bool,
 class RobotControlServer:
     _STATE_INTERVAL          = 1.0 / 30.0
     _BASE_YAW_CORRECTION_DEG = -90.0
+    _MOVE_POS_TOL_M          = 0.03
+    _MOVE_ANGLE_TOL_RAD      = np.deg2rad(5.0)
+    _MOVE_BRAKE_DIST_M       = 0.05
+    _MOVE_BRAKE_ANGLE_RAD    = np.deg2rad(8.0)
+    _MOVE_SCALE_FLOOR        = 0.05
+    _SERVO_EMA_ALPHA         = 0.70
+    _SERVO_LOOKAHEAD_S       = 0.08
+    _SERVO_GAIN              = 400
 
     def __init__(self, quest_ip: str, robot_ip: "str | None", simulation: bool,
                  use_calibrated_robot_base: bool, gripper_collision: bool,
@@ -232,6 +240,11 @@ class RobotControlServer:
             print(f"{_YLW}[RobotServer] Motion mode: PyBullet IK + CBF filter (--no-diff-ik){_RST}")
         else:
             print(f"{_YLW}[RobotServer] Motion mode: PyBullet IK only (frax not loaded){_RST}")
+        print(f"[RobotServer] Move tuning: brake={self._MOVE_BRAKE_DIST_M*100:.0f} cm/"
+              f"{np.rad2deg(self._MOVE_BRAKE_ANGLE_RAD):.0f} deg, "
+              f"EMA={self._SERVO_EMA_ALPHA:.2f}, "
+              f"lookahead={self._SERVO_LOOKAHEAD_S:.2f} s, "
+              f"gain={self._SERVO_GAIN}")
 
         # Gate publish_base until vision side has locked the anchor and called set_scene_origin
         self._scene_origin_set = False
@@ -508,6 +521,11 @@ class RobotControlServer:
             self._move_phase = None
             return
 
+        # Use the configured hardware period for integration and servoJ.  The
+        # measured outer-loop dt can include servoJ blocking time and scheduling
+        # jitter, which otherwise feeds back into the next command.
+        control_dt = dt if self.simulation else 1.0 / self.control_hz
+
         q_cur = self.pb_scene.current_q.copy()
 
         _GRN = "\033[92m"; _RED = "\033[91m"; _RST = "\033[0m"
@@ -522,7 +540,9 @@ class RobotControlServer:
                 print(f"[Robot] FK check    frax TCP:   {np.round(_fr_tcp, 3).tolist()}")
                 print(f"[Robot] FK check    target:     {np.round(target_pos, 3).tolist()}")
 
-        # Convergence check: TCP within 8 cm for at least 0.5 s (position only)
+        # Convergence requires both translation and rotation to remain aligned
+        # for the dwell period.  Position-only completion can stop servoing
+        # before the wrist reaches its requested orientation.
         T_tcp = self.pb_scene.update_tcp_bodies()
         dist = float('inf')
         angle_err = float('inf')
@@ -535,16 +555,21 @@ class RobotControlServer:
             _now = time.perf_counter()
             if _now - self._move_diag_t >= 0.5:
                 self._move_diag_t = _now
-                _dc = _GRN if dist      < 0.080          else _RED
-                _ac = _GRN if angle_err < np.deg2rad(10) else _RED
+                _dc = _GRN if dist      < self._MOVE_POS_TOL_M     else _RED
+                _ac = _GRN if angle_err < self._MOVE_ANGLE_TOL_RAD else _RED
                 print(f"[Robot] dist: {_dc}{dist*100:5.1f} cm{_RST}  "
                       f"angle: {_ac}{np.rad2deg(angle_err):5.1f}°{_RST}")
 
-            if dist < 0.080:
+            if (dist < self._MOVE_POS_TOL_M
+                    and angle_err < self._MOVE_ANGLE_TOL_RAD):
                 if self._move_conv_start is None:
                     self._move_conv_start = time.perf_counter()
                 elif time.perf_counter() - self._move_conv_start >= 0.5:
-                    print(f"[Robot] move_to_pose converged ({dist*100:.1f} cm < 8 cm, {np.rad2deg(angle_err):.1f}° < 10°, 0.5 s dwell) → idle")
+                    print(f"[Robot] move_to_pose converged "
+                          f"({dist*100:.1f} cm < {self._MOVE_POS_TOL_M*100:.1f} cm, "
+                          f"{np.rad2deg(angle_err):.1f}° < "
+                          f"{np.rad2deg(self._MOVE_ANGLE_TOL_RAD):.1f}°, "
+                          f"0.5 s dwell) → idle")
                     self._finish_move(True)
                     return
             else:
@@ -555,27 +580,45 @@ class RobotControlServer:
             # OSC + CBF: Cartesian-space differential IK — deterministic, no PyBullet IK needed
             target_rot = ScipyR.from_quat(target_quat).as_matrix()
             try:
-                q_target = self._frax.servo_step(target_pos, target_rot, q_cur, dt)
+                q_target = self._frax.servo_step(
+                    target_pos, target_rot, q_cur, control_dt)
             except Exception as _e:
                 print(f"[Robot] servo_step error: {_e}")
                 q_target = q_cur
-            # Proximity damping: scale step down linearly inside 15 cm so robot decelerates into target
-            dist_scale = min(dist / 0.25, 1.0) if T_tcp is not None else 1.0
-            q_target = q_cur + (q_target - q_cur) * dist_scale
+            # Brake only when both pose components are close.  Taking the
+            # larger scale preserves wrist motion when translation has already
+            # converged but a significant orientation error remains.
+            if T_tcp is not None:
+                pos_scale = min(dist / self._MOVE_BRAKE_DIST_M, 1.0)
+                rot_scale = min(angle_err / self._MOVE_BRAKE_ANGLE_RAD, 1.0)
+                motion_scale = max(self._MOVE_SCALE_FLOOR,
+                                   pos_scale, rot_scale)
+            else:
+                motion_scale = 1.0
+            q_target = q_cur + (q_target - q_cur) * motion_scale
         else:
             # PyBullet IK + rate-limit (fallback or --no-diff-ik)
             q_ik = self.pb_scene.solve_ik(q_cur, target_pos, target_quat)
             q_ik = _wrap_nearest(q_ik, q_cur)
             sc        = self._speed_scale
-            dist_scale = min(dist / 0.10, 1.0) if T_tcp is not None else 1.0
-            max_step  = np.deg2rad(90.0 if self.simulation else 180.0) * (1.0 if self.simulation else sc) * dt * dist_scale
+            if T_tcp is not None:
+                pos_scale = min(dist / self._MOVE_BRAKE_DIST_M, 1.0)
+                rot_scale = min(angle_err / self._MOVE_BRAKE_ANGLE_RAD, 1.0)
+                motion_scale = max(self._MOVE_SCALE_FLOOR,
+                                   pos_scale, rot_scale)
+            else:
+                motion_scale = 1.0
+            max_step = (np.deg2rad(90.0 if self.simulation else 180.0)
+                        * (1.0 if self.simulation else sc)
+                        * control_dt * motion_scale)
             q_target  = q_cur + np.clip(q_ik - q_cur, -max_step, max_step)
             if self._frax is not None:
                 # Still apply CBF safety filter even in IK mode
-                qdot = (q_target - q_cur) / max(dt, 1e-6)
+                qdot = (q_target - q_cur) / max(control_dt, 1e-6)
                 try:
                     q_target = q_cur + np.asarray(
-                        self._frax._cbf.safety_filter(_jnp.array(q_cur), _jnp.array(qdot))) * dt
+                        self._frax._cbf.safety_filter(
+                            _jnp.array(q_cur), _jnp.array(qdot))) * control_dt
                 except Exception:
                     pass
             if np.linalg.norm(q_target - q_cur) < 1e-4:
@@ -597,8 +640,12 @@ class RobotControlServer:
             if self._move_smooth_q is None:
                 self._move_smooth_q = q_target.copy()
             else:
-                self._move_smooth_q = 0.25 * q_target + 0.75 * self._move_smooth_q
-            self.servoJ(self._move_smooth_q, dt, lookahead=0.195, gain=100)
+                alpha = self._SERVO_EMA_ALPHA
+                self._move_smooth_q = (alpha * q_target
+                                       + (1.0 - alpha) * self._move_smooth_q)
+            self.servoJ(self._move_smooth_q, control_dt,
+                        lookahead=self._SERVO_LOOKAHEAD_S,
+                        gain=self._SERVO_GAIN)
 
     # ── Grasp command ─────────────────────────────────────────────────────────
 
@@ -833,8 +880,10 @@ class RobotControlServer:
 
     def servoJ(self, q: np.ndarray, dt: float,
                speed: float = 1.0, accel: float = 1.0,
-               lookahead: float = 0.15, gain: int = 300) -> None:
-        t  = max(min(float(dt),        0.2), 0.03)
+               lookahead: float = 0.10, gain: int = 300) -> None:
+        # `time` is the blocking command period.  Keep it at the configured
+        # control period instead of stretching a 120 Hz command to 30 ms.
+        t  = max(min(float(dt),       0.020), 0.002)
         la = max(min(float(lookahead), 0.2), 0.03)
         try:
             self._rtde_ctrl_conn().servoJ(list(q), speed, accel, t, la, gain)
