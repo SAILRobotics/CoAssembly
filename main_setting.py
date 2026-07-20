@@ -50,6 +50,13 @@ ROBOT_CONTROL_HZ_REAL = 120   # real hardware control rate (matches RTDE max ~12
 # 1.0 = full speed. Simulation is unaffected.
 REAL_ROBOT_SPEED_SCALE = 1.0
 
+# Board handoff force detection.  These are used only by the AR board workflow;
+# normal pegboard tool/part grasps continue to use their programmed sequence.
+BOARD_GRASP_FORCE_THRESHOLD_N   = 4.0
+BOARD_RELEASE_FORCE_THRESHOLD_N = 15.0
+BOARD_FORCE_DEBOUNCE_HITS       = 5
+BOARD_FORCE_POLL_HZ             = 20
+
 # ── ArUco marker IDs ──────────────────────────────────────────────────────────
 ANCHOR_MARKER_ID   = 100   # world frame + PyBullet scene origin
 PEGBOARD_MARKER_ID = 101   # pegboard origin (top-right corner)
@@ -130,7 +137,6 @@ HANDOVER_RESOLUTION    = 5      # voxel cells per axis (mesh resolution)
 HANDOVER_WEIGHT_HUMAN  = 1.0    # weight on the human-distance term
 HANDOVER_WEIGHT_ROBOT  = 1.0    # weight on the robot joint-travel term
 HANDOVER_STANDOFF_M    = 0.15   # TCP stops this far short of the point along the gripper approach (+Z); the sphere stays on the point
-HANDOVER_RELEASE_THRESHOLD_N = 15.0  # N — pull force to release the tool at the handover point (real robot only)
 
 # ── Conservative UR10e joint limits (degrees) ─────────────────────────────────
 # Applied to both PyBullet IK and the frax CBF safety filter.

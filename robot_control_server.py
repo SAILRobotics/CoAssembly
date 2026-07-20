@@ -208,6 +208,14 @@ class RobotControlServer:
         self._grasp_ok:             bool           = False   # real only: object detected
         self._grasp_cancel_pending: bool           = False   # cancel in progress; all phases
 
+        # Board-only force handoff.  This is intentionally independent of the
+        # programmed tool/part grasp state machine above.
+        self._board_state: str = "inactive"
+        self._board_force_mode: "str | None" = None  # None | 'grasp' | 'release'
+        self._board_force_baseline: "np.ndarray | None" = None
+        self._board_force_hits = 0
+        self._board_force_last_t = 0.0
+
         # Move-to-pose state machine (IK + CBF servo loop, driven by tick())
         self._move_phase:       "str | None"        = None
         self._move_target_pos:  "np.ndarray | None" = None
@@ -300,6 +308,9 @@ class RobotControlServer:
             "q":                  q.tolist(),
             "tool_grasp_running": bool(self.tool_grasp_running),
             "move_running":       bool(self._move_phase is not None),
+            "board_state":        self._board_state,
+            "board_interaction_active": self._board_force_mode is not None
+                                        or self._board_state != "inactive",
         })
 
     def _poll_commands(self) -> None:
@@ -343,6 +354,7 @@ class RobotControlServer:
             self.move_to_pose(
                 pos  = msg["pos"],
                 quat = msg.get("quat"),
+                board_move = bool(msg.get("board_move", False)),
                 on_complete = lambda ok, rid=rid: self._publish_event(
                     "move_done", rid, ok=bool(ok)))
 
@@ -356,6 +368,12 @@ class RobotControlServer:
             self.cancel_motion()
         elif cmd == "cancel_grasp":
             self.cancel_grasp()
+
+        elif cmd == "start_board_interaction":
+            self.start_board_interaction()
+
+        elif cmd == "cancel_board_interaction":
+            self.cancel_board_interaction()
 
         else:
             print(f"[RobotServer] Unknown command: {cmd!r}")
@@ -408,6 +426,8 @@ class RobotControlServer:
         if self._move_phase is not None:
             self._tick_move_to_pose(dt)
             return
+        if self._board_force_mode is not None:
+            self._tick_board_interaction()
         if not self.simulation:
             if self._grasp_phase is not None:
                 self._tick_real_grasp(dt)
@@ -471,7 +491,125 @@ class RobotControlServer:
 
     # ── Move-to-pose (IK + CBF servo loop) ───────────────────────────────────
 
-    def move_to_pose(self, pos, quat=None,
+    # Board force handoff is intentionally independent of tool/part grasps.
+    def _set_board_state(self, state: str) -> None:
+        if state != self._board_state:
+            print(f"[Robot] board state: {self._board_state} → {state}")
+        self._board_state = state
+
+    def _arm_board_force(self, mode: "str | None") -> None:
+        self._board_force_mode = mode
+        self._board_force_baseline = None
+        self._board_force_hits = 0
+        self._board_force_last_t = 0.0
+        if mode is not None:
+            threshold = (cfg.BOARD_GRASP_FORCE_THRESHOLD_N
+                         if mode == "grasp"
+                         else cfg.BOARD_RELEASE_FORCE_THRESHOLD_N)
+            print(f"[Robot] Board force monitor armed: {mode}, "
+                  f"threshold={threshold:.1f} N")
+
+    def start_board_interaction(self) -> None:
+        """Open for a board and arm force-triggered grasp detection."""
+        if self._grasp_phase is not None or self._move_phase is not None:
+            print("[Robot] Board interaction blocked — robot motion is active")
+            return
+        if self.simulation:
+            self._set_board_state("holding_board")
+            return
+        try:
+            self.servoStop()
+            self.open_gripper()
+        except Exception as e:
+            print(f"[Robot] Board gripper open failed: {e}")
+            self._set_board_state("inactive")
+            self._arm_board_force(None)
+            return
+        # Motion is idle here.  Force monitoring is armed independently; the
+        # public board state stays inactive until the gripper confirms an object.
+        self._set_board_state("inactive")
+        self._arm_board_force("grasp")
+
+    def cancel_board_interaction(self) -> None:
+        """Stop board monitoring without automatically dropping a held board."""
+        self._arm_board_force(None)
+        if self._board_state not in ("holding_board", "moving_board"):
+            self._set_board_state("inactive")
+
+    def _poll_tcp_force(self) -> "np.ndarray | None":
+        if self.simulation:
+            return None
+        try:
+            return np.asarray(self._recv_conn().getActualTCPForce()[:3], float)
+        except Exception as e:
+            print(f"[Robot] Board force read failed: {e}")
+            return None
+
+    def _tick_board_interaction(self) -> None:
+        """Detect board insertion/pull as force change from a fresh baseline."""
+        if self.simulation:
+            return
+        now = time.perf_counter()
+        if (self._board_force_last_t > 0.0
+                and now - self._board_force_last_t
+                    < 1.0 / cfg.BOARD_FORCE_POLL_HZ):
+            return
+        self._board_force_last_t = now
+        force = self._poll_tcp_force()
+        if force is None:
+            return
+        if self._board_force_baseline is None:
+            self._board_force_baseline = force
+            print(f"[Robot] Board force baseline captured "
+                  f"({np.round(force, 1).tolist()} N)")
+            return
+
+        delta = float(np.linalg.norm(force - self._board_force_baseline))
+        mode = self._board_force_mode
+        if mode is None:
+            return
+        threshold = (cfg.BOARD_GRASP_FORCE_THRESHOLD_N
+                     if mode == "grasp"
+                     else cfg.BOARD_RELEASE_FORCE_THRESHOLD_N)
+        self._board_force_hits = (self._board_force_hits + 1
+                                  if delta > threshold else 0)
+        if self._board_force_hits < cfg.BOARD_FORCE_DEBOUNCE_HITS:
+            return
+
+        if mode == "grasp":
+            print(f"[Robot] Board contact detected ({delta:.1f} N) → closing")
+            try:
+                has_object = self.close_gripper()
+            except Exception as e:
+                print(f"[Robot] Board gripper close failed: {e}")
+                self._set_board_state("inactive")
+                self._arm_board_force(None)
+                return
+            if has_object:
+                self._set_board_state("holding_board")
+                self._arm_board_force("release")
+            else:
+                print("[Robot] Board not detected by gripper → reopening")
+                try:
+                    self.open_gripper()
+                except Exception as e:
+                    print(f"[Robot] Board gripper reopen failed: {e}")
+                    self._arm_board_force(None)
+                    return
+                self._set_board_state("inactive")
+                self._arm_board_force("grasp")
+        elif mode == "release" and self._board_state == "holding_board":
+            print(f"[Robot] Board pull detected ({delta:.1f} N) → opening")
+            try:
+                self.open_gripper()
+            except Exception as e:
+                print(f"[Robot] Board gripper release failed: {e}")
+                self._arm_board_force(None)
+                return
+            self._set_board_state("inactive")
+            self._arm_board_force(None)
+
+    def move_to_pose(self, pos, quat=None, board_move: bool = False,
                      on_complete: "Callable[[bool], None] | None" = None) -> None:
         """Stream IK+CBF servoJ toward a fixed Cartesian target until convergence."""
         if self._grasp_phase is not None:
@@ -479,6 +617,16 @@ class RobotControlServer:
             if on_complete:
                 on_complete(False)
             return
+        if (self._board_state != "inactive"
+                or self._board_force_mode is not None):
+            valid_board_move = (board_move
+                                and self._board_state == "holding_board")
+            if not valid_board_move:
+                print(f"[Robot] move_to_pose blocked — board state "
+                      f"is '{self._board_state}'")
+                if on_complete:
+                    on_complete(False)
+                return
         if not self.simulation:
             self.servoStop()
         T_tcp = self.pb_scene.update_tcp_bodies()
@@ -491,6 +639,10 @@ class RobotControlServer:
         self._move_conv_start  = None
         self._move_diag_t      = 0.0
         self._move_phase       = 'moving_to_pose'
+        if board_move:
+            # Acceleration during motion must not look like a release pull.
+            self._arm_board_force(None)
+            self._set_board_state("moving_board")
         print(f"[Robot] move_to_pose start → {np.round(self._move_target_pos, 3).tolist()}")
 
     def update_move_target(self, pos, quat=None) -> None:
@@ -518,6 +670,11 @@ class RobotControlServer:
         self._move_conv_start  = None
         if not self.simulation:
             self.servoStop()
+        if self._board_state == "moving_board":
+            # The board remains clamped on success or cancellation.  Capture a
+            # fresh stationary baseline before release monitoring resumes.
+            self._set_board_state("holding_board")
+            self._arm_board_force("release")
         cb = self._move_on_complete
         self._move_on_complete = None
         if cb is not None:
@@ -672,6 +829,13 @@ class RobotControlServer:
         category:     str                              = "tool",
         board_normal: "list | np.ndarray | None"      = None,
     ) -> None:
+        if (self._board_state != "inactive"
+                or self._board_force_mode is not None):
+            print(f"[Robot] Tool/part grasp blocked — board state "
+                  f"is '{self._board_state}'")
+            if on_complete:
+                on_complete(False)
+            return
         if self.tool_grasp_running:
             print("[Robot] Grasp already running — cancel first.")
             return
@@ -1172,6 +1336,7 @@ class RobotControlServer:
     # ── Cleanup ───────────────────────────────────────────────────────────────
 
     def close(self) -> None:
+        self.cancel_board_interaction()
         self.cancel_motion()
         if not self.simulation:
             self.servoStop()
