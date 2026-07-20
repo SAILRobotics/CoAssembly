@@ -1046,68 +1046,54 @@ class _WorkspaceBoundPublisher:
         except Exception:
             pass
 
-# # =============================================================================
-# # Grip state publisher / target pose receiver  (ports 5012 / 5013)
-# # =============================================================================
+# =============================================================================
+# Grip-state / target-pose bridge (ports 5012 / 5013)
+# =============================================================================
 
-# class _GripStatePublisher:
-#     """Publishes grip state + box pose to Unity on port 5012 (PUB).
-#     Unity SUB binds; Python PUB connects to Quest IP (same pattern as all other Python→Unity channels).
-#     """
+class _GripPoseBridge:
+    """Bidirectional bridge for Unity's AR box manipulation workflow.
 
-#     def __init__(self, quest_ip: str, port: int = cfg.GRIP_STATE_PORT):
-#         ctx = zmq.Context.instance()
-#         self._pub = ctx.socket(zmq.PUB)
-#         self._pub.connect(f"tcp://{quest_ip}:{port}")
-
-#     def publish(self, grip_state: str, T_tcp_world: np.ndarray) -> None:
-#         """Compute box pose from TCP transform and publish."""
-#         # Box centre = TCP position + BOX_FORWARD_OFFSET along gripper Z
-#         gripper_z_world = T_tcp_world[:3, :3] @ np.array([0.0, 0.0, 1.0])
-#         box_pos_w = T_tcp_world[:3, 3] + cfg.BOX_FORWARD_OFFSET * gripper_z_world
-
-#         q_xyzw  = ScipyR.from_matrix(T_tcp_world[:3, :3]).as_quat()
-#         pos_u   = open3d_to_unity_vector(box_pos_w)
-#         q_wxyz  = [q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]]
-#         q_u     = open3d_to_unity_quaternion(q_wxyz)
-#         sz_u    = open3d_to_unity_vector(np.array(cfg.BOX_SIZE, dtype=float))
-
-#         msg = {
-#             "grip_state":    grip_state,
-#             "box_pos":       pos_u.tolist(),
-#             "box_rot_xyzw":  [float(q_u[1]), float(q_u[2]),
-#                                float(q_u[3]), float(q_u[0])],
-#             "box_size":      sz_u.tolist(),
-#         }
-#         try:
-#             self._pub.send_string(json.dumps(msg))
-#         except Exception:
-#             pass
-
-#     def close(self) -> None:
-#         try:
-#             self._pub.close(0)
-#         except Exception:
-#             pass
-
-
-
-
-
-class _TargetPoseReceiver:
-    """Receives the manipulated TCP target pose from Unity on port 5013 (SUB).
-    Unity PUB binds; Python SUB connects to Quest IP (same pattern as all other Unity→Python channels).
+    Publishes grip state and box pose to Unity on port 5012, and receives the
+    manipulated box pose back from Unity on port 5013.
     """
 
-    def __init__(self, quest_ip: str, port: int = cfg.TARGET_POSE_PORT):
+    def __init__(self, quest_ip: str,
+                 grip_state_port: int = cfg.GRIP_STATE_PORT,
+                 target_pose_port: int = cfg.TARGET_POSE_PORT):
         ctx = zmq.Context.instance()
+        self._pub = ctx.socket(zmq.PUB)
+        self._pub.connect(f"tcp://{quest_ip}:{grip_state_port}")
         self._sub = ctx.socket(zmq.SUB)
-        self._sub.connect(f"tcp://{quest_ip}:{port}")
+        self._sub.connect(f"tcp://{quest_ip}:{target_pose_port}")
         self._sub.setsockopt_string(zmq.SUBSCRIBE, "")
         self._sub.setsockopt(zmq.RCVTIMEO, 0)
 
+    def publish(self, grip_state: str, T_tcp_world: np.ndarray) -> None:
+        """Compute box pose from TCP transform and publish."""
+        # Box centre = TCP position + BOX_FORWARD_OFFSET along gripper Z
+        gripper_z_world = T_tcp_world[:3, :3] @ np.array([0.0, 0.0, 1.0])
+        box_pos_w = T_tcp_world[:3, 3] + cfg.BOX_FORWARD_OFFSET * gripper_z_world
+
+        q_xyzw  = ScipyR.from_matrix(T_tcp_world[:3, :3]).as_quat()
+        pos_u   = open3d_to_unity_vector(box_pos_w)
+        q_wxyz  = [q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]]
+        q_u     = open3d_to_unity_quaternion(q_wxyz)
+        sz_u    = open3d_to_unity_vector(np.array(cfg.BOX_SIZE, dtype=float))
+
+        msg = {
+            "grip_state":    grip_state,
+            "box_pos":       pos_u.tolist(),
+            "box_rot_xyzw":  [float(q_u[1]), float(q_u[2]),
+                               float(q_u[3]), float(q_u[0])],
+            "box_size":      sz_u.tolist(),
+        }
+        try:
+            self._pub.send_string(json.dumps(msg))
+        except Exception:
+            pass
+
     def poll(self) -> "np.ndarray | None":
-        """Return 4×4 TCP world transform if a new target pose has arrived, else None."""
+        """Return the latest released 4×4 box pose, or None if none arrived."""
         try:
             raw = self._sub.recv_string(flags=zmq.NOBLOCK)
             data = json.loads(raw)
@@ -1124,10 +1110,11 @@ class _TargetPoseReceiver:
             return None
 
     def close(self) -> None:
-        try:
-            self._sub.close(0)
-        except Exception:
-            pass
+        for sock in (self._pub, self._sub):
+            try:
+                sock.close(0)
+            except Exception:
+                pass
 
 
 
@@ -1421,8 +1408,7 @@ class MainScene:
         # self.handover_sphere = _HandoverSpherePublisher(quest_ip)
         self.tool_layout = _ToolLayoutManager(
                                cfg.SCENE_LAYOUT_DIR / "tool_layout1.json", quest_ip)
-        # self.grip_pub    = _GripStatePublisher(quest_ip)
-        # self.target_recv = _TargetPoseReceiver(quest_ip)
+        # self.grip_pose_bridge = _GripPoseBridge(quest_ip)
         self.workspace_bound_pub = _WorkspaceBoundPublisher(quest_ip)
 
         # Cubes around the anchor marker (world origin) — ids 0, 1, 2
@@ -1470,7 +1456,7 @@ class MainScene:
         self._tracking_hand_side: "str | None"           = None   # 'left' | 'right' while tracking
         # self._handover: "dict | None"               = None   # frozen compromise-handover result (grid/target/sphere), set on tool grasp
         # self._pending_handover_move                 = False  # set by grasp on_complete; main thread then issues the handover move_tcp
-        self._last_ar_board_T: "np.ndarray | None"    = None   # last AR box pose from _TargetPoseReceiver; persists between polls
+        self._last_ar_board_T: "np.ndarray | None"    = None   # last AR box pose from _GripPoseBridge; persists between polls
         self._pending_grasp_tool_id: "int | None"           = None   # tool ID being grasped (set on click, not yet read back)
         self._tracked_hand_side: "str | None"        = None   # which hand is being tracked: 'left' or 'right'
         self._track_proximity_enter_t: "float | None"           = None   # perf_counter time when TCP first entered _TRACK_DIST_THRESHOLD
@@ -1975,7 +1961,7 @@ class MainScene:
                 #         self.vis.clear_board_manip_debug()
                 #         if self.robot is not None:
                 #             self.robot.cancel_motion()
-                #         self.grip_pub.publish(
+                #         self.grip_pose_bridge.publish(
                 #             'idle',
                 #             self._T_world_tcp if self._T_world_tcp is not None else np.eye(4))
                 #         print(f"[User] Cancelled grip state '{prev_state}' → idle")
@@ -2208,9 +2194,9 @@ class MainScene:
 
                 #     # ── Grip-state publishing + target-pose move ──────────────
                 #     if self._robot_state is not None and self._T_world_tcp is not None:
-                #         self.grip_pub.publish(self._robot_state, self._T_world_tcp)
+                #         self.grip_pose_bridge.publish(self._robot_state, self._T_world_tcp)
                 #     if self._robot_state in ('grabbed', 'moving'):
-                #         T_target = self.target_recv.poll()
+                #         T_target = self.grip_pose_bridge.poll()
                 #         if T_target is not None:
                 #             self._last_ar_board_T = T_target
                 #             _grip_z  = T_target[:3, :3] @ np.array([0., 0., 1.])
@@ -2549,8 +2535,7 @@ class MainScene:
         self.relock_cubes.close()
         # self.handover_sphere.close()
         self.tool_layout.close()
-        # self.grip_pub.close()
-        # self.target_recv.close()
+        # self.grip_pose_bridge.close()
         self.workspace_bound_pub.close()
         self.hands.close()
         self.cam.close()
