@@ -700,7 +700,13 @@ class SceneVis:
             _palm_n /= _norm_len
             if np.dot(_palm_n, -R_tcp[:, 2]) < 0:
                 _palm_n = -_palm_n
-        self._update_arrow_ls(self._qd_palm_normal, centroid, _palm_n, 0.10, (1., 1., 0.))
+        if is_left:
+            self._update_arrow_ls(
+                self._qd_palm_normal, centroid, _palm_n, 0.10, (1., 1., 0.))
+        else:
+            # The right hand already has the always-on -gripper_z standoff
+            # arrow; hide this second geometric-normal debug arrow.
+            self._clear_ls(self._qd_palm_normal)
 
     def clear_palm_quat_debug(self):
         self._clear_ls(self._qd_palm_tri, self._qd_palm_normal, self._qd_palm_frame)

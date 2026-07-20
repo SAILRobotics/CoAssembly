@@ -1094,40 +1094,40 @@ class _WorkspaceBoundPublisher:
 
 
 
-# class _TargetPoseReceiver:
-#     """Receives the manipulated TCP target pose from Unity on port 5013 (SUB).
-#     Unity PUB binds; Python SUB connects to Quest IP (same pattern as all other Unity→Python channels).
-#     """
+class _TargetPoseReceiver:
+    """Receives the manipulated TCP target pose from Unity on port 5013 (SUB).
+    Unity PUB binds; Python SUB connects to Quest IP (same pattern as all other Unity→Python channels).
+    """
 
-#     def __init__(self, quest_ip: str, port: int = cfg.TARGET_POSE_PORT):
-#         ctx = zmq.Context.instance()
-#         self._sub = ctx.socket(zmq.SUB)
-#         self._sub.connect(f"tcp://{quest_ip}:{port}")
-#         self._sub.setsockopt_string(zmq.SUBSCRIBE, "")
-#         self._sub.setsockopt(zmq.RCVTIMEO, 0)
+    def __init__(self, quest_ip: str, port: int = cfg.TARGET_POSE_PORT):
+        ctx = zmq.Context.instance()
+        self._sub = ctx.socket(zmq.SUB)
+        self._sub.connect(f"tcp://{quest_ip}:{port}")
+        self._sub.setsockopt_string(zmq.SUBSCRIBE, "")
+        self._sub.setsockopt(zmq.RCVTIMEO, 0)
 
-#     def poll(self) -> "np.ndarray | None":
-#         """Return 4×4 TCP world transform if a new target pose has arrived, else None."""
-#         try:
-#             raw = self._sub.recv_string(flags=zmq.NOBLOCK)
-#             data = json.loads(raw)
-#             pos_u = data["tcp_pos"]       # Unity frame [x, y, z]
-#             q_u   = data["tcp_rot_xyzw"]  # Unity xyzw
-#             pos_w = unity_to_open3d_vector({"x": pos_u[0], "y": pos_u[1], "z": pos_u[2]})
-#             q_o3d = unity_to_open3d_quaternion([q_u[3], q_u[0], q_u[1], q_u[2]])
-#             R_w   = ScipyR.from_quat([q_o3d[1], q_o3d[2], q_o3d[3], q_o3d[0]]).as_matrix()
-#             T = np.eye(4, dtype=np.float64)
-#             T[:3, :3] = R_w
-#             T[:3, 3]  = pos_w
-#             return T
-#         except Exception:
-#             return None
+    def poll(self) -> "np.ndarray | None":
+        """Return 4×4 TCP world transform if a new target pose has arrived, else None."""
+        try:
+            raw = self._sub.recv_string(flags=zmq.NOBLOCK)
+            data = json.loads(raw)
+            pos_u = data["tcp_pos"]       # Unity frame [x, y, z]
+            q_u   = data["tcp_rot_xyzw"]  # Unity xyzw
+            pos_w = unity_to_open3d_vector({"x": pos_u[0], "y": pos_u[1], "z": pos_u[2]})
+            q_o3d = unity_to_open3d_quaternion([q_u[3], q_u[0], q_u[1], q_u[2]])
+            R_w   = ScipyR.from_quat([q_o3d[1], q_o3d[2], q_o3d[3], q_o3d[0]]).as_matrix()
+            T = np.eye(4, dtype=np.float64)
+            T[:3, :3] = R_w
+            T[:3, 3]  = pos_w
+            return T
+        except Exception:
+            return None
 
-#     def close(self) -> None:
-#         try:
-#             self._sub.close(0)
-#         except Exception:
-#             pass
+    def close(self) -> None:
+        try:
+            self._sub.close(0)
+        except Exception:
+            pass
 
 
 
@@ -1326,6 +1326,8 @@ class _JogGUI:
 class MainScene:
 
     _TCP_TOOL_ID     = 200    # must match ToolClickPublisher tool_id in Unity
+    # 18.5 cm TCP-to-fingertip length + 10 cm clearance from the hand.
+    _PALM_TCP_STANDOFF_M = 0.285
     _SYNTH_INTERVAL  = 1.0 / 30.0
     _RELOCK_COOLDOWN = 2.0
     _AUTO_LOCK_MAX_DIST     = 1.0    # metres — auto-lock-on-sight only within this range
@@ -1721,8 +1723,17 @@ class MainScene:
                     self._T_world_tcp = self.robot.tcp_pose
                     _link_poses       = self.robot.arm_link_poses()
                     if self._T_world_tcp is not None and self._tcp_synth is not None:
-                        self._tcp_synth.centroid = self._T_world_tcp[:3, 3]
-                        self._tcp_synth.R_o3d    = self._T_world_tcp[:3, :3]
+                        # In hand-tracking mode, show Unity the same projected
+                        # target represented by the magenta Open3D pose.  In all
+                        # other modes, ID 3 continues to show the actual FK TCP.
+                        _T_tcp_synth = (
+                            self._tcp_target_T
+                            if (self._robot_state == 'tracking'
+                                and self._tcp_target_T is not None)
+                            else self._T_world_tcp
+                        )
+                        self._tcp_synth.centroid = _T_tcp_synth[:3, 3]
+                        self._tcp_synth.R_o3d    = _T_tcp_synth[:3, :3]
 
                 # ── ArUco results (background thread) ─────────────────────────
                 T_cam_anchor, T_cam_pegboard, T_cam_board, det_vis = \
@@ -2037,9 +2048,14 @@ class MainScene:
                                 centroid    = (np.asarray(hand_pts[3], float)
                                                + np.asarray(hand_pts[1], float)
                                                + np.asarray(hand_pts[6], float)) / 3.0
-                                # Standoff along _palm_quat Z axis (jaw×wrist-to-palm); 10 cm + 18.5 cm tip offset
-                                target_pos  = centroid - gripper_z * (0.10 + 0.185)
+                                # Keep the TCP behind the hand by the gripper
+                                # length plus 10 cm of fingertip clearance.
+                                target_pos = (centroid - gripper_z
+                                              * self._PALM_TCP_STANDOFF_M)
                                 target_quat = target_quat.tolist()
+                            target_pos = np.asarray(
+                                cfg.project_robot_target_position(
+                                    target_pos, self._T_world_tcp[:3, 3]), float)
                             print(f"[TCP] Move to {opposing} hand "
                                   f"(palm={np.round(palm_pos, 3).tolist()}, "
                                   f"target={np.round(target_pos, 3).tolist()})")
@@ -2250,9 +2266,13 @@ class MainScene:
                             _centroid = (np.asarray(_track_pts[3], float)
                                          + np.asarray(_track_pts[1], float)
                                          + np.asarray(_track_pts[6], float)) / 3.0
-                            # _tp  = (_centroid - _gz * (0.10 + 0.185)).tolist()
-                            _tp  = (_centroid - _gz * (0.0)).tolist()
+                            _tp = (_centroid - _gz
+                                   * self._PALM_TCP_STANDOFF_M).tolist()
                             _tq  = _tq.tolist()
+                        _target_origin = (self._T_world_tcp[:3, 3]
+                                          if self._T_world_tcp is not None else None)
+                        _tp = cfg.project_robot_target_position(
+                            _tp, _target_origin)
                         self.robot.update_move_target(_tp, _tq)
                         _T_tgt              = np.eye(4)
                         _T_tgt[:3, 3]       = _tp
@@ -2455,7 +2475,10 @@ class MainScene:
 
                 # ── Jog slider control ────────────────────────────────────────
                 if self.jog_gui.active and self.robot is not None:
-                    _jp = self.jog_gui.get_pos()
+                    _target_origin = (self._T_world_tcp[:3, 3]
+                                      if self._T_world_tcp is not None else None)
+                    _jp = np.asarray(cfg.project_robot_target_position(
+                        self.jog_gui.get_pos(), _target_origin), float)
                     _jq = self.jog_gui.get_quat()
                     _changed = (self._jog_last_pos is None
                                 or np.linalg.norm(_jp - self._jog_last_pos) > 0.004

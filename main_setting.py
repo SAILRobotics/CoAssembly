@@ -75,6 +75,47 @@ WORLD_MARKERS_RELOCK_COOLDOWN = 1.0                  # seconds between secondary
 WORKSPACE_LO = [-0.6000, -0.3082, 0.05]   # [x_min, y_min, z_min]
 WORKSPACE_HI = [ 0.7942,  0.4220, 0.750]   # [x_max, y_max, z_max]
 
+# Keep commanded TCP targets slightly inside the CBF workspace rather than
+# directly on its boundary.  Both main_with_robot.py (visual target) and the
+# robot server (final enforcement) use this helper.
+ROBOT_TARGET_WORKSPACE_MARGIN_M = 0.05
+
+
+def project_robot_target_position(pos, origin=None):
+    """Project an XYZ target along origin→target into the inset workspace.
+
+    Targets already inside are returned unchanged.  For an outside target, the
+    returned point is the intersection of the motion ray with the inset AABB,
+    preserving the requested direction instead of independently clipping axes.
+    ``origin`` should normally be the current TCP position.  If it is missing or
+    outside the inset workspace, the workspace centre is used as a safe fallback.
+    """
+    margin = float(ROBOT_TARGET_WORKSPACE_MARGIN_M)
+    lo = [float(value) + margin for value in WORKSPACE_LO]
+    hi = [float(value) - margin for value in WORKSPACE_HI]
+    target = [float(value) for value in pos]
+
+    if all(lo[i] <= target[i] <= hi[i] for i in range(3)):
+        return target
+
+    if origin is None:
+        ray_origin = [(lo[i] + hi[i]) * 0.5 for i in range(3)]
+    else:
+        ray_origin = [float(value) for value in origin]
+        if not all(lo[i] <= ray_origin[i] <= hi[i] for i in range(3)):
+            ray_origin = [(lo[i] + hi[i]) * 0.5 for i in range(3)]
+
+    direction = [target[i] - ray_origin[i] for i in range(3)]
+    t_exit = 1.0
+    for i, delta in enumerate(direction):
+        if delta > 0.0:
+            t_exit = min(t_exit, (hi[i] - ray_origin[i]) / delta)
+        elif delta < 0.0:
+            t_exit = min(t_exit, (lo[i] - ray_origin[i]) / delta)
+
+    t_exit = max(0.0, min(1.0, t_exit))
+    return [ray_origin[i] + t_exit * direction[i] for i in range(3)]
+
 # ── Handover grid (compromise tool delivery) ──────────────────────────────────
 # When a pegboard tool is grasped, a headset-yaw-aligned voxel grid is built in
 # front of the human; voxels fully inside WORKSPACE_LO/HI are scored by a weighted
@@ -125,4 +166,3 @@ LOAD_PEGBOARD_FROM_FILE = True
 # ── Helpers (kept for compatibility with code that calls cfg.to_unity() etc.) ─
 def to_unity(port: int) -> str:
     return f"tcp://{UNITY_IP}:{port}"
-

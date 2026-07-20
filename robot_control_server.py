@@ -158,8 +158,9 @@ def _build_pb_scene(simulation: bool, use_calibrated_robot_base: bool,
 class RobotControlServer:
     _STATE_INTERVAL          = 1.0 / 30.0
     _BASE_YAW_CORRECTION_DEG = -90.0
-    _MOVE_POS_TOL_M          = 0.03
-    _MOVE_ANGLE_TOL_RAD      = np.deg2rad(5.0)
+    _MOVE_POS_TOL_M          = 0.08
+    _MOVE_ANGLE_TOL_RAD      = np.deg2rad(20.0)
+    _MOVE_DWELL_S            = 0.30
     _MOVE_BRAKE_DIST_M       = 0.05
     _MOVE_BRAKE_ANGLE_RAD    = np.deg2rad(8.0)
     _MOVE_SCALE_FLOOR        = 0.05
@@ -245,6 +246,11 @@ class RobotControlServer:
               f"EMA={self._SERVO_EMA_ALPHA:.2f}, "
               f"lookahead={self._SERVO_LOOKAHEAD_S:.2f} s, "
               f"gain={self._SERVO_GAIN}")
+        print(f"[RobotServer] Stop/clamp: "
+              f"{self._MOVE_POS_TOL_M*100:.0f} cm/"
+              f"{np.rad2deg(self._MOVE_ANGLE_TOL_RAD):.0f} deg for "
+              f"{self._MOVE_DWELL_S:.1f} s, workspace inset="
+              f"{cfg.ROBOT_TARGET_WORKSPACE_MARGIN_M*100:.0f} cm")
 
         # Gate publish_base until vision side has locked the anchor and called set_scene_origin
         self._scene_origin_set = False
@@ -475,7 +481,10 @@ class RobotControlServer:
             return
         if not self.simulation:
             self.servoStop()
-        self._move_target_pos  = np.asarray(pos, float)
+        T_tcp = self.pb_scene.update_tcp_bodies()
+        origin = T_tcp[:3, 3] if T_tcp is not None else None
+        self._move_target_pos = np.asarray(
+            cfg.project_robot_target_position(pos, origin), float)
         self._move_target_quat = np.asarray(quat, float) if quat is not None else None
         self._move_on_complete = on_complete
         self._move_smooth_q    = None
@@ -488,7 +497,10 @@ class RobotControlServer:
         """Update the Cartesian target of an in-progress move without restarting the controller."""
         if self._move_phase is None:
             return
-        self._move_target_pos = np.asarray(pos, float)
+        T_tcp = self.pb_scene.update_tcp_bodies()
+        origin = T_tcp[:3, 3] if T_tcp is not None else None
+        self._move_target_pos = np.asarray(
+            cfg.project_robot_target_position(pos, origin), float)
         if quat is not None:
             self._move_target_quat = np.asarray(quat, float)
 
@@ -564,12 +576,13 @@ class RobotControlServer:
                     and angle_err < self._MOVE_ANGLE_TOL_RAD):
                 if self._move_conv_start is None:
                     self._move_conv_start = time.perf_counter()
-                elif time.perf_counter() - self._move_conv_start >= 0.5:
+                elif (time.perf_counter() - self._move_conv_start
+                      >= self._MOVE_DWELL_S):
                     print(f"[Robot] move_to_pose converged "
                           f"({dist*100:.1f} cm < {self._MOVE_POS_TOL_M*100:.1f} cm, "
                           f"{np.rad2deg(angle_err):.1f}° < "
                           f"{np.rad2deg(self._MOVE_ANGLE_TOL_RAD):.1f}°, "
-                          f"0.5 s dwell) → idle")
+                          f"{self._MOVE_DWELL_S:.1f} s dwell) → idle")
                     self._finish_move(True)
                     return
             else:
