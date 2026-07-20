@@ -536,6 +536,13 @@ class RobotControlServer:
         if self._board_state not in ("holding_board", "moving_board"):
             self._set_board_state("inactive")
 
+    def _cancel_unheld_board_wait_for_motion(self) -> None:
+        """Let a new motion supersede an unanswered board-contact wait."""
+        if (self._board_state == "inactive"
+                and self._board_force_mode == "grasp"):
+            print("[Robot] New motion requested → cancelling board-contact wait")
+            self._arm_board_force(None)
+
     def _poll_tcp_force(self) -> "np.ndarray | None":
         if self.simulation:
             return None
@@ -617,6 +624,7 @@ class RobotControlServer:
             if on_complete:
                 on_complete(False)
             return
+        self._cancel_unheld_board_wait_for_motion()
         if (self._board_state != "inactive"
                 or self._board_force_mode is not None):
             valid_board_move = (board_move
@@ -829,6 +837,7 @@ class RobotControlServer:
         category:     str                              = "tool",
         board_normal: "list | np.ndarray | None"      = None,
     ) -> None:
+        self._cancel_unheld_board_wait_for_motion()
         if (self._board_state != "inactive"
                 or self._board_force_mode is not None):
             print(f"[Robot] Tool/part grasp blocked — board state "

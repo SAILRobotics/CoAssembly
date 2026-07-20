@@ -1835,7 +1835,7 @@ class MainScene:
                         self._tracking_hand_side = None
                     elif (self.robot is not None
                           and not self.robot.tool_grasp_running
-                          and not self.robot.board_interaction_active
+                          and self.robot.board_state == "inactive"
                           and self.anchor.locked):
                         opposing  = "left" if clicking_hand == "right" else "right"
                         hand_pts  = left_pts if opposing == "left" else right_pts
@@ -1912,7 +1912,7 @@ class MainScene:
                         and self.anchor.locked
                         and self.anchor.T_pegboard_in_world is not None
                         and self.robot is not None
-                        and not self.robot.board_interaction_active
+                        and self.robot.board_state == "inactive"
                         and not self.robot.tool_grasp_running):
                     tool_data = self.tool_layout.get_world_data(
                         _tid, self.anchor.T_pegboard_in_world)
@@ -2240,7 +2240,7 @@ class MainScene:
                 # ── Jog slider control ────────────────────────────────────────
                 if (self.jog_gui.active
                         and self.robot is not None
-                        and not self.robot.board_interaction_active):
+                        and self.robot.board_state == "inactive"):
                     _target_origin = (self._T_world_tcp[:3, 3]
                                       if self._T_world_tcp is not None else None)
                     _jp = np.asarray(cfg.project_robot_target_position(
