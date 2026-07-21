@@ -32,8 +32,10 @@ class SceneVis:
     # ── Static geometry helpers ───────────────────────────────────────────────
 
     @staticmethod
-    def make_axes_lineset(T: np.ndarray, size: float = 0.10) -> o3d.geometry.LineSet:
-        """RGB XYZ axes as a LineSet at the given 4×4 pose."""
+    def make_axes_lineset(T: np.ndarray, size: float = 0.10,
+                          color=None) -> o3d.geometry.LineSet:
+        """RGB XYZ axes as a LineSet at the given 4×4 pose.
+        Pass color=(r,g,b) to draw all three axes in a single colour."""
         o = T[:3, 3]
         pts = np.array([o,
                         o + T[:3, 0] * size,
@@ -42,7 +44,10 @@ class SceneVis:
         ls = o3d.geometry.LineSet()
         ls.points = o3d.utility.Vector3dVector(pts)
         ls.lines  = o3d.utility.Vector2iVector([[0, 1], [0, 2], [0, 3]])
-        ls.colors = o3d.utility.Vector3dVector([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+        if color is None:
+            ls.colors = o3d.utility.Vector3dVector([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+        else:
+            ls.colors = o3d.utility.Vector3dVector([color, color, color])
         return ls
 
     @staticmethod
@@ -109,8 +114,10 @@ class SceneVis:
         self._cam_frustum            = None
         self._head_frustum           = None
         self._passthrough_cam_frustum = None
-        self._tcp_axes      = None
-        self._tcp_target_ls = None
+        self._tcp_axes        = None
+        self._tcp_target_ls         = None
+        self._tcp_target_axes       = None
+        self._gripper_tip_target_axes = None
         self._tool_box_linesets: list = []
 
         self.show_collision_spheres = True
@@ -246,10 +253,21 @@ class SceneVis:
         self._qd_tool_frame  = o3d.geometry.LineSet()
         self._qd_box_grip_z  = o3d.geometry.LineSet()
         self._qd_box_tcp     = o3d.geometry.LineSet()
+        # Always-on palm triangle + centroid + normal for both hands
+        self._left_palm_tri      = o3d.geometry.LineSet()
+        self._left_palm_normal   = o3d.geometry.LineSet()
+        self._left_palm_centroid = o3d.geometry.PointCloud()
+        self._right_palm_tri     = o3d.geometry.LineSet()
+        self._right_palm_normal  = o3d.geometry.LineSet()
+        self._right_palm_centroid = o3d.geometry.PointCloud()
         for _ls in [self._qd_palm_tri, self._qd_palm_normal, self._qd_palm_frame,
                     self._qd_tool_face, self._qd_tool_normal, self._qd_tool_frame,
-                    self._qd_box_grip_z, self._qd_box_tcp]:
+                    self._qd_box_grip_z, self._qd_box_tcp,
+                    self._left_palm_tri, self._left_palm_normal,
+                    self._right_palm_tri, self._right_palm_normal]:
             self.vis.add_geometry(_ls)
+        for _pc in [self._left_palm_centroid, self._right_palm_centroid]:
+            self.vis.add_geometry(_pc)
 
         ctr = self.vis.get_view_control()
         ctr.set_lookat([0., 0., 0.])
@@ -490,9 +508,10 @@ class SceneVis:
         self._tcp_T = T_new
 
     def update_tcp_target(self, T: "np.ndarray | None"):
-        """Debug: draw the commanded move_tcp/step_hand_track target — a
-        magenta wireframe sphere at the target position."""
+        """Draw the move_to_pose target as a magenta sphere + RGB axes frame."""
         T_new = T if T is not None else self._hidden_T()
+
+        # Magenta wireframe sphere at target position
         new_ls = self.make_sphere_wireframe(
             np.array([T_new[:3, 3]]), np.array([0.035]),
             color=(1.0, 0.0, 1.0))
@@ -504,6 +523,37 @@ class SceneVis:
             self._tcp_target_ls.lines  = new_ls.lines
             self._tcp_target_ls.colors = new_ls.colors
             self.vis.update_geometry(self._tcp_target_ls)
+
+        # RGB axes frame showing target orientation
+        new_axes = self.make_axes_lineset(T_new, size=0.07)
+        if self._tcp_target_axes is None:
+            self._tcp_target_axes = new_axes
+            self.vis.add_geometry(self._tcp_target_axes)
+        else:
+            self._tcp_target_axes.points = new_axes.points
+            self._tcp_target_axes.lines  = new_axes.lines
+            self._tcp_target_axes.colors = new_axes.colors
+            self.vis.update_geometry(self._tcp_target_axes)
+
+    _GRIPPER_TIP_OFFSET = 0.185  # metres from TCP along TCP Z axis
+
+    def update_gripper_tip_target(self, T_tcp: "np.ndarray | None"):
+        """Draw the gripper fingertip target (18.5 cm along TCP Z) as a cyan axes frame."""
+        if T_tcp is not None:
+            T_tip = T_tcp.copy()
+            T_tip[:3, 3] += T_tcp[:3, :3] @ np.array([0.0, 0.0, self._GRIPPER_TIP_OFFSET])
+        else:
+            T_tip = self._hidden_T()
+
+        new_axes = self.make_axes_lineset(T_tip, size=0.07, color=(0.0, 1.0, 1.0))
+        if self._gripper_tip_target_axes is None:
+            self._gripper_tip_target_axes = new_axes
+            self.vis.add_geometry(self._gripper_tip_target_axes)
+        else:
+            self._gripper_tip_target_axes.points = new_axes.points
+            self._gripper_tip_target_axes.lines  = new_axes.lines
+            self._gripper_tip_target_axes.colors = new_axes.colors
+            self.vis.update_geometry(self._gripper_tip_target_axes)
 
     def update_tool_boxes(self, boxes):
         """Update wireframe box linesets for all tool bounding boxes.
@@ -590,6 +640,36 @@ class SceneVis:
             ls.points = empty_pts; ls.lines = empty_ln; ls.colors = empty_cl
             self.vis.update_geometry(ls)
 
+    def update_palm_triangles(self, left_pts, right_pts) -> None:
+        """Always-on gold triangle + centroid dot + normal arrow for both hands."""
+        _GOLD = (0.9, 0.75, 0.1)
+        for pts, is_left, tri, norm, cen in [
+            (left_pts,  True,  self._left_palm_tri,  self._left_palm_normal,  self._left_palm_centroid),
+            (right_pts, False, self._right_palm_tri, self._right_palm_normal, self._right_palm_centroid),
+        ]:
+            if pts is None or len(pts) <= 6:
+                self._clear_ls(tri, norm)
+                cen.points = o3d.utility.Vector3dVector(np.zeros((0, 3)))
+                cen.colors = o3d.utility.Vector3dVector(np.zeros((0, 3)))
+                self.vis.update_geometry(cen)
+                continue
+            p_th     = np.asarray(pts[3], float)
+            p_pa     = np.asarray(pts[1], float)
+            p_ix     = np.asarray(pts[6], float)
+            centroid = (p_th + p_pa + p_ix) / 3.0
+            # Triangle edges
+            tri.points = o3d.utility.Vector3dVector([p_th, p_pa, p_ix])
+            tri.lines  = o3d.utility.Vector2iVector([[0, 1], [1, 2], [2, 0]])
+            tri.colors = o3d.utility.Vector3dVector([_GOLD] * 3)
+            self.vis.update_geometry(tri)
+            # Centroid dot
+            cen.points = o3d.utility.Vector3dVector([centroid])
+            cen.colors = o3d.utility.Vector3dVector([_GOLD])
+            self.vis.update_geometry(cen)
+            # Standoff direction: -gripper_z from _palm_quat (jaw × wrist-to-palm)
+            _gz = ScipyR.from_quat(_palm_quat(pts, is_left=is_left)).apply([0., 0., 1.])
+            self._update_arrow_ls(norm, centroid, -_gz, 0.10, _GOLD)
+
     def update_palm_quat_debug(self, pts: np.ndarray, is_left: bool = False):
         if pts is None or len(pts) <= 6:
             self._clear_ls(self._qd_palm_tri, self._qd_palm_normal, self._qd_palm_frame)
@@ -611,7 +691,22 @@ class SceneVis:
         self._qd_palm_frame.colors = fl.colors
         self.vis.update_geometry(self._qd_palm_frame)
 
-        self._update_arrow_ls(self._qd_palm_normal, p_palm, -R_tcp[:, 2], 0.10, (1., 1., 0.))
+        # Triangle normal: geometric cross product of palm triangle edges
+        centroid  = (np.asarray(p_thumb, float) + np.asarray(p_palm, float) + np.asarray(p_index, float)) / 3.0
+        _palm_n   = np.cross(np.asarray(p_palm, float) - np.asarray(p_thumb, float),
+                             np.asarray(p_index, float) - np.asarray(p_thumb, float))
+        _norm_len = np.linalg.norm(_palm_n)
+        if _norm_len > 1e-9:
+            _palm_n /= _norm_len
+            if np.dot(_palm_n, -R_tcp[:, 2]) < 0:
+                _palm_n = -_palm_n
+        if is_left:
+            self._update_arrow_ls(
+                self._qd_palm_normal, centroid, _palm_n, 0.10, (1., 1., 0.))
+        else:
+            # The right hand already has the always-on -gripper_z standoff
+            # arrow; hide this second geometric-normal debug arrow.
+            self._clear_ls(self._qd_palm_normal)
 
     def clear_palm_quat_debug(self):
         self._clear_ls(self._qd_palm_tri, self._qd_palm_normal, self._qd_palm_frame)

@@ -1,11 +1,8 @@
 """robot_client.py — Thin ZMQ-backed client for robot_control_server.py.
 
 Used by main_with_robot.py in place of a direct RobotController instance.
-Mirrors RobotController's public method surface (execute_grasp, move_tcp,
-cancel_motion, tool_grasp_running, start_force_monitor,
-open_gripper_async/close_gripper_async, servoStop, tcp_pose,
-arm_link_poses, set_scene_origin, check_reachability) so the grip-state
-machine in main_with_robot.py needs only minimal changes to use it.
+Exposes motion, tool/part grasp, and the isolated AR board-interaction
+commands while all hardware access remains in robot_control_server.py.
 
 Keeps a private, IK-free PyBullet scene (`self.pb_scene`) purely for forward
 kinematics — robot-mesh rendering and reachability-arrow visualisation. Real
@@ -87,7 +84,10 @@ class RobotClient:
         if self.pb_scene is None:
             raise RuntimeError("local visualization pb_scene failed to build")
 
-        self._tool_grasp_running   = False
+        self._tool_grasp_running = False
+        self._move_running       = False
+        self._board_state        = "inactive"
+        self._board_interaction_active = False
 
         ctx = zmq.Context.instance()
         self._cmd_pub = ctx.socket(zmq.PUB)
@@ -117,6 +117,10 @@ class RobotClient:
             if q is not None:
                 self.pb_scene.update_robot(np.array(q, dtype=float))
             self._tool_grasp_running = bool(msg.get("tool_grasp_running", False))
+            self._move_running       = bool(msg.get("move_running", False))
+            self._board_state        = str(msg.get("board_state", "inactive"))
+            self._board_interaction_active = bool(
+                msg.get("board_interaction_active", False))
             return
         if msg.get("type") != "event":
             return
@@ -158,6 +162,18 @@ class RobotClient:
     @property
     def tool_grasp_running(self) -> bool:
         return self._tool_grasp_running
+
+    @property
+    def move_running(self) -> bool:
+        return self._move_running
+
+    @property
+    def board_state(self) -> str:
+        return self._board_state
+
+    @property
+    def board_interaction_active(self) -> bool:
+        return self._board_interaction_active
 
     @property
     def q(self) -> "np.ndarray | None":
@@ -208,6 +224,42 @@ class RobotClient:
                               if board_normal is not None else None),
             "request_id":    rid,
         })
+
+    def move_to_pose(self, pos, quat=None, *, board_move: bool = False,
+                     on_complete: "Callable[[bool], None] | None" = None) -> None:
+        """Stream IK+CBF toward a fixed Cartesian target; fires on_complete(ok) on arrival."""
+        rid = None
+        if on_complete is not None:
+            rid = self._next_request_id
+            self._next_request_id += 1
+            self._callbacks[rid] = lambda msg: on_complete(bool(msg.get("ok", False)))
+        self._send({
+            "cmd":        "move_to_pose",
+            "pos":        np.asarray(pos, float).tolist(),
+            "quat":       np.asarray(quat, float).tolist() if quat is not None else None,
+            "board_move": bool(board_move),
+            "request_id": rid,
+        })
+
+    def start_board_interaction(self) -> None:
+        """Open for force-triggered board grasp (simulation enters held state)."""
+        self._send({"cmd": "start_board_interaction"})
+
+    def cancel_board_interaction(self) -> None:
+        """Disable board force monitoring without opening a held gripper."""
+        self._send({"cmd": "cancel_board_interaction"})
+
+    def update_move_target(self, pos, quat=None) -> None:
+        """Update the target of an in-progress move_to_pose without restarting it."""
+        self._send({
+            "cmd":  "update_move_target",
+            "pos":  np.asarray(pos, float).tolist(),
+            "quat": np.asarray(quat, float).tolist() if quat is not None else None,
+        })
+
+    def cancel_move(self) -> None:
+        """Cancel an in-progress move_to_pose."""
+        self._send({"cmd": "cancel_move"})
 
     def cancel_motion(self) -> None:
         self._send({"cmd": "cancel"})

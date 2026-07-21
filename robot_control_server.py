@@ -65,10 +65,23 @@ except ImportError:
 import main_setting as cfg
 
 _FILE_DIR = Path(__file__).resolve().parent
+_URDF_PATH = _FILE_DIR / "robot_assets" / "ur10e.urdf"
 
 _SIM_Q_DEG = [-105.97, -29.43, 87.53, 33.17, 92.40, 168.95]
 
+# ── frax / CBF (optional) ─────────────────────────────────────────────────────
+try:
+    from frax_controller import _FraxController as _RobotFraxController
+    import jax.numpy as _jnp
+    _HAS_FRAX = True
+    print("[RobotServer] frax/CBF loaded OK.")
+except Exception as _e:
+    _RobotFraxController = None   # type: ignore[assignment,misc]
+    _jnp = None
+    _HAS_FRAX = False
+    print(f"[RobotServer] frax/CBF NOT loaded — CBF inactive: {_e}")
 
+# _HAS_FRAX = False
 # ── Simulation waypoint runner ────────────────────────────────────────────────
 
 class _PbJointRunner:
@@ -145,10 +158,21 @@ def _build_pb_scene(simulation: bool, use_calibrated_robot_base: bool,
 class RobotControlServer:
     _STATE_INTERVAL          = 1.0 / 30.0
     _BASE_YAW_CORRECTION_DEG = -90.0
+    _MOVE_POS_TOL_M          = 0.08
+    _MOVE_ANGLE_TOL_RAD      = np.deg2rad(20.0)
+    _MOVE_DWELL_S            = 0.30
+    _MOVE_BRAKE_DIST_M       = 0.05
+    _MOVE_BRAKE_ANGLE_RAD    = np.deg2rad(8.0)
+    _MOVE_SCALE_FLOOR        = 0.05
+    _SERVO_EMA_ALPHA         = 0.70
+    _SERVO_LOOKAHEAD_S       = 0.08
+    _SERVO_GAIN              = 400
 
     def __init__(self, quest_ip: str, robot_ip: "str | None", simulation: bool,
-                 use_calibrated_robot_base: bool, gripper_collision: bool):
+                 use_calibrated_robot_base: bool, gripper_collision: bool,
+                 use_diff_ik: bool = True):
         self.simulation   = simulation
+        self.use_diff_ik  = use_diff_ik
         self._robot_ip    = robot_ip
         self.control_hz   = cfg.ROBOT_CONTROL_HZ if simulation else cfg.ROBOT_CONTROL_HZ_REAL
 
@@ -183,6 +207,58 @@ class RobotControlServer:
         self._grasp_settle_start: "float | None" = None    # real only: close+settle timer
         self._grasp_ok:             bool           = False   # real only: object detected
         self._grasp_cancel_pending: bool           = False   # cancel in progress; all phases
+
+        # Board-only force handoff.  This is intentionally independent of the
+        # programmed tool/part grasp state machine above.
+        self._board_state: str = "inactive"
+        self._board_force_mode: "str | None" = None  # None | 'grasp' | 'release'
+        self._board_force_baseline: "np.ndarray | None" = None
+        self._board_force_hits = 0
+        self._board_force_last_t = 0.0
+
+        # Move-to-pose state machine (IK + CBF servo loop, driven by tick())
+        self._move_phase:       "str | None"        = None
+        self._move_target_pos:  "np.ndarray | None" = None
+        self._move_target_quat: "np.ndarray | None" = None
+        self._move_on_complete: "Callable | None"   = None
+        self._move_smooth_q:    "np.ndarray | None" = None
+        self._move_conv_start:  "float | None"      = None  # perf_counter when TCP first entered 5cm zone
+        self._move_diag_t:      float               = 0.0   # last convergence-status print time
+
+        # frax CBF controller (optional — falls back to rate-limited IK)
+        self._frax = None
+        if _HAS_FRAX and _URDF_PATH.exists():
+            try:
+                self._frax = _RobotFraxController(
+                    urdf_path          = str(_URDF_PATH),
+                    T_world_base       = self._T_world_base,
+                    q_min              = np.deg2rad(cfg.JOINT_MIN_DEG).tolist(),
+                    q_max              = np.deg2rad(cfg.JOINT_MAX_DEG).tolist(),
+                    ws_lo              = list(cfg.WORKSPACE_LO),
+                    ws_hi              = list(cfg.WORKSPACE_HI),
+                    gripper_collision  = gripper_collision,
+                )
+                print("[RobotServer] frax CBF ready.")
+            except Exception as e:
+                print(f"[RobotServer] frax init failed: {e}")
+
+        _GRN = "\033[92m"; _YLW = "\033[93m"; _RST = "\033[0m"
+        if self.use_diff_ik and self._frax is not None:
+            print(f"{_GRN}[RobotServer] Motion mode: OSC + CBF differential IK{_RST}")
+        elif self._frax is not None:
+            print(f"{_YLW}[RobotServer] Motion mode: PyBullet IK + CBF filter (--no-diff-ik){_RST}")
+        else:
+            print(f"{_YLW}[RobotServer] Motion mode: PyBullet IK only (frax not loaded){_RST}")
+        print(f"[RobotServer] Move tuning: brake={self._MOVE_BRAKE_DIST_M*100:.0f} cm/"
+              f"{np.rad2deg(self._MOVE_BRAKE_ANGLE_RAD):.0f} deg, "
+              f"EMA={self._SERVO_EMA_ALPHA:.2f}, "
+              f"lookahead={self._SERVO_LOOKAHEAD_S:.2f} s, "
+              f"gain={self._SERVO_GAIN}")
+        print(f"[RobotServer] Stop/clamp: "
+              f"{self._MOVE_POS_TOL_M*100:.0f} cm/"
+              f"{np.rad2deg(self._MOVE_ANGLE_TOL_RAD):.0f} deg for "
+              f"{self._MOVE_DWELL_S:.1f} s, workspace inset="
+              f"{cfg.ROBOT_TARGET_WORKSPACE_MARGIN_M*100:.0f} cm")
 
         # Gate publish_base until vision side has locked the anchor and called set_scene_origin
         self._scene_origin_set = False
@@ -231,6 +307,10 @@ class RobotControlServer:
             "type":               "state",
             "q":                  q.tolist(),
             "tool_grasp_running": bool(self.tool_grasp_running),
+            "move_running":       bool(self._move_phase is not None),
+            "board_state":        self._board_state,
+            "board_interaction_active": self._board_force_mode is not None
+                                        or self._board_state != "inactive",
         })
 
     def _poll_commands(self) -> None:
@@ -270,10 +350,30 @@ class RobotControlServer:
                 on_phase     = lambda phase, rid=rid: self._publish_event(
                     "grasp_phase", rid, phase=phase))
 
+        elif cmd == "move_to_pose":
+            self.move_to_pose(
+                pos  = msg["pos"],
+                quat = msg.get("quat"),
+                board_move = bool(msg.get("board_move", False)),
+                on_complete = lambda ok, rid=rid: self._publish_event(
+                    "move_done", rid, ok=bool(ok)))
+
+        elif cmd == "update_move_target":
+            self.update_move_target(msg["pos"], msg.get("quat"))
+
+        elif cmd == "cancel_move":
+            self.cancel_move()
+
         elif cmd == "cancel":
             self.cancel_motion()
         elif cmd == "cancel_grasp":
             self.cancel_grasp()
+
+        elif cmd == "start_board_interaction":
+            self.start_board_interaction()
+
+        elif cmd == "cancel_board_interaction":
+            self.cancel_board_interaction()
 
         else:
             print(f"[RobotServer] Unknown command: {cmd!r}")
@@ -323,6 +423,11 @@ class RobotControlServer:
         return self._grasp_phase is not None
 
     def tick(self, dt: float = 1.0 / 60.0) -> None:
+        if self._move_phase is not None:
+            self._tick_move_to_pose(dt)
+            return
+        if self._board_force_mode is not None:
+            self._tick_board_interaction()
         if not self.simulation:
             if self._grasp_phase is not None:
                 self._tick_real_grasp(dt)
@@ -384,6 +489,353 @@ class RobotControlServer:
             except Exception:
                 pass
 
+    # ── Move-to-pose (IK + CBF servo loop) ───────────────────────────────────
+
+    # Board force handoff is intentionally independent of tool/part grasps.
+    def _set_board_state(self, state: str) -> None:
+        if state != self._board_state:
+            print(f"[Robot] board state: {self._board_state} → {state}")
+        self._board_state = state
+
+    def _arm_board_force(self, mode: "str | None") -> None:
+        self._board_force_mode = mode
+        self._board_force_baseline = None
+        self._board_force_hits = 0
+        self._board_force_last_t = 0.0
+        if mode is not None:
+            threshold = (cfg.BOARD_GRASP_FORCE_THRESHOLD_N
+                         if mode == "grasp"
+                         else cfg.BOARD_RELEASE_FORCE_THRESHOLD_N)
+            print(f"[Robot] Board force monitor armed: {mode}, "
+                  f"threshold={threshold:.1f} N")
+
+    def start_board_interaction(self) -> None:
+        """Open for a board and arm force-triggered grasp detection."""
+        if self._grasp_phase is not None or self._move_phase is not None:
+            print("[Robot] Board interaction blocked — robot motion is active")
+            return
+        if self.simulation:
+            self._set_board_state("holding_board")
+            return
+        try:
+            self.servoStop()
+            self.open_gripper()
+        except Exception as e:
+            print(f"[Robot] Board gripper open failed: {e}")
+            self._set_board_state("inactive")
+            self._arm_board_force(None)
+            return
+        # Motion is idle here.  Force monitoring is armed independently; the
+        # public board state stays inactive until the gripper confirms an object.
+        self._set_board_state("inactive")
+        self._arm_board_force("grasp")
+
+    def cancel_board_interaction(self) -> None:
+        """Stop board monitoring without automatically dropping a held board."""
+        self._arm_board_force(None)
+        if self.simulation:
+            # Simulation has no physical gripper/object to protect.  Its
+            # holding_board state is only a virtual state used to expose the AR
+            # handle, so cancellation can always return it to inactive.
+            self._set_board_state("inactive")
+            return
+        if self._board_state not in ("holding_board", "moving_board"):
+            self._set_board_state("inactive")
+
+    def _prepare_board_state_for_motion(self, board_move: bool = False) -> None:
+        """Release board states that do not represent a physical held object."""
+        if (self.simulation and not board_move
+                and self._board_state == "holding_board"):
+            print("[Robot sim] New motion requested → dismissing virtual board hold")
+            self._set_board_state("inactive")
+            return
+        if (self._board_state == "inactive"
+                and self._board_force_mode == "grasp"):
+            print("[Robot] New motion requested → cancelling board-contact wait")
+            self._arm_board_force(None)
+
+    def _poll_tcp_force(self) -> "np.ndarray | None":
+        if self.simulation:
+            return None
+        try:
+            return np.asarray(self._recv_conn().getActualTCPForce()[:3], float)
+        except Exception as e:
+            print(f"[Robot] Board force read failed: {e}")
+            return None
+
+    def _tick_board_interaction(self) -> None:
+        """Detect board insertion/pull as force change from a fresh baseline."""
+        if self.simulation:
+            return
+        now = time.perf_counter()
+        if (self._board_force_last_t > 0.0
+                and now - self._board_force_last_t
+                    < 1.0 / cfg.BOARD_FORCE_POLL_HZ):
+            return
+        self._board_force_last_t = now
+        force = self._poll_tcp_force()
+        if force is None:
+            return
+        if self._board_force_baseline is None:
+            self._board_force_baseline = force
+            print(f"[Robot] Board force baseline captured "
+                  f"({np.round(force, 1).tolist()} N)")
+            return
+
+        delta = float(np.linalg.norm(force - self._board_force_baseline))
+        mode = self._board_force_mode
+        if mode is None:
+            return
+        threshold = (cfg.BOARD_GRASP_FORCE_THRESHOLD_N
+                     if mode == "grasp"
+                     else cfg.BOARD_RELEASE_FORCE_THRESHOLD_N)
+        self._board_force_hits = (self._board_force_hits + 1
+                                  if delta > threshold else 0)
+        if self._board_force_hits < cfg.BOARD_FORCE_DEBOUNCE_HITS:
+            return
+
+        if mode == "grasp":
+            print(f"[Robot] Board contact detected ({delta:.1f} N) → closing")
+            try:
+                has_object = self.close_gripper()
+            except Exception as e:
+                print(f"[Robot] Board gripper close failed: {e}")
+                self._set_board_state("inactive")
+                self._arm_board_force(None)
+                return
+            if has_object:
+                self._set_board_state("holding_board")
+                self._arm_board_force("release")
+            else:
+                print("[Robot] Board not detected by gripper → reopening")
+                try:
+                    self.open_gripper()
+                except Exception as e:
+                    print(f"[Robot] Board gripper reopen failed: {e}")
+                    self._arm_board_force(None)
+                    return
+                self._set_board_state("inactive")
+                self._arm_board_force("grasp")
+        elif mode == "release" and self._board_state == "holding_board":
+            print(f"[Robot] Board pull detected ({delta:.1f} N) → opening")
+            try:
+                self.open_gripper()
+            except Exception as e:
+                print(f"[Robot] Board gripper release failed: {e}")
+                self._arm_board_force(None)
+                return
+            self._set_board_state("inactive")
+            self._arm_board_force(None)
+
+    def move_to_pose(self, pos, quat=None, board_move: bool = False,
+                     on_complete: "Callable[[bool], None] | None" = None) -> None:
+        """Stream IK+CBF servoJ toward a fixed Cartesian target until convergence."""
+        if self._grasp_phase is not None:
+            print("[Robot] move_to_pose blocked — grasp in progress")
+            if on_complete:
+                on_complete(False)
+            return
+        self._prepare_board_state_for_motion(board_move=board_move)
+        if (self._board_state != "inactive"
+                or self._board_force_mode is not None):
+            valid_board_move = (board_move
+                                and self._board_state == "holding_board")
+            if not valid_board_move:
+                print(f"[Robot] move_to_pose blocked — board state "
+                      f"is '{self._board_state}'")
+                if on_complete:
+                    on_complete(False)
+                return
+        if not self.simulation:
+            self.servoStop()
+        T_tcp = self.pb_scene.update_tcp_bodies()
+        origin = T_tcp[:3, 3] if T_tcp is not None else None
+        self._move_target_pos = np.asarray(
+            cfg.project_robot_target_position(pos, origin), float)
+        self._move_target_quat = np.asarray(quat, float) if quat is not None else None
+        self._move_on_complete = on_complete
+        self._move_smooth_q    = None
+        self._move_conv_start  = None
+        self._move_diag_t      = 0.0
+        self._move_phase       = 'moving_to_pose'
+        if board_move:
+            # Acceleration during motion must not look like a release pull.
+            self._arm_board_force(None)
+            self._set_board_state("moving_board")
+        print(f"[Robot] move_to_pose start → {np.round(self._move_target_pos, 3).tolist()}")
+
+    def update_move_target(self, pos, quat=None) -> None:
+        """Update the Cartesian target of an in-progress move without restarting the controller."""
+        if self._move_phase is None:
+            return
+        T_tcp = self.pb_scene.update_tcp_bodies()
+        origin = T_tcp[:3, 3] if T_tcp is not None else None
+        self._move_target_pos = np.asarray(
+            cfg.project_robot_target_position(pos, origin), float)
+        if quat is not None:
+            self._move_target_quat = np.asarray(quat, float)
+
+    def cancel_move(self) -> None:
+        if self._move_phase is None:
+            return
+        print("[Robot] move_to_pose cancelled")
+        self._finish_move(False)
+
+    def _finish_move(self, ok: bool) -> None:
+        self._move_phase       = None
+        self._move_target_pos  = None
+        self._move_target_quat = None
+        self._move_smooth_q    = None
+        self._move_conv_start  = None
+        if not self.simulation:
+            self.servoStop()
+        if self._board_state == "moving_board":
+            # The board remains clamped on success or cancellation.  Capture a
+            # fresh stationary baseline before release monitoring resumes.
+            self._set_board_state("holding_board")
+            self._arm_board_force("release")
+        cb = self._move_on_complete
+        self._move_on_complete = None
+        if cb is not None:
+            try:
+                cb(ok)
+            except Exception as e:
+                print(f"[Robot] move_on_complete error: {e}")
+
+    def _tick_move_to_pose(self, dt: float) -> None:
+        target_pos  = self._move_target_pos
+        target_quat = self._move_target_quat
+        if target_pos is None:
+            self._move_phase = None
+            return
+
+        # Use the configured hardware period for integration and servoJ.  The
+        # measured outer-loop dt can include servoJ blocking time and scheduling
+        # jitter, which otherwise feeds back into the next command.
+        control_dt = dt if self.simulation else 1.0 / self.control_hz
+
+        q_cur = self.pb_scene.current_q.copy()
+
+        _GRN = "\033[92m"; _RED = "\033[91m"; _RST = "\033[0m"
+
+        # One-shot: compare frax FK vs PyBullet FK to detect frame mismatch
+        if not getattr(self, '_fk_check_done', False) and self._frax is not None:
+            self._fk_check_done = True
+            _pb_tcp  = self.pb_scene.update_tcp_bodies()
+            _fr_tcp  = self._frax.ee_world_pos(q_cur)
+            if _pb_tcp is not None:
+                print(f"[Robot] FK check  PyBullet TCP: {np.round(_pb_tcp[:3, 3], 3).tolist()}")
+                print(f"[Robot] FK check    frax TCP:   {np.round(_fr_tcp, 3).tolist()}")
+                print(f"[Robot] FK check    target:     {np.round(target_pos, 3).tolist()}")
+
+        # Convergence requires both translation and rotation to remain aligned
+        # for the dwell period.  Position-only completion can stop servoing
+        # before the wrist reaches its requested orientation.
+        T_tcp = self.pb_scene.update_tcp_bodies()
+        dist = float('inf')
+        angle_err = float('inf')
+        if T_tcp is not None:
+            dist = float(np.linalg.norm(T_tcp[:3, 3] - target_pos))
+            R_err = T_tcp[:3, :3].T @ ScipyR.from_quat(target_quat).as_matrix()
+            angle_err = float(ScipyR.from_matrix(R_err).magnitude())
+
+            # Throttled colored status print at ~2 Hz
+            _now = time.perf_counter()
+            if _now - self._move_diag_t >= 0.5:
+                self._move_diag_t = _now
+                _dc = _GRN if dist      < self._MOVE_POS_TOL_M     else _RED
+                _ac = _GRN if angle_err < self._MOVE_ANGLE_TOL_RAD else _RED
+                print(f"[Robot] dist: {_dc}{dist*100:5.1f} cm{_RST}  "
+                      f"angle: {_ac}{np.rad2deg(angle_err):5.1f}°{_RST}")
+
+            if (dist < self._MOVE_POS_TOL_M
+                    and angle_err < self._MOVE_ANGLE_TOL_RAD):
+                if self._move_conv_start is None:
+                    self._move_conv_start = time.perf_counter()
+                elif (time.perf_counter() - self._move_conv_start
+                      >= self._MOVE_DWELL_S):
+                    print(f"[Robot] move_to_pose converged "
+                          f"({dist*100:.1f} cm < {self._MOVE_POS_TOL_M*100:.1f} cm, "
+                          f"{np.rad2deg(angle_err):.1f}° < "
+                          f"{np.rad2deg(self._MOVE_ANGLE_TOL_RAD):.1f}°, "
+                          f"{self._MOVE_DWELL_S:.1f} s dwell) → idle")
+                    self._finish_move(True)
+                    return
+            else:
+                self._move_conv_start = None
+
+        # Velocity command
+        if self.use_diff_ik and self._frax is not None:
+            # OSC + CBF: Cartesian-space differential IK — deterministic, no PyBullet IK needed
+            target_rot = ScipyR.from_quat(target_quat).as_matrix()
+            try:
+                q_target = self._frax.servo_step(
+                    target_pos, target_rot, q_cur, control_dt)
+            except Exception as _e:
+                print(f"[Robot] servo_step error: {_e}")
+                q_target = q_cur
+            # Brake only when both pose components are close.  Taking the
+            # larger scale preserves wrist motion when translation has already
+            # converged but a significant orientation error remains.
+            if T_tcp is not None:
+                pos_scale = min(dist / self._MOVE_BRAKE_DIST_M, 1.0)
+                rot_scale = min(angle_err / self._MOVE_BRAKE_ANGLE_RAD, 1.0)
+                motion_scale = max(self._MOVE_SCALE_FLOOR,
+                                   pos_scale, rot_scale)
+            else:
+                motion_scale = 1.0
+            q_target = q_cur + (q_target - q_cur) * motion_scale
+        else:
+            # PyBullet IK + rate-limit (fallback or --no-diff-ik)
+            q_ik = self.pb_scene.solve_ik(q_cur, target_pos, target_quat)
+            q_ik = _wrap_nearest(q_ik, q_cur)
+            sc        = self._speed_scale
+            if T_tcp is not None:
+                pos_scale = min(dist / self._MOVE_BRAKE_DIST_M, 1.0)
+                rot_scale = min(angle_err / self._MOVE_BRAKE_ANGLE_RAD, 1.0)
+                motion_scale = max(self._MOVE_SCALE_FLOOR,
+                                   pos_scale, rot_scale)
+            else:
+                motion_scale = 1.0
+            max_step = (np.deg2rad(90.0 if self.simulation else 180.0)
+                        * (1.0 if self.simulation else sc)
+                        * control_dt * motion_scale)
+            q_target  = q_cur + np.clip(q_ik - q_cur, -max_step, max_step)
+            if self._frax is not None:
+                # Still apply CBF safety filter even in IK mode
+                qdot = (q_target - q_cur) / max(control_dt, 1e-6)
+                try:
+                    q_target = q_cur + np.asarray(
+                        self._frax._cbf.safety_filter(
+                            _jnp.array(q_cur), _jnp.array(qdot))) * control_dt
+                except Exception:
+                    pass
+            if np.linalg.norm(q_target - q_cur) < 1e-4:
+                print("[Robot] move_to_pose stalled → idle")
+                self._finish_move(True)
+                return
+
+        if np.any(np.isnan(q_target)):
+            return
+
+        if self.simulation:
+            if self._move_smooth_q is None:
+                self._move_smooth_q = q_target.copy()
+            else:
+                self._move_smooth_q = 0.3 * q_target + 0.7 * self._move_smooth_q
+            self.pb_scene.update_robot(self._move_smooth_q)
+        else:
+            # EMA smoothing to damp servoJ jitter
+            if self._move_smooth_q is None:
+                self._move_smooth_q = q_target.copy()
+            else:
+                alpha = self._SERVO_EMA_ALPHA
+                self._move_smooth_q = (alpha * q_target
+                                       + (1.0 - alpha) * self._move_smooth_q)
+            self.servoJ(self._move_smooth_q, control_dt,
+                        lookahead=self._SERVO_LOOKAHEAD_S,
+                        gain=self._SERVO_GAIN)
+
     # ── Grasp command ─────────────────────────────────────────────────────────
 
     def execute_grasp(
@@ -396,6 +848,14 @@ class RobotControlServer:
         category:     str                              = "tool",
         board_normal: "list | np.ndarray | None"      = None,
     ) -> None:
+        self._prepare_board_state_for_motion()
+        if (self._board_state != "inactive"
+                or self._board_force_mode is not None):
+            print(f"[Robot] Tool/part grasp blocked — board state "
+                  f"is '{self._board_state}'")
+            if on_complete:
+                on_complete(False)
+            return
         if self.tool_grasp_running:
             print("[Robot] Grasp already running — cancel first.")
             return
@@ -617,8 +1077,10 @@ class RobotControlServer:
 
     def servoJ(self, q: np.ndarray, dt: float,
                speed: float = 1.0, accel: float = 1.0,
-               lookahead: float = 0.15, gain: int = 300) -> None:
-        t  = max(min(float(dt),        0.2), 0.03)
+               lookahead: float = 0.10, gain: int = 300) -> None:
+        # `time` is the blocking command period.  Keep it at the configured
+        # control period instead of stretching a 120 Hz command to 30 ms.
+        t  = max(min(float(dt),       0.020), 0.002)
         la = max(min(float(lookahead), 0.2), 0.03)
         try:
             self._rtde_ctrl_conn().servoJ(list(q), speed, accel, t, la, gain)
@@ -894,6 +1356,7 @@ class RobotControlServer:
     # ── Cleanup ───────────────────────────────────────────────────────────────
 
     def close(self) -> None:
+        self.cancel_board_interaction()
         self.cancel_motion()
         if not self.simulation:
             self.servoStop()
@@ -931,7 +1394,9 @@ def main():
     ap.add_argument("--calibrated-robot-base", action=argparse.BooleanOptionalAction,
                     default=cfg.USE_CALIBRATED_ROBOT_BASE_POSE)
     ap.add_argument("--gripper-collision", action=argparse.BooleanOptionalAction,
-                    default=False)
+                    default=True)
+    ap.add_argument("--diff-ik", action=argparse.BooleanOptionalAction,
+                    default=True, help="Use OSC+CBF differential IK (default). --no-diff-ik falls back to PyBullet IK.")
     args = ap.parse_args()
 
     if not _PYBULLET_AVAILABLE:
@@ -943,6 +1408,7 @@ def main():
         simulation                = args.simulation,
         use_calibrated_robot_base = args.calibrated_robot_base,
         gripper_collision         = args.gripper_collision,
+        use_diff_ik               = args.diff_ik,
     )
     server.run()
 

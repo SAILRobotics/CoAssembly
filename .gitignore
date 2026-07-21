@@ -1,10 +1,8 @@
 __pycache__/
 *.py[cod]
 ip_setting.py
-main_setting.py
 
 scene_layout/rgbd*
 scene_layout/*.ply
 
-task_graph/*
 captures/*
