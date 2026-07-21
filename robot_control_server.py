@@ -533,11 +533,22 @@ class RobotControlServer:
     def cancel_board_interaction(self) -> None:
         """Stop board monitoring without automatically dropping a held board."""
         self._arm_board_force(None)
+        if self.simulation:
+            # Simulation has no physical gripper/object to protect.  Its
+            # holding_board state is only a virtual state used to expose the AR
+            # handle, so cancellation can always return it to inactive.
+            self._set_board_state("inactive")
+            return
         if self._board_state not in ("holding_board", "moving_board"):
             self._set_board_state("inactive")
 
-    def _cancel_unheld_board_wait_for_motion(self) -> None:
-        """Let a new motion supersede an unanswered board-contact wait."""
+    def _prepare_board_state_for_motion(self, board_move: bool = False) -> None:
+        """Release board states that do not represent a physical held object."""
+        if (self.simulation and not board_move
+                and self._board_state == "holding_board"):
+            print("[Robot sim] New motion requested → dismissing virtual board hold")
+            self._set_board_state("inactive")
+            return
         if (self._board_state == "inactive"
                 and self._board_force_mode == "grasp"):
             print("[Robot] New motion requested → cancelling board-contact wait")
@@ -624,7 +635,7 @@ class RobotControlServer:
             if on_complete:
                 on_complete(False)
             return
-        self._cancel_unheld_board_wait_for_motion()
+        self._prepare_board_state_for_motion(board_move=board_move)
         if (self._board_state != "inactive"
                 or self._board_force_mode is not None):
             valid_board_move = (board_move
@@ -837,7 +848,7 @@ class RobotControlServer:
         category:     str                              = "tool",
         board_normal: "list | np.ndarray | None"      = None,
     ) -> None:
-        self._cancel_unheld_board_wait_for_motion()
+        self._prepare_board_state_for_motion()
         if (self._board_state != "inactive"
                 or self._board_force_mode is not None):
             print(f"[Robot] Tool/part grasp blocked — board state "

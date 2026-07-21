@@ -1557,6 +1557,14 @@ class MainScene:
         self._tcp_target_T = None
         print(f"[Robot] AR board move {'complete' if ok else 'cancelled'}")
 
+    def _board_allows_unrelated_motion(self) -> bool:
+        """A simulated hold is only an AR affordance, not a physical lock."""
+        if self.robot is None:
+            return False
+        return (self.robot.board_state == "inactive"
+                or (self.simulation
+                    and self.robot.board_state == "holding_board"))
+
     # ── Main loop ─────────────────────────────────────────────────────────────
 
     def run(self) -> None:
@@ -1835,7 +1843,7 @@ class MainScene:
                         self._tracking_hand_side = None
                     elif (self.robot is not None
                           and not self.robot.tool_grasp_running
-                          and self.robot.board_state == "inactive"
+                          and self._board_allows_unrelated_motion()
                           and self.anchor.locked):
                         opposing  = "left" if clicking_hand == "right" else "right"
                         hand_pts  = left_pts if opposing == "left" else right_pts
@@ -1912,7 +1920,7 @@ class MainScene:
                         and self.anchor.locked
                         and self.anchor.T_pegboard_in_world is not None
                         and self.robot is not None
-                        and self.robot.board_state == "inactive"
+                        and self._board_allows_unrelated_motion()
                         and not self.robot.tool_grasp_running):
                     tool_data = self.tool_layout.get_world_data(
                         _tid, self.anchor.T_pegboard_in_world)
@@ -2240,7 +2248,7 @@ class MainScene:
                 # ── Jog slider control ────────────────────────────────────────
                 if (self.jog_gui.active
                         and self.robot is not None
-                        and self.robot.board_state == "inactive"):
+                        and self._board_allows_unrelated_motion()):
                     _target_origin = (self._T_world_tcp[:3, 3]
                                       if self._T_world_tcp is not None else None)
                     _jp = np.asarray(cfg.project_robot_target_position(
