@@ -12,22 +12,25 @@ using Newtonsoft.Json;
 /// Drives the gearbox visualization from an external Python process over NetMQ.
 /// Attach this to the "Gearbox Assembly Named" root GameObject.
 ///
-/// Commands (JSON, sent by gearbox_control.py and gearbox_click_handler.py):
-///   {"command":"row","row":N}                       → show only parts whose name contains "RowN"
+/// Commands (JSON, sent by gearbox_control.py):
+///   {"command":"row","row":N}                       → show only parts of row N
 ///   {"command":"toggle","part":".."}                → flip a single part's highlight color
-///   {"command":"show_all"}                          → make every row visible again
-///   {"command":"reset"}                             → clear all color highlights
-///   {"command":"show_subset","row":N,"types":[..]}  → show only the given part types of row N
-///   {"command":"ui","show":bool,"row":N,"checked":bool}
-///                                                   → show/hide + place the checkbox & reset X
-///                                                     near row N; tint the checkbox
-///   {"command":"assemble","row":N,"order":[types],"step_delay":s,"slide_seconds":s}
-///                                                   → isolate row N and slide its parts into
-///                                                     place one type at a time (staggered),
-///                                                     in the given type order
+///   {"command":"show_all"} / {"command":"reset"}    → show every part / reset all colors
+///   {"command":"ui","show":bool,"row":N,"checked":bool,"blocked":bool}
+///                                                   → place + tint the checkbox/X (row 0 = whole
+///                                                     gearbox); red if blocked, green if checked
+///   {"command":"stage","row":R,"stage":N,"done_stages":[..],"step_delay":s,"slide_seconds":s}
+///                                                   → play the 7-stage assembly: show stages 1..N
+///                                                     of row R with the staging→seat animation;
+///                                                     green the parts whose stage is in done_stages
+///   {"command":"recolor","row":R,"stage":S,"done":bool}
+///                                                   → green / un-green the parts that seat at stage
+///                                                     S of row R (no motion) — fired on check/uncheck
 ///
-/// Mirrors the established receiver pattern in ToolColorReceiver.cs: bind a SubscriberSocket,
-/// receive JSON on a background thread into a ConcurrentQueue, apply on the main thread in Update().
+/// The 7-stage model + two-position (staging→seat) motion + green-on-complete live here (Unity owns
+/// the choreography); Python (gearbox_control.py) owns the dependency/lock logic. Mirrors the
+/// receiver pattern in ToolColorReceiver.cs: bind a SubscriberSocket, receive JSON on a background
+/// thread into a ConcurrentQueue, apply on the main thread in Update().
 /// </summary>
 public class GearboxCommandReceiver : MonoBehaviour
 {
@@ -66,9 +69,18 @@ public class GearboxCommandReceiver : MonoBehaviour
     [SerializeField] private List<AssembleOverride> assembleOverrides = new();
     [Tooltip("Delay between two parts of the SAME type sliding in (e.g. Left then Right gear).")]
     [SerializeField] private float subStaggerSeconds = 0.12f;
-    [Tooltip("Fallbacks used when the Python 'assemble' command omits timing.")]
+    [Tooltip("Fallbacks used when the Python command omits timing.")]
     [SerializeField] private float defaultStepDelay    = 0.35f;
     [SerializeField] private float defaultSlideSeconds  = 0.50f;
+    [Tooltip("World-space offset a sub-assembly floats at (above the board) while it is being " +
+             "built, before it drops onto the board when its stage seats. Tune to your scene scale.")]
+    [SerializeField] private Vector3 stagingOffset = new Vector3(0f, 0.15f, 0f);
+
+    [Header("Stage completion colors")]
+    [Tooltip("Color a part turns when its stage is checked complete (\"that portion is done\").")]
+    [SerializeField] private Color seatedColor  = new Color(0.15f, 0.80f, 0.20f, 1f);  // green
+    [Tooltip("Color the checkbox tints when the current stage is locked (prerequisites unmet).")]
+    [SerializeField] private Color blockedColor = new Color(0.85f, 0.15f, 0.15f, 1f);  // red
 
     public enum Side { Any, Left, Right }
 
@@ -97,9 +109,14 @@ public class GearboxCommandReceiver : MonoBehaviour
         public bool     isChecked; // "ui"
         public string[] order;     // "assemble" — part types, in assembly order
         [JsonProperty("step_delay")]
-        public float    stepDelay;    // "assemble" — delay between types (0 → use default)
+        public float    stepDelay;    // "stage"/"assemble" — delay between groups (0 → use default)
         [JsonProperty("slide_seconds")]
-        public float    slideSeconds; // "assemble" — per-part slide duration (0 → use default)
+        public float    slideSeconds; // "stage"/"assemble" — per-part slide duration (0 → default)
+        public int      stage;        // "stage"/"recolor" — 1..7
+        [JsonProperty("done_stages")]
+        public int[]    doneStages;   // "stage" — stages already completed for this row (→ green)
+        public bool     done;         // "recolor" — completed (green) or un-done (original)
+        public bool     blocked;      // "ui" — current stage locked → red checkbox
     }
 
     // ── Per-part cached state ────────────────────────────────────────────────
@@ -112,9 +129,11 @@ public class GearboxCommandReceiver : MonoBehaviour
         public Color                originalColor;
         public bool                 highlighted;
         public string               type;    // parsed prefix before "Row" (e.g. "GearRod", "Bearing")
-        public int                  rowNum;  // parsed row number, or -1
+        public int                  rowNum;  // parsed row number; 0 = shared (BaseBoard)
         public string               side;    // "Left" / "Right" / "" (side-less, e.g. GearRod)
-        public Vector3              restLocalPos;  // authored local position (the slide target)
+        public Vector3              restLocalPos;  // authored local (FINAL) position
+        public int                  appearStage;   // first stage the part is shown (staging or final)
+        public int                  seatStage;     // stage the part moves STAGING → FINAL, then fixed
     }
 
     private readonly List<PartEntry>                 parts          = new();
@@ -166,34 +185,43 @@ public class GearboxCommandReceiver : MonoBehaviour
 
     private void BuildPartIndex()
     {
-        // A "part" = a transform whose name contains "Row" AND has a Renderer.
-        // This naturally excludes the root itself and any non-part nodes, so we
+        // A "part" = a mesh transform whose name contains "Row" ({Type}Row{N}{Side}), plus the
+        // shared "BaseBoard" mesh (no "Row"). Non-part nodes (incl. the root) are excluded, so we
         // never SetActive(false) the GameObject this script lives on.
         foreach (Transform t in gearboxRoot.GetComponentsInChildren<Transform>(true))
         {
-            if (!t.name.Contains("Row")) continue;
+            string clean = t.name.Replace("_", "");
+            int    rowIdx = clean.IndexOf("Row");
+            bool   isRow  = rowIdx >= 0;
+            bool   isBase = !isRow && clean.IndexOf("Base", StringComparison.OrdinalIgnoreCase) >= 0;
+            if (!isRow && !isBase) continue;
 
             Renderer r = t.GetComponent<Renderer>();
             if (r == null) continue;
-
             Material mat = r.sharedMaterial;
             if (mat == null) continue;
 
-            // colorID may be 0 if the shader exposes no known base-color property;
-            // the part still participates in row show/hide, only its color toggle is disabled.
             int colorID = ResolveColorID(mat);
             if (colorID == 0)
                 Debug.LogWarning($"[GearboxCommandReceiver] '{t.name}' has no known base-color " +
-                                 $"property (shader '{mat.shader.name}'); color toggle disabled for it.");
+                                 $"property (shader '{mat.shader.name}'); color disabled for it.");
 
-            // Underscore-agnostic: "Bearing_Row3_Left" and "BearingRow3Left" parse identically.
-            string clean  = t.name.Replace("_", "");
-            int    rowIdx = clean.IndexOf("Row");
-            if (rowIdx < 0) continue;
+            string type, side;
+            int    rowNum;
+            if (isRow)
+            {
+                int di = rowIdx + 3;                                   // skip "Row"
+                while (di < clean.Length && char.IsDigit(clean[di])) di++;
+                side   = clean.Substring(di);                          // "Left" / "Right" / ""
+                type   = clean.Substring(0, rowIdx);                  // "GearRod", "Bearing", ...
+                rowNum = ParseRow(clean, rowIdx);
+            }
+            else                                                       // BaseBoard — shared
+            {
+                type = "BaseBoard"; side = ""; rowNum = 0;
+            }
 
-            int di = rowIdx + 3;                                   // skip "Row"
-            while (di < clean.Length && char.IsDigit(clean[di])) di++;
-            string side = clean.Substring(di);                    // "Left" / "Right" / ""
+            StagesOf(type, side, out int appear, out int seat);
 
             var entry = new PartEntry
             {
@@ -203,16 +231,34 @@ public class GearboxCommandReceiver : MonoBehaviour
                 colorID       = colorID,
                 originalColor = colorID != 0 ? mat.GetColor(colorID) : Color.white,
                 highlighted   = false,
-                type          = clean.Substring(0, rowIdx),   // "GearRod", "Gear", "Bearing", ...
-                rowNum        = ParseRow(clean, rowIdx),
+                type          = type,
+                rowNum        = rowNum,
                 side          = side,
                 restLocalPos  = t.localPosition,
+                appearStage   = appear,
+                seatStage     = seat,
             };
 
             parts.Add(entry);
             partsByName[t.name]                = entry;
             partsByLower[t.name.ToLower()]     = entry;
             partsByStripped[clean.ToLower()]   = entry;
+        }
+    }
+
+    // The 7-stage assembly model: when each part first appears (at STAGING for sub-assemblies, or
+    // straight to FINAL for board-level parts) and when it seats (STAGING → FINAL, then fixed).
+    private static void StagesOf(string type, string side, out int appear, out int seat)
+    {
+        bool left = string.Equals(side, "Left", StringComparison.OrdinalIgnoreCase);
+        switch (type.ToLowerInvariant())
+        {
+            case "bearing": case "stand":  appear = left ? 1 : 3; seat = left ? 4 : 5; break;
+            case "gearrod": case "gear": case "pin":  appear = 2; seat = 4;            break;
+            case "screw":                  appear = left ? 4 : 5; seat = left ? 4 : 5; break;
+            case "crankhandle":            appear = 6; seat = 6;                        break;
+            case "baseboard":              appear = 4; seat = 4;                        break;
+            default:                       appear = 0; seat = 0;                        break;
         }
     }
 
@@ -290,8 +336,10 @@ public class GearboxCommandReceiver : MonoBehaviour
                 case "toggle":      TogglePart(cmd.part);              break;
                 case "reset":       ResetHighlights();                 break;
                 case "show_subset": ShowSubset(cmd.row, cmd.types);    break;
-                case "ui":          ShowUi(cmd.row, cmd.show, cmd.isChecked); break;
+                case "ui":          ShowUi(cmd.row, cmd.show, cmd.isChecked, cmd.blocked); break;
                 case "assemble":    StartAssemble(cmd.row, cmd.order, cmd.stepDelay, cmd.slideSeconds); break;
+                case "stage":       PlayStage(cmd.row, cmd.stage, cmd.doneStages, cmd.stepDelay, cmd.slideSeconds); break;
+                case "recolor":     Recolor(cmd.row, cmd.stage, cmd.done); break;
                 default:
                     Debug.LogWarning($"[GearboxCommandReceiver] Unknown command '{cmd.command}'");
                     break;
@@ -330,8 +378,9 @@ public class GearboxCommandReceiver : MonoBehaviour
         Debug.Log($"[GearboxCommandReceiver] 👁 Row{row} subset [{string.Join(",", set)}] → {shown} parts");
     }
 
-    // Show/hide + place the checkbox and reset-X near the active row, and tint the checkbox.
-    private void ShowUi(int row, bool show, bool isChecked)
+    // Show/hide + place the checkbox and reset-X near the active row (row 0 = whole gearbox), and
+    // tint the checkbox: red if blocked, else green if checked, else grey.
+    private void ShowUi(int row, bool show, bool isChecked, bool blocked)
     {
         if (!show)
         {
@@ -340,13 +389,13 @@ public class GearboxCommandReceiver : MonoBehaviour
             return;
         }
 
-        // Centroid of the row's parts at their REST positions — stable even while parts are
-        // still mid-slide during an assembly animation.
+        // Centroid of the row's parts at their REST positions (all parts when row==0) — stable
+        // even while parts are still mid-slide during an assembly animation.
         Vector3 sum = Vector3.zero;
         int n = 0;
         foreach (var p in parts)
         {
-            if (p.rowNum != row) continue;
+            if (row != 0 && p.rowNum != row) continue;
             sum += p.go.transform.parent != null
                 ? p.go.transform.parent.TransformPoint(p.restLocalPos)
                 : p.restLocalPos;
@@ -364,7 +413,7 @@ public class GearboxCommandReceiver : MonoBehaviour
             resetObject.position = basePos + resetOffsetFromCheckbox;
             resetObject.gameObject.SetActive(true);
         }
-        ApplyCheckboxVisual(isChecked);
+        ApplyCheckboxVisual(isChecked, blocked);
     }
 
     // ── Assembly animation ───────────────────────────────────────────────────
@@ -449,12 +498,197 @@ public class GearboxCommandReceiver : MonoBehaviour
             p.go.transform.localPosition = p.restLocalPos;
     }
 
-    private void ApplyCheckboxVisual(bool isChecked)
+    private void ApplyCheckboxVisual(bool isChecked, bool blocked)
     {
         if (checkboxRenderer == null || checkboxColorID == 0 || checkboxBlock == null) return;
+        Color c = blocked ? blockedColor : (isChecked ? checkedColor : uncheckedColor);
         checkboxRenderer.GetPropertyBlock(checkboxBlock);
-        checkboxBlock.SetColor(checkboxColorID, isChecked ? checkedColor : uncheckedColor);
+        checkboxBlock.SetColor(checkboxColorID, c);
         checkboxRenderer.SetPropertyBlock(checkboxBlock);
+    }
+
+    // ── Stage choreography (7-stage dependency assembly) ─────────────────────
+    // Which appear-stages are shown when displaying stage N: N itself plus its prerequisite closure.
+    // Stages 1/2/3 are INDEPENDENT (shown alone); 4 depends on 1&2; 5 on 3&4; 6 on 5; 7 shows all.
+    // So opening stage 4 reveals stages 1,2,4 but NOT 3 (per the dependency graph).
+    private static HashSet<int> VisibleAppearStages(int n)
+    {
+        switch (n)
+        {
+            case 1:  return new HashSet<int> { 1 };
+            case 2:  return new HashSet<int> { 2 };
+            case 3:  return new HashSet<int> { 3 };
+            case 4:  return new HashSet<int> { 1, 2, 4 };
+            case 5:  return new HashSet<int> { 1, 2, 3, 4, 5 };
+            case 6:  return new HashSet<int> { 1, 2, 3, 4, 5, 6 };
+            default: return new HashSet<int> { 1, 2, 3, 4, 5, 6 };   // 7 (verify): everything
+        }
+    }
+
+    // Show stage N of row R (row 0 = whole gearbox). Parts whose appear-stage is not in stage N's
+    // dependency closure are hidden; parts already at their pose are shown static; this stage's
+    // motion is played by StageRoutine. `doneStages` are the row's completed stages → green.
+    private void PlayStage(int row, int n, int[] doneStages, float stepDelay, float slideSeconds)
+    {
+        int gen = ++assembleGen;   // supersede any running animation (positions set explicitly below)
+        float step  = stepDelay    > 0f ? stepDelay    : defaultStepDelay;
+        float slide = slideSeconds > 0f ? slideSeconds : defaultSlideSeconds;
+        var done    = new HashSet<int>(doneStages ?? Array.Empty<int>());
+        var visible = VisibleAppearStages(n);
+
+        foreach (var p in parts)
+        {
+            if (!InView(p, row) || !visible.Contains(p.appearStage)) { p.go.SetActive(false); continue; }
+            if (p.appearStage == n || p.seatStage == n)
+            {
+                // Animated by StageRoutine. Pre-place at its START pose NOW so it is never seen at
+                // its final spot first (which caused the "sit at rest → jump → slide" glitch). A
+                // part that merely drops this stage waits VISIBLY at STAGING (it was built earlier);
+                // a first-appearing part stays hidden until its group reveals it at the start offset.
+                p.go.transform.localPosition = StageStartLocal(p, n);
+                p.go.SetActive(p.appearStage < n);
+                continue;
+            }
+            // Static: place at its current pose (FINAL if seated by now, else STAGING) and color it.
+            p.go.transform.localPosition = (p.seatStage <= n) ? p.restLocalPos : StagingLocal(p);
+            p.go.SetActive(true);
+            ApplyPartColor(p, done);
+        }
+
+        StartCoroutine(StageRoutine(gen, row, n, done, step, slide));
+        Debug.Log($"[GearboxCommandReceiver] ▶ stage row{row} stage{n}");
+    }
+
+    private IEnumerator StageRoutine(int gen, int row, int n, HashSet<int> done,
+                                     float stepDelay, float slideSeconds)
+    {
+        foreach (string[] group in GroupsForStage(n))
+        {
+            // Parts of this row that this group animates this stage (appear==n or seat==n).
+            var members = new List<PartEntry>();
+            foreach (var p in parts)
+            {
+                if (!InView(p, row)) continue;
+                if (p.appearStage != n && p.seatStage != n) continue;
+                foreach (string sel in group)
+                    if (MatchesSelector(sel, p)) { members.Add(p); break; }
+            }
+            if (members.Count == 0) continue;
+            members.Sort((a, b) => string.CompareOrdinal(a.go.name, b.go.name));
+
+            // A "seat" group (parts dropping STAGING→FINAL) moves together; a first-appear group
+            // sub-staggers so it reads piece by piece.
+            bool together = members.TrueForAll(m => m.seatStage == n && m.appearStage < n);
+            for (int i = 0; i < members.Count; i++)
+            {
+                if (gen != assembleGen) yield break;
+                StartCoroutine(SlideLocal(gen, members[i], n, done, slideSeconds));
+                if (!together && i < members.Count - 1)
+                    yield return new WaitForSeconds(subStaggerSeconds);
+            }
+            yield return new WaitForSeconds(stepDelay);
+        }
+    }
+
+    // The local pose a part starts its stage-n motion from. A first-appearing part (appear==n)
+    // starts offset AWAY from its end pose (which is STAGING while un-seated, else FINAL); a part
+    // that only drops this stage (seat==n, appear<n) starts at STAGING, where it was built earlier.
+    private Vector3 StageStartLocal(PartEntry p, int n)
+    {
+        Vector3 stagingLocal = StagingLocal(p);
+        Vector3 endLocal = (p.seatStage <= n) ? p.restLocalPos : stagingLocal;
+        if (p.appearStage == n)
+        {
+            Transform par = p.go.transform.parent;
+            Vector3 offsetLocal = par != null ? par.InverseTransformVector(ResolveOffset(p)) : ResolveOffset(p);
+            return endLocal + offsetLocal;
+        }
+        return stagingLocal;
+    }
+
+    // Animate one part into its stage-n pose. appear==n: slide in (from the ResolveOffset direction)
+    // to STAGING (if still un-seated) or FINAL; seat==n (drop): move STAGING → FINAL.
+    private IEnumerator SlideLocal(int gen, PartEntry p, int n, HashSet<int> done, float duration)
+    {
+        Transform tr = p.go.transform;
+        Vector3 endLocal   = (p.seatStage <= n) ? p.restLocalPos : StagingLocal(p);
+        Vector3 startLocal = StageStartLocal(p, n);
+
+        tr.localPosition = startLocal;
+        p.go.SetActive(true);
+        ApplyColor(p, p.originalColor);   // uncolored while it moves
+
+        float t = 0f;
+        while (t < duration)
+        {
+            if (gen != assembleGen) yield break;   // superseded — the new stage owns positions
+            t += Time.deltaTime;
+            float k = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(t / duration));
+            tr.localPosition = Vector3.Lerp(startLocal, endLocal, k);
+            yield return null;
+        }
+        tr.localPosition = endLocal;
+        ApplyPartColor(p, done);          // green if this part's stage is already complete
+    }
+
+    // Per-stage ordered animation groups (each inner array is a group of "Type:Side" selectors;
+    // groups play in order with step_delay between them). Mirrors the plan's choreography.
+    private static IEnumerable<string[]> GroupsForStage(int n)
+    {
+        switch (n)
+        {
+            case 1: return new[] { new[] { "Stand:Left",  "Bearing:Left"  } };
+            case 2: return new[] { new[] { "GearRod:Any" }, new[] { "Gear:Any" }, new[] { "Pin:Any" } };
+            case 3: return new[] { new[] { "Stand:Right", "Bearing:Right" } };
+            case 4: return new[] { new[] { "BaseBoard:Any" },
+                                   new[] { "Bearing:Left", "Stand:Left" },
+                                   new[] { "Screw:Left" },
+                                   new[] { "GearRod:Any", "Gear:Any", "Pin:Any" } };
+            case 5: return new[] { new[] { "Bearing:Right", "Stand:Right" }, new[] { "Screw:Right" } };
+            case 6: return new[] { new[] { "CrankHandle:Any" } };
+            default: return Array.Empty<string[]>();   // stage 7 (and any other): nothing animates
+        }
+    }
+
+    private static bool MatchesSelector(string selector, PartEntry p)
+    {
+        int c = selector.IndexOf(':');
+        string t    = c >= 0 ? selector.Substring(0, c) : selector;
+        string side = c >= 0 ? selector.Substring(c + 1) : "Any";
+        if (!string.Equals(t, p.type, StringComparison.OrdinalIgnoreCase)) return false;
+        if (string.Equals(side, "Any", StringComparison.OrdinalIgnoreCase)) return true;
+        return string.Equals(side, p.side, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // A part is in the current view if it belongs to the row, or is shared (BaseBoard, rowNum 0);
+    // row 0 (stage 7) shows everything.
+    private bool InView(PartEntry p, int row) =>
+        row == 0 || p.rowNum == row || p.rowNum == 0;
+
+    private Vector3 StagingLocal(PartEntry p)
+    {
+        Transform par = p.go.transform.parent;
+        Vector3 offLocal = par != null ? par.InverseTransformVector(stagingOffset) : stagingOffset;
+        return p.restLocalPos + offLocal;
+    }
+
+    // Green a part iff its seat stage is complete (BaseBoard stays neutral). Used for static parts
+    // in PlayStage and at the end of an animated part's move.
+    private void ApplyPartColor(PartEntry p, HashSet<int> doneStages)
+    {
+        if (p.colorID == 0 || p.type == "BaseBoard") return;
+        ApplyColor(p, doneStages.Contains(p.seatStage) ? seatedColor : p.originalColor);
+    }
+
+    // Tint every part that seats at `stage` in `row` green (done) or original (un-done). No motion.
+    private void Recolor(int row, int stage, bool done)
+    {
+        foreach (var p in parts)
+        {
+            if (p.rowNum != row || p.seatStage != stage || p.type == "BaseBoard" || p.colorID == 0)
+                continue;
+            ApplyColor(p, done ? seatedColor : p.originalColor);
+        }
     }
 
     // Parse the row number that follows "Row" in a part name (e.g. "GearRodRow1" → 1).
@@ -493,17 +727,16 @@ public class GearboxCommandReceiver : MonoBehaviour
                   (entry.highlighted ? "highlight" : "original"));
     }
 
+    // Full color reset: restore every part to its original color (clears both the yellow toggle
+    // highlights and the green "done" seating colors).
     private void ResetHighlights()
     {
-        int cleared = 0;
         foreach (var p in parts)
         {
-            if (!p.highlighted) continue;
             p.highlighted = false;
-            ApplyColor(p, p.originalColor);
-            cleared++;
+            if (p.colorID != 0) ApplyColor(p, p.originalColor);
         }
-        Debug.Log($"[GearboxCommandReceiver] ♻ Reset {cleared} highlight(s)");
+        Debug.Log("[GearboxCommandReceiver] ♻ Reset all part colors");
     }
 
     // Candidate base-color property names, in priority order:
