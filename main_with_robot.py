@@ -2008,11 +2008,18 @@ class MainScene:
                     _board_state = self.robot.board_state
                     # Drain every frame so poses sent outside the held state do
                     # not become stale commands when a board is grasped later.
+                    # While a board move is active, however, a newly released
+                    # AR pose replaces the current target in place.
                     _T_box_target = self.grip_pose_bridge.poll()
+                    _local_board_move = (
+                        self._robot_state == "moving_to_pose"
+                        and self._motion_source == "object")
+                    _board_move_active = (
+                        _board_state == "moving_board"
+                        or _local_board_move)
                     if (_T_box_target is not None
-                            and _board_state == "holding_board"
-                            and not (self._robot_state == "moving_to_pose"
-                                     and self._motion_source == "object")):
+                            and (_board_state == "holding_board"
+                                 or _board_move_active)):
                         self._last_ar_board_T = _T_box_target
                         _tcp_pos = (_T_box_target[:3, 3]
                                     - cfg.BOX_FORWARD_OFFSET
@@ -2031,12 +2038,18 @@ class MainScene:
                         _T_tcp_target[:3, 3] = _tcp_pos
                         _T_tcp_target[:3, :3] = _T_box_target[:3, :3]
                         self._tcp_target_T = _T_tcp_target
-                        print(f"[Board AR] Released target → TCP "
-                              f"{np.round(_tcp_pos, 3).tolist()}")
-                        self.robot.move_to_pose(
-                            _tcp_pos, _tcp_quat,
-                            board_move=True,
-                            on_complete=self._on_board_move_complete)
+                        if _board_move_active:
+                            print(f"[Board AR] Updated target → TCP "
+                                  f"{np.round(_tcp_pos, 3).tolist()}")
+                            self.robot.update_move_target(
+                                _tcp_pos, _tcp_quat)
+                        else:
+                            print(f"[Board AR] Released target → TCP "
+                                  f"{np.round(_tcp_pos, 3).tolist()}")
+                            self.robot.move_to_pose(
+                                _tcp_pos, _tcp_quat,
+                                board_move=True,
+                                on_complete=self._on_board_move_complete)
 
                     if self._T_world_tcp is not None:
                         if (_board_state == "moving_board"

@@ -67,7 +67,7 @@ import main_setting as cfg
 _FILE_DIR = Path(__file__).resolve().parent
 _URDF_PATH = _FILE_DIR / "robot_assets" / "ur10e.urdf"
 
-_SIM_Q_DEG = [-105.97, -29.43, 87.53, 33.17, 92.40, 168.95]
+_DEFAULT_Q_DEG = cfg.ROBOT_DEFAULT_JOINT_DEG
 
 # ── frax / CBF (optional) ─────────────────────────────────────────────────────
 try:
@@ -158,9 +158,12 @@ def _build_pb_scene(simulation: bool, use_calibrated_robot_base: bool,
 class RobotControlServer:
     _STATE_INTERVAL          = 1.0 / 30.0
     _BASE_YAW_CORRECTION_DEG = -90.0
-    _MOVE_POS_TOL_M          = 0.08
+    _MOVE_POS_TOL_M          = 0.03
     _MOVE_ANGLE_TOL_RAD      = np.deg2rad(20.0)
     _MOVE_DWELL_S            = 0.30
+    _MOVE_STALL_TIMEOUT_S     = 3.0
+    _MOVE_PROGRESS_POS_M      = 0.002
+    _MOVE_PROGRESS_ANGLE_RAD  = np.deg2rad(1.0)
     _MOVE_BRAKE_DIST_M       = 0.05
     _MOVE_BRAKE_ANGLE_RAD    = np.deg2rad(8.0)
     _MOVE_SCALE_FLOOR        = 0.05
@@ -176,8 +179,13 @@ class RobotControlServer:
         self._robot_ip    = robot_ip
         self.control_hz   = cfg.ROBOT_CONTROL_HZ if simulation else cfg.ROBOT_CONTROL_HZ_REAL
 
-        sim_q = np.deg2rad(_SIM_Q_DEG)
-        self.pb_scene = _build_pb_scene(simulation, use_calibrated_robot_base, sim_q)
+        self._default_q = np.deg2rad(_DEFAULT_Q_DEG)
+        # Give simulation a visible startup move.  The real scene is synced to
+        # the measured hardware joints before its first startup command.
+        initial_q = (np.deg2rad(cfg.JOINT_REST_DEG)
+                     if simulation else self._default_q)
+        self.pb_scene = _build_pb_scene(
+            simulation, use_calibrated_robot_base, initial_q)
         if self.pb_scene is None:
             raise RuntimeError("[RobotServer] pb_scene failed to build — cannot run.")
         self.pb_scene.set_joint_limits(cfg.JOINT_MIN_DEG, cfg.JOINT_MAX_DEG, degrees=True)
@@ -222,8 +230,18 @@ class RobotControlServer:
         self._move_target_quat: "np.ndarray | None" = None
         self._move_on_complete: "Callable | None"   = None
         self._move_smooth_q:    "np.ndarray | None" = None
-        self._move_conv_start:  "float | None"      = None  # perf_counter when TCP first entered 5cm zone
+        self._move_conv_start:  "float | None"      = None  # perf_counter when TCP first meets pose tolerances
         self._move_diag_t:      float               = 0.0   # last convergence-status print time
+        self._move_best_dist:   float               = float('inf')
+        self._move_best_angle:  float               = float('inf')
+        self._move_progress_t:  float               = 0.0
+
+        # Automatic startup positioning, shared by simulation and hardware.
+        self._startup_active = True
+        self._startup_move_sent = False
+        self._startup_runner = (
+            _PbJointRunner(self.pb_scene.current_q.copy(), self._default_q)
+            if simulation else None)
 
         # frax CBF controller (optional — falls back to rate-limited IK)
         self._frax = None
@@ -307,7 +325,8 @@ class RobotControlServer:
             "type":               "state",
             "q":                  q.tolist(),
             "tool_grasp_running": bool(self.tool_grasp_running),
-            "move_running":       bool(self._move_phase is not None),
+            "move_running":       bool(self._startup_active
+                                        or self._move_phase is not None),
             "board_state":        self._board_state,
             "board_interaction_active": self._board_force_mode is not None
                                         or self._board_state != "inactive",
@@ -423,6 +442,9 @@ class RobotControlServer:
         return self._grasp_phase is not None
 
     def tick(self, dt: float = 1.0 / 60.0) -> None:
+        if self._startup_active:
+            self._tick_startup_pose(dt)
+            return
         if self._move_phase is not None:
             self._tick_move_to_pose(dt)
             return
@@ -475,6 +497,48 @@ class RobotControlServer:
         else:
             self._finish_grasp(True)
 
+    def _tick_startup_pose(self, dt: float) -> None:
+        """Move both simulated and real robots to the shared default pose."""
+        if self.simulation:
+            runner = self._startup_runner
+            if runner is None:
+                self._startup_active = False
+                return
+            if not runner.done:
+                runner.update(self.pb_scene.robot_id,
+                              self.pb_scene.arm_indices, dt)
+                return
+            self.pb_scene.update_robot(self._default_q)
+            self._startup_runner = None
+            self._startup_active = False
+            print("[Robot sim] Startup default pose reached")
+            return
+
+        q_cur = self.pb_scene.current_q.copy()
+        target = _wrap_nearest(self._default_q, q_cur)
+        joint_err = np.abs(_wrap_nearest(target, q_cur) - q_cur)
+        if np.max(joint_err) < np.deg2rad(1.0):
+            self._startup_active = False
+            print("[Robot] Startup default pose reached")
+            return
+
+        try:
+            ctrl = self._rtde_ctrl_conn()
+            if not self._startup_move_sent:
+                speed = 0.5 * self._speed_scale
+                ctrl.moveJ(list(target), speed, speed, asynchronous=True)
+                self._startup_move_sent = True
+                print(f"[Robot] Startup moveJ → default pose "
+                      f"{np.round(np.rad2deg(target), 2).tolist()}")
+            elif ctrl.isSteady() and np.max(joint_err) < np.deg2rad(2.0):
+                self._startup_active = False
+                print("[Robot] Startup default pose reached")
+        except Exception as e:
+            print(f"[Robot] Startup default-pose move failed: {e}")
+            self._startup_active = False
+            self._startup_move_sent = False
+            self._rtde_ctrl = None
+
     def _finish_grasp(self, success: bool) -> None:
         cb = self._grasp_on_complete
         self._grasp_runner       = None
@@ -511,10 +575,16 @@ class RobotControlServer:
 
     def start_board_interaction(self) -> None:
         """Open for a board and arm force-triggered grasp detection."""
+        if self._startup_active:
+            print("[Robot] Board interaction blocked — startup move is active")
+            return
         if self._grasp_phase is not None or self._move_phase is not None:
             print("[Robot] Board interaction blocked — robot motion is active")
             return
         if self.simulation:
+            # Simulation has no force sensor or gripper.  Never carry a stale
+            # real-robot force mode into its virtual held-board state.
+            self._arm_board_force(None)
             self._set_board_state("holding_board")
             return
         try:
@@ -547,6 +617,7 @@ class RobotControlServer:
         if (self.simulation and not board_move
                 and self._board_state == "holding_board"):
             print("[Robot sim] New motion requested → dismissing virtual board hold")
+            self._arm_board_force(None)
             self._set_board_state("inactive")
             return
         if (self._board_state == "inactive"
@@ -630,6 +701,11 @@ class RobotControlServer:
     def move_to_pose(self, pos, quat=None, board_move: bool = False,
                      on_complete: "Callable[[bool], None] | None" = None) -> None:
         """Stream IK+CBF servoJ toward a fixed Cartesian target until convergence."""
+        if self._startup_active:
+            print("[Robot] move_to_pose blocked — startup move is active")
+            if on_complete:
+                on_complete(False)
+            return
         if self._grasp_phase is not None:
             print("[Robot] move_to_pose blocked — grasp in progress")
             if on_complete:
@@ -642,7 +718,8 @@ class RobotControlServer:
                                 and self._board_state == "holding_board")
             if not valid_board_move:
                 print(f"[Robot] move_to_pose blocked — board state "
-                      f"is '{self._board_state}'")
+                      f"is '{self._board_state}', force mode "
+                      f"is {self._board_force_mode!r}")
                 if on_complete:
                     on_complete(False)
                 return
@@ -657,6 +734,7 @@ class RobotControlServer:
         self._move_smooth_q    = None
         self._move_conv_start  = None
         self._move_diag_t      = 0.0
+        self._reset_move_progress()
         self._move_phase       = 'moving_to_pose'
         if board_move:
             # Acceleration during motion must not look like a release pull.
@@ -674,6 +752,14 @@ class RobotControlServer:
             cfg.project_robot_target_position(pos, origin), float)
         if quat is not None:
             self._move_target_quat = np.asarray(quat, float)
+        # A replacement target gets its own progress window.  This prevents an
+        # old unreachable AR pose from timing out a newly released pose.
+        self._reset_move_progress()
+
+    def _reset_move_progress(self) -> None:
+        self._move_best_dist = float('inf')
+        self._move_best_angle = float('inf')
+        self._move_progress_t = time.perf_counter()
 
     def cancel_move(self) -> None:
         if self._move_phase is None:
@@ -687,13 +773,14 @@ class RobotControlServer:
         self._move_target_quat = None
         self._move_smooth_q    = None
         self._move_conv_start  = None
+        self._reset_move_progress()
         if not self.simulation:
             self.servoStop()
         if self._board_state == "moving_board":
             # The board remains clamped on success or cancellation.  Capture a
             # fresh stationary baseline before release monitoring resumes.
             self._set_board_state("holding_board")
-            self._arm_board_force("release")
+            self._arm_board_force(None if self.simulation else "release")
         cb = self._move_on_complete
         self._move_on_complete = None
         if cb is not None:
@@ -738,9 +825,33 @@ class RobotControlServer:
             dist = float(np.linalg.norm(T_tcp[:3, 3] - target_pos))
             R_err = T_tcp[:3, :3].T @ ScipyR.from_quat(target_quat).as_matrix()
             angle_err = float(ScipyR.from_matrix(R_err).magnitude())
+            _now = time.perf_counter()
+
+            # Fixed unreachable poses used to servo forever.  Treat meaningful
+            # improvement in either pose component as progress, and report a
+            # failed move after both have stalled outside the stop tolerance.
+            _made_progress = (
+                dist < self._move_best_dist - self._MOVE_PROGRESS_POS_M
+                or angle_err < (self._move_best_angle
+                                - self._MOVE_PROGRESS_ANGLE_RAD))
+            if _made_progress:
+                # Retain the last *meaningful* milestone so many small control
+                # steps accumulate into progress instead of being discarded.
+                self._move_best_dist = min(self._move_best_dist, dist)
+                self._move_best_angle = min(self._move_best_angle, angle_err)
+                self._move_progress_t = _now
+            elif ((dist >= self._MOVE_POS_TOL_M
+                   or angle_err >= self._MOVE_ANGLE_TOL_RAD)
+                  and _now - self._move_progress_t
+                  >= self._MOVE_STALL_TIMEOUT_S):
+                print(f"[Robot] move_to_pose unreachable/no progress for "
+                      f"{self._MOVE_STALL_TIMEOUT_S:.1f} s "
+                      f"({dist*100:.1f} cm, "
+                      f"{np.rad2deg(angle_err):.1f}°) → cancelled")
+                self._finish_move(False)
+                return
 
             # Throttled colored status print at ~2 Hz
-            _now = time.perf_counter()
             if _now - self._move_diag_t >= 0.5:
                 self._move_diag_t = _now
                 _dc = _GRN if dist      < self._MOVE_POS_TOL_M     else _RED
@@ -811,8 +922,8 @@ class RobotControlServer:
                 except Exception:
                     pass
             if np.linalg.norm(q_target - q_cur) < 1e-4:
-                print("[Robot] move_to_pose stalled → idle")
-                self._finish_move(True)
+                print("[Robot] move_to_pose IK stalled → cancelled")
+                self._finish_move(False)
                 return
 
         if np.any(np.isnan(q_target)):
@@ -848,6 +959,11 @@ class RobotControlServer:
         category:     str                              = "tool",
         board_normal: "list | np.ndarray | None"      = None,
     ) -> None:
+        if self._startup_active:
+            print("[Robot] Grasp blocked — startup move is active")
+            if on_complete:
+                on_complete(False)
+            return
         self._prepare_board_state_for_motion()
         if (self._board_state != "inactive"
                 or self._board_force_mode is not None):
@@ -991,6 +1107,9 @@ class RobotControlServer:
             print("[Robot] Grasp cancelled — returning tool to board")
 
     def cancel_motion(self) -> None:
+        startup_was_active = self._startup_active
+        self._startup_active = False
+        self._startup_runner = None
         phase              = self._grasp_phase
         cb                 = self._grasp_on_complete
         self._grasp_phase          = None
@@ -1002,7 +1121,13 @@ class RobotControlServer:
         self._grasp_q_above        = None
         self._grasp_cancel_pending = False
         if not self.simulation:
-            if phase is not None and self._grasp_move_sent:
+            if startup_was_active and self._startup_move_sent:
+                try:
+                    self._rtde_ctrl_conn().stopJ(2.0)
+                except Exception as e:
+                    print(f"[Robot] cancel startup stopJ failed: {e}")
+                self._startup_move_sent = False
+            elif phase is not None and self._grasp_move_sent:
                 try:
                     self._rtde_ctrl_conn().stopJ(2.0)
                 except Exception as e:
