@@ -41,6 +41,11 @@ HANDOVER_SPHERE_PORT = 5018 # handover target sphere world position (matches Han
 ROBOT_CMD_PORT   = 5020   # main_with_robot.py → robot_control_server.py: commands
 ROBOT_EVENT_PORT = 5021   # robot_control_server.py → main_with_robot.py: state + events
 
+# ── Ports (Gearbox visualization) ─────────────────────────────────────────────
+GEARBOX_CMD_PORT       = 5019   # gearbox_control.py → Unity  (GearboxCommandReceiver)
+GEARBOX_CLICK_PORT     = 5023   # Unity → gearbox_control.py  (GearboxClickPublisher)
+GEARBOX_TASKGRAPH_PORT = 5022   # gearbox_control.py → gearbox_task_graph.py (live mirror)
+
 # ── Robot-control process tuning ──────────────────────────────────────────────
 ROBOT_CONTROL_HZ      = 120   # fixed-rate hardware loop, simulation
 ROBOT_CONTROL_HZ_REAL = 120   # real hardware control rate (matches RTDE max ~125 Hz)

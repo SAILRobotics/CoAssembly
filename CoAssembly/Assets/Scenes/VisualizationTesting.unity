@@ -149,7 +149,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &13044581
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -304,7 +304,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &105918366
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -504,7 +504,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &137432351
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -714,7 +714,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &161951085
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1045,7 +1045,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &370723136
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1166,7 +1166,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &407670178
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1675,7 +1675,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &441420346
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1796,7 +1796,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &462624382
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2121,7 +2121,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &608755309
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2242,7 +2242,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &627405726
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2363,7 +2363,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &630981853
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2484,7 +2484,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &640384048
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -3005,7 +3005,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &726831724
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -3126,7 +3126,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &734311388
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -3286,7 +3286,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &757783922
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -3487,7 +3487,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &903807605
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -3818,7 +3818,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &923968282
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -3939,7 +3939,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &950603840
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -4060,7 +4060,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &966220375
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -4335,7 +4335,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &1057481502
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -4456,7 +4456,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &1081642996
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -4609,7 +4609,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &1104906759
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -5138,7 +5138,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &1184612310
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -5259,7 +5259,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &1238065516
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -5380,7 +5380,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &1241876459
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -6042,7 +6042,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &1451666359
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -6163,7 +6163,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &1464656571
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -6378,7 +6378,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &1518410391
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -6499,7 +6499,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &1523560413
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -6620,7 +6620,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &1543647848
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -6741,7 +6741,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &1599064478
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -6913,7 +6913,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &1742726149
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -7034,7 +7034,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &1747478165
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -7155,7 +7155,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &1782587271
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -7276,7 +7276,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &1847732191
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -7397,7 +7397,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &1853315702
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -7728,7 +7728,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &1899766171
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -7849,7 +7849,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &1910133715
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -7970,7 +7970,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &1921617887
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -8091,7 +8091,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &2011119135
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -8212,7 +8212,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &2056117711
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -8333,7 +8333,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5cff8f25982f8c43a6d742a19916439, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GearboxClickPublisher
-  port: 5020
+  port: 5023
 --- !u!114 &2070013483
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -9736,11 +9736,16 @@ MonoBehaviour:
     row: 1
     side: 0
     offset: {x: 0, y: -0.2, z: 0}
+  - type: Handle
+    row: 0
+    side: 0
+    offset: {x: 0, y: 0, z: -0.1}
   subStaggerSeconds: 0.12
   defaultStepDelay: 0.35
   defaultSlideSeconds: 0.5
   stagingOffset: {x: 0, y: 0, z: 0}
   seatedColor: {r: 0.15, g: 0.8, b: 0.2, a: 1}
+  builtColor: {r: 1, g: 0.55, b: 0, a: 1}
   blockedColor: {r: 0.85, g: 0.15, b: 0.15, a: 1}
 --- !u!1660057539 &9223372036854775807
 SceneRoots:

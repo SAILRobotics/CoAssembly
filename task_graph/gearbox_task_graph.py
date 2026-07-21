@@ -8,8 +8,15 @@ part-transformation rules can be tested without opening a window.
 from __future__ import annotations
 
 import argparse
+import json
+import queue
+import threading
 from dataclasses import dataclass
 from typing import Iterable
+
+# Live-mirror listen port. Canonical value is main_setting.GEARBOX_TASKGRAPH_PORT; hardcoded here
+# because this viewer runs from the task_graph/ subdirectory (main_setting is at the repo root).
+_DEFAULT_TASKGRAPH_PORT = 5022
 
 
 @dataclass(frozen=True)
@@ -294,6 +301,25 @@ def validate_model() -> list[str]:
     return errors
 
 
+def taskgraph_steps(row: int, stage: int) -> list[str]:
+    """Bridge a gearbox_control.py (row, control-stage) to this graph's step id(s).
+
+    The two files number "stage" differently: gearbox_control uses per-row control-stages 1-7,
+    while this graph uses named steps. Control stage 5 ("insert rod + fit right stand + screw it")
+    spans TWO task steps, so it maps to both — completing it marks both, in dependency order."""
+    if stage == 7 or row == 0:
+        return ["finish_gearbox"]
+    if stage == 6:
+        return ["r1_attach_handle"] if row == 1 else []
+    return {
+        1: [f"r{row}_bearing_left"],
+        2: [f"r{row}_gear_rod"],
+        3: [f"r{row}_bearing_right"],
+        4: [f"r{row}_fasten_first_stand"],
+        5: [f"r{row}_insert_rod_and_fit_second", f"r{row}_fasten_second_stand"],
+    }.get(stage, [])
+
+
 class TkTaskGraphApp:
     COLORS = {"complete": "#2e9d60", "ready": "#2784d8", "blocked": "#d18a27"}
 
@@ -537,6 +563,14 @@ class DearPyGuiTaskGraphApp:
         self.output_attributes: dict[str, str] = {}
         self.themes: dict[str, str] = {}
 
+        # Live-mirror state: step ids currently "open" in the controller (rendered purple), plus
+        # the background listener that feeds events in from gearbox_control.py.
+        self.active_ids: set[str] = set()
+        self._live_queue: "queue.Queue[dict]" = queue.Queue()
+        self._live_running = False
+        self._live_thread: threading.Thread | None = None
+        self._live_sub = None
+
     def build(self) -> None:
         dpg = self.dpg
         dpg.create_context()
@@ -570,10 +604,92 @@ class DearPyGuiTaskGraphApp:
         dpg.setup_dearpygui()
         dpg.show_viewport()
 
-    def run(self) -> None:
+    def run(self, live_port: int | None = None) -> None:
         self.build()
-        self.dpg.start_dearpygui()
-        self.dpg.destroy_context()
+        if live_port is not None:
+            self.start_live_listener(live_port)
+        dpg = self.dpg
+        # Manual render loop (instead of blocking start_dearpygui) so queued live events from the
+        # controller are applied on the UI thread, one frame at a time.
+        while dpg.is_dearpygui_running():
+            self._drain_live_queue()
+            dpg.render_dearpygui_frame()
+        self._live_running = False
+        dpg.destroy_context()
+
+    # ── Live mirror of gearbox_control.py ────────────────────────────────────
+    def start_live_listener(self, port: int) -> bool:
+        """Bind a SUB (receiver binds, per the repo's Python<->Python convention) and drain
+        controller events on a background thread. Failures are non-fatal — the GUI still opens."""
+        try:
+            import zmq
+        except Exception as e:
+            self.log(f"Live link disabled (zmq unavailable: {e}).")
+            return False
+        try:
+            ctx = zmq.Context.instance()
+            sub = ctx.socket(zmq.SUB)
+            sub.setsockopt_string(zmq.SUBSCRIBE, "")
+            sub.bind(f"tcp://127.0.0.1:{port}")
+        except Exception as e:
+            self.log(f"Live link disabled (could not bind :{port}: {e}).")
+            return False
+        self._live_sub = sub
+        self._live_running = True
+
+        def _loop() -> None:
+            poller = zmq.Poller()
+            poller.register(sub, zmq.POLLIN)
+            while self._live_running:
+                if not dict(poller.poll(timeout=200)):
+                    continue
+                while True:
+                    try:
+                        raw = sub.recv_string(flags=zmq.NOBLOCK)
+                    except zmq.Again:
+                        break
+                    try:
+                        self._live_queue.put(json.loads(raw))
+                    except json.JSONDecodeError:
+                        continue
+
+        self._live_thread = threading.Thread(target=_loop, daemon=True)
+        self._live_thread.start()
+        self.log(f"Live link listening on tcp://127.0.0.1:{port} (controller mirror).")
+        return True
+
+    def _drain_live_queue(self) -> None:
+        while True:
+            try:
+                msg = self._live_queue.get_nowait()
+            except queue.Empty:
+                return
+            self._apply_live_event(msg)
+
+    def _apply_live_event(self, msg: dict) -> None:
+        """Apply one controller event (main/UI thread): purple overlay + built-in complete/undo."""
+        event = msg.get("event")
+        row, stage = msg.get("row", 0), msg.get("stage", 0)
+        ids = [i for i in taskgraph_steps(row, stage) if i in self.graph.by_id]
+        if event == "show":
+            self.active_ids = set(ids)
+        elif event == "close":
+            self.active_ids = set()
+        elif event == "reset":
+            self.graph.reset()
+            self.active_ids = set()
+            self.log("Live: controller reset all progress.")
+        elif event == "complete":
+            for sid in ids:                              # dependency order
+                _, message = self.graph.complete(self.graph.by_id[sid])
+                self.log("Live: " + message)
+        elif event == "uncomplete":
+            for sid in reversed(ids):                    # reverse order for frontier-safe undo
+                _, message = self.graph.undo(self.graph.by_id[sid])
+                self.log("Live: " + message)
+        else:
+            return
+        self.refresh()
 
     def _create_themes(self) -> None:
         dpg = self.dpg
@@ -618,6 +734,33 @@ class DearPyGuiTaskGraphApp:
                     dpg.add_theme_style(dpg.mvNodeStyleVar_NodeCornerRounding, 5.0,
                                         category=dpg.mvThemeCat_Nodes)
             self.themes[state] = tag
+
+        # Purple "active" overlay theme — bound to a node while its stage is open in the live
+        # controller (a part was clicked in Unity), overriding its state color until the menu closes.
+        active_color = (168, 85, 247, 255)
+        background = tuple(max(18, int(channel * 0.48)) for channel in active_color[:3]) + (255,)
+        selected_background = tuple(max(25, int(channel * 0.68)) for channel in active_color[:3]) + (255,)
+        with dpg.theme(tag="node_theme_active"):
+            with dpg.theme_component(dpg.mvNode):
+                dpg.add_theme_color(dpg.mvThemeCol_Text, (255, 255, 255, 255),
+                                    category=dpg.mvThemeCat_Core)
+                dpg.add_theme_color(dpg.mvNodeCol_NodeBackground, background,
+                                    category=dpg.mvThemeCat_Nodes)
+                dpg.add_theme_color(dpg.mvNodeCol_NodeBackgroundHovered, selected_background,
+                                    category=dpg.mvThemeCat_Nodes)
+                dpg.add_theme_color(dpg.mvNodeCol_NodeBackgroundSelected, selected_background,
+                                    category=dpg.mvThemeCat_Nodes)
+                dpg.add_theme_color(dpg.mvNodeCol_NodeOutline, active_color,
+                                    category=dpg.mvThemeCat_Nodes)
+                dpg.add_theme_color(dpg.mvNodeCol_TitleBar, active_color,
+                                    category=dpg.mvThemeCat_Nodes)
+                dpg.add_theme_color(dpg.mvNodeCol_TitleBarHovered, active_color,
+                                    category=dpg.mvThemeCat_Nodes)
+                dpg.add_theme_color(dpg.mvNodeCol_TitleBarSelected, active_color,
+                                    category=dpg.mvThemeCat_Nodes)
+                dpg.add_theme_style(dpg.mvNodeStyleVar_NodeCornerRounding, 5.0,
+                                    category=dpg.mvThemeCat_Nodes)
+        self.themes["active"] = "node_theme_active"
 
     def _create_nodes(self) -> None:
         dpg = self.dpg
@@ -724,9 +867,11 @@ class DearPyGuiTaskGraphApp:
         dpg = self.dpg
         for step in self.graph.steps:
             state = self.graph.state(step)
-            dpg.bind_item_theme(self.node_tags[step.id], self.themes[state])
-            dpg.configure_item(self.node_tags[step.id],
-                               label=f"{step.title}  [{state.upper()}]")
+            active = step.id in self.active_ids
+            dpg.bind_item_theme(self.node_tags[step.id],
+                                self.themes["active"] if active else self.themes[state])
+            label = f"{step.title}  [{state.upper()}]" + ("  (open)" if active else "")
+            dpg.configure_item(self.node_tags[step.id], label=label)
             dpg.set_value(f"node_state::{step.id}", f"State: {state.upper()}")
 
         self._refresh_active_parts_tree()
@@ -929,11 +1074,17 @@ def run_self_test() -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--self-test", action="store_true", help="test the task model without opening the GUI")
+    parser.add_argument("--task-graph-port", type=int, default=_DEFAULT_TASKGRAPH_PORT,
+                        help=f"Port to listen on for live gearbox_control.py events "
+                             f"(default: {_DEFAULT_TASKGRAPH_PORT})")
+    parser.add_argument("--no-live", action="store_true",
+                        help="Disable the live controller link (open the viewer standalone).")
     args = parser.parse_args()
     if args.self_test:
         run_self_test()
         return
-    DearPyGuiTaskGraphApp().run()
+    live_port = None if args.no_live else args.task_graph_port
+    DearPyGuiTaskGraphApp().run(live_port)
 
 
 if __name__ == "__main__":
