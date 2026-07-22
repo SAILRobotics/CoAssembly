@@ -60,7 +60,8 @@ class _VLMWorker:
 
         self._history: list[dict] = []
         self._history_lock = threading.Lock()
-        self._task_state: str = ""   # injected before each inference
+        self._task_state: str = ""
+        self._focused_step: str = ""   # injected before each inference
 
     def start(self) -> None:
         self._running = True
@@ -79,6 +80,11 @@ class _VLMWorker:
             self._task_state = state
             self._history.clear()
         self._result_queue.put(("state_updated", state))
+
+    def set_focused_step(self, focused: str) -> None:
+        """Update which step the user has selected. Does NOT clear history."""
+        with self._history_lock:
+            self._focused_step = focused
 
     def reset_history(self) -> None:
         with self._history_lock:
@@ -143,30 +149,34 @@ class _VLMWorker:
     def _infer(self, model, processor, question: str, image_paths: list[str]) -> str:
         from PIL import Image
 
-        # Build current user turn content (images only sent on the turn they appear)
+        with self._history_lock:
+            task_state   = self._task_state
+            focused_step = self._focused_step
+            history_snap = list(self._history[-(self.MAX_HISTORY_PAIRS * 2):])
+
+        # Prepend state + focused step directly into the question text.
+        # Small models attend to the user message far more reliably than
+        # a second system message, so we inject context here instead.
+        prefix_parts: list[str] = []
+        if task_state:
+            prefix_parts.append(
+                "=== CURRENT ASSEMBLY STATE ===\n" + task_state + "\n=== END STATE ===")
+        if focused_step:
+            prefix_parts.append(
+                "=== CURRENTLY SELECTED STEP ===\n" + focused_step +
+                "\n=== END SELECTED STEP ===")
+        question_with_state = ("\n\n".join(prefix_parts) + "\n\n" + question
+                               if prefix_parts else question)
+
         content = []
         pil_images = []
         for p in image_paths:
             img = Image.open(p).convert("RGB")
             pil_images.append(img)
             content.append({"type": "image", "image": img})
-        content.append({"type": "text", "text": question})
+        content.append({"type": "text", "text": question_with_state})
 
-        with self._history_lock:
-            task_state  = self._task_state
-            history_snap = list(self._history[-(self.MAX_HISTORY_PAIRS * 2):])
-
-        # System message + optional state injection + history + current turn
         messages = [{"role": "system", "content": self._system_prompt}]
-        if task_state:
-            messages.append({
-                "role": "system",
-                "content": (
-                    "=== CURRENT ASSEMBLY STATE ===\n"
-                    + task_state +
-                    "\n=== END STATE ==="
-                ),
-            })
         messages.extend(history_snap)
         messages.append({"role": "user", "content": content})
 
@@ -254,6 +264,22 @@ class VLMAssistant:
     def notify_graph_event(self, event_label: str, state_summary: str) -> None:
         """Call this whenever the task graph changes (complete/undo/reset/live)."""
         self._worker.update_task_state(f"Event: {event_label}\n\n{state_summary}")
+
+    def set_focused_step(self, focused_text: str) -> None:
+        """Tell the VLM which step the user has selected. Does NOT clear history."""
+        self._worker.set_focused_step(focused_text)
+
+    # ── Public: voice input ───────────────────────────────────────────────────
+
+    def submit_question(self, text: str) -> bool:
+        """Route an external text (e.g. voice transcript) as a VLM question.
+        Returns False if the model is busy; caller can log a warning."""
+        if self._current_status != "ready":
+            return False
+        self._pending_question = text
+        self._render_history(pending=True)
+        self._worker.submit(text, self._image_paths)
+        return True
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 

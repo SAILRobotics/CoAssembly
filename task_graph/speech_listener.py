@@ -103,8 +103,8 @@ class SpeechListener:
     def _asr_worker(self) -> None:
         try:
             import nemo.collections.asr as nemo_asr
-        except ImportError:
-            self._event_queue.put(("error", "NeMo not installed — pip install nemo-toolkit[asr]"))
+        except Exception as e:
+            self._event_queue.put(("error", f"NeMo import failed: {e}"))
             return
 
         self._event_queue.put(("_status", self.STATUS_LOADING))

@@ -657,7 +657,8 @@ class DearPyGuiTaskGraphApp:
         with dpg.window(tag="primary_window", label="Gearbox Assembly Task Graph"):
             dpg.add_text("Gearbox Assembly Dependency Graph", color=(225, 232, 240),
                          tag="main_title")
-            dpg.add_text("Blue = ready     Orange = blocked     Green = complete",
+            dpg.add_text("Blue = ready     Orange = blocked     Green = complete"
+                         "     Purple = selected / active",
                          color=(170, 180, 195))
             with dpg.table(header_row=False, resizable=True, policy=dpg.mvTable_SizingStretchProp):
                 dpg.add_table_column(init_width_or_weight=2.8)
@@ -698,6 +699,15 @@ class DearPyGuiTaskGraphApp:
             wake_word: str = "hey robot",
             vlm_model: str | None = None,
             task_description_path: str | None = None) -> None:
+        # Pre-import transformers on the main thread before any worker threads start.
+        # The VLM thread and ASR (NeMo) thread both import from transformers; if they
+        # race during the initial import, Python's partially-initialized sys.modules
+        # entry causes "cannot import name X from transformers".
+        try:
+            import transformers as _tf  # noqa: F401
+        except Exception:
+            pass
+
         if vlm_model is not None:
             desc_path = task_description_path or str(
                 Path(__file__).parent / "task_description.md")
@@ -813,12 +823,18 @@ class DearPyGuiTaskGraphApp:
         if history:
             dpg.set_value("voice_transcripts", "\n".join(f"› {t}" for t in history))
 
-        # Log notable events to the terminal
+        # Log notable events to the terminal; optionally route transcripts to VLM
+        route_to_vlm = (self._vlm is not None
+                        and dpg.get_value("voice_to_vlm"))
         for kind, payload in events:
             if kind == "wake_word":
                 self.log("[Voice] Wake word detected — listening.")
             elif kind == "transcript":
                 self.log(f"[Voice] {payload}")
+                if route_to_vlm:
+                    sent = self._vlm.submit_question(payload)
+                    if not sent:
+                        self.log("[Voice->VLM] Model busy — transcript dropped.")
             elif kind == "timeout":
                 self.log("[Voice] Timed out — back to idle.")
             elif kind == "error":
@@ -1006,9 +1022,12 @@ class DearPyGuiTaskGraphApp:
         dpg.add_text("Level:", color=(160, 170, 185))
         dpg.add_progress_bar(tag="voice_rms", default_value=0.0, width=-1)
         dpg.add_spacer(height=4)
+        dpg.add_checkbox(label="Route transcripts to VLM", tag="voice_to_vlm",
+                         default_value=False)
+        dpg.add_spacer(height=4)
         dpg.add_text("Transcripts:", color=(160, 170, 185))
         dpg.add_input_text(tag="voice_transcripts", multiline=True, readonly=True,
-                           width=-1, height=140,
+                           width=-1, height=120,
                            default_value='Say "hey robot" to start...')
 
     def _notify_vlm(self, event_label: str) -> None:
@@ -1018,6 +1037,20 @@ class DearPyGuiTaskGraphApp:
     def _select_callback(self, _sender, _app_data, user_data) -> None:
         self.selected_id = user_data
         self.refresh()
+        if self._vlm is not None:
+            step = self.graph.by_id[user_data]
+            state = self.graph.state(step)
+            missing = self.graph.missing(step)
+            focused = (
+                f"[{step.id}] {step.title}\n"
+                f"State: {state.upper()}\n"
+                f"Description: {step.description}\n"
+                f"Inputs: {', '.join(step.inputs)}\n"
+                f"Produces: {step.output}"
+            )
+            if missing:
+                focused += f"\nBlocked by: {', '.join(missing)}"
+            self._vlm.set_focused_step(focused)
 
     def _complete_selected(self) -> None:
         if not self.selected_id:
@@ -1055,8 +1088,8 @@ class DearPyGuiTaskGraphApp:
     def refresh(self) -> None:
         dpg = self.dpg
         for step in self.graph.steps:
-            state = self.graph.state(step)
-            active = step.id in self.active_ids
+            state  = self.graph.state(step)
+            active = step.id in self.active_ids or step.id == self.selected_id
             dpg.bind_item_theme(self.node_tags[step.id],
                                 self.themes["active"] if active else self.themes[state])
             label = f"{step.title}  [{state.upper()}]" + ("  (open)" if active else "")
