@@ -6,3 +6,5 @@ scene_layout/rgbd*
 scene_layout/*.ply
 
 captures/*
+
+task_graph/captures/*
