@@ -12,7 +12,7 @@ _HERE = Path(__file__).resolve().parent
 SCENE_LAYOUT_DIR = _HERE / "scene_layout"
 
 # ── Machine IPs ───────────────────────────────────────────────────────────────
-UNITY_IP   = "192.168.50.103"   # Quest / Windows machine running Unity
+UNITY_IP   = "192.168.50.167"   # Quest / Windows machine running Unity
 ROBOT_IP   = "192.168.50.70"    # UR10e robot controller
 
 # ── Ports (Unity → Python) ────────────────────────────────────────────────────
@@ -40,6 +40,11 @@ HANDOVER_SPHERE_PORT = 5018 # handover target sphere world position (matches Han
 # ── Ports (Python ↔ Python: dedicated robot-control process) ─────────────────
 ROBOT_CMD_PORT   = 5020   # main_with_robot.py → robot_control_server.py: commands
 ROBOT_EVENT_PORT = 5021   # robot_control_server.py → main_with_robot.py: state + events
+
+# ── Ports (Gearbox visualization) ─────────────────────────────────────────────
+GEARBOX_CMD_PORT       = 5019   # gearbox_control.py → Unity  (GearboxCommandReceiver)
+GEARBOX_CLICK_PORT     = 5023   # Unity → gearbox_control.py  (GearboxClickPublisher)
+GEARBOX_TASKGRAPH_PORT = 5022   # gearbox_control.py → gearbox_task_graph.py (live mirror)
 
 # ── Robot-control process tuning ──────────────────────────────────────────────
 ROBOT_CONTROL_HZ      = 120   # fixed-rate hardware loop, simulation

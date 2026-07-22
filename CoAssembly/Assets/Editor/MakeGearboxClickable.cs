@@ -7,7 +7,7 @@ using Oculus.Interaction.Surfaces;
 
 /// <summary>
 /// Editor tool that makes gearbox parts (and the checkbox / reset-X objects) clickable, so
-/// clicking one publishes its GameObject NAME to Python via GearboxClickPublisher (port 5020).
+/// clicking one publishes its GameObject NAME to Python via GearboxClickPublisher (port 5023).
 ///
 /// It builds the same ISDK ray-interaction stack MakeRobotClickable uses, but with the gearbox's
 /// lean publisher/interactable (no ToolColorReceiver — the gearbox parts are color-managed by
@@ -32,6 +32,10 @@ using Oculus.Interaction.Surfaces;
 /// </summary>
 public class MakeGearboxClickable : EditorWindow
 {
+    // Port every GearboxClickPublisher this tool creates should bind. Must match
+    // main_setting.GEARBOX_CLICK_PORT / gearbox_control.py's --click-port default.
+    private const int ClickPort = 5023;
+
     [MenuItem("Tools/Gearbox/Make Gearbox Clickable")]
     private static void Open() => GetWindow<MakeGearboxClickable>("Make Gearbox Clickable");
 
@@ -39,11 +43,13 @@ public class MakeGearboxClickable : EditorWindow
     {
         EditorGUILayout.HelpBox(
             "Adds a MeshCollider + the ISDK ray-interaction stack (publishing the GameObject name " +
-            "on port 5020) to gearbox parts, so clicking a part isolates its row via Python.\n\n" +
+            $"on port {ClickPort}) to gearbox parts, so clicking a part isolates its row via Python.\n\n" +
             "• 'Set up gearbox parts' operates on every mesh under the selection whose name " +
             "contains \"Row\".\n" +
             "• 'Set up selected as UI' operates on exactly the selected objects — use it for the " +
-            "checkbox and X (name them \"__checkbox__\" and \"__reset__\").",
+            "checkbox and X (name them \"__checkbox__\" and \"__reset__\").\n" +
+            $"• 'Update click port' rewrites every existing publisher under the selection to " +
+            $"{ClickPort} — use it to migrate parts set up before the port changed.",
             MessageType.Info);
 
         GUILayout.Space(8);
@@ -57,7 +63,40 @@ public class MakeGearboxClickable : EditorWindow
             GUILayout.Space(4);
             if (GUILayout.Button($"Set up {n} selected object(s) as UI (checkbox / X)"))
                 Run(Selection.gameObjects, onlyRowNamed: false);
+
+            GUILayout.Space(4);
+            if (GUILayout.Button($"Update click port to {ClickPort} on selected + children"))
+                SyncPort(Selection.gameObjects);
         }
+    }
+
+    // Rewrite the serialized `port` on every GearboxClickPublisher under the selection. The shared
+    // socket binds whichever instance initializes first, so all must agree — this sets them all.
+    private void SyncPort(GameObject[] roots)
+    {
+        Undo.IncrementCurrentGroup();
+        Undo.SetCurrentGroupName("Update Gearbox Click Port");
+        int group = Undo.GetCurrentGroup();
+
+        int changed = 0;
+        var seen = new HashSet<GearboxClickPublisher>();
+        foreach (var root in roots)
+            foreach (var pub in root.GetComponentsInChildren<GearboxClickPublisher>(true))
+            {
+                if (!seen.Add(pub)) continue;
+                var so = new SerializedObject(pub);
+                var p = so.FindProperty("port");
+                if (p == null || p.intValue == ClickPort) continue;
+                p.intValue = ClickPort;
+                so.ApplyModifiedProperties();   // records undo
+                EditorUtility.SetDirty(pub);
+                changed++;
+            }
+
+        Undo.CollapseUndoOperations(group);
+        if (changed > 0) EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
+        Debug.Log($"[MakeGearboxClickable] Set click port to {ClickPort} on {changed} publisher(s) " +
+                  $"({seen.Count} found). Save the scene to persist.");
     }
 
     private void Run(GameObject[] roots, bool onlyRowNamed)
@@ -135,7 +174,8 @@ public class MakeGearboxClickable : EditorWindow
         SetRef(wrap, "_pointable", ray);
 
         // 5. GearboxClickPublisher — publishes this object's name to Python (required by the interactable).
-        Undo.AddComponent<GearboxClickPublisher>(go);
+        var pub = Undo.AddComponent<GearboxClickPublisher>(go);
+        SetInt(pub, "port", ClickPort);   // stamp the port explicitly (don't rely on the code default)
 
         // 6. GearboxPartInteractable — subscribes to the wrapper's WhenSelect in code.
         var interact = Undo.AddComponent<GearboxPartInteractable>(go);
@@ -156,6 +196,19 @@ public class MakeGearboxClickable : EditorWindow
             return;
         }
         p.objectReferenceValue = value;
+        so.ApplyModifiedPropertiesWithoutUndo();
+    }
+
+    private static void SetInt(Object comp, string field, int value)
+    {
+        var so = new SerializedObject(comp);
+        var p = so.FindProperty(field);
+        if (p == null)
+        {
+            Debug.LogError($"[MakeGearboxClickable] Field '{field}' not found on {comp.GetType().Name}.");
+            return;
+        }
+        p.intValue = value;
         so.ApplyModifiedPropertiesWithoutUndo();
     }
 }
