@@ -59,8 +59,9 @@ public class GearboxCommandReceiver : MonoBehaviour
     [SerializeField] private Vector3 resetOffsetFromCheckbox = new Vector3(0.08f, 0f, 0f);
 
     [Header("Assembly animation")]
-    [Tooltip("Default world-space offset a part starts at before sliding into its final place " +
-             "(drops in from above). Used for any part without an override below.")]
+    [Tooltip("Default offset a part starts at before sliding into its final place (drops in from " +
+             "above). Interpreted in the BOARD's own frame, so it rotates with the gearbox when " +
+             "grabbed. Used for any part without an override below.")]
     [SerializeField] private Vector3 assembleOffset = new Vector3(0f, 0.20f, 0f);
     [Tooltip("Start-offset overrides so components can come from different directions. Each rule " +
              "matches by any mix of Type / Row / Side (empty Type, Row 0, or Side Any = 'any'). " +
@@ -73,8 +74,9 @@ public class GearboxCommandReceiver : MonoBehaviour
     [Tooltip("Fallbacks used when the Python command omits timing.")]
     [SerializeField] private float defaultStepDelay    = 0.35f;
     [SerializeField] private float defaultSlideSeconds  = 0.50f;
-    [Tooltip("World-space offset a sub-assembly floats at (above the board) while it is being " +
-             "built, before it drops onto the board when its stage seats. Tune to your scene scale.")]
+    [Tooltip("Offset a sub-assembly floats at (above the board) while it is being built, before it " +
+             "drops onto the board when its stage seats. Interpreted in the BOARD's own frame, so it " +
+             "rotates with the gearbox when grabbed. Tune to your scene scale.")]
     [SerializeField] private Vector3 stagingOffset = new Vector3(0f, 0.15f, 0f);
 
     [Header("Stage completion colors")]
@@ -98,7 +100,8 @@ public class GearboxCommandReceiver : MonoBehaviour
         public int     row;
         [Tooltip("Side to match. Any = both sides (and side-less parts like GearRod).")]
         public Side    side;
-        [Tooltip("World-space offset matching parts start at before sliding home.")]
+        [Tooltip("Offset matching parts start at before sliding home. Interpreted in the board's " +
+                 "own frame, so it rotates with the gearbox when grabbed.")]
         public Vector3 offset;
     }
 
@@ -609,7 +612,8 @@ public class GearboxCommandReceiver : MonoBehaviour
         if (p.appearStage == n)
         {
             Transform par = p.go.transform.parent;
-            Vector3 offsetLocal = par != null ? par.InverseTransformVector(ResolveOffset(p)) : ResolveOffset(p);
+            Vector3 world = BoardOffset(ResolveOffset(p));
+            Vector3 offsetLocal = par != null ? par.InverseTransformVector(world) : world;
             return endLocal + offsetLocal;
         }
         return stagingLocal;
@@ -682,9 +686,17 @@ public class GearboxCommandReceiver : MonoBehaviour
     private Vector3 StagingLocal(PartEntry p)
     {
         Transform par = p.go.transform.parent;
-        Vector3 offLocal = par != null ? par.InverseTransformVector(stagingOffset) : stagingOffset;
+        Vector3 world = BoardOffset(stagingOffset);
+        Vector3 offLocal = par != null ? par.InverseTransformVector(world) : world;
         return p.restLocalPos + offLocal;
     }
+
+    // Interpret an authored offset in the BOARD's own frame: rotate it by the gearbox's CURRENT
+    // orientation so slide-in and staging directions follow the board when it's grabbed/rotated,
+    // instead of staying locked to world axes. At the board's default orientation this equals the
+    // previous world-space behavior.
+    private Vector3 BoardOffset(Vector3 authored) =>
+        (gearboxRoot != null ? gearboxRoot.rotation : transform.rotation) * authored;
 
     // Color a part from the row's completed stages (BaseBoard stays neutral): GREEN once its seat
     // stage is complete (fully seated), else ORANGE once its first/appear stage is complete (built

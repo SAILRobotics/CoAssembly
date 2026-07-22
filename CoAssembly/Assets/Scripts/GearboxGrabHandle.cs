@@ -8,7 +8,8 @@ using Oculus.Interaction.HandGrab;
 /// Mirrors the proven hand-delta math in ARManipulationHandle: ISDK only tells us WHEN a grab
 /// starts/ends (and snaps the hand visual); this script does the actual 6-DOF move by tracking the
 /// interactor's hand-pose delta and applying it to `target`. There is no physics — the object stays
-/// exactly where you release it. One hand at a time (the first grab wins), giving free move+rotate.
+/// exactly where you release it. One hand at a time (the first grab wins). Rotation can be
+/// constrained to the world Y axis (turntable) and/or position locked — see `yawOnly`/`lockPosition`.
 ///
 /// Setup (or use Tools > Gearbox > Make Gearbox Grabbable):
 ///   • a HandGrabInteractable + a kinematic Rigidbody on the object (the interactable grabs the
@@ -28,6 +29,14 @@ public class GearboxGrabHandle : MonoBehaviour
     [Tooltip("Transform to move + rotate while grabbed. Defaults to this object's transform " +
              "(set it to the gearbox root).")]
     [SerializeField] private Transform target;
+
+    [Tooltip("Constrain rotation to the world Y (up) axis only — grabbing spins the object like a " +
+             "turntable and never tips it over. Off = free 6-DOF rotation.")]
+    [SerializeField] private bool yawOnly = true;
+
+    [Tooltip("Keep the object's position fixed while grabbed (rotation only). Tick this together " +
+             "with Yaw Only for a pure turntable that spins in place.")]
+    [SerializeField] private bool lockPosition = false;
 
     private HandGrabInteractor _interactor;
     private bool       _grabbed;
@@ -91,7 +100,22 @@ public class GearboxGrabHandle : MonoBehaviour
         // Apply the hand's rotation + translation delta to the target (same formula as
         // ARManipulationHandle): rotate the grab-time offset by the hand's rotation delta.
         Quaternion deltaRot = hand.rotation * Quaternion.Inverse(_grabHandRot);
-        target.position = hand.position + deltaRot * (_grabTargetPos - _grabHandPos);
+        if (yawOnly) deltaRot = TwistAboutY(deltaRot);   // keep only rotation about world Y
+
         target.rotation = deltaRot * _grabTargetRot;
+        target.position = lockPosition
+            ? _grabTargetPos                                              // stay put (turntable)
+            : hand.position + deltaRot * (_grabTargetPos - _grabHandPos); // follow the hand
+    }
+
+    // The component of a rotation about the world Y axis (swing-twist decomposition). Discards any
+    // tilt/roll so a grab can only spin the object about vertical.
+    private static Quaternion TwistAboutY(Quaternion q)
+    {
+        var twist = new Quaternion(0f, q.y, 0f, q.w);
+        float mag2 = twist.x * twist.x + twist.y * twist.y + twist.z * twist.z + twist.w * twist.w;
+        if (mag2 < 1e-8f) return Quaternion.identity;    // 180° swing → no defined twist
+        float inv = 1f / Mathf.Sqrt(mag2);
+        return new Quaternion(twist.x * inv, twist.y * inv, twist.z * inv, twist.w * inv);
     }
 }
