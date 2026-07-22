@@ -1255,7 +1255,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ToolColorReceiver
   toolId: 100
-  targetRenderer: {fileID: 0}
+  targetRenderer: {fileID: 655074607}
   port: 5010
 --- !u!114 &655074605
 MonoBehaviour:
