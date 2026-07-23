@@ -155,6 +155,11 @@ public class GearboxCommandReceiver : MonoBehaviour
     private int                   checkboxColorID;
     private MaterialPropertyBlock checkboxBlock;
 
+    // Which row the checkbox/reset are anchored to, and whether they're currently shown. LateUpdate
+    // re-anchors them every frame while shown so they follow the gearbox when it's grabbed.
+    private bool uiVisible;
+    private int  uiRow;
+
     // Assembly-animation state. Bumping the generation invalidates any in-flight slide coroutines.
     private int assembleGen = 0;
 
@@ -412,6 +417,13 @@ public class GearboxCommandReceiver : MonoBehaviour
         }
     }
 
+    // Keep the checkbox / reset-X glued to the (possibly grabbed) gearbox. Runs in LateUpdate so it's
+    // AFTER GearboxGrabHandle has moved the board this frame — no one-frame lag while dragging.
+    private void LateUpdate()
+    {
+        if (uiVisible) PositionUi(uiRow);
+    }
+
     private void ShowOnlyRow(int row)
     {
         CancelAssembly();
@@ -447,12 +459,15 @@ public class GearboxCommandReceiver : MonoBehaviour
     }
 
     // Show/hide + place the checkbox and reset-X near the active row (row 0 = whole gearbox), and
-    // tint the checkbox: red if blocked, else green if checked, else grey.
+    // tint the checkbox: red if blocked, else green if checked, else grey. While shown, LateUpdate
+    // re-runs the placement every frame so the buttons follow the gearbox when it's grabbed/rotated.
     private void ShowUi(int row, bool show, bool isChecked, bool blocked)
     {
         // The "ui" message follows its "stage" message, so this is where the animation learns the
         // just-opened stage was blocked (→ its parts land red as they finish sliding).
         stageBlocked = blocked;
+        uiVisible = show;
+        uiRow     = row;
         if (!show)
         {
             if (checkboxObject) checkboxObject.gameObject.SetActive(false);
@@ -460,31 +475,32 @@ public class GearboxCommandReceiver : MonoBehaviour
             return;
         }
 
-        // Centroid of the row's parts at their REST positions (all parts when row==0) — stable
-        // even while parts are still mid-slide during an assembly animation.
+        PositionUi(row);
+        if (checkboxObject) checkboxObject.gameObject.SetActive(true);
+        if (resetObject)    resetObject.gameObject.SetActive(true);
+        ApplyCheckboxVisual(isChecked, blocked);
+    }
+
+    // Place the checkbox + reset-X at the active row's centroid (row 0 = whole gearbox). Uses the
+    // parts' CURRENT parent transform, so the anchor moves and rotates with the gearbox; the offsets
+    // are interpreted in the board's own frame (BoardOffset) so the button cluster rotates with it.
+    private void PositionUi(int row)
+    {
+        // Centroid of the row's parts at their REST positions (all parts when row==0) — stable even
+        // while parts are still mid-slide during an assembly animation.
         Vector3 sum = Vector3.zero;
         int n = 0;
         foreach (var p in parts)
         {
             if (row != 0 && p.rowNum != row) continue;
-            sum += p.go.transform.parent != null
-                ? p.go.transform.parent.TransformPoint(p.restLocalPos)
-                : p.restLocalPos;
+            Transform par = p.go.transform.parent;
+            sum += par != null ? par.TransformPoint(p.restLocalPos) : p.restLocalPos;
             n++;
         }
-        Vector3 basePos = (n > 0 ? sum / n : gearboxRoot.position) + uiOffset;
+        Vector3 basePos = (n > 0 ? sum / n : gearboxRoot.position) + BoardOffset(uiOffset);
 
-        if (checkboxObject)
-        {
-            checkboxObject.position = basePos;
-            checkboxObject.gameObject.SetActive(true);
-        }
-        if (resetObject)
-        {
-            resetObject.position = basePos + resetOffsetFromCheckbox;
-            resetObject.gameObject.SetActive(true);
-        }
-        ApplyCheckboxVisual(isChecked, blocked);
+        if (checkboxObject) checkboxObject.position = basePos;
+        if (resetObject)    resetObject.position = basePos + BoardOffset(resetOffsetFromCheckbox);
     }
 
     // ── Assembly animation ───────────────────────────────────────────────────

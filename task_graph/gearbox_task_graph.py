@@ -75,7 +75,7 @@ def build_steps() -> list[Step]:
         for side in ("Left", "Right"):
             steps.append(Step(
                 id=f"r{row}_bearing_{side.lower()}",
-                title=f"Row {row}: bearing into {side.lower()} stand",
+                title=f"Row {row}.{1 if side == 'Left' else 3}: bearing into {side.lower()} stand",
                 row=row,
                 stage=0,
                 inputs=(f"BEARING_ROW{row}_{side.upper()}", f"STAND_ROW{row}_{side.upper()}"),
@@ -86,7 +86,7 @@ def build_steps() -> list[Step]:
 
         steps.append(Step(
             id=f"r{row}_gear_rod",
-            title=f"Row {row}: assemble gear rod",
+            title=f"Row {row}.2: assemble gear rod",
             row=row,
             stage=1,
             inputs=gear_inputs[row],
@@ -97,7 +97,7 @@ def build_steps() -> list[Step]:
         first, second = "Left", "Right"
         steps.append(Step(
             id=f"r{row}_fasten_first_stand",
-            title=f"Row {row}: fasten {first.lower()} stand",
+            title=f"Row {row}.4: fasten {first.lower()} stand",
             row=row,
             stage=2,
             inputs=(f"BEARING_STAND_ROW{row}_{first.upper()}_ASSEMBLY",
@@ -109,7 +109,7 @@ def build_steps() -> list[Step]:
         ))
         steps.append(Step(
             id=f"r{row}_insert_rod_and_fit_second",
-            title=f"Row {row}: insert rod and fit {second.lower()} stand",
+            title=f"Row {row}.5: insert rod and fit {second.lower()} stand",
             row=row,
             stage=3,
             inputs=(f"FASTENED_STAND_ROW{row}_{first.upper()}_ASSEMBLY",
@@ -123,7 +123,7 @@ def build_steps() -> list[Step]:
         ))
         steps.append(Step(
             id=f"r{row}_fasten_second_stand",
-            title=f"Row {row}: fasten {second.lower()} stand",
+            title=f"Row {row}.6: fasten {second.lower()} stand",
             row=row,
             stage=4,
             inputs=(f"UNFASTENED_SECOND_STAND_ROW{row}_ASSEMBLY",
@@ -136,7 +136,7 @@ def build_steps() -> list[Step]:
 
     steps.append(Step(
         id="r1_attach_handle",
-        title="Row 1: attach crank handle",
+        title="Row 1.7: attach crank handle",
         row=1,
         stage=5,
         inputs=("MOUNTED_ROW1_ASSEMBLY", "CRANK_HANDLE_ROW1"),

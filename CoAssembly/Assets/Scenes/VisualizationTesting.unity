@@ -9749,7 +9749,7 @@ MonoBehaviour:
     row: 0
     side: 0
     offset: {x: 0, y: 0, z: -0.1}
-  - type: Handle
+  - type: GearRod
     row: 0
     side: 0
     offset: {x: 0, y: 0, z: -0.1}
