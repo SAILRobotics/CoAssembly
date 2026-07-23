@@ -605,6 +605,21 @@ def _graph_state_summary(graph: TaskGraph) -> str:
     return "\n".join(lines)
 
 
+def _recommend_next_step(graph: TaskGraph) -> "Step | None":
+    """Row-by-row recommendation policy: pick the READY step with the lowest row
+    number, then lowest stage within that row. The finish step (row=0) is treated
+    as the highest row so it is only recommended when everything else is done."""
+    ready = [s for s in graph.steps if graph.is_ready(s)]
+    if not ready:
+        return None
+
+    def _priority(s: Step) -> tuple:
+        row = s.row if s.row > 0 else 999
+        return (row, s.stage, s.id)
+
+    return min(ready, key=_priority)
+
+
 class DearPyGuiTaskGraphApp:
     """Dear PyGui task-graph view and terminal controller."""
 
@@ -639,6 +654,7 @@ class DearPyGuiTaskGraphApp:
 
         # Live-mirror state
         self.active_ids: set[str] = set()
+        self.recommended_id: str | None = None
         self._live_queue: "queue.Queue[dict]" = queue.Queue()
         self._live_running = False
         self._live_thread: threading.Thread | None = None
@@ -658,7 +674,7 @@ class DearPyGuiTaskGraphApp:
             dpg.add_text("Gearbox Assembly Dependency Graph", color=(225, 232, 240),
                          tag="main_title")
             dpg.add_text("Blue = ready     Orange = blocked     Green = complete"
-                         "     Purple = selected / active",
+                         "     Purple = selected / active     Gold = recommended",
                          color=(170, 180, 195))
             with dpg.table(header_row=False, resizable=True, policy=dpg.mvTable_SizingStretchProp):
                 dpg.add_table_column(init_width_or_weight=2.8)
@@ -851,7 +867,8 @@ class DearPyGuiTaskGraphApp:
             self.active_ids = set()
         elif event == "reset":
             self.graph.reset()
-            self.active_ids = set()
+            self.active_ids     = set()
+            self.recommended_id = None
             self.log("Live: controller reset all progress.")
             self._notify_vlm("RESET: controller reset all progress")
         elif event == "complete":
@@ -941,6 +958,33 @@ class DearPyGuiTaskGraphApp:
                                     category=dpg.mvThemeCat_Nodes)
         self.themes["active"] = "node_theme_active"
 
+        # Gold/yellow "recommended" overlay theme — shown when the system recommends
+        # a step as the next to perform.
+        rec_color  = (255, 195, 0, 255)
+        background = tuple(max(18, int(channel * 0.48)) for channel in rec_color[:3]) + (255,)
+        selected_background = tuple(max(25, int(channel * 0.68)) for channel in rec_color[:3]) + (255,)
+        with dpg.theme(tag="node_theme_recommended"):
+            with dpg.theme_component(dpg.mvNode):
+                dpg.add_theme_color(dpg.mvThemeCol_Text, (255, 255, 255, 255),
+                                    category=dpg.mvThemeCat_Core)
+                dpg.add_theme_color(dpg.mvNodeCol_NodeBackground, background,
+                                    category=dpg.mvThemeCat_Nodes)
+                dpg.add_theme_color(dpg.mvNodeCol_NodeBackgroundHovered, selected_background,
+                                    category=dpg.mvThemeCat_Nodes)
+                dpg.add_theme_color(dpg.mvNodeCol_NodeBackgroundSelected, selected_background,
+                                    category=dpg.mvThemeCat_Nodes)
+                dpg.add_theme_color(dpg.mvNodeCol_NodeOutline, rec_color,
+                                    category=dpg.mvThemeCat_Nodes)
+                dpg.add_theme_color(dpg.mvNodeCol_TitleBar, rec_color,
+                                    category=dpg.mvThemeCat_Nodes)
+                dpg.add_theme_color(dpg.mvNodeCol_TitleBarHovered, rec_color,
+                                    category=dpg.mvThemeCat_Nodes)
+                dpg.add_theme_color(dpg.mvNodeCol_TitleBarSelected, rec_color,
+                                    category=dpg.mvThemeCat_Nodes)
+                dpg.add_theme_style(dpg.mvNodeStyleVar_NodeCornerRounding, 5.0,
+                                    category=dpg.mvThemeCat_Nodes)
+        self.themes["recommended"] = "node_theme_recommended"
+
     def _create_nodes(self) -> None:
         dpg = self.dpg
         stage_x = {0: 20, 1: 500, 2: 980, 3: 1460, 4: 1940, 5: 2420, 6: 2900}
@@ -993,6 +1037,8 @@ class DearPyGuiTaskGraphApp:
         dpg.add_spacer(height=5)
         dpg.add_button(label="Mark selected step complete", tag="complete_button",
                        callback=self._complete_selected, enabled=False, width=-1)
+        dpg.add_button(label="Recommend next step", tag="recommend_button",
+                       callback=self._recommend_callback, width=-1)
         dpg.add_button(label="Reset all progress", callback=self._reset_callback, width=-1)
         dpg.add_spacer(height=8)
         dpg.add_separator()
@@ -1034,6 +1080,25 @@ class DearPyGuiTaskGraphApp:
         if self._vlm is not None:
             self._vlm.notify_graph_event(event_label, _graph_state_summary(self.graph))
 
+    def _recommend_callback(self) -> None:
+        step = _recommend_next_step(self.graph)
+        if step is None:
+            self.log("[Recommend] No READY steps — assembly may be complete or stalled.")
+            return
+        self.recommended_id = step.id
+        self.refresh()
+        self.log(f"[Recommend] Highlighted: [{step.id}]  {step.title}")
+        if self._vlm is not None:
+            q = (
+                f"The system recommends the next step as:\n"
+                f"  [{step.id}] {step.title}\n\n"
+                f"Briefly explain what this step involves and why it is the right"
+                f" choice now according to the row-by-row assembly policy."
+            )
+            sent = self._vlm.submit_question(q)
+            if not sent:
+                self.log("[Recommend] VLM busy — explanation skipped.")
+
     def _select_callback(self, _sender, _app_data, user_data) -> None:
         self.selected_id = user_data
         self.refresh()
@@ -1069,7 +1134,8 @@ class DearPyGuiTaskGraphApp:
 
     def _reset_callback(self) -> None:
         self.graph.reset()
-        self.selected_id = None
+        self.selected_id   = None
+        self.recommended_id = None
         self.log("All assembly progress was reset.")
         self.refresh()
         self._notify_vlm("RESET: all progress cleared")
@@ -1087,12 +1153,26 @@ class DearPyGuiTaskGraphApp:
 
     def refresh(self) -> None:
         dpg = self.dpg
+        # Auto-clear recommendation once the recommended step is completed.
+        if (self.recommended_id
+                and self.graph.state(self.graph.by_id[self.recommended_id]) == "complete"):
+            self.recommended_id = None
         for step in self.graph.steps:
             state  = self.graph.state(step)
             active = step.id in self.active_ids or step.id == self.selected_id
-            dpg.bind_item_theme(self.node_tags[step.id],
-                                self.themes["active"] if active else self.themes[state])
-            label = f"{step.title}  [{state.upper()}]" + ("  (open)" if active else "")
+            rec    = step.id == self.recommended_id and not active
+            if active:
+                theme = self.themes["active"]
+            elif rec:
+                theme = self.themes["recommended"]
+            else:
+                theme = self.themes[state]
+            dpg.bind_item_theme(self.node_tags[step.id], theme)
+            label = f"{step.title}  [{state.upper()}]"
+            if active:
+                label += "  (open)"
+            elif rec:
+                label += "  [RECOMMENDED]"
             dpg.configure_item(self.node_tags[step.id], label=label)
             dpg.set_value(f"node_state::{step.id}", f"State: {state.upper()}")
 
