@@ -606,18 +606,39 @@ def _graph_state_summary(graph: TaskGraph) -> str:
 
 
 def _recommend_next_step(graph: TaskGraph) -> "Step | None":
-    """Row-by-row recommendation policy: pick the READY step with the lowest row
-    number, then lowest stage within that row. The finish step (row=0) is treated
-    as the highest row so it is only recommended when everything else is done."""
-    ready = [s for s in graph.steps if graph.is_ready(s)]
-    if not ready:
-        return None
+    """Recommend the next step using a most-progress-first policy.
 
-    def _priority(s: Step) -> tuple:
-        row = s.row if s.row > 0 else 999
-        return (row, s.stage, s.id)
+    Among rows that still have at least one READY step, choose the row with
+    the most already-completed steps (deepest into that row). Ties go to the
+    lower row number. Within the winning row, pick the lowest stage. The final
+    verification step (row=0) is only considered when no regular row has a
+    ready step."""
+    rows: dict[int, list[Step]] = {}
+    for s in graph.steps:
+        if s.row > 0:
+            rows.setdefault(s.row, []).append(s)
 
-    return min(ready, key=_priority)
+    best_ready: list[Step] | None = None
+    best_completed = -1
+    best_row_num   = 999
+
+    for row_num, steps in sorted(rows.items()):
+        ready = [s for s in steps if graph.is_ready(s)]
+        if not ready:
+            continue
+        completed = sum(1 for s in steps if s.id in graph.completed)
+        if completed > best_completed or (completed == best_completed and row_num < best_row_num):
+            best_completed = completed
+            best_row_num   = row_num
+            best_ready     = ready
+
+    if best_ready is not None:
+        return min(best_ready, key=lambda s: (s.stage, s.id))
+
+    finish = graph.by_id.get("finish_gearbox")
+    if finish and graph.is_ready(finish):
+        return finish
+    return None
 
 
 class DearPyGuiTaskGraphApp:
