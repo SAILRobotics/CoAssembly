@@ -33,11 +33,6 @@ import main_setting as cfg
 
 _FILE_DIR = Path(__file__).resolve().parent
 
-# Mirrors robot_control_server._SIM_Q_DEG — only used to pose the local
-# visualization mesh before the first real state broadcast arrives.
-_SIM_Q_DEG = [-105.97, -29.43, 87.53, 33.17, 92.40, 168.95]
-
-
 def _build_local_viz_scene(simulation: bool, use_calibrated_robot_base: bool,
                             sim_q: np.ndarray) -> "PyBulletScene | None":
     """FK-only mirror of the server's pb_scene base-pose selection, so the
@@ -78,7 +73,9 @@ class RobotClient:
         if not _PYBULLET_AVAILABLE:
             raise RuntimeError("pybullet_ik not available")
         self.simulation = simulation
-        self._sim_q = np.deg2rad(_SIM_Q_DEG)
+        # Mirror the server's simulation starting point until its first joint
+        # state arrives; the server then animates toward ROBOT_DEFAULT_JOINT_DEG.
+        self._sim_q = np.deg2rad(cfg.JOINT_REST_DEG)
         self.pb_scene = _build_local_viz_scene(
             simulation, use_calibrated_robot_base, self._sim_q)
         if self.pb_scene is None:
