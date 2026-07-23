@@ -58,6 +58,13 @@ public class GearboxCommandReceiver : MonoBehaviour
     [SerializeField] private Vector3 uiOffset = new Vector3(0f, 0.15f, 0f);
     [SerializeField] private Vector3 resetOffsetFromCheckbox = new Vector3(0.08f, 0f, 0f);
 
+    [Tooltip("The revert object (a clickable 3D quad/cube named \"__revert__\"). Sits above the whole " +
+             "gearbox whenever no stage menu is open, and undoes the last completed step when clicked. " +
+             "Optional.")]
+    [SerializeField] private Transform revertObject;
+    [Tooltip("Offset of the revert button above the whole-gearbox center (board's own frame).")]
+    [SerializeField] private Vector3 revertOffset = new Vector3(0f, 0.30f, 0f);
+
     [Header("Assembly animation")]
     [Tooltip("Default offset a part starts at before sliding into its final place (drops in from " +
              "above). Interpreted in the BOARD's own frame, so it rotates with the gearbox when " +
@@ -160,6 +167,11 @@ public class GearboxCommandReceiver : MonoBehaviour
     private bool uiVisible;
     private int  uiRow;
 
+    // The revert button lives above the whole gearbox whenever NO stage menu is open (the inverse of
+    // the checkbox/reset), so it's hidden while an animation/stage is shown. LateUpdate keeps it
+    // anchored to the (possibly grabbed) gearbox too.
+    private bool revertVisible;
+
     // Assembly-animation state. Bumping the generation invalidates any in-flight slide coroutines.
     private int assembleGen = 0;
 
@@ -194,9 +206,11 @@ public class GearboxCommandReceiver : MonoBehaviour
             checkboxColorID = ResolveColorID(checkboxRenderer.sharedMaterial);
             checkboxBlock   = new MaterialPropertyBlock();
         }
-        // Start with the UI hidden.
+        // Start with the stage UI hidden, and the revert button shown above the gearbox.
         if (checkboxObject) checkboxObject.gameObject.SetActive(false);
         if (resetObject)    resetObject.gameObject.SetActive(false);
+        revertVisible = revertObject != null;
+        if (revertObject) revertObject.gameObject.SetActive(true);
 
         AsyncIO.ForceDotNet.Force();
         socket = new SubscriberSocket();
@@ -421,7 +435,8 @@ public class GearboxCommandReceiver : MonoBehaviour
     // AFTER GearboxGrabHandle has moved the board this frame — no one-frame lag while dragging.
     private void LateUpdate()
     {
-        if (uiVisible) PositionUi(uiRow);
+        if (uiVisible)     PositionUi(uiRow);
+        if (revertVisible) PositionRevert();
     }
 
     private void ShowOnlyRow(int row)
@@ -468,6 +483,11 @@ public class GearboxCommandReceiver : MonoBehaviour
         stageBlocked = blocked;
         uiVisible = show;
         uiRow     = row;
+
+        // The revert button is the inverse of the stage menu: shown only when no stage is open.
+        revertVisible = !show && revertObject != null;
+        if (revertObject) revertObject.gameObject.SetActive(revertVisible);
+
         if (!show)
         {
             if (checkboxObject) checkboxObject.gameObject.SetActive(false);
@@ -486,8 +506,22 @@ public class GearboxCommandReceiver : MonoBehaviour
     // are interpreted in the board's own frame (BoardOffset) so the button cluster rotates with it.
     private void PositionUi(int row)
     {
-        // Centroid of the row's parts at their REST positions (all parts when row==0) — stable even
-        // while parts are still mid-slide during an assembly animation.
+        Vector3 basePos = RowCentroid(row) + BoardOffset(uiOffset);
+        if (checkboxObject) checkboxObject.position = basePos;
+        if (resetObject)    resetObject.position = basePos + BoardOffset(resetOffsetFromCheckbox);
+    }
+
+    // Place the revert button above the whole gearbox (row 0 centroid), tracking it as it's grabbed.
+    private void PositionRevert()
+    {
+        if (revertObject) revertObject.position = RowCentroid(0) + BoardOffset(revertOffset);
+    }
+
+    // Centroid of a row's parts at their REST positions in world space (all parts when row==0),
+    // computed from each part's CURRENT parent transform so it moves/rotates with the gearbox. Rest
+    // positions keep it stable even while parts are still mid-slide during an assembly animation.
+    private Vector3 RowCentroid(int row)
+    {
         Vector3 sum = Vector3.zero;
         int n = 0;
         foreach (var p in parts)
@@ -497,10 +531,7 @@ public class GearboxCommandReceiver : MonoBehaviour
             sum += par != null ? par.TransformPoint(p.restLocalPos) : p.restLocalPos;
             n++;
         }
-        Vector3 basePos = (n > 0 ? sum / n : gearboxRoot.position) + BoardOffset(uiOffset);
-
-        if (checkboxObject) checkboxObject.position = basePos;
-        if (resetObject)    resetObject.position = basePos + BoardOffset(resetOffsetFromCheckbox);
+        return n > 0 ? sum / n : gearboxRoot.position;
     }
 
     // ── Assembly animation ───────────────────────────────────────────────────

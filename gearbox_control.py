@@ -63,6 +63,7 @@ SLIDE_SECONDS = 0.50   # per-part slide duration
 
 CHECKBOX_NAME = "__checkbox__"
 RESET_NAME    = "__reset__"
+REVERT_NAME   = "__revert__"
 
 # 8-stage per-row assembly dependency model (mirrors task_graph/gearbox_task_graph.py):
 #   1 left bearing->stand   2 gears->rod+pins   3 right bearing->stand
@@ -176,14 +177,27 @@ class GearboxStateMachine:
         self.done8 = False                      # global "verify" stage (stage 8)
         self.current_row = None
         self.current_stage = None
+        # Completed (row, stage) steps in the order they were checked off, so the revert button can
+        # undo the most recent one. Stays frontier-safe: completions respect dependency order, so the
+        # last-completed step can never have a completed dependent (that would be the last instead).
+        self.history: list[tuple[int, int]] = []
 
     def handle_click(self, name: str):
         if name == CHECKBOX_NAME:
             self._handle_checkbox()
         elif name == RESET_NAME:
             self.close_menu()
+        elif name == REVERT_NAME:
+            self.revert_last()
         else:
             self._handle_part(name)
+
+    def _forget_history(self, row: int, stage: int):
+        """Drop a (row, stage) from the completion history if present (on un-check / revert)."""
+        try:
+            self.history.remove((row, stage))
+        except ValueError:
+            pass
 
     # ── dependency logic ──────────────────────────────────────────────────────
     def unlocked(self, row: int, stage: int) -> bool:
@@ -259,6 +273,10 @@ class GearboxStateMachine:
     def _handle_checkbox(self):
         if self.current_stage == 8:                       # global verify
             self.done8 = not self.done8
+            if self.done8:
+                self.history.append((0, 8))
+            else:
+                self._forget_history(0, 8)
             self._send({"command": "ui", "show": True, "row": 0,
                         "checked": self.done8, "blocked": False})
             self._notify({"event": "complete" if self.done8 else "uncomplete",
@@ -274,11 +292,13 @@ class GearboxStateMachine:
             return
         if not self.done[row][stage]:
             self.done[row][stage] = True
+            self.history.append((row, stage))
         else:
             if self.dependents_done(row, stage):
                 print(f"  (can't un-check stage {stage}: a later stage depends on it)")
                 return
             self.done[row][stage] = False
+            self._forget_history(row, stage)
 
         # Recolor the whole row from its completed stages: green where seated, orange where a
         # sub-assembly's build step is done but it isn't seated yet, original otherwise.
@@ -292,6 +312,24 @@ class GearboxStateMachine:
 
         if self.done[row][stage] and self.all_rows_done():
             self._show_stage8()
+
+    def revert_last(self):
+        """The revert button: turn the most-recently completed step back to incomplete. Updates the
+        part colors (Unity) and the task-graph progression (viewer). Popping in reverse completion
+        order keeps it frontier-safe — the newest completion never has a completed dependent."""
+        if not self.history:
+            print("  (nothing to revert)")
+            return
+        row, stage = self.history.pop()
+        if stage == 8:
+            self.done8 = False
+        else:
+            self.done[row][stage] = False
+            # Whole model is on screen (no stage menu open), so just recolor the affected row.
+            self._send({"command": "recolor", "row": row,
+                        "done_stages": self._completed_stages(row)})
+        self._notify({"event": "uncomplete", "row": row, "stage": stage})
+        print(f"  reverted: row {row} stage {stage} -> incomplete")
 
     def _show_stage8(self):
         self.current_row, self.current_stage = 0, 8
@@ -324,6 +362,7 @@ class GearboxStateMachine:
             for s in self.done[r]:
                 self.done[r][s] = False
         self.done8 = False
+        self.history.clear()
         self.close_menu()
         self._notify({"event": "reset"})
 
