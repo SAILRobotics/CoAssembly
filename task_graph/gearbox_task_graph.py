@@ -312,19 +312,20 @@ def validate_model() -> list[str]:
 def taskgraph_steps(row: int, stage: int) -> list[str]:
     """Bridge a gearbox_control.py (row, control-stage) to this graph's step id(s).
 
-    The two files number "stage" differently: gearbox_control uses per-row control-stages 1-7,
-    while this graph uses named steps. Control stage 5 ("insert rod + fit right stand + screw it")
-    spans TWO task steps, so it maps to both — completing it marks both, in dependency order."""
-    if stage == 7 or row == 0:
+    The two files number "stage" differently: gearbox_control uses per-row control-stages 1-8,
+    while this graph uses named steps. The control stages now map one-to-one onto task steps:
+    stage 5 is the rod-insert + right-stand fit, stage 6 the right-stand fastening."""
+    if stage == 8 or row == 0:
         return ["finish_gearbox"]
-    if stage == 6:
+    if stage == 7:
         return ["r1_attach_handle"] if row == 1 else []
     return {
         1: [f"r{row}_bearing_left"],
         2: [f"r{row}_gear_rod"],
         3: [f"r{row}_bearing_right"],
         4: [f"r{row}_fasten_first_stand"],
-        5: [f"r{row}_insert_rod_and_fit_second", f"r{row}_fasten_second_stand"],
+        5: [f"r{row}_insert_rod_and_fit_second"],
+        6: [f"r{row}_fasten_second_stand"],
     }.get(stage, [])
 
 

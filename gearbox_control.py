@@ -64,12 +64,13 @@ SLIDE_SECONDS = 0.50   # per-part slide duration
 CHECKBOX_NAME = "__checkbox__"
 RESET_NAME    = "__reset__"
 
-# 7-stage per-row assembly dependency model (mirrors task_graph/gearbox_task_graph.py, not linked):
+# 8-stage per-row assembly dependency model (mirrors task_graph/gearbox_task_graph.py):
 #   1 left bearing->stand   2 gears->rod+pins   3 right bearing->stand
 #   4 fasten left stand to board (needs 1)
-#   5 insert rod + fit right stand + screw right (needs 2, 3 & 4)
-#   6 crank handle (row 1 only, needs 5)        7 verify (global, all rows done)
-FINAL_STAGE = {1: 6, 2: 5, 3: 5, 4: 5}   # last per-row stage that must be complete
+#   5 insert rod + fit right bearing/stand together (needs 2, 3 & 4)
+#   6 drive right screw (needs 5)
+#   7 crank handle (row 1 only, needs 6)        8 verify (global, all rows done)
+FINAL_STAGE = {1: 7, 2: 6, 3: 6, 4: 6}   # last per-row stage that must be complete
 
 
 def parse_part(name: str):
@@ -92,23 +93,26 @@ def parse_part(name: str):
 
 
 def part_stages(ptype: str, side: str, row: int):
-    """Map a clicked part to its (appear_stage, seat_stage) — mirrors Unity's StagesOf.
-    A part is interacted with at TWO stages: when it first appears, and (later) when it seats
-    onto the board. Returns (None, None) if the type isn't stage-mapped.
+    """Map a clicked part to its (appear, place, seat) stages — mirrors Unity's StagesOf.
+    A part is interacted with at up to three stages. Returns (None, None, None) if unmapped.
         appear = the stage that first reveals the part
-        seat   = the stage the part is fastened down (>= appear)"""
+        place  = the stage it drops into its final position (>= appear)
+        seat   = the stage it is fastened down / turns green (>= place)
+    These coincide for every part EXCEPT the right bearing-stand, which drops into place with the
+    rod at stage 5 (place=5) but isn't fastened until the right screw drives at stage 6 (seat=6).
+    Clicking a placed-but-unfastened part advances to its seat stage (see _handle_part)."""
     left = side == "Left"
     if ptype in ("Bearing", "Stand"):
-        return (1, 4) if left else (3, 5)
+        return (1, 4, 4) if left else (3, 5, 6)
     if ptype == "Pin" and row == 1 and side == "Right":
-        return 6, 6                     # Row-1 right pin secures the crank handle at stage 6
+        return 7, 7, 7                  # Row-1 right pin secures the crank handle at stage 7
     if ptype in ("GearRod", "Gear", "Pin"):
-        return 2, 5
+        return 2, 5, 5
     if ptype == "Screw":
-        return (4, 4) if left else (5, 5)
+        return (4, 4, 4) if left else (6, 6, 6)
     if ptype == "CrankHandle":
-        return 6, 6
-    return None, None
+        return 7, 7, 7
+    return None, None, None
 
 
 # ── typed-command parsing ─────────────────────────────────────────────────────
@@ -168,8 +172,8 @@ class GearboxStateMachine:
         # notify(dict) -> publishes a semantic (row, stage) event to the task-graph viewer.
         # Optional: defaults to a no-op so headless tests can construct GearboxStateMachine(send).
         self._notify = notify or (lambda _msg: None)
-        self.done = {r: {s: False for s in range(1, 7)} for r in range(1, 5)}
-        self.done7 = False                      # global "verify" stage
+        self.done = {r: {s: False for s in range(1, 8)} for r in range(1, 5)}
+        self.done8 = False                      # global "verify" stage (stage 8)
         self.current_row = None
         self.current_stage = None
 
@@ -191,7 +195,9 @@ class GearboxStateMachine:
         if stage == 5:
             return d[2] and d[3] and d[4]
         if stage == 6:
-            return row == 1 and d[5]
+            return d[5]
+        if stage == 7:
+            return row == 1 and d[6]
         return False
 
     def dependents_done(self, row: int, stage: int) -> bool:
@@ -202,16 +208,18 @@ class GearboxStateMachine:
         if stage in (2, 3, 4):
             return d[5]
         if stage == 5:
-            return d[6] if row == 1 else self.done7
+            return d[6]
         if stage == 6:
-            return self.done7
+            return d[7] if row == 1 else self.done8
+        if stage == 7:
+            return self.done8
         return False
 
     def all_rows_done(self) -> bool:
         return all(self.done[r][FINAL_STAGE[r]] for r in range(1, 5))
 
     def _completed_stages(self, row: int):
-        return [s for s in range(1, 7) if self.done[row][s]]
+        return [s for s in range(1, 8) if self.done[row][s]]
 
     # ── click handlers ────────────────────────────────────────────────────────
     def _handle_part(self, name: str):
@@ -219,17 +227,22 @@ class GearboxStateMachine:
         if row is None:
             print(f"  (ignored '{name}': not a Row part)")
             return
-        appear, seat = part_stages(ptype, side, row)
+        appear, place, seat = part_stages(ptype, side, row)
         if appear is None:
             print(f"  (ignored '{name}': type '{ptype}' not stage-mapped)")
             return
-        # A part participates in its appear stage and (later) its seat stage. Once the seat
-        # stage's prerequisites are met, clicking the part jumps FORWARD to that stage — e.g.
-        # after stages 1 & 2 are done, clicking a stage-1/2 part triggers the stage-4
-        # (drop-onto-board) animation instead of re-showing the earlier stage.
-        stage = seat if (seat != appear and self.unlocked(row, seat)) else appear
-        if stage == 6 and row != 1:
-            print(f"  (ignored '{name}': stage 6 is row 1 only)")
+        # A part participates in its appear, place, and seat stages. Clicking it jumps FORWARD to
+        # the furthest of those whose prerequisites are met — so once stages 1 & 2 are done a
+        # stage-1/2 part triggers the stage-4 drop, and a part that's already dropped into place but
+        # not yet fastened (the right bearing-stand: place 5, seat 6) advances to its fasten stage
+        # so it can be completed. Falls back to `appear` (possibly blocked) when nothing is unlocked.
+        stage = appear
+        for cand in (seat, place):
+            if cand > appear and self.unlocked(row, cand):
+                stage = cand
+                break
+        if stage == 7 and row != 1:
+            print(f"  (ignored '{name}': stage 7 is row 1 only)")
             return
 
         self.current_row, self.current_stage = row, stage
@@ -244,13 +257,13 @@ class GearboxStateMachine:
               f"({'LOCKED' if blocked else 'ready'}, done={self.done[row][stage]})")
 
     def _handle_checkbox(self):
-        if self.current_stage == 7:                       # global verify
-            self.done7 = not self.done7
+        if self.current_stage == 8:                       # global verify
+            self.done8 = not self.done8
             self._send({"command": "ui", "show": True, "row": 0,
-                        "checked": self.done7, "blocked": False})
-            self._notify({"event": "complete" if self.done7 else "uncomplete",
-                          "row": 0, "stage": 7})
-            print(f"  verify done={self.done7}")
+                        "checked": self.done8, "blocked": False})
+            self._notify({"event": "complete" if self.done8 else "uncomplete",
+                          "row": 0, "stage": 8})
+            print(f"  verify done={self.done8}")
             return
         if self.current_row is None or self.current_stage is None:
             print("  (checkbox ignored: no active stage)")
@@ -278,21 +291,21 @@ class GearboxStateMachine:
         print(f"  row {row}: stage {stage} done={self.done[row][stage]}")
 
         if self.done[row][stage] and self.all_rows_done():
-            self._show_stage7()
+            self._show_stage8()
 
-    def _show_stage7(self):
-        self.current_row, self.current_stage = 0, 7
-        self._send({"command": "stage", "row": 0, "stage": 7,
-                    "done_stages": [1, 2, 3, 4, 5, 6]})   # everything is done -> all green
+    def _show_stage8(self):
+        self.current_row, self.current_stage = 0, 8
+        self._send({"command": "stage", "row": 0, "stage": 8,
+                    "done_stages": [1, 2, 3, 4, 5, 6, 7]})   # everything is done -> all green
         self._send({"command": "ui", "show": True, "row": 0,
-                    "checked": self.done7, "blocked": False})
-        self._notify({"event": "show", "row": 0, "stage": 7})
-        print("  all rows complete -> stage 7 (verify)")
+                    "checked": self.done8, "blocked": False})
+        self._notify({"event": "show", "row": 0, "stage": 8})
+        print("  all rows complete -> stage 8 (verify)")
 
     def show_verify(self):
-        """Typed 'verify': re-open the stage-7 view if the whole gearbox is done."""
+        """Typed 'verify': re-open the stage-8 view if the whole gearbox is done."""
         if self.all_rows_done():
-            self._show_stage7()
+            self._show_stage8()
         else:
             print("  (verify unavailable: not all rows are complete)")
 
@@ -310,7 +323,7 @@ class GearboxStateMachine:
         for r in self.done:
             for s in self.done[r]:
                 self.done[r][s] = False
-        self.done7 = False
+        self.done8 = False
         self.close_menu()
         self._notify({"event": "reset"})
 
