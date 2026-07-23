@@ -155,6 +155,19 @@ public class GearboxCommandReceiver : MonoBehaviour
     // Assembly-animation state. Bumping the generation invalidates any in-flight slide coroutines.
     private int assembleGen = 0;
 
+    // Blocked-stage red highlight. When a LOCKED stage is clicked its parts turn red (not just the
+    // checkbox). `stageBlocked` is read from the "ui" message's `blocked` flag, which always follows
+    // the "stage" message — so the animation, which colors each part when its slide ends, learns the
+    // stage was blocked without a second Python field. Each red we apply is remembered with the color
+    // it replaced, so closing the menu / opening another stage restores exactly the prior color.
+    private bool stageBlocked;
+    private readonly List<(PartEntry part, Color prev)> blockedReds = new();
+
+    // The board's orientation at load. Animation offsets are authored for this rest pose, so they
+    // rotate only by the board's CHANGE from it (i.e. as it's grabbed/rotated) — at rest they equal
+    // the original world-authored directions regardless of any baked-in root rotation.
+    private Quaternion restRotation = Quaternion.identity;
+
     // ── Socket + dispatcher ──────────────────────────────────────────────────
     private SubscriberSocket socket;
     private Thread receiveThread;
@@ -164,6 +177,7 @@ public class GearboxCommandReceiver : MonoBehaviour
     private void Start()
     {
         if (gearboxRoot == null) gearboxRoot = transform;
+        restRotation = gearboxRoot.rotation;   // baseline the animation offsets against the load pose
 
         BuildPartIndex();
 
@@ -362,6 +376,7 @@ public class GearboxCommandReceiver : MonoBehaviour
     private void ShowOnlyRow(int row)
     {
         CancelAssembly();
+        ClearBlockedReds();
         foreach (var p in parts)
             p.go.SetActive(p.rowNum == row);
         Debug.Log($"[GearboxCommandReceiver] 👁 Showing only Row{row}");
@@ -370,6 +385,7 @@ public class GearboxCommandReceiver : MonoBehaviour
     private void ShowAll()
     {
         CancelAssembly();
+        ClearBlockedReds();          // a blocked stage's red reverts to its prior color on close
         foreach (var p in parts)
             p.go.SetActive(true);
         Debug.Log("[GearboxCommandReceiver] 👁 Showing all rows");
@@ -379,6 +395,7 @@ public class GearboxCommandReceiver : MonoBehaviour
     private void ShowSubset(int row, string[] types)
     {
         CancelAssembly();
+        ClearBlockedReds();
         var set = new HashSet<string>(types ?? Array.Empty<string>());
         int shown = 0;
         foreach (var p in parts)
@@ -394,6 +411,9 @@ public class GearboxCommandReceiver : MonoBehaviour
     // tint the checkbox: red if blocked, else green if checked, else grey.
     private void ShowUi(int row, bool show, bool isChecked, bool blocked)
     {
+        // The "ui" message follows its "stage" message, so this is where the animation learns the
+        // just-opened stage was blocked (→ its parts land red as they finish sliding).
+        stageBlocked = blocked;
         if (!show)
         {
             if (checkboxObject) checkboxObject.gameObject.SetActive(false);
@@ -543,6 +563,7 @@ public class GearboxCommandReceiver : MonoBehaviour
     private void PlayStage(int row, int n, int[] doneStages, float stepDelay, float slideSeconds)
     {
         int gen = ++assembleGen;   // supersede any running animation (positions set explicitly below)
+        ClearBlockedReds();        // restore any parts reddened by a previous blocked stage
         float step  = stepDelay    > 0f ? stepDelay    : defaultStepDelay;
         float slide = slideSeconds > 0f ? slideSeconds : defaultSlideSeconds;
         var done    = new HashSet<int>(doneStages ?? Array.Empty<int>());
@@ -641,7 +662,15 @@ public class GearboxCommandReceiver : MonoBehaviour
             yield return null;
         }
         tr.localPosition = endLocal;
-        ApplyPartColor(p, done);          // green if this part's stage is already complete
+        // A blocked stage's newly-introduced parts (appear==n — the ones you clicked to add) land
+        // red to signal "locked"; remember the color they'd otherwise have so closing restores it.
+        if (stageBlocked && p.appearStage == n && p.type != "BaseBoard" && p.colorID != 0)
+        {
+            blockedReds.Add((p, PartColorFor(p, done)));
+            ApplyColor(p, blockedColor);
+        }
+        else
+            ApplyPartColor(p, done);      // green if this part's stage is already complete
     }
 
     // Per-stage ordered animation groups (each inner array is a group of "Type:Side" selectors;
@@ -691,12 +720,16 @@ public class GearboxCommandReceiver : MonoBehaviour
         return p.restLocalPos + offLocal;
     }
 
-    // Interpret an authored offset in the BOARD's own frame: rotate it by the gearbox's CURRENT
-    // orientation so slide-in and staging directions follow the board when it's grabbed/rotated,
-    // instead of staying locked to world axes. At the board's default orientation this equals the
-    // previous world-space behavior.
-    private Vector3 BoardOffset(Vector3 authored) =>
-        (gearboxRoot != null ? gearboxRoot.rotation : transform.rotation) * authored;
+    // Interpret an authored offset in the BOARD's own frame: rotate it by how far the gearbox has
+    // turned SINCE LOAD (current rotation relative to restRotation), so slide-in and staging
+    // directions follow the board when it's grabbed/rotated. At the rest pose the delta is identity,
+    // so this exactly reproduces the original world-authored directions — regardless of any
+    // non-identity rotation baked into the root.
+    private Vector3 BoardOffset(Vector3 authored)
+    {
+        if (gearboxRoot == null) return authored;
+        return (gearboxRoot.rotation * Quaternion.Inverse(restRotation)) * authored;
+    }
 
     // Color a part from the row's completed stages (BaseBoard stays neutral): GREEN once its seat
     // stage is complete (fully seated), else ORANGE once its first/appear stage is complete (built
@@ -705,10 +738,28 @@ public class GearboxCommandReceiver : MonoBehaviour
     private void ApplyPartColor(PartEntry p, HashSet<int> doneStages)
     {
         if (p.colorID == 0 || p.type == "BaseBoard") return;
-        Color c = doneStages.Contains(p.seatStage)   ? seatedColor
-                : doneStages.Contains(p.appearStage) ? builtColor
-                : p.originalColor;
-        ApplyColor(p, c);
+        ApplyColor(p, PartColorFor(p, doneStages));
+    }
+
+    // The color a part should have from its row's completed stages, WITHOUT applying it: GREEN once
+    // seated, ORANGE once its build step is done but not seated, else its original color. Used both
+    // by ApplyPartColor and to remember the pre-red color of a blocked stage's parts.
+    private Color PartColorFor(PartEntry p, HashSet<int> doneStages)
+    {
+        if (p.type == "BaseBoard") return p.originalColor;
+        return doneStages.Contains(p.seatStage)   ? seatedColor
+             : doneStages.Contains(p.appearStage) ? builtColor
+             : p.originalColor;
+    }
+
+    // Restore every part reddened by a blocked stage to the color it had before, and forget them.
+    // Called whenever the view changes (new stage, show-all/close, row/subset, recolor, reset) so a
+    // blocked stage's red never lingers once its menu is left.
+    private void ClearBlockedReds()
+    {
+        foreach (var (part, prev) in blockedReds)
+            if (part.colorID != 0) ApplyColor(part, prev);
+        blockedReds.Clear();
     }
 
     // Re-color a whole row from its completed-stage set (green/orange/original), no motion. Fired
@@ -716,6 +767,7 @@ public class GearboxCommandReceiver : MonoBehaviour
     // un-checked seat correctly falls back to orange if its build step is still complete.
     private void Recolor(int row, int[] doneStages)
     {
+        ClearBlockedReds();
         var done = new HashSet<int>(doneStages ?? Array.Empty<int>());
         foreach (var p in parts)
         {
@@ -764,6 +816,7 @@ public class GearboxCommandReceiver : MonoBehaviour
     // highlights and the green "done" seating colors).
     private void ResetHighlights()
     {
+        blockedReds.Clear();          // originals are about to be re-applied to everything anyway
         foreach (var p in parts)
         {
             p.highlighted = false;
