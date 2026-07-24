@@ -17,6 +17,11 @@ directly in the pegboard frame instead.
 The script republishes every --interval seconds (until Ctrl-C) so you can enter Play at any time and
 still receive the layout; pass --once to send a single batch and exit.
 
+It also plays the CONSUMER half of the pegboard-highlight loop (a dummy stand-in for
+main_with_robot.py): it BINDs a SUB on GEARBOX_HIGHLIGHT_PORT (5024) for gearbox_control.py's
+tool-id messages and colours the matching spawned tools via ToolColorReceiver (5010), owning the
+HIGHLIGHT_COLOR itself. Disable with --no-highlight; it is skipped in --once mode.
+
 Usage
 -----
     python test_tool_layout.py                     # 127.0.0.1:5011, tool_layout1.json + scan pose
@@ -28,6 +33,7 @@ Usage
 import argparse
 import json
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -42,11 +48,19 @@ if str(_HERE) not in sys.path:
 # ── Config: reuse the canonical port / IP / paths, with standalone fallbacks ───────────────────
 try:
     import main_setting as cfg
-    DEFAULT_IP   = getattr(cfg, "UNITY_IP", "127.0.0.1")
-    DEFAULT_PORT = getattr(cfg, "TOOL_LAYOUT_PORT", 5011)
-    SCENE_DIR    = getattr(cfg, "SCENE_LAYOUT_DIR", _HERE / "scene_layout")
+    DEFAULT_IP        = getattr(cfg, "UNITY_IP", "127.0.0.1")
+    DEFAULT_PORT      = getattr(cfg, "TOOL_LAYOUT_PORT", 5011)
+    DEFAULT_COLOR_PORT     = getattr(cfg, "TOOL_COLOR_PORT", 5010)
+    DEFAULT_HIGHLIGHT_PORT = getattr(cfg, "GEARBOX_HIGHLIGHT_PORT", 5024)
+    SCENE_DIR         = getattr(cfg, "SCENE_LAYOUT_DIR", _HERE / "scene_layout")
 except Exception:
     DEFAULT_IP, DEFAULT_PORT, SCENE_DIR = "127.0.0.1", 5011, _HERE / "scene_layout"
+    DEFAULT_COLOR_PORT, DEFAULT_HIGHLIGHT_PORT = 5010, 5024
+
+# Colour the pegboard tools flash when their gearbox part is the next thing to fetch. The CONSUMER
+# owns this — gearbox_control.py sends only ids. Eventually main_with_robot.py picks it the same way
+# it already owns SELECTED_COLOR / HOVER_COLOR in _ToolSelectionManager. RGBA, 0-1.
+HIGHLIGHT_COLOR = [0.0, 1.0, 1.0, 1.0]   # cyan
 
 # ── Open3D → Unity conversion: reuse the repo's helpers, with inline fallbacks ─────────────────
 try:
@@ -121,6 +135,91 @@ def build_payload(tools: list, T: np.ndarray) -> dict:
     return {"tools": out}
 
 
+class ToolHighlightBridge:
+    """Consumer half of the pegboard-highlight loop (dummy stand-in for main_with_robot.py).
+
+    BINDs a SUB on GEARBOX_HIGHLIGHT_PORT (5024) — receiver binds, per the Python<->Python
+    convention — and drains gearbox_control.py's `{"event":"highlight","ids":[...]}` /
+    `{"event":"clear"}` messages on a background thread. It owns the colour (HIGHLIGHT_COLOR) and
+    drives Unity's ToolColorReceiver over TOOL_COLOR_PORT (5010), reusing that schema exactly
+    ({"tool_id":N,"color":[r,g,b,a]}, with color[0] < 0 as the restore-original sentinel).
+
+    Replace semantics: each highlight message carries the full id set, so ids that dropped out of
+    the set are restored and newly-appearing ids are coloured; a clear restores every tracked id."""
+
+    _RESTORE = [-1.0, 0.0, 0.0, 0.0]   # ToolColorReceiver sentinel: color[0] < 0 -> original colour
+
+    def __init__(self, ip: str, listen_port: int, color_port: int):
+        self.ip, self.listen_port, self.color_port = ip, listen_port, color_port
+        self._ctx = zmq.Context.instance()
+
+        self._sub = self._ctx.socket(zmq.SUB)
+        self._sub.setsockopt_string(zmq.SUBSCRIBE, "")
+        self._sub.bind(f"tcp://0.0.0.0:{listen_port}")   # receiver binds
+
+        self._color_pub = self._ctx.socket(zmq.PUB)
+        self._color_pub.connect(f"tcp://{ip}:{color_port}")   # Unity ToolColorReceiver binds 5010
+        time.sleep(0.2)   # slow-joiner guard so the first colour message isn't dropped
+
+        self._highlighted: set[int] = set()
+        self._running = True
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+
+    def start(self):
+        self._thread.start()
+        print(f"[ToolHighlight] SUB  bound tcp://0.0.0.0:{self.listen_port}  "
+              f"(colours -> tcp://{self.ip}:{self.color_port})")
+
+    def _send_color(self, tool_id: int, color):
+        self._color_pub.send_string(json.dumps({"tool_id": int(tool_id), "color": color}))
+
+    def _apply_highlight(self, ids):
+        new = set(int(i) for i in ids)
+        for tid in self._highlighted - new:      # dropped out of the set -> restore
+            self._send_color(tid, self._RESTORE)
+        for tid in new - self._highlighted:      # newly appearing -> highlight colour
+            self._send_color(tid, HIGHLIGHT_COLOR)
+        self._highlighted = new
+        print(f"[ToolHighlight] highlight ids={sorted(new)}")
+
+    def _apply_clear(self):
+        for tid in self._highlighted:
+            self._send_color(tid, self._RESTORE)
+        if self._highlighted:
+            print(f"[ToolHighlight] clear (restored {sorted(self._highlighted)})")
+        self._highlighted = set()
+
+    def _loop(self):
+        poller = zmq.Poller()
+        poller.register(self._sub, zmq.POLLIN)
+        while self._running:
+            if not dict(poller.poll(timeout=100)):
+                continue
+            while True:
+                try:
+                    raw = self._sub.recv_string(flags=zmq.NOBLOCK)
+                except zmq.Again:
+                    break
+                try:
+                    msg = json.loads(raw)
+                except json.JSONDecodeError as e:
+                    print(f"[ToolHighlight] bad message: {e}")
+                    continue
+                if msg.get("event") == "clear":
+                    self._apply_clear()
+                elif msg.get("event") == "highlight":
+                    self._apply_highlight(msg.get("ids", []))
+
+    def stop(self):
+        self._running = False
+        self._thread.join(timeout=1.0)
+        self._apply_clear()   # leave the pegboard clean
+        try: self._sub.close()
+        except Exception: pass
+        try: self._color_pub.close()
+        except Exception: pass
+
+
 def main():
     ap = argparse.ArgumentParser(description="Publish a tool_layout JSON into a Unity test scene.")
     ap.add_argument("--ip",       default=DEFAULT_IP,   help=f"Unity host (default {DEFAULT_IP})")
@@ -134,6 +233,12 @@ def main():
                     help="seconds between republishes (default 1.0)")
     ap.add_argument("--once",     action="store_true",
                     help="send a single batch and exit instead of republishing")
+    ap.add_argument("--color-port", type=int, default=DEFAULT_COLOR_PORT,
+                    help=f"TOOL_COLOR_PORT that ToolColorReceiver binds (default {DEFAULT_COLOR_PORT})")
+    ap.add_argument("--highlight-port", type=int, default=DEFAULT_HIGHLIGHT_PORT,
+                    help=f"port gearbox_control.py sends highlight ids on (default {DEFAULT_HIGHLIGHT_PORT})")
+    ap.add_argument("--no-highlight", action="store_true",
+                    help="skip the pegboard tool-highlight listener (layout publishing only)")
     args = ap.parse_args()
 
     tools = load_tools(args.json)
@@ -146,6 +251,12 @@ def main():
     time.sleep(0.2)   # slow-joiner guard so the first message isn't dropped
     print(f"[TestToolLayout] PUB → tcp://{args.ip}:{args.port}  "
           f"({len(payload['tools'])} tool(s): ids {[t['id'] for t in payload['tools']]})")
+
+    # The highlight listener is a live loop, so it only runs in republish mode (not --once).
+    bridge = None
+    if not args.no_highlight and not args.once:
+        bridge = ToolHighlightBridge(args.ip, args.highlight_port, args.color_port)
+        bridge.start()
 
     msg = json.dumps(payload)
     try:
@@ -161,6 +272,8 @@ def main():
     except KeyboardInterrupt:
         print("\n[TestToolLayout] Stopped.")
     finally:
+        if bridge is not None:
+            bridge.stop()
         pub.close()
         ctx.term()
 

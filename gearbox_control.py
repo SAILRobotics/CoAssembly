@@ -24,8 +24,10 @@ per-row state machine:
 
 Networking mirrors the repo's convention: Unity BINDS sockets, this script CONNECTS. Commands
 go out on 5019 (GearboxCommandReceiver); clicks come in on 5023 (GearboxClickPublisher). A third
-channel PUBs stage events to the task-graph viewer (gearbox_task_graph.py) on 5022 — that mirror
-follows the Python<->Python convention (the viewer BINDS a SUB, this script CONNECTS a PUB).
+channel PUBs stage events to the task-graph viewer (gearbox_task_graph.py) on 5022, and a fourth
+PUBs the pegboard tool ids to fetch for the current stage on 5024 (consumed by test_tool_layout.py
+/ eventually main_with_robot.py, which picks the highlight colour itself) — both mirrors follow the
+Python<->Python convention (the consumer BINDS a SUB, this script CONNECTS a PUB).
 ZeroMQ sockets are not thread-safe, so every outbound send is serialized through one lock.
 """
 
@@ -34,6 +36,7 @@ import json
 import sys
 import threading
 import time
+from pathlib import Path
 
 import zmq
 
@@ -52,10 +55,16 @@ try:
     DEFAULT_CMD_PORT       = main_setting.GEARBOX_CMD_PORT
     DEFAULT_CLICK_PORT     = main_setting.GEARBOX_CLICK_PORT
     DEFAULT_TASKGRAPH_PORT = main_setting.GEARBOX_TASKGRAPH_PORT
+    DEFAULT_HIGHLIGHT_PORT = main_setting.GEARBOX_HIGHLIGHT_PORT
+    _SCENE_DIR             = main_setting.SCENE_LAYOUT_DIR
 except Exception:
     DEFAULT_CMD_PORT       = 5019   # Python -> Unity (commands), GearboxCommandReceiver.
     DEFAULT_CLICK_PORT     = 5023   # Unity -> Python (clicks), GearboxClickPublisher.
     DEFAULT_TASKGRAPH_PORT = 5022   # Python -> task-graph viewer (live mirror).
+    DEFAULT_HIGHLIGHT_PORT = 5024   # Python -> pegboard tool-highlight consumer (ids only).
+    _SCENE_DIR             = Path(__file__).resolve().parent / "scene_layout"
+
+_DEFAULT_TOOL_JSON = _SCENE_DIR / "tool_layout1.json"
 
 # Timing for the assembly animation (Unity owns the actual motion/choreography).
 STEP_DELAY    = 0.35   # seconds between one animation group finishing and the next starting
@@ -116,6 +125,79 @@ def part_stages(ptype: str, side: str, row: int):
     return None, None, None
 
 
+# ── pegboard tool highlighting: appearing parts -> tool ids ───────────────────
+# Fixed (type, side) set to consider when deciding which pegboard tools to fetch for a stage.
+# For each, part_stages(...).appear picks out the ones entering the assembly at the clicked stage.
+_HIGHLIGHT_PARTS = [
+    ("Bearing", "Left"), ("Bearing", "Right"),
+    ("Stand",   "Left"), ("Stand",   "Right"),
+    ("Screw",   "Left"), ("Screw",   "Right"),
+    ("GearRod", ""),
+    ("Gear",    "Left"), ("Gear",    "Right"),
+    ("Pin",     "Left"), ("Pin",     "Right"),
+    ("CrankHandle", ""),
+]
+
+
+def load_tool_index(json_path) -> dict:
+    """Build {TYPE_UPPER: id} from a tool_layout JSON. Returns {} (feature disables silently) if
+    the file can't be read — the same soft-fail style as the optional ip_setting/main_setting imports."""
+    try:
+        data = json.loads(Path(json_path).read_text())
+    except Exception as e:
+        print(f"  (tool highlight disabled: can't read {json_path}: {e})")
+        return {}
+    index = {}
+    for t in data.get("tools", []):
+        try:
+            index[str(t["type"]).upper()] = int(t["id"])
+        except (KeyError, ValueError, TypeError):
+            continue
+    return index
+
+
+def _candidate_tool_names(ptype: str, side: str, row: int):
+    """Ordered pegboard-name candidates for a part; the first present in the index wins.
+    Tiers: exact per-part name, then the GEAR_STAND alias, then the shared bin by type."""
+    s = side.upper()
+    if ptype == "Bearing":
+        return [f"BEARING_ROW{row}_{s}", "BEARINGS"]
+    if ptype == "Stand":
+        return [f"STAND_ROW{row}_{s}", f"GEAR_STAND_ROW{row}_{s}"]
+    if ptype == "GearRod":
+        return [f"GEAR_ROD_ROW{row}"]
+    if ptype == "Gear":
+        return [f"GEAR_ROW{row}_{s}"]
+    if ptype == "Pin":
+        return [f"PIN_ROW{row}_{s}", "PINS"]
+    if ptype == "Screw":
+        return [f"SCREW_ROW{row}_{s}", "SCREWS"]
+    if ptype == "CrankHandle":
+        # The crank is a row-1-only part; other rows have no crank step (and no MISC fetch).
+        return [f"CRANK_HANDLE_ROW{row}", "MISC"] if row == 1 else []
+    return []
+
+
+def appearing_ids(index: dict, row: int, stage: int) -> list:
+    """Pegboard tool ids for the parts ENTERING the assembly at (row, stage) — those whose
+    part_stages(...).appear == stage. A part already built into a sub-assembly has appear < stage
+    (it's orange, off the pegboard) so it's excluded for free — that IS the 'appear state only'
+    rule. Each part resolves to a tool id via _candidate_tool_names; a (type, side) that doesn't
+    exist for the row simply fails to resolve and is skipped. Ids are de-duplicated in order."""
+    ids: list = []
+    for ptype, side in _HIGHLIGHT_PARTS:
+        appear, _place, _seat = part_stages(ptype, side, row)
+        if appear != stage:
+            continue
+        for name in _candidate_tool_names(ptype, side, row):
+            tid = index.get(name.upper())
+            if tid is not None:
+                if tid not in ids:
+                    ids.append(tid)
+                break
+    return ids
+
+
 # ── typed-command parsing ─────────────────────────────────────────────────────
 def build_command(raw: str):
     """Parse a line of REPL input into a command dict, or None to ignore."""
@@ -168,11 +250,15 @@ class GearboxStateMachine:
     dependency/lock/completion logic; Unity choreographs the motion. State lives as attributes,
     matching the house style of _ToolSelectionManager (main_with_robot.py)."""
 
-    def __init__(self, send, notify=None):
+    def __init__(self, send, notify=None, highlight=None):
         self._send = send                       # send(dict) -> publishes a command to Unity
         # notify(dict) -> publishes a semantic (row, stage) event to the task-graph viewer.
         # Optional: defaults to a no-op so headless tests can construct GearboxStateMachine(send).
         self._notify = notify or (lambda _msg: None)
+        # highlight(dict) -> forwards a pegboard tool-highlight event (the controller resolves the
+        # appearing parts to tool ids). Same optional add-on pattern as notify, so the older
+        # GearboxStateMachine(send) / (send, notify) constructions keep working unchanged.
+        self._highlight = highlight or (lambda _msg: None)
         self.done = {r: {s: False for s in range(1, 8)} for r in range(1, 5)}
         self.done8 = False                      # global "verify" stage (stage 8)
         self.current_row = None
@@ -267,6 +353,11 @@ class GearboxStateMachine:
         self._send({"command": "ui", "show": True, "row": row,
                     "checked": self.done[row][stage], "blocked": blocked})
         self._notify({"event": "show", "row": row, "stage": stage})
+        # Light up the pegboard tools for the parts appearing at this stage. A stage that's already
+        # complete has no appearing parts (they're orange, off the pegboard), so pass complete=True
+        # to request an empty set. Locked/blocked stages still highlight (informational).
+        self._highlight({"event": "highlight", "row": row, "stage": stage,
+                         "complete": self.done[row][stage]})
         print(f"  row {row}: stage {stage}  "
               f"({'LOCKED' if blocked else 'ready'}, done={self.done[row][stage]})")
 
@@ -338,6 +429,8 @@ class GearboxStateMachine:
         self._send({"command": "ui", "show": True, "row": 0,
                     "checked": self.done8, "blocked": False})
         self._notify({"event": "show", "row": 0, "stage": 8})
+        # Verify has no parts to fetch; the empty set also clears any lingering highlight.
+        self._highlight({"event": "highlight", "row": 0, "stage": 8, "complete": True})
         print("  all rows complete -> stage 8 (verify)")
 
     def show_verify(self):
@@ -354,6 +447,7 @@ class GearboxStateMachine:
         self._send({"command": "show_all"})
         self._send({"command": "ui", "show": False})
         self._notify({"event": "close"})
+        self._highlight({"event": "clear"})
 
     def reset(self):
         """Full restart: clear all completion, show the whole model, hide the UI.
@@ -371,9 +465,12 @@ class GearboxController:
     """Owns the ZMQ sockets, the shared state machine, and the click-listener loop."""
 
     def __init__(self, ip: str, cmd_port: int, click_port: int,
-                 tg_ip: str = _TASKGRAPH_IP, tg_port: int = DEFAULT_TASKGRAPH_PORT):
+                 tg_ip: str = _TASKGRAPH_IP, tg_port: int = DEFAULT_TASKGRAPH_PORT,
+                 hl_ip: str = None, hl_port: int = DEFAULT_HIGHLIGHT_PORT,
+                 no_highlight: bool = False, tool_json=None):
         self.ip, self.cmd_port, self.click_port = ip, cmd_port, click_port
         self.tg_ip, self.tg_port = tg_ip, tg_port
+        self.hl_ip, self.hl_port = hl_ip or ip, hl_port
         self._ctx = zmq.Context.instance()
 
         self._pub = self._ctx.socket(zmq.PUB)
@@ -388,11 +485,23 @@ class GearboxController:
         self._tg_pub = self._ctx.socket(zmq.PUB)
         self._tg_pub.connect(f"tcp://{tg_ip}:{tg_port}")
 
+        # Pegboard tool-highlight channel (ids only; the consumer picks the colour). We resolve the
+        # appearing parts to tool ids via the tool_layout JSON. Same Python<->Python convention as
+        # the task-graph mirror: the consumer BINDs a SUB, we CONNECT a PUB. Disabled silently if the
+        # JSON can't be loaded or --no-highlight is set.
+        self._tool_index = {} if no_highlight else load_tool_index(tool_json or _DEFAULT_TOOL_JSON)
+        self._highlight_enabled = bool(self._tool_index) and not no_highlight
+        if self._highlight_enabled:
+            self._hl_pub = self._ctx.socket(zmq.PUB)
+            self._hl_pub.connect(f"tcp://{self.hl_ip}:{self.hl_port}")
+        else:
+            self._hl_pub = None
+
         time.sleep(0.2)  # let PUB/SUB settle (slow-joiner guard)
 
         self._send_lock = threading.Lock()
         self._running = True
-        self.sm = GearboxStateMachine(self.send, self.send_taskgraph)
+        self.sm = GearboxStateMachine(self.send, self.send_taskgraph, self._on_highlight)
 
     def send(self, msg: dict):
         """Thread-safe outbound send (called from both the REPL and the click thread)."""
@@ -403,6 +512,26 @@ class GearboxController:
         """Thread-safe send of a semantic (row, stage) event to the task-graph viewer."""
         with self._send_lock:
             self._tg_pub.send_string(json.dumps(msg))
+
+    def send_highlight(self, msg: dict):
+        """Thread-safe send of a pegboard tool-highlight event (ids only, no colour)."""
+        if self._hl_pub is None:
+            return
+        with self._send_lock:
+            self._hl_pub.send_string(json.dumps(msg))
+
+    def _on_highlight(self, msg: dict):
+        """State-machine highlight hook: resolve the appearing parts of (row, stage) to pegboard
+        tool ids and publish them (or forward a clear). This is where 'gearbox_control sends the
+        ids to be highlighted' — the state machine only forwards semantic (row, stage) events."""
+        if not self._highlight_enabled:
+            return
+        if msg.get("event") == "clear":
+            self.send_highlight({"event": "clear"})
+            return
+        row, stage = msg["row"], msg["stage"]
+        ids = [] if msg.get("complete") else appearing_ids(self._tool_index, row, stage)
+        self.send_highlight({"event": "highlight", "ids": ids, "row": row, "stage": stage})
 
     def full_reset(self):
         """Typed 'reset': clear color highlights too, then reset progress/visibility/UI."""
@@ -444,6 +573,9 @@ class GearboxController:
         except Exception: pass
         try: self._tg_pub.close()
         except Exception: pass
+        if self._hl_pub is not None:
+            try: self._hl_pub.close()
+            except Exception: pass
         # Context is shared (Context.instance()); leave it for the process to reclaim.
 
 
@@ -477,17 +609,33 @@ def main():
                         help=f"IP of the task-graph viewer (default: {_TASKGRAPH_IP})")
     parser.add_argument("--task-graph-port", type=int, default=DEFAULT_TASKGRAPH_PORT,
                         help=f"Port the task-graph viewer binds to (default: {DEFAULT_TASKGRAPH_PORT})")
+    parser.add_argument("--highlight-ip", default=None,
+                        help="IP of the pegboard tool-highlight consumer (default: same as --ip)")
+    parser.add_argument("--highlight-port", type=int, default=DEFAULT_HIGHLIGHT_PORT,
+                        help=f"Port the tool-highlight consumer binds to (default: {DEFAULT_HIGHLIGHT_PORT})")
+    parser.add_argument("--tool-json", default=None,
+                        help=f"tool_layout JSON for name->id resolution (default: {_DEFAULT_TOOL_JSON})")
+    parser.add_argument("--no-highlight", action="store_true",
+                        help="Disable pegboard tool highlighting.")
     parser.add_argument("--no-repl", action="store_true",
                         help="Run only the click listener (no typed REPL).")
     args = parser.parse_args()
 
     ctrl = GearboxController(args.ip, args.cmd_port, args.click_port,
-                             args.task_graph_ip, args.task_graph_port)
+                             args.task_graph_ip, args.task_graph_port,
+                             hl_ip=args.highlight_ip, hl_port=args.highlight_port,
+                             no_highlight=args.no_highlight, tool_json=args.tool_json)
 
     print(BANNER)
     print(f" commands   OUT -> tcp://{args.ip}:{args.cmd_port}")
     print(f" clicks     IN  <- tcp://{args.ip}:{args.click_port}")
-    print(f" task-graph OUT -> tcp://{args.task_graph_ip}:{args.task_graph_port}\n")
+    print(f" task-graph OUT -> tcp://{args.task_graph_ip}:{args.task_graph_port}")
+    if ctrl._highlight_enabled:
+        print(f" highlight  OUT -> tcp://{ctrl.hl_ip}:{ctrl.hl_port}  "
+              f"({len(ctrl._tool_index)} tools indexed)")
+    else:
+        print(" highlight  OFF")
+    print()
 
     click_thread = None
     try:
