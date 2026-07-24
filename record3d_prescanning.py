@@ -758,8 +758,12 @@ class AnnotateApp:
     # ── init ──────────────────────────────────────────────────────────────
 
     def __init__(self, robot_ip: str = "192.168.50.70",
-                 ply_path: "Path | None" = None):
+                 ply_path: "Path | None" = None, no_robot: bool = False):
         self.robot_ip  = robot_ip
+        self._no_robot = no_robot   # skip every connection to robot_ip (RTDE / gripper / dashboard)
+        if no_robot:
+            print("[Annotate] --no-robot: robot control disabled; not connecting to "
+                  f"{robot_ip}.")
         self._ply_path = (Path(ply_path) if ply_path is not None
                           else self._LAYOUT_DIR / "pegboard_scan.ply")
         self._ScipyR   = ScipyR
@@ -942,6 +946,8 @@ class AnnotateApp:
 
     def _move_to_object(self, standoff: float = 0.25):
         """MoveJ to hover above the selected box centroid."""
+        if self._robot_off():
+            return
         if not (0 <= self._selected_idx < len(self._boxes)):
             print("[Robot] No box selected.")
             return
@@ -979,6 +985,8 @@ class AnnotateApp:
 
     def _move_robot_to_view(self):
         """Solve IK for the viewing pose and moveJ in a background thread."""
+        if self._robot_off():
+            return
         def _worker():
             try:
                 recv = self._get_rtde_recv()
@@ -1024,8 +1032,23 @@ class AnnotateApp:
                 print(f"[Robot] Move failed: {exc}")
         threading.Thread(target=_worker, daemon=True).start()
 
+    def _robot_off(self) -> bool:
+        """True when --no-robot is set. Posts a one-line note to the status bar/console so a
+        clicked robot button explains why nothing happened. Guards every robot entry point."""
+        if self._no_robot:
+            msg = "Robot control disabled (--no-robot)."
+            print(f"[Annotate] {msg}")
+            try:
+                dpg.set_value(self._TAG_STATUS, msg)
+            except Exception:
+                pass
+            return True
+        return False
+
     def _get_rtde_ctrl(self):
         """Persistent RTDE connection — kept alive for freedrive."""
+        if self._no_robot:
+            raise RuntimeError("robot control disabled (--no-robot)")
         if self._rtde_ctrl is None:
             print(f"[Robot] Connecting RTDE control → {self.robot_ip}")
             self._rtde_ctrl = RTDEControlInterface(self.robot_ip)
@@ -1036,14 +1059,20 @@ class AnnotateApp:
         The RTDE control script times out between uses, so stale cached
         connections raise 'control script is not running'. A fresh connect
         always works."""
+        if self._no_robot:
+            raise RuntimeError("robot control disabled (--no-robot)")
         return RTDEControlInterface(self.robot_ip)
 
     def _get_rtde_recv(self):
+        if self._no_robot:
+            raise RuntimeError("robot control disabled (--no-robot)")
         if self._rtde_recv is None:
             self._rtde_recv = RTDEReceiveInterface(self.robot_ip)
         return self._rtde_recv
 
     def _get_gripper(self):
+        if self._no_robot:
+            raise RuntimeError("robot control disabled (--no-robot)")
         if self._gripper is None:
             print(f"[Gripper] Connecting → {self.robot_ip}:63352")
             g = RobotiqGripper()
@@ -1092,6 +1121,8 @@ class AnnotateApp:
     }
 
     def _on_freedrive_toggle(self):
+        if self._robot_off():
+            return
         mode_name = dpg.get_value(self._TAG_FD_MODE)
         free_axes = self._FREEDRIVE_MODES.get(mode_name, [1,1,1,1,1,1])
         def _worker():
@@ -1121,6 +1152,8 @@ class AnnotateApp:
 
     def _on_recover(self):
         """Recover from protective stop or e-stop via UR Dashboard Server (port 29999)."""
+        if self._robot_off():
+            return
         def _worker():
             try:
                 import socket
@@ -1144,6 +1177,8 @@ class AnnotateApp:
         threading.Thread(target=_worker, daemon=True).start()
 
     def _on_estop(self):
+        if self._robot_off():
+            return
         def _worker():
             try:
                 ctrl = self._stop_servo_and_get_ctrl()
@@ -1182,6 +1217,8 @@ class AnnotateApp:
                 + ScipyR.from_matrix(T_base[:3, :3]).as_rotvec().tolist())
 
     def _on_test_grasp(self):
+        if self._robot_off():
+            return
         if not (0 <= self._selected_idx < len(self._boxes)):
             dpg.set_value(self._TAG_STATUS, "Select a box first.")
             return
@@ -1308,6 +1345,8 @@ class AnnotateApp:
     def _jog_send(self):
         """Called on every slider drag event — just updates the target pose.
         The servo loop thread picks it up and streams servoL at ~125 Hz."""
+        if self._robot_off():
+            return
         if self._freedrive:
             dpg.set_value(self._TAG_STATUS, "Exit freedrive first before jogging.")
             return
@@ -1364,6 +1403,8 @@ class AnnotateApp:
             self._jog_servo_active = False
 
     def _on_gripper_toggle(self):
+        if self._robot_off():
+            return
         def _worker():
             try:
                 g = self._get_gripper()
@@ -1416,6 +1457,9 @@ class AnnotateApp:
 
     def _start_robot_poll(self):
         """Background thread: update joint angles + TCP display every 200 ms."""
+        if self._no_robot:
+            print("[Annotate] --no-robot: skipping robot pose polling.")
+            return
         def _poll():
             while True:
                 try:
@@ -2089,7 +2133,7 @@ class AnnotateApp:
         self._push_undo()
         new_box = copy.deepcopy(self._boxes[self._selected_idx])
         new_box["id"] = self._next_id
-        new_box["world_pos"] = [round(v + 0.02, 4) for v in new_box["world_pos"]]
+        new_box["world_pos"] = [round(v + 0.0, 4) for v in new_box["world_pos"]]
         for k in ("grasp_joints",):
             new_box.pop(k, None)
         self._next_id += 1
@@ -2207,6 +2251,10 @@ def main():
     parser.add_argument('--robot-ip',      default='192.168.50.70',
                         help='UR10e IP for the annotate robot-move button '
                              '(default: 192.168.50.70)')
+    parser.add_argument('--no-robot',      action='store_true',
+                        help='Annotate without the robot: skip every connection to --robot-ip '
+                             '(no RTDE / gripper / dashboard), so box editing works with the arm '
+                             'off or unreachable')
     parser.add_argument('--scan-mode',     choices=['board', 'plane', 'all', 'oneshot'], default='board',
                         help='Frame-save trigger: "board" saves only when ray hits '
                              'the pegboard rectangle (default); "plane" saves whenever '
@@ -2229,7 +2277,8 @@ def main():
         return
 
     if args.annotate:
-        AnnotateApp(robot_ip=args.robot_ip, ply_path=args.ply).run()
+        AnnotateApp(robot_ip=args.robot_ip, ply_path=args.ply,
+                    no_robot=args.no_robot).run()
         return
 
     if args.fuse:

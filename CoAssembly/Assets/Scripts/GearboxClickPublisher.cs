@@ -11,12 +11,13 @@ using Newtonsoft.Json;
 /// same shared-socket lifecycle, but a dedicated port so it never crosses the robot arm's
 /// tool-click pipeline, and it carries the part NAME instead of a numeric tool_id.
 ///
-/// Bound (server) side; Python CONNECTs a zmq.SUB to tcp://&lt;this-machine&gt;:5020.
+/// Bound (server) side; Python CONNECTs a zmq.SUB to tcp://&lt;this-machine&gt;:5023.
 /// </summary>
 public class GearboxClickPublisher : MonoBehaviour
 {
     [Header("NetMQ")]
-    [SerializeField] private int port = 5020;
+    // 5023 (was 5020, which collided with ROBOT_CMD_PORT). See main_setting.GEARBOX_CLICK_PORT.
+    [SerializeField] private int port = 5023;
 
     private static PublisherSocket sharedSocket;
     private static int refCount = 0;

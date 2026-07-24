@@ -130,3 +130,27 @@ The gearbox assembly is complete when:
 - All eight stands are secured to `BASE_BOARD`.
 - `CRANK_HANDLE_ROW1` is attached to `GEAR_ROD_ROW1`.
 - All gears rotate freely and mesh correctly with the adjacent gears.
+
+## Recommended Work Order
+
+Complete the gearbox row by row:
+
+1. Finish **all steps in Row 1** before starting any work on Row 2.
+2. Finish **all steps in Row 2** before starting any work on Row 3.
+3. Finish **all steps in Row 3** before starting any work on Row 4.
+4. Perform the final verification step only after all four rows are fully
+   assembled.
+
+Within each row, the recommended sequence is:
+
+1. Insert the left bearing into the left stand.
+2. Insert the right bearing into the right stand (may be done in parallel
+   with step 1).
+3. Assemble the gear rod (may be done in parallel with steps 1–2).
+4. Fasten the left (first) stand to `BASE_BOARD`.
+5. Insert the assembled gear rod and fit the right (second) stand.
+6. Fasten the right (second) stand to `BASE_BOARD`.
+7. Row 1 only: attach `CRANK_HANDLE_ROW1` after both stands are fastened.
+
+This row-by-row order avoids interference between in-progress assemblies on
+different rows and keeps the workspace organised.
