@@ -67,7 +67,7 @@ class RobotClient:
 
     def __init__(self, simulation: bool = True,
                  use_calibrated_robot_base: bool = cfg.USE_CALIBRATED_ROBOT_BASE_POSE,
-                 host: str = "127.0.0.1",
+                 host: str = cfg.LOCALHOST,
                  cmd_port: int = cfg.ROBOT_CMD_PORT,
                  event_port: int = cfg.ROBOT_EVENT_PORT):
         if not _PYBULLET_AVAILABLE:

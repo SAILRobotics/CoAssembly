@@ -801,20 +801,26 @@ class _ToolLayoutManager:
 
     # ── Publishing ───────────────────────────────────────────────────────────
 
+    def _tool_box_world(self, t: dict, T: np.ndarray) -> tuple:
+        """(centroid, R_world, size) in the Open3D world frame — exactly the geometry Unity receives
+        (after the o3d→Unity conversion) and that the Open3D scene draws directly. Orientation is
+        world-frame yaw only, Rz(rot[2]); the pegboard tilt T[:3,:3] is deliberately NOT composed
+        in. T[:3,:3] carries a ~90° from the ArUco/camera pose chain, so composing it (as the robot
+        path's _tool_world_data does) rotates the wireframe box 90° relative to the Unity tools."""
+        sz  = t.get("size", [0.05, 0.05, 0.05])
+        rot = t.get("rotation_deg", [0.0, 0.0, 0.0])
+        # peg_pos is the base in pegboard frame (new format); fall back to world_pos.
+        R_world = ScipyR.from_euler('z', float(rot[2]), degrees=True).as_matrix()
+        base_w  = ((T @ np.append(t["peg_pos"], 1.0))[:3] if "peg_pos" in t
+                   else np.array(t.get("world_pos", [0.0, 0.0, 0.0])))
+        # Unity prefabs are centred at their local origin → return the centroid.
+        centroid = base_w + R_world @ np.array([0.0, 0.0, sz[2] / 2.0])
+        return centroid, R_world, sz
+
     def publish(self, T: np.ndarray) -> None:
         out = []
         for t in self._tools:
-            sz   = t.get("size", [0.05, 0.05, 0.05])
-            rot  = t.get("rotation_deg", [0.0, 0.0, 0.0])
-
-            # peg_pos is the base in pegboard frame (new format); fall back to world_pos.
-            R_world = ScipyR.from_euler('z', float(rot[2]), degrees=True).as_matrix()
-            if "peg_pos" in t:
-                base_w = (T @ np.append(t["peg_pos"], 1.0))[:3]
-            else:
-                base_w = np.array(t.get("world_pos", [0.0, 0.0, 0.0]))
-            # Unity prefabs are centred at their local origin → send centroid
-            pos_w   = base_w + R_world @ np.array([0.0, 0.0, sz[2] / 2.0])
+            pos_w, R_world, sz = self._tool_box_world(t, T)
             q_xyzw  = ScipyR.from_matrix(R_world).as_quat()
 
             pos_u  = open3d_to_unity_vector(pos_w)
@@ -847,7 +853,10 @@ class _ToolLayoutManager:
         return centroid, R_world, sz
 
     def world_boxes(self, T: np.ndarray) -> list:
-        return [self._tool_world_data(t, T) for t in self._tools]
+        # Open3D wireframe boxes use the SAME geometry Unity gets (yaw-only orientation), so the
+        # scene matches the Unity tools. NOTE: this intentionally differs from _tool_world_data /
+        # get_world_data below, which compose T[:3,:3] for the robot grasp path.
+        return [self._tool_box_world(t, T) for t in self._tools]
 
     def get_world_data(self, tool_id: int, T: np.ndarray) -> "tuple | None":
         """Return (centroid_world, R_world, size) for tool_id, or None if not found."""
@@ -1021,6 +1030,11 @@ class _ToolSelectionManager:
     @property
     def active_tool_id(self) -> int | None:
         return self._active_tool_id
+
+    @property
+    def highlighted(self) -> set:
+        """Tool ids currently flagged by the pegboard highlight (gearbox_control.py on 5024)."""
+        return self._highlighted
 
     @property
     def active_hand(self) -> str | None:
@@ -1547,6 +1561,10 @@ class MainScene:
         # self.handover_sphere = _HandoverSpherePublisher(quest_ip)
         self.tool_layout = _ToolLayoutManager(
                                cfg.SCENE_LAYOUT_DIR / "tool_layout1.json", quest_ip)
+        # tool id → Open3D box index (box order == tool_layout.world_boxes() order), so the pegboard
+        # highlight ids from gearbox_control.py can be mirrored onto the local Open3D tool boxes.
+        self._tool_id_to_box_index = {int(t["id"]): i
+                                      for i, t in enumerate(self.tool_layout._tools)}
         self.grip_pose_bridge = _GripPoseBridge(quest_ip)
         self.workspace_bound_pub = _WorkspaceBoundPublisher(quest_ip)
 
@@ -1651,6 +1669,15 @@ class MainScene:
             self.vis.update_tool_boxes(boxes)
         return True
 
+    def _sync_vis_highlight(self) -> None:
+        """Mirror the pegboard tool highlight (received by self.tools on 5024 and applied to the
+        Unity tools) onto the local Open3D tool boxes — cyan, exactly like gearbox_control --open-3d.
+        Always on; no argument gates it."""
+        idxs = [self._tool_id_to_box_index[tid]
+                for tid in self.tools.highlighted
+                if tid in self._tool_id_to_box_index]
+        self.vis.set_tool_highlight_indices(idxs)
+
     def _apply_tool_category_colors(self) -> None:
         """Send each tool's category color via ToolColorReceiver (port 5010)
         and register it as the resting color so hover/reset cycles preserve it."""
@@ -1719,7 +1746,8 @@ class MainScene:
 
                 # ── Poll streams ──────────────────────────────────────────────
                 self.tools.poll(timeout_ms=0)
-                self.tools.drain_highlights(timeout_ms=0)
+                if self.tools.drain_highlights(timeout_ms=0):
+                    self._sync_vis_highlight()   # mirror the cyan highlight onto the Open3D boxes
                 self.hands.poll()
                 _link_poses = None
                 if self.robot is not None:

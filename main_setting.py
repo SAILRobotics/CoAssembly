@@ -12,8 +12,9 @@ _HERE = Path(__file__).resolve().parent
 SCENE_LAYOUT_DIR = _HERE / "scene_layout"
 
 # ── Machine IPs ───────────────────────────────────────────────────────────────
-UNITY_IP   = "127.0.0.1"   # Quest / Windows machine running Unity
+UNITY_IP   = "192.168.50.167"   # Quest / Windows machine running Unity
 ROBOT_IP   = "192.168.50.70"    # UR10e robot controller
+LOCALHOST  = "127.0.0.1"        # loopback for same-machine inter-process comms
 
 # ── Ports (Unity → Python) ────────────────────────────────────────────────────
 CAM_FEED_PORT         = 5560   # camera feed frames + intrinsics
