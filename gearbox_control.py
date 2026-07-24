@@ -56,12 +56,14 @@ try:
     DEFAULT_CLICK_PORT     = main_setting.GEARBOX_CLICK_PORT
     DEFAULT_TASKGRAPH_PORT = main_setting.GEARBOX_TASKGRAPH_PORT
     DEFAULT_HIGHLIGHT_PORT = main_setting.GEARBOX_HIGHLIGHT_PORT
+    DEFAULT_STEP_SELECT_PORT = main_setting.GEARBOX_STEP_SELECT_PORT
     _SCENE_DIR             = main_setting.SCENE_LAYOUT_DIR
 except Exception:
     DEFAULT_CMD_PORT       = 5019   # Python -> Unity (commands), GearboxCommandReceiver.
     DEFAULT_CLICK_PORT     = 5023   # Unity -> Python (clicks), GearboxClickPublisher.
     DEFAULT_TASKGRAPH_PORT = 5022   # Python -> task-graph viewer (live mirror).
     DEFAULT_HIGHLIGHT_PORT = 5024   # Python -> pegboard tool-highlight consumer (ids only).
+    DEFAULT_STEP_SELECT_PORT = 5025 # task-graph viewer -> this script's --open-3d viewer.
     _SCENE_DIR             = Path(__file__).resolve().parent / "scene_layout"
 
 _DEFAULT_TOOL_JSON = _SCENE_DIR / "tool_layout1.json"
@@ -461,16 +463,114 @@ class GearboxStateMachine:
         self._notify({"event": "reset"})
 
 
+class PegboardBoxViewer:
+    """Open3D window that draws every pegboard tool as a wireframe box and recolours the ones for
+    the currently-selected task-graph step. A local stand-in for Unity (used via --open-3d when the
+    headset pipeline is unavailable). Box geometry matches test_tool_layout.build_payload: pegboard
+    peg_pos -> world via T, plus a half-height offset along the part's z to reach the centroid — but
+    kept in the Open3D/world frame (no Open3D->Unity axis swap, since this renders in Open3D).
+
+    Open3D's Visualizer is single-threaded and must live on the main thread; the owning code drives
+    tick()/set_highlight() from there. open3d/numpy/scipy are imported lazily so the normal
+    (non-open3d) modes of this script don't need them."""
+
+    NEUTRAL   = [0.55, 0.55, 0.58]
+    HIGHLIGHT = [0.0, 1.0, 1.0]
+    _EDGES = [[0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4],
+              [0, 4], [1, 5], [2, 6], [3, 7]]
+
+    def __init__(self, tools: list, T, title: str = "Pegboard tools"):
+        import numpy as np
+        import open3d as o3d
+        self.np, self.o3d = np, o3d
+
+        self.vis = o3d.visualization.Visualizer()
+        self.vis.create_window(title, width=1000, height=700)
+        ro = self.vis.get_render_option()
+        ro.background_color = np.array([0.08, 0.08, 0.10])
+        ro.line_width = 2.0
+        self.vis.add_geometry(o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.10))
+
+        self._ls_by_id: dict = {}
+        self._color_by_id: dict = {}
+        for t in tools:
+            try:
+                tid = int(t["id"])
+            except (KeyError, ValueError, TypeError):
+                continue
+            center, R, size = self._box_geom(t, T)
+            ls = self._make_box(center, R, size, self.NEUTRAL)
+            self.vis.add_geometry(ls)
+            self._ls_by_id[tid] = ls
+            self._color_by_id[tid] = self.NEUTRAL
+
+        ctr = self.vis.get_view_control()
+        ctr.set_front([0.0, -0.4, -1.0])
+        ctr.set_up([0.0, 1.0, 0.0])
+        ctr.set_zoom(0.6)
+
+    def _box_geom(self, t: dict, T):
+        np = self.np
+        from scipy.spatial.transform import Rotation as ScipyR
+        sz  = t.get("size", [0.05, 0.05, 0.05])
+        rot = t.get("rotation_deg", [0.0, 0.0, 0.0])
+        R = ScipyR.from_euler('z', float(rot[2]), degrees=True).as_matrix()
+        if "peg_pos" in t:
+            base = (np.asarray(T) @ np.append(t["peg_pos"], 1.0))[:3]
+        else:
+            base = np.array(t.get("world_pos", [0.0, 0.0, 0.0]))
+        center = base + R @ np.array([0.0, 0.0, sz[2] / 2.0])
+        return center, R, sz
+
+    def _make_box(self, pos, R, size, color):
+        np, o3d = self.np, self.o3d
+        w, d, h = size[0] / 2.0, size[1] / 2.0, size[2] / 2.0
+        corners_local = np.array([[-w, -d, -h], [w, -d, -h], [w, d, -h], [-w, d, -h],
+                                  [-w, -d,  h], [w, -d,  h], [w, d,  h], [-w, d,  h]])
+        corners = (R @ corners_local.T).T + pos
+        ls = o3d.geometry.LineSet()
+        ls.points = o3d.utility.Vector3dVector(corners)
+        ls.lines  = o3d.utility.Vector2iVector(self._EDGES)
+        ls.colors = o3d.utility.Vector3dVector([list(color)] * 12)
+        return ls
+
+    def set_highlight(self, ids):
+        """Colour the given tool ids HIGHLIGHT and everything else NEUTRAL (only touching boxes that
+        actually change, so a repeated selection is cheap)."""
+        want_ids = set(int(i) for i in ids)
+        for tid, ls in self._ls_by_id.items():
+            want = self.HIGHLIGHT if tid in want_ids else self.NEUTRAL
+            if self._color_by_id[tid] is not want:
+                ls.colors = self.o3d.utility.Vector3dVector([list(want)] * 12)
+                self.vis.update_geometry(ls)
+                self._color_by_id[tid] = want
+
+    def tick(self) -> bool:
+        """Pump one frame. Returns False once the window has been closed."""
+        alive = self.vis.poll_events()
+        self.vis.update_renderer()
+        return alive
+
+    def close(self):
+        try:
+            self.vis.destroy_window()
+        except Exception:
+            pass
+
+
 class GearboxController:
     """Owns the ZMQ sockets, the shared state machine, and the click-listener loop."""
 
     def __init__(self, ip: str, cmd_port: int, click_port: int,
                  tg_ip: str = _TASKGRAPH_IP, tg_port: int = DEFAULT_TASKGRAPH_PORT,
                  hl_ip: str = None, hl_port: int = DEFAULT_HIGHLIGHT_PORT,
-                 no_highlight: bool = False, tool_json=None):
+                 no_highlight: bool = False, tool_json=None,
+                 open3d: bool = False, step_select_port: int = DEFAULT_STEP_SELECT_PORT):
         self.ip, self.cmd_port, self.click_port = ip, cmd_port, click_port
         self.tg_ip, self.tg_port = tg_ip, tg_port
         self.hl_ip, self.hl_port = hl_ip or ip, hl_port
+        self.open3d, self.step_select_port = open3d, step_select_port
+        self._tool_json = tool_json or _DEFAULT_TOOL_JSON
         self._ctx = zmq.Context.instance()
 
         self._pub = self._ctx.socket(zmq.PUB)
@@ -489,13 +589,24 @@ class GearboxController:
         # appearing parts to tool ids via the tool_layout JSON. Same Python<->Python convention as
         # the task-graph mirror: the consumer BINDs a SUB, we CONNECT a PUB. Disabled silently if the
         # JSON can't be loaded or --no-highlight is set.
-        self._tool_index = {} if no_highlight else load_tool_index(tool_json or _DEFAULT_TOOL_JSON)
+        # The name->id index feeds both the 5024 highlight wire and the --open-3d viewer, so it is
+        # loaded regardless; --no-highlight only silences the 5024 PUB.
+        self._tool_index = load_tool_index(self._tool_json)
         self._highlight_enabled = bool(self._tool_index) and not no_highlight
         if self._highlight_enabled:
             self._hl_pub = self._ctx.socket(zmq.PUB)
             self._hl_pub.connect(f"tcp://{self.hl_ip}:{self.hl_port}")
         else:
             self._hl_pub = None
+
+        # --open-3d: receive the task-graph viewer's selected step (Python<->Python: we BIND a SUB,
+        # gearbox_task_graph.py CONNECTs a PUB) and recolour the local pegboard boxes accordingly.
+        if open3d:
+            self._ss_sub = self._ctx.socket(zmq.SUB)
+            self._ss_sub.setsockopt_string(zmq.SUBSCRIBE, "")
+            self._ss_sub.bind(f"tcp://0.0.0.0:{step_select_port}")
+        else:
+            self._ss_sub = None
 
         time.sleep(0.2)  # let PUB/SUB settle (slow-joiner guard)
 
@@ -532,6 +643,52 @@ class GearboxController:
         row, stage = msg["row"], msg["stage"]
         ids = [] if msg.get("complete") else appearing_ids(self._tool_index, row, stage)
         self.send_highlight({"event": "highlight", "ids": ids, "row": row, "stage": stage})
+
+    def _poll_step_select(self):
+        """Drain the task-graph select channel; return the most recent event dict, or None. Only the
+        latest is applied — intermediate selections in one tick are superseded anyway."""
+        if self._ss_sub is None:
+            return None
+        latest = None
+        while True:
+            try:
+                raw = self._ss_sub.recv_string(flags=zmq.NOBLOCK)
+            except zmq.Again:
+                break
+            try:
+                latest = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+        return latest
+
+    def run_open3d(self, identity: bool = False):
+        """--open-3d: open the local pegboard-box window and recolour it from the task-graph viewer's
+        selected step. Blocks on the Open3D loop (main thread) until the window closes or stop()."""
+        from test_tool_layout import load_tools, load_pegboard_T
+        tools = load_tools(self._tool_json)
+        T     = load_pegboard_T(identity)
+        viewer = PegboardBoxViewer(tools, T)
+        print(f"[open3d] window open ({len(tools)} tools). "
+              f"Select a step in the task graph to highlight its pegboard tools.")
+        try:
+            while self._running:
+                ev = self._poll_step_select()
+                if ev is not None:
+                    if ev.get("event") == "clear":
+                        viewer.set_highlight([])
+                        print("[open3d] cleared")
+                    elif ev.get("event") == "select":
+                        row, stage = int(ev["row"]), int(ev["stage"])
+                        ids = appearing_ids(self._tool_index, row, stage)
+                        viewer.set_highlight(ids)
+                        print(f"[open3d] step '{ev.get('step','?')}' "
+                              f"(row {row}, stage {stage}) -> tools {ids}")
+                if not viewer.tick():
+                    break
+                time.sleep(0.02)
+        finally:
+            viewer.close()
+            self._running = False
 
     def full_reset(self):
         """Typed 'reset': clear color highlights too, then reset progress/visibility/UI."""
@@ -576,6 +733,9 @@ class GearboxController:
         if self._hl_pub is not None:
             try: self._hl_pub.close()
             except Exception: pass
+        if self._ss_sub is not None:
+            try: self._ss_sub.close()
+            except Exception: pass
         # Context is shared (Context.instance()); leave it for the process to reclaim.
 
 
@@ -617,6 +777,15 @@ def main():
                         help=f"tool_layout JSON for name->id resolution (default: {_DEFAULT_TOOL_JSON})")
     parser.add_argument("--no-highlight", action="store_true",
                         help="Disable pegboard tool highlighting.")
+    parser.add_argument("--open-3d", "--open3d", dest="open_3d", action="store_true",
+                        help="Open a local Open3D pegboard-box window (stand-in for Unity) and "
+                             "highlight the tools for whichever step is selected in the task graph.")
+    parser.add_argument("--step-select-port", type=int, default=DEFAULT_STEP_SELECT_PORT,
+                        help=f"Port to receive the task graph's selected step on "
+                             f"(default: {DEFAULT_STEP_SELECT_PORT}; --open-3d only)")
+    parser.add_argument("--identity", action="store_true",
+                        help="Lay out the --open-3d boxes in the pegboard frame (ignore the saved "
+                             "scan pose).")
     parser.add_argument("--no-repl", action="store_true",
                         help="Run only the click listener (no typed REPL).")
     args = parser.parse_args()
@@ -624,7 +793,8 @@ def main():
     ctrl = GearboxController(args.ip, args.cmd_port, args.click_port,
                              args.task_graph_ip, args.task_graph_port,
                              hl_ip=args.highlight_ip, hl_port=args.highlight_port,
-                             no_highlight=args.no_highlight, tool_json=args.tool_json)
+                             no_highlight=args.no_highlight, tool_json=args.tool_json,
+                             open3d=args.open_3d, step_select_port=args.step_select_port)
 
     print(BANNER)
     print(f" commands   OUT -> tcp://{args.ip}:{args.cmd_port}")
@@ -635,11 +805,21 @@ def main():
               f"({len(ctrl._tool_index)} tools indexed)")
     else:
         print(" highlight  OFF")
+    if args.open_3d:
+        print(f" open3d     IN  <- tcp://0.0.0.0:{args.step_select_port}  (task-graph step select)")
     print()
 
-    click_thread = None
+    click_thread = repl_thread = None
     try:
-        if args.no_repl:
+        if args.open_3d:
+            # Open3D owns the main thread; the click listener and (optionally) the REPL run behind it.
+            click_thread = threading.Thread(target=ctrl.run_click_loop, daemon=True)
+            click_thread.start()
+            if not args.no_repl:
+                repl_thread = threading.Thread(target=_run_repl, args=(ctrl,), daemon=True)
+                repl_thread.start()
+            ctrl.run_open3d(identity=args.identity)
+        elif args.no_repl:
             print(" (click-listener only; Ctrl-C to quit)")
             ctrl.run_click_loop()
         else:

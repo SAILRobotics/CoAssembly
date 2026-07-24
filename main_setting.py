@@ -46,6 +46,7 @@ GEARBOX_CMD_PORT       = 5019   # gearbox_control.py → Unity  (GearboxCommandR
 GEARBOX_CLICK_PORT     = 5023   # Unity → gearbox_control.py  (GearboxClickPublisher)
 GEARBOX_TASKGRAPH_PORT = 5022   # gearbox_control.py → gearbox_task_graph.py (live mirror)
 GEARBOX_HIGHLIGHT_PORT = 5024   # gearbox_control.py → tool-highlight consumer (pegboard tool ids)
+GEARBOX_STEP_SELECT_PORT = 5025 # gearbox_task_graph.py → gearbox_control.py --open-3d (selected step)
 
 # ── Robot-control process tuning ──────────────────────────────────────────────
 ROBOT_CONTROL_HZ      = 120   # fixed-rate hardware loop, simulation
