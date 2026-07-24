@@ -23,14 +23,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from vlm_assistant import VLMAssistant  # noqa: E402
 from speech_listener import SpeechListener  # noqa: E402
+import gearbox_control  # noqa: E402  (--with-controller: run the controller in-process)
 
 # Ports live canonically in main_setting.py; fall back to literals so the viewer still runs if that
 # import is unavailable.
 try:
     import main_setting as _cfg
+    _LOCALHOST                = _cfg.LOCALHOST                  # loopback for same-machine Python IPC
     _DEFAULT_TASKGRAPH_PORT   = _cfg.GEARBOX_TASKGRAPH_PORT     # live gearbox_control.py mirror (in)
     _DEFAULT_STEP_SELECT_PORT = _cfg.GEARBOX_STEP_SELECT_PORT   # selected step -> --open-3d viewer (out)
 except Exception:
+    _LOCALHOST                = "127.0.0.1"
     _DEFAULT_TASKGRAPH_PORT   = 5022
     _DEFAULT_STEP_SELECT_PORT = 5025
 
@@ -798,7 +801,7 @@ class DearPyGuiTaskGraphApp:
             ctx = zmq.Context.instance()
             sub = ctx.socket(zmq.SUB)
             sub.setsockopt_string(zmq.SUBSCRIBE, "")
-            sub.bind(f"tcp://127.0.0.1:{port}")
+            sub.bind(f"tcp://{_LOCALHOST}:{port}")
         except Exception as e:
             self.log(f"Live link disabled (could not bind :{port}: {e}).")
             return False
@@ -823,7 +826,7 @@ class DearPyGuiTaskGraphApp:
 
         self._live_thread = threading.Thread(target=_loop, daemon=True)
         self._live_thread.start()
-        self.log(f"Live link listening on tcp://127.0.0.1:{port} (controller mirror).")
+        self.log(f"Live link listening on tcp://{_LOCALHOST}:{port} (controller mirror).")
         return True
 
     def start_select_publisher(self, port: int) -> bool:
@@ -837,12 +840,12 @@ class DearPyGuiTaskGraphApp:
         try:
             ctx = zmq.Context.instance()
             pub = ctx.socket(zmq.PUB)
-            pub.connect(f"tcp://127.0.0.1:{port}")
+            pub.connect(f"tcp://{_LOCALHOST}:{port}")
         except Exception as e:
             self.log(f"Step-select link disabled (could not connect :{port}: {e}).")
             return False
         self._select_pub = pub
-        self.log(f"Step-select link -> tcp://127.0.0.1:{port} (open3d viewer).")
+        self.log(f"Step-select link -> tcp://{_LOCALHOST}:{port} (open3d viewer).")
         return True
 
     def _send_select(self, msg: dict) -> None:
@@ -1458,6 +1461,22 @@ def main() -> None:
     parser.add_argument("--vlm-model", default=None,
                         help="Enable VLM assistant with this model name "
                              "(default when enabled: Qwen/Qwen2.5-VL-3B-Instruct). Omit to disable.")
+    parser.add_argument("--with-controller", action="store_true",
+                        help="Also run gearbox_control.py in-process (one launch = viewer + "
+                             "controller). The controller drives Unity and mirrors here over the "
+                             "live link; incompatible with --no-live and with the controller's "
+                             "--open-3d mode (which needs the main thread).")
+    parser.add_argument("--controller-repl", action="store_true",
+                        help="With --with-controller, also run the typed 'gearbox>' REPL "
+                             "(on a background thread).")
+    parser.add_argument("--unity-ip", default=gearbox_control._DEFAULT_IP,
+                        help=f"With --with-controller: Unity host (default: {gearbox_control._DEFAULT_IP}).")
+    parser.add_argument("--cmd-port", type=int, default=gearbox_control.DEFAULT_CMD_PORT,
+                        help=f"With --with-controller: commands -> Unity (default: {gearbox_control.DEFAULT_CMD_PORT}).")
+    parser.add_argument("--click-port", type=int, default=gearbox_control.DEFAULT_CLICK_PORT,
+                        help=f"With --with-controller: clicks <- Unity (default: {gearbox_control.DEFAULT_CLICK_PORT}).")
+    parser.add_argument("--no-highlight", action="store_true",
+                        help="With --with-controller: disable the controller's pegboard tool highlighting.")
     args = parser.parse_args()
     if args.self_test:
         run_self_test()
@@ -1465,13 +1484,37 @@ def main() -> None:
     live_port    = None if args.no_live  else args.task_graph_port
     select_port  = None if args.no_step_select else args.step_select_port
     voice_device = None if args.no_voice else args.voice_device
-    DearPyGuiTaskGraphApp().run(
-        live_port,
-        voice_device=voice_device,
-        wake_word=args.wake_word,
-        vlm_model=args.vlm_model,
-        select_port=select_port,
-    )
+
+    # Optionally co-launch gearbox_control.py in-process. DearPyGui owns the main thread, so the
+    # controller's click listener (+ optional REPL) run on daemon threads behind it; the two keep
+    # talking over the localhost live link (task-graph port). Both files still run standalone.
+    controller = None
+    if args.with_controller:
+        if args.no_live:
+            parser.error("--with-controller needs the live link; do not pass --no-live.")
+        controller = gearbox_control.GearboxController(
+            args.unity_ip, args.cmd_port, args.click_port,
+            _LOCALHOST, args.task_graph_port, no_highlight=args.no_highlight)
+        threading.Thread(target=controller.run_click_loop, daemon=True).start()
+        if args.controller_repl:
+            threading.Thread(target=gearbox_control._run_repl,
+                             args=(controller,), daemon=True).start()
+        print(f"[Controller] in-process — cmd -> {args.unity_ip}:{args.cmd_port}, "
+              f"clicks <- {args.unity_ip}:{args.click_port}, "
+              f"mirror -> {_LOCALHOST}:{args.task_graph_port}")
+
+    try:
+        DearPyGuiTaskGraphApp().run(
+            live_port,
+            voice_device=voice_device,
+            wake_word=args.wake_word,
+            vlm_model=args.vlm_model,
+            select_port=select_port,
+        )
+    finally:
+        if controller is not None:
+            controller.stop()
+            controller.close()
 
 
 if __name__ == "__main__":

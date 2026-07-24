@@ -40,18 +40,12 @@ from pathlib import Path
 
 import zmq
 
-try:
-    import ip_setting
-    _DEFAULT_IP    = ip_setting.UNITY_IP
-    _TASKGRAPH_IP  = ip_setting.LOCALHOST         # viewer runs on this machine
-except Exception:
-    _DEFAULT_IP    = "127.0.0.1"
-    _TASKGRAPH_IP  = "127.0.0.1"
-
-# Ports live canonically in main_setting.py (single source of truth); fall back to literals so the
-# script still runs standalone if that import is unavailable.
+# IPs and ports live canonically in main_setting.py (single source of truth); fall back to literals
+# so the script still runs standalone if that import is unavailable.
 try:
     import main_setting
+    _DEFAULT_IP    = main_setting.UNITY_IP
+    _TASKGRAPH_IP  = main_setting.LOCALHOST       # viewer runs on this machine (loopback)
     DEFAULT_CMD_PORT       = main_setting.GEARBOX_CMD_PORT
     DEFAULT_CLICK_PORT     = main_setting.GEARBOX_CLICK_PORT
     DEFAULT_TASKGRAPH_PORT = main_setting.GEARBOX_TASKGRAPH_PORT
@@ -59,6 +53,8 @@ try:
     DEFAULT_STEP_SELECT_PORT = main_setting.GEARBOX_STEP_SELECT_PORT
     _SCENE_DIR             = main_setting.SCENE_LAYOUT_DIR
 except Exception:
+    _DEFAULT_IP    = "127.0.0.1"
+    _TASKGRAPH_IP  = "127.0.0.1"
     DEFAULT_CMD_PORT       = 5019   # Python -> Unity (commands), GearboxCommandReceiver.
     DEFAULT_CLICK_PORT     = 5023   # Unity -> Python (clicks), GearboxClickPublisher.
     DEFAULT_TASKGRAPH_PORT = 5022   # Python -> task-graph viewer (live mirror).
@@ -143,7 +139,7 @@ _HIGHLIGHT_PARTS = [
 
 def load_tool_index(json_path) -> dict:
     """Build {TYPE_UPPER: id} from a tool_layout JSON. Returns {} (feature disables silently) if
-    the file can't be read — the same soft-fail style as the optional ip_setting/main_setting imports."""
+    the file can't be read — the same soft-fail style as the optional main_setting import."""
     try:
         data = json.loads(Path(json_path).read_text())
     except Exception as e:
@@ -568,7 +564,11 @@ class GearboxController:
                  open3d: bool = False, step_select_port: int = DEFAULT_STEP_SELECT_PORT):
         self.ip, self.cmd_port, self.click_port = ip, cmd_port, click_port
         self.tg_ip, self.tg_port = tg_ip, tg_port
-        self.hl_ip, self.hl_port = hl_ip or ip, hl_port
+        # The tool-highlight consumer (main_with_robot.py / test_tool_layout.py) is a Python process
+        # on THIS machine — a Python↔Python link like the task-graph mirror — so it defaults to
+        # loopback, NOT the Unity IP. (When Unity ran on localhost these were the same; on an
+        # Android/WiFi headset build the Unity IP is remote and would send highlights nowhere.)
+        self.hl_ip, self.hl_port = hl_ip or _TASKGRAPH_IP, hl_port
         self.open3d, self.step_select_port = open3d, step_select_port
         self._tool_json = tool_json or _DEFAULT_TOOL_JSON
         self._ctx = zmq.Context.instance()
@@ -770,7 +770,8 @@ def main():
     parser.add_argument("--task-graph-port", type=int, default=DEFAULT_TASKGRAPH_PORT,
                         help=f"Port the task-graph viewer binds to (default: {DEFAULT_TASKGRAPH_PORT})")
     parser.add_argument("--highlight-ip", default=None,
-                        help="IP of the pegboard tool-highlight consumer (default: same as --ip)")
+                        help="IP of the pegboard tool-highlight consumer, a same-machine Python "
+                             "process (default: loopback, NOT the Unity IP)")
     parser.add_argument("--highlight-port", type=int, default=DEFAULT_HIGHLIGHT_PORT,
                         help=f"Port the tool-highlight consumer binds to (default: {DEFAULT_HIGHLIGHT_PORT})")
     parser.add_argument("--tool-json", default=None,

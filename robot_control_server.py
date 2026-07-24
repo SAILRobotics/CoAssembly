@@ -295,9 +295,9 @@ class RobotControlServer:
         # main_with_robot.py ↔ server
         self._cmd_sub = ctx.socket(zmq.SUB)
         self._cmd_sub.setsockopt_string(zmq.SUBSCRIBE, "")
-        self._cmd_sub.bind(f"tcp://127.0.0.1:{cfg.ROBOT_CMD_PORT}")
+        self._cmd_sub.bind(f"tcp://{cfg.LOCALHOST}:{cfg.ROBOT_CMD_PORT}")
         self._event_pub = ctx.socket(zmq.PUB)
-        self._event_pub.bind(f"tcp://127.0.0.1:{cfg.ROBOT_EVENT_PORT}")
+        self._event_pub.bind(f"tcp://{cfg.LOCALHOST}:{cfg.ROBOT_EVENT_PORT}")
         time.sleep(0.2)
 
         self._running = True
