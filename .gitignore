@@ -8,3 +8,8 @@ scene_layout/*.ply
 captures/*
 
 task_graph/captures/*
+task_graph/dante_captures/*
+task_graph/dante_captures_labels/*
+
+mobileclip2_b.ts
+yoloe-26s-seg.pt
