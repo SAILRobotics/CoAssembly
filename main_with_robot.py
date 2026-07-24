@@ -881,24 +881,33 @@ class _ToolLayoutManager:
 # =============================================================================
 
 class _ToolSelectionManager:
-    SELECTED_COLOR = [0.0, 1.0, 0.0, 0.25]
-    HOVER_COLOR    = [1.0, 0.5, 0.0, 0.25]
+    SELECTED_COLOR = [0.0, 1.0, 0.0, 0.25]     #when cursor clicks
+    HOVER_COLOR    = [1.0, 0.5, 0.0, 0.25]     #when cursor hovers
     RESET_COLOR    = [-1.0, -1.0, -1.0, -1.0]   # sentinel → restores to resting color
     TOOL_COLOR     = [0.80, 0.88, 1.0,  0.25]    # light blue for "tool" category
     PART_COLOR     = [1.0,  0.78, 0.78, 0.25]    # light red  for "part" category
+    HIGHLIGHT_COLOR = [0.0, 1.0, 1.0, 0.25]       # cyan — pegboard tool needed for the current step
 
-    def __init__(self, quest_ip: str, click_port: int = cfg.TOOL_CLICK_PORT, color_port: int = cfg.TOOL_COLOR_PORT):
+    def __init__(self, quest_ip: str, click_port: int = cfg.TOOL_CLICK_PORT,
+                 color_port: int = cfg.TOOL_COLOR_PORT,
+                 highlight_port: int = cfg.GEARBOX_HIGHLIGHT_PORT):
         ctx = zmq.Context.instance()
         self._sub = ctx.socket(zmq.SUB)
         self._sub.setsockopt_string(zmq.SUBSCRIBE, "")
         self._sub.connect(f"tcp://{quest_ip}:{click_port}")
         self._pub = ctx.socket(zmq.PUB)
         self._pub.connect(f"tcp://{quest_ip}:{color_port}")
+        # Pegboard highlight ids from gearbox_control.py. Python↔Python convention:
+        # the receiver BINDS (unlike the click SUB / color PUB above, which connect).
+        self._hl_sub = ctx.socket(zmq.SUB)
+        self._hl_sub.setsockopt_string(zmq.SUBSCRIBE, "")
+        self._hl_sub.bind(f"tcp://0.0.0.0:{highlight_port}")
         time.sleep(0.2)
         self._active_tool_id:   int | None              = None
         self._hovered_tool_id:  int | None              = None
         self._active_hand:      str | None              = None
         self._category_colors:  dict[int, list[float]]  = {}
+        self._highlighted:      set[int]                = set()
         self._on_cancel = None
 
     def poll(self, timeout_ms: int = 0) -> bool:
@@ -933,18 +942,32 @@ class _ToolSelectionManager:
             self._handle_hover_exit(tool_id)
 
     def set_category_color(self, tool_id: int, color: list[float]) -> None:
-        """Store the tool's base category color and paint it. Call from _apply_tool_category_colors."""
+        """Store the tool's base category color and paint it. Call from _apply_tool_category_colors.
+        A currently-highlighted tool keeps its cyan (highlights survive a category repaint, e.g. a
+        relock republish) unless it is the actively-selected tool."""
         self._category_colors[tool_id] = color
-        self.send_color(tool_id, color)
+        if tool_id in self._highlighted and tool_id != self._active_tool_id:
+            self.send_color(tool_id, self.HIGHLIGHT_COLOR)
+        else:
+            self.send_color(tool_id, color)
 
     def reset_to_category(self, tool_id: int) -> None:
         """Restore a tool to its category color (falls back to RESET_COLOR if not registered)."""
         self.send_color(tool_id, self._category_colors.get(tool_id, self.RESET_COLOR))
 
+    def _restore(self, tool_id: int) -> None:
+        """Return a tool to its resting appearance after a hover/deselect. If a stage menu is open
+        and this tool is still highlighted, that means cyan — highlights only clear on menu
+        close/reset, so cyan→orange→cyan on hover, not cyan→orange→category."""
+        if tool_id in self._highlighted:
+            self.send_color(tool_id, self.HIGHLIGHT_COLOR)
+        else:
+            self.reset_to_category(tool_id)
+
     def _handle_click(self, tool_id: int, hand: str = "unknown"):
         # hand was near tool A (hover) and clicked a different tool B before hover_exit(A) arrived
         if self._hovered_tool_id is not None and self._hovered_tool_id != tool_id:
-            self.reset_to_category(self._hovered_tool_id)
+            self._restore(self._hovered_tool_id)
         self._hovered_tool_id = None
         if self._active_tool_id == tool_id:
             if self._on_cancel is not None:
@@ -954,10 +977,10 @@ class _ToolSelectionManager:
             # clicking the already-selected tool → deselect (toggle off)
             self._active_tool_id = None
             self._active_hand    = None
-            self.reset_to_category(tool_id)
+            self._restore(tool_id)
         elif self._active_tool_id is not None:
             # clicking a different tool while another is already selected → switch selection
-            self.reset_to_category(self._active_tool_id)
+            self._restore(self._active_tool_id)
             self._active_tool_id = tool_id
             self._active_hand    = hand
             self.send_color(tool_id, self.SELECTED_COLOR)
@@ -970,7 +993,7 @@ class _ToolSelectionManager:
     def _handle_hover_enter(self, tool_id: int):
         # hand moved from tool A to tool B without a hover_exit(A) in between → clear A first
         if self._hovered_tool_id is not None and self._hovered_tool_id != tool_id:
-            self.reset_to_category(self._hovered_tool_id)
+            self._restore(self._hovered_tool_id)
         self._hovered_tool_id = None
         # hovering over the already-selected tool — don't downgrade its color to HOVER_COLOR
         if tool_id == self._active_tool_id:
@@ -986,7 +1009,7 @@ class _ToolSelectionManager:
         # tool was clicked while being hovered — it is now selected, don't strip its SELECTED_COLOR
         if tool_id == self._active_tool_id:
             return
-        self.reset_to_category(tool_id)
+        self._restore(tool_id)
 
     def send_color(self, tool_id: int, color: list[float]):
         msg = {"tool_id": int(tool_id), "color": [float(c) for c in color]}
@@ -1008,10 +1031,57 @@ class _ToolSelectionManager:
             self._active_tool_id = None
             self._active_hand    = None
 
+    # ── Pegboard highlight (gearbox_control.py → here on GEARBOX_HIGHLIGHT_PORT) ──
+    # Cyan-flag the tools needed for the current assembly step. Folded in from
+    # test_tool_layout.py's ToolHighlightBridge; here the restore goes back to the
+    # tool's CATEGORY colour (not the raw sentinel), and the actively-selected tool
+    # is never repainted (selection wins over highlight).
+    def drain_highlights(self, timeout_ms: int = 0) -> bool:
+        poller = zmq.Poller()
+        poller.register(self._hl_sub, zmq.POLLIN)
+        if not dict(poller.poll(timeout=timeout_ms)):
+            return False
+        processed = False
+        while True:
+            try:
+                raw = self._hl_sub.recv_string(flags=zmq.NOBLOCK)
+            except zmq.Again:
+                break
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError as e:
+                print(f"[ToolHighlight] Bad message: {e}")
+                continue
+            event = msg.get("event")
+            if event == "clear":
+                self._apply_highlight_clear()
+            elif event == "highlight":
+                self._apply_highlight(msg.get("ids", []))
+            processed = True
+        return processed
+
+    def _apply_highlight(self, ids) -> None:
+        new = {int(i) for i in ids}
+        for tid in self._highlighted - new:          # dropped out of the set → restore
+            if tid != self._active_tool_id:
+                self.reset_to_category(tid)
+        for tid in new - self._highlighted:          # newly appearing → highlight colour
+            if tid != self._active_tool_id:          # selection wins over highlight
+                self.send_color(tid, self.HIGHLIGHT_COLOR)
+        self._highlighted = new
+
+    def _apply_highlight_clear(self) -> None:
+        for tid in self._highlighted:
+            if tid != self._active_tool_id and tid != self._hovered_tool_id:
+                self.reset_to_category(tid)
+        self._highlighted = set()
+
     def close(self):
         try: self._sub.close(0)
         except Exception: pass
         try: self._pub.close(0)
+        except Exception: pass
+        try: self._hl_sub.close(0)
         except Exception: pass
 
 class _WorkspaceBoundPublisher:
@@ -1649,6 +1719,7 @@ class MainScene:
 
                 # ── Poll streams ──────────────────────────────────────────────
                 self.tools.poll(timeout_ms=0)
+                self.tools.drain_highlights(timeout_ms=0)
                 self.hands.poll()
                 _link_poses = None
                 if self.robot is not None:
