@@ -16,15 +16,23 @@ import threading
 from dataclasses import dataclass
 from typing import Iterable
 
-# Ensure task_graph/ is on the path when run from the repo root
+# Ensure task_graph/ (this dir) and the repo root (its parent) are both importable, so we can pull
+# the canonical ports from main_setting.py even though the viewer runs from the task_graph/ subdir.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from vlm_assistant import VLMAssistant  # noqa: E402
 from speech_listener import SpeechListener  # noqa: E402
 
-# Live-mirror listen port. Canonical value is main_setting.GEARBOX_TASKGRAPH_PORT; hardcoded here
-# because this viewer runs from the task_graph/ subdirectory (main_setting is at the repo root).
-_DEFAULT_TASKGRAPH_PORT = 5022
+# Ports live canonically in main_setting.py; fall back to literals so the viewer still runs if that
+# import is unavailable.
+try:
+    import main_setting as _cfg
+    _DEFAULT_TASKGRAPH_PORT   = _cfg.GEARBOX_TASKGRAPH_PORT     # live gearbox_control.py mirror (in)
+    _DEFAULT_STEP_SELECT_PORT = _cfg.GEARBOX_STEP_SELECT_PORT   # selected step -> --open-3d viewer (out)
+except Exception:
+    _DEFAULT_TASKGRAPH_PORT   = 5022
+    _DEFAULT_STEP_SELECT_PORT = 5025
 
 
 @dataclass(frozen=True)
@@ -75,7 +83,7 @@ def build_steps() -> list[Step]:
         for side in ("Left", "Right"):
             steps.append(Step(
                 id=f"r{row}_bearing_{side.lower()}",
-                title=f"Row {row}: bearing into {side.lower()} stand",
+                title=f"Row {row}.{1 if side == 'Left' else 3}: bearing into {side.lower()} stand",
                 row=row,
                 stage=0,
                 inputs=(f"BEARING_ROW{row}_{side.upper()}", f"STAND_ROW{row}_{side.upper()}"),
@@ -86,7 +94,7 @@ def build_steps() -> list[Step]:
 
         steps.append(Step(
             id=f"r{row}_gear_rod",
-            title=f"Row {row}: assemble gear rod",
+            title=f"Row {row}.2: assemble gear rod",
             row=row,
             stage=1,
             inputs=gear_inputs[row],
@@ -97,7 +105,7 @@ def build_steps() -> list[Step]:
         first, second = "Left", "Right"
         steps.append(Step(
             id=f"r{row}_fasten_first_stand",
-            title=f"Row {row}: fasten {first.lower()} stand",
+            title=f"Row {row}.4: fasten {first.lower()} stand",
             row=row,
             stage=2,
             inputs=(f"BEARING_STAND_ROW{row}_{first.upper()}_ASSEMBLY",
@@ -109,7 +117,7 @@ def build_steps() -> list[Step]:
         ))
         steps.append(Step(
             id=f"r{row}_insert_rod_and_fit_second",
-            title=f"Row {row}: insert rod and fit {second.lower()} stand",
+            title=f"Row {row}.5: insert rod and fit {second.lower()} stand",
             row=row,
             stage=3,
             inputs=(f"FASTENED_STAND_ROW{row}_{first.upper()}_ASSEMBLY",
@@ -123,7 +131,7 @@ def build_steps() -> list[Step]:
         ))
         steps.append(Step(
             id=f"r{row}_fasten_second_stand",
-            title=f"Row {row}: fasten {second.lower()} stand",
+            title=f"Row {row}.6: fasten {second.lower()} stand",
             row=row,
             stage=4,
             inputs=(f"UNFASTENED_SECOND_STAND_ROW{row}_ASSEMBLY",
@@ -136,7 +144,7 @@ def build_steps() -> list[Step]:
 
     steps.append(Step(
         id="r1_attach_handle",
-        title="Row 1: attach crank handle",
+        title="Row 1.7: attach crank handle",
         row=1,
         stage=5,
         inputs=("MOUNTED_ROW1_ASSEMBLY", "CRANK_HANDLE_ROW1"),
@@ -312,20 +320,34 @@ def validate_model() -> list[str]:
 def taskgraph_steps(row: int, stage: int) -> list[str]:
     """Bridge a gearbox_control.py (row, control-stage) to this graph's step id(s).
 
-    The two files number "stage" differently: gearbox_control uses per-row control-stages 1-7,
-    while this graph uses named steps. Control stage 5 ("insert rod + fit right stand + screw it")
-    spans TWO task steps, so it maps to both — completing it marks both, in dependency order."""
-    if stage == 7 or row == 0:
+    The two files number "stage" differently: gearbox_control uses per-row control-stages 1-8,
+    while this graph uses named steps. The control stages now map one-to-one onto task steps:
+    stage 5 is the rod-insert + right-stand fit, stage 6 the right-stand fastening."""
+    if stage == 8 or row == 0:
         return ["finish_gearbox"]
-    if stage == 6:
+    if stage == 7:
         return ["r1_attach_handle"] if row == 1 else []
     return {
         1: [f"r{row}_bearing_left"],
         2: [f"r{row}_gear_rod"],
         3: [f"r{row}_bearing_right"],
         4: [f"r{row}_fasten_first_stand"],
-        5: [f"r{row}_insert_rod_and_fit_second", f"r{row}_fasten_second_stand"],
+        5: [f"r{row}_insert_rod_and_fit_second"],
+        6: [f"r{row}_fasten_second_stand"],
     }.get(stage, [])
+
+
+def control_coords_for_step(step_id: str):
+    """Inverse of taskgraph_steps: a task-step id -> the gearbox_control (row, control-stage) that
+    opens it, or None if the id isn't a mapped control step. Lets this viewer tell an external
+    (row, stage) consumer — e.g. gearbox_control.py --open-3d — which step was just selected."""
+    if step_id == "finish_gearbox":
+        return 0, 8
+    for row in range(1, 5):
+        for stage in range(1, 8):
+            if step_id in taskgraph_steps(row, stage):
+                return row, stage
+    return None
 
 
 class TkTaskGraphApp:
@@ -659,6 +681,7 @@ class DearPyGuiTaskGraphApp:
         self._live_running = False
         self._live_thread: threading.Thread | None = None
         self._live_sub = None
+        self._select_pub = None   # PUB -> gearbox_control.py --open-3d viewer (selected step)
 
         self._speech = None   # SpeechListener, set in run() if enabled
         self._vlm    = None   # VLMAssistant, set in run() if enabled
@@ -714,7 +737,8 @@ class DearPyGuiTaskGraphApp:
             voice_device: str | None = None,
             wake_word: str = "hey robot",
             vlm_model: str | None = None,
-            task_description_path: str | None = None) -> None:
+            task_description_path: str | None = None,
+            select_port: int | None = None) -> None:
         # Pre-import transformers on the main thread before any worker threads start.
         # The VLM thread and ASR (NeMo) thread both import from transformers; if they
         # race during the initial import, Python's partially-initialized sys.modules
@@ -732,6 +756,8 @@ class DearPyGuiTaskGraphApp:
         self.build()
         if live_port is not None:
             self.start_live_listener(live_port)
+        if select_port is not None:
+            self.start_select_publisher(select_port)
         if voice_device is not None:
             try:
                 self._speech = SpeechListener(device=voice_device, wake_word=wake_word)
@@ -799,6 +825,33 @@ class DearPyGuiTaskGraphApp:
         self._live_thread.start()
         self.log(f"Live link listening on tcp://127.0.0.1:{port} (controller mirror).")
         return True
+
+    def start_select_publisher(self, port: int) -> bool:
+        """Connect a PUB (sender connects, per convention) so pressing 'Select step' can tell an
+        (row, stage) consumer — gearbox_control.py --open-3d — which step is selected. Non-fatal."""
+        try:
+            import zmq
+        except Exception as e:
+            self.log(f"Step-select link disabled (zmq unavailable: {e}).")
+            return False
+        try:
+            ctx = zmq.Context.instance()
+            pub = ctx.socket(zmq.PUB)
+            pub.connect(f"tcp://127.0.0.1:{port}")
+        except Exception as e:
+            self.log(f"Step-select link disabled (could not connect :{port}: {e}).")
+            return False
+        self._select_pub = pub
+        self.log(f"Step-select link -> tcp://127.0.0.1:{port} (open3d viewer).")
+        return True
+
+    def _send_select(self, msg: dict) -> None:
+        if self._select_pub is None:
+            return
+        try:
+            self._select_pub.send_string(json.dumps(msg))
+        except Exception:
+            pass
 
     def _drain_live_queue(self) -> None:
         while True:
@@ -1102,6 +1155,10 @@ class DearPyGuiTaskGraphApp:
     def _select_callback(self, _sender, _app_data, user_data) -> None:
         self.selected_id = user_data
         self.refresh()
+        coords = control_coords_for_step(user_data)
+        if coords is not None:
+            self._send_select({"event": "select", "row": coords[0], "stage": coords[1],
+                               "step": user_data})
         if self._vlm is not None:
             step = self.graph.by_id[user_data]
             state = self.graph.state(step)
@@ -1138,6 +1195,7 @@ class DearPyGuiTaskGraphApp:
         self.recommended_id = None
         self.log("All assembly progress was reset.")
         self.refresh()
+        self._send_select({"event": "clear"})
         self._notify_vlm("RESET: all progress cleared")
 
     def _command_callback(self, sender, app_data) -> None:
@@ -1386,6 +1444,11 @@ def main() -> None:
                              f"(default: {_DEFAULT_TASKGRAPH_PORT})")
     parser.add_argument("--no-live", action="store_true",
                         help="Disable the live controller link (open the viewer standalone).")
+    parser.add_argument("--step-select-port", type=int, default=_DEFAULT_STEP_SELECT_PORT,
+                        help=f"Port to publish the selected step on for gearbox_control.py --open-3d "
+                             f"(default: {_DEFAULT_STEP_SELECT_PORT}).")
+    parser.add_argument("--no-step-select", action="store_true",
+                        help="Disable publishing the selected step to the --open-3d viewer.")
     parser.add_argument("--voice-device", default="bluez_source.50_C2_ED_43_95_C8.handsfree_head_unit",
                         help="PulseAudio source name for voice input (pass empty string to disable).")
     parser.add_argument("--no-voice", action="store_true",
@@ -1400,12 +1463,14 @@ def main() -> None:
         run_self_test()
         return
     live_port    = None if args.no_live  else args.task_graph_port
+    select_port  = None if args.no_step_select else args.step_select_port
     voice_device = None if args.no_voice else args.voice_device
     DearPyGuiTaskGraphApp().run(
         live_port,
         voice_device=voice_device,
         wake_word=args.wake_word,
         vlm_model=args.vlm_model,
+        select_port=select_port,
     )
 
 
