@@ -21,7 +21,11 @@ MonoBehaviour:
   m_OverrideGlobalSceneList: 1
   m_Scenes:
   - m_enabled: 1
+<<<<<<< HEAD
     m_path: Assets/Scenes/DataCapture.unity
+=======
+    m_path: Assets/Scenes/VisualizationTesting.unity
+>>>>>>> 0e2bab6a27f7d6a4c239dd9d878d32fbd4efcd4f
   m_ScriptingDefines: []
   m_PlayerSettingsYaml:
     m_Settings:
@@ -37,7 +41,11 @@ MonoBehaviour:
     - line: '|   useOnDemandResources: 0'
     - line: '|   accelerometerFrequency: 60'
     - line: '|   companyName: DefaultCompany'
+<<<<<<< HEAD
     - line: '|   productName: DataCapture'
+=======
+    - line: '|   productName: DataVisualization'
+>>>>>>> 0e2bab6a27f7d6a4c239dd9d878d32fbd4efcd4f
     - line: '|   defaultCursor: {instanceID: 0}'
     - line: '|   cursorHotspot: {x: 0, y: 0}'
     - line: '|   m_SplashScreenBackgroundColor: {r: 0.13725491, g: 0.12156863, b:

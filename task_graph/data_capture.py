@@ -41,6 +41,7 @@ from pathlib import Path
 
 import cv2 as cv
 import numpy as np
+import zmq
 
 _FILE_DIR = Path(__file__).resolve().parent
 if str(_FILE_DIR) not in sys.path:
@@ -162,11 +163,18 @@ class DataCaptureScene:
         self._left_pinching_prev  = False
         self._right_pinching_prev = False
 
+        ctx = zmq.Context.instance()
+        self._color_pub = ctx.socket(zmq.PUB)
+        self._color_pub.connect(f"tcp://{quest_ip}:{cfg.TOOL_COLOR_PORT}")
+        time.sleep(0.2)
+
         self.vis  = _SceneVis("Data Capture - World Frame")
         self._win = (f"Data Capture  [ENTER=lock/relock  SPACE=record  ESC=quit]"
                      f"  anchor=#{anchor_marker_id}")
         cv.namedWindow(self._win, cv.WINDOW_NORMAL)
         cv.resizeWindow(self._win, 960, 540)
+
+        self._send_cube_color([1.0, 0.2, 0.2, 1.0])  # start red (not recording)
 
         print(f"\n[Running]  quest_ip={quest_ip}  "
               f"anchor_marker=#{anchor_marker_id}  hand_port={hand_port}")
@@ -176,6 +184,13 @@ class DataCaptureScene:
         print("  SPACE = start/stop recording   ENTER = lock/relock   ESC = quit")
         print("  Left-hand pinch = start/stop recording   "
               "Right-hand pinch = lock/relock\n")
+
+    def _send_cube_color(self, color: list) -> None:
+        msg = {"tool_id": int(self.anchor_marker_id), "color": [float(c) for c in color]}
+        try:
+            self._color_pub.send_string(json.dumps(msg))
+        except Exception as e:
+            print(f"[DataCapture] Color send error: {e}")
 
     # ── Shared actions (keyboard + pinch trigger both of these) ─────────────────
 
@@ -188,16 +203,13 @@ class DataCaptureScene:
             "sensor_height": self.cam.sensor_height,
         }
 
-    def _lock_or_relock(self, T_cam_anchor, _center_T, source: str) -> None:
+    def _lock_or_relock(self, T_cam_anchor, source: str) -> None:
         if self.cam.camera_T is None or T_cam_anchor is None:
             print(f"[{source}] Marker #{self.anchor_marker_id} not visible - cannot lock.")
             return
-        if self.anchor.locked:
-            self.anchor.relock(T_cam_anchor, self.cam.camera_T, _center_T)
-            print(f"[{source}] Relocked world to marker #{self.anchor_marker_id}")
-        else:
-            self.anchor.lock(T_cam_anchor, self.cam.camera_T, center_T=_center_T)
-            print(f"[{source}] Locked world to marker #{self.anchor_marker_id}")
+        self.anchor.lock(T_cam_anchor, self.cam.camera_T)
+        print(f"[{source}] {'Relocked' if self.anchor.locked else 'Locked'} world to marker "
+              f"#{self.anchor_marker_id}")
 
     # ── Main loop ─────────────────────────────────────────────────────────────
 
@@ -230,10 +242,9 @@ class DataCaptureScene:
                 _min_cos  = np.cos(np.deg2rad(self._AUTO_LOCK_MAX_TILT_DEG))
                 if (not self.anchor.locked and anchor_ok
                         and self.cam.camera_T is not None
-                        and _center_T is not None
                         and dist_to_anchor < self._AUTO_LOCK_MAX_DIST
                         and _cos_tilt > _min_cos):
-                    self.anchor.lock(T_cam_anchor, self.cam.camera_T, center_T=_center_T)
+                    self.anchor.lock(T_cam_anchor, self.cam.camera_T)
                     print(f"[AutoLock] Locked world to marker "
                           f"#{self.anchor_marker_id} ({dist_to_anchor:.2f} m)")
 
@@ -296,9 +307,11 @@ class DataCaptureScene:
                 if key == 27:
                     break
                 elif key == 13:  # ENTER
-                    self._lock_or_relock(T_cam_anchor, _center_T, source="ENTER")
+                    self._lock_or_relock(T_cam_anchor, source="ENTER")
                 elif key == 32:  # SPACE
                     self.recorder.toggle(self._camera_intrinsics())
+                    self._send_cube_color([0.2, 1.0, 0.2, 1.0] if self.recorder.active
+                                          else [1.0, 0.2, 0.2, 1.0])
 
                 # ── Pinch handling (mirrors ENTER/SPACE via Unity hand input) ───
                 left_pinch  = self.hands.pinch_strength("LeftHand")
@@ -308,8 +321,10 @@ class DataCaptureScene:
 
                 if left_pinching and not self._left_pinching_prev:
                     self.recorder.toggle(self._camera_intrinsics())
+                    self._send_cube_color([0.2, 1.0, 0.2, 1.0] if self.recorder.active
+                                          else [1.0, 0.2, 0.2, 1.0])
                 if right_pinching and not self._right_pinching_prev:
-                    self._lock_or_relock(T_cam_anchor, _center_T, source="Pinch")
+                    self._lock_or_relock(T_cam_anchor, source="Pinch")
 
                 self._left_pinching_prev  = left_pinching
                 self._right_pinching_prev = right_pinching
@@ -322,6 +337,7 @@ class DataCaptureScene:
             self.close()
 
     def close(self) -> None:
+        self._send_cube_color([1.0, 0.2, 0.2, 1.0])  # reset to red on exit
         self.recorder.close()
         self.aruco_worker.stop()
         self.vis.close()
@@ -329,6 +345,10 @@ class DataCaptureScene:
         self.anchor.close()
         self.hands.close()
         self.cam.close()
+        try:
+            self._color_pub.close(0)
+        except Exception:
+            pass
         print("[Done]")
 
 

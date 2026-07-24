@@ -10,13 +10,29 @@ from __future__ import annotations
 import argparse
 import json
 import queue
+import sys
+from pathlib import Path
 import threading
 from dataclasses import dataclass
 from typing import Iterable
 
-# Live-mirror listen port. Canonical value is main_setting.GEARBOX_TASKGRAPH_PORT; hardcoded here
-# because this viewer runs from the task_graph/ subdirectory (main_setting is at the repo root).
-_DEFAULT_TASKGRAPH_PORT = 5022
+# Ensure task_graph/ (this dir) and the repo root (its parent) are both importable, so we can pull
+# the canonical ports from main_setting.py even though the viewer runs from the task_graph/ subdir.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from vlm_assistant import VLMAssistant  # noqa: E402
+from speech_listener import SpeechListener  # noqa: E402
+
+# Ports live canonically in main_setting.py; fall back to literals so the viewer still runs if that
+# import is unavailable.
+try:
+    import main_setting as _cfg
+    _DEFAULT_TASKGRAPH_PORT   = _cfg.GEARBOX_TASKGRAPH_PORT     # live gearbox_control.py mirror (in)
+    _DEFAULT_STEP_SELECT_PORT = _cfg.GEARBOX_STEP_SELECT_PORT   # selected step -> --open-3d viewer (out)
+except Exception:
+    _DEFAULT_TASKGRAPH_PORT   = 5022
+    _DEFAULT_STEP_SELECT_PORT = 5025
 
 
 @dataclass(frozen=True)
@@ -67,7 +83,7 @@ def build_steps() -> list[Step]:
         for side in ("Left", "Right"):
             steps.append(Step(
                 id=f"r{row}_bearing_{side.lower()}",
-                title=f"Row {row}: bearing into {side.lower()} stand",
+                title=f"Row {row}.{1 if side == 'Left' else 3}: bearing into {side.lower()} stand",
                 row=row,
                 stage=0,
                 inputs=(f"BEARING_ROW{row}_{side.upper()}", f"STAND_ROW{row}_{side.upper()}"),
@@ -78,7 +94,7 @@ def build_steps() -> list[Step]:
 
         steps.append(Step(
             id=f"r{row}_gear_rod",
-            title=f"Row {row}: assemble gear rod",
+            title=f"Row {row}.2: assemble gear rod",
             row=row,
             stage=1,
             inputs=gear_inputs[row],
@@ -89,7 +105,7 @@ def build_steps() -> list[Step]:
         first, second = "Left", "Right"
         steps.append(Step(
             id=f"r{row}_fasten_first_stand",
-            title=f"Row {row}: fasten {first.lower()} stand",
+            title=f"Row {row}.4: fasten {first.lower()} stand",
             row=row,
             stage=2,
             inputs=(f"BEARING_STAND_ROW{row}_{first.upper()}_ASSEMBLY",
@@ -101,7 +117,7 @@ def build_steps() -> list[Step]:
         ))
         steps.append(Step(
             id=f"r{row}_insert_rod_and_fit_second",
-            title=f"Row {row}: insert rod and fit {second.lower()} stand",
+            title=f"Row {row}.5: insert rod and fit {second.lower()} stand",
             row=row,
             stage=3,
             inputs=(f"FASTENED_STAND_ROW{row}_{first.upper()}_ASSEMBLY",
@@ -115,7 +131,7 @@ def build_steps() -> list[Step]:
         ))
         steps.append(Step(
             id=f"r{row}_fasten_second_stand",
-            title=f"Row {row}: fasten {second.lower()} stand",
+            title=f"Row {row}.6: fasten {second.lower()} stand",
             row=row,
             stage=4,
             inputs=(f"UNFASTENED_SECOND_STAND_ROW{row}_ASSEMBLY",
@@ -128,7 +144,7 @@ def build_steps() -> list[Step]:
 
     steps.append(Step(
         id="r1_attach_handle",
-        title="Row 1: attach crank handle",
+        title="Row 1.7: attach crank handle",
         row=1,
         stage=5,
         inputs=("MOUNTED_ROW1_ASSEMBLY", "CRANK_HANDLE_ROW1"),
@@ -304,20 +320,34 @@ def validate_model() -> list[str]:
 def taskgraph_steps(row: int, stage: int) -> list[str]:
     """Bridge a gearbox_control.py (row, control-stage) to this graph's step id(s).
 
-    The two files number "stage" differently: gearbox_control uses per-row control-stages 1-7,
-    while this graph uses named steps. Control stage 5 ("insert rod + fit right stand + screw it")
-    spans TWO task steps, so it maps to both — completing it marks both, in dependency order."""
-    if stage == 7 or row == 0:
+    The two files number "stage" differently: gearbox_control uses per-row control-stages 1-8,
+    while this graph uses named steps. The control stages now map one-to-one onto task steps:
+    stage 5 is the rod-insert + right-stand fit, stage 6 the right-stand fastening."""
+    if stage == 8 or row == 0:
         return ["finish_gearbox"]
-    if stage == 6:
+    if stage == 7:
         return ["r1_attach_handle"] if row == 1 else []
     return {
         1: [f"r{row}_bearing_left"],
         2: [f"r{row}_gear_rod"],
         3: [f"r{row}_bearing_right"],
         4: [f"r{row}_fasten_first_stand"],
-        5: [f"r{row}_insert_rod_and_fit_second", f"r{row}_fasten_second_stand"],
+        5: [f"r{row}_insert_rod_and_fit_second"],
+        6: [f"r{row}_fasten_second_stand"],
     }.get(stage, [])
+
+
+def control_coords_for_step(step_id: str):
+    """Inverse of taskgraph_steps: a task-step id -> the gearbox_control (row, control-stage) that
+    opens it, or None if the id isn't a mapped control step. Lets this viewer tell an external
+    (row, stage) consumer — e.g. gearbox_control.py --open-3d — which step was just selected."""
+    if step_id == "finish_gearbox":
+        return 0, 8
+    for row in range(1, 5):
+        for stage in range(1, 8):
+            if step_id in taskgraph_steps(row, stage):
+                return row, stage
+    return None
 
 
 class TkTaskGraphApp:
@@ -542,6 +572,76 @@ class TkTaskGraphApp:
             for s in matches[:12]))
 
 
+def _graph_state_summary(graph: TaskGraph) -> str:
+    """Build a concise state description for the VLM system context."""
+    completed  = graph.completed
+    ready      = [s for s in graph.steps if graph.is_ready(s)]
+    blocked    = [s for s in graph.steps
+                  if s.id not in graph.completed and not graph.is_ready(s)]
+    assemblies = sorted(p for p in graph.active_parts if p.endswith("_ASSEMBLY"))
+
+    lines = [f"Progress: {len(completed)} / {len(graph.steps)} steps completed"]
+
+    if completed:
+        lines.append("\nCompleted steps (most recent last):")
+        for sid in completed[-8:]:
+            step = graph.by_id[sid]
+            lines.append(f"  - {step.title}  ->  {step.output}")
+
+    if ready:
+        lines.append(
+            "\nREADY steps — ALL of these are currently unlocked and INDEPENDENT."
+            "\nThey have NO ordering requirement among themselves; the user may perform"
+            " them in any order they prefer:"
+        )
+        for step in ready[:8]:
+            lines.append(f"  - [{step.id}] {step.title}")
+
+    if blocked:
+        lines.append("\nBLOCKED steps (prerequisites not yet met):")
+        for step in blocked[:6]:
+            missing_parts  = graph.missing(step)
+            missing_steps  = []
+            missing_raw    = []
+            for part in missing_parts:
+                producer = graph.producer_for(part)
+                if producer:
+                    missing_steps.append(f"[{producer.id}]")
+                else:
+                    missing_raw.append(part)
+            needs = ", ".join(missing_steps + missing_raw)
+            lines.append(f"  - [{step.id}] {step.title}  (needs these steps first: {needs})")
+
+    if assemblies:
+        lines.append("\nActive assemblies in inventory:")
+        for a in assemblies[:12]:
+            lines.append(f"  - {a}")
+
+    lines.append(
+        "\nIMPORTANT: Base your answers ONLY on the dependency structure above."
+        " Do NOT infer ordering constraints from step descriptions — only the"
+        " BLOCKED list represents real prerequisites. If a step is READY, the"
+        " user may do it at any time regardless of the order steps are listed."
+    )
+
+    return "\n".join(lines)
+
+
+def _recommend_next_step(graph: TaskGraph) -> "Step | None":
+    """Row-by-row recommendation policy: pick the READY step with the lowest row
+    number, then lowest stage within that row. The finish step (row=0) is treated
+    as the highest row so it is only recommended when everything else is done."""
+    ready = [s for s in graph.steps if graph.is_ready(s)]
+    if not ready:
+        return None
+
+    def _priority(s: Step) -> tuple:
+        row = s.row if s.row > 0 else 999
+        return (row, s.stage, s.id)
+
+    return min(ready, key=_priority)
+
+
 class DearPyGuiTaskGraphApp:
     """Dear PyGui task-graph view and terminal controller."""
 
@@ -549,6 +649,17 @@ class DearPyGuiTaskGraphApp:
         "complete": (46, 157, 96, 255),
         "ready": (39, 132, 216, 255),
         "blocked": (209, 138, 39, 255),
+    }
+
+    # Status → (RGBA color, display label)
+    _VOICE_STATUS_STYLE: dict[str, tuple[tuple, str]] = {
+        "loading":     ((180, 180, 180, 255), "Loading model..."),
+        "idle":        ((255, 220, 50,  255), "Idle"),
+        "speech":      ((50,  200, 255, 255), "Speech detected..."),
+        "queued":      ((200, 160, 50,  255), "Queued..."),
+        "transcribing":((255, 165, 50,  255), "Transcribing..."),
+        "listening":   ((50,  220, 80,  255), "Listening"),
+        "error":       ((255, 80,  80,  255), "Error"),
     }
 
     def __init__(self) -> None:
@@ -563,29 +674,35 @@ class DearPyGuiTaskGraphApp:
         self.output_attributes: dict[str, str] = {}
         self.themes: dict[str, str] = {}
 
-        # Live-mirror state: step ids currently "open" in the controller (rendered purple), plus
-        # the background listener that feeds events in from gearbox_control.py.
+        # Live-mirror state
         self.active_ids: set[str] = set()
+        self.recommended_id: str | None = None
         self._live_queue: "queue.Queue[dict]" = queue.Queue()
         self._live_running = False
         self._live_thread: threading.Thread | None = None
         self._live_sub = None
+        self._select_pub = None   # PUB -> gearbox_control.py --open-3d viewer (selected step)
+
+        self._speech = None   # SpeechListener, set in run() if enabled
+        self._vlm    = None   # VLMAssistant, set in run() if enabled
 
     def build(self) -> None:
         dpg = self.dpg
         dpg.create_context()
-        dpg.create_viewport(title="Gearbox Assembly Task Graph", width=1540, height=920,
-                            min_width=1080, min_height=700)
+        dpg.create_viewport(title="Gearbox Assembly Task Graph", width=3420, height=1400,
+                            min_width=1400, min_height=800)
         self._create_themes()
 
         with dpg.window(tag="primary_window", label="Gearbox Assembly Task Graph"):
             dpg.add_text("Gearbox Assembly Dependency Graph", color=(225, 232, 240),
                          tag="main_title")
-            dpg.add_text("Blue = ready     Orange = blocked     Green = complete",
+            dpg.add_text("Blue = ready     Orange = blocked     Green = complete"
+                         "     Purple = selected / active     Gold = recommended",
                          color=(170, 180, 195))
             with dpg.table(header_row=False, resizable=True, policy=dpg.mvTable_SizingStretchProp):
-                dpg.add_table_column(init_width_or_weight=3.2)
-                dpg.add_table_column(init_width_or_weight=1.25)
+                dpg.add_table_column(init_width_or_weight=2.8)
+                dpg.add_table_column(init_width_or_weight=1.0)
+                dpg.add_table_column(init_width_or_weight=1.1)
                 with dpg.table_row():
                     with dpg.table_cell():
                         with dpg.child_window(height=-1, horizontal_scrollbar=True):
@@ -596,6 +713,18 @@ class DearPyGuiTaskGraphApp:
                     with dpg.table_cell():
                         with dpg.child_window(height=-1):
                             self._create_side_panel()
+                    with dpg.table_cell():
+                        with dpg.child_window(height=-1):
+                            if self._vlm is not None:
+                                self._vlm.build_inline()
+                            else:
+                                dpg.add_text("VLM Assistant",
+                                             color=(225, 232, 240))
+                                dpg.add_separator()
+                                dpg.add_text(
+                                    "Not enabled.\n\nRun with:\n"
+                                    "  --vlm-model Qwen/Qwen2.5-VL-7B-Instruct",
+                                    color=(140, 155, 175))
 
         dpg.set_primary_window("primary_window", True)
         dpg.bind_item_theme("task_node_editor", "node_editor_theme")
@@ -604,17 +733,56 @@ class DearPyGuiTaskGraphApp:
         dpg.setup_dearpygui()
         dpg.show_viewport()
 
-    def run(self, live_port: int | None = None) -> None:
+    def run(self, live_port: int | None = None,
+            voice_device: str | None = None,
+            wake_word: str = "hey robot",
+            vlm_model: str | None = None,
+            task_description_path: str | None = None,
+            select_port: int | None = None) -> None:
+        # Pre-import transformers on the main thread before any worker threads start.
+        # The VLM thread and ASR (NeMo) thread both import from transformers; if they
+        # race during the initial import, Python's partially-initialized sys.modules
+        # entry causes "cannot import name X from transformers".
+        try:
+            import transformers as _tf  # noqa: F401
+        except Exception:
+            pass
+
+        if vlm_model is not None:
+            desc_path = task_description_path or str(
+                Path(__file__).parent / "task_description.md")
+            self._vlm = VLMAssistant(self.dpg, desc_path, model_name=vlm_model)
+            print(f"[VLM] Assistant created: {vlm_model}")
         self.build()
         if live_port is not None:
             self.start_live_listener(live_port)
+        if select_port is not None:
+            self.start_select_publisher(select_port)
+        if voice_device is not None:
+            try:
+                self._speech = SpeechListener(device=voice_device, wake_word=wake_word)
+                self._speech.start()
+                self.log(f"[Voice] Started on device: {voice_device}")
+            except Exception as e:
+                self.log(f"[Voice] Failed to start: {e}")
+        if self._vlm is not None:
+            try:
+                self.dpg.set_viewport_drop_callback(self._vlm.on_file_drop)
+            except Exception:
+                pass  # older DPG versions may not support this
+
         dpg = self.dpg
-        # Manual render loop (instead of blocking start_dearpygui) so queued live events from the
-        # controller are applied on the UI thread, one frame at a time.
         while dpg.is_dearpygui_running():
             self._drain_live_queue()
+            self._poll_speech()
+            if self._vlm is not None:
+                self._vlm.tick()
             dpg.render_dearpygui_frame()
         self._live_running = False
+        if self._speech is not None:
+            self._speech.close()
+        if self._vlm is not None:
+            self._vlm.close()
         dpg.destroy_context()
 
     # ── Live mirror of gearbox_control.py ────────────────────────────────────
@@ -658,6 +826,33 @@ class DearPyGuiTaskGraphApp:
         self.log(f"Live link listening on tcp://127.0.0.1:{port} (controller mirror).")
         return True
 
+    def start_select_publisher(self, port: int) -> bool:
+        """Connect a PUB (sender connects, per convention) so pressing 'Select step' can tell an
+        (row, stage) consumer — gearbox_control.py --open-3d — which step is selected. Non-fatal."""
+        try:
+            import zmq
+        except Exception as e:
+            self.log(f"Step-select link disabled (zmq unavailable: {e}).")
+            return False
+        try:
+            ctx = zmq.Context.instance()
+            pub = ctx.socket(zmq.PUB)
+            pub.connect(f"tcp://127.0.0.1:{port}")
+        except Exception as e:
+            self.log(f"Step-select link disabled (could not connect :{port}: {e}).")
+            return False
+        self._select_pub = pub
+        self.log(f"Step-select link -> tcp://127.0.0.1:{port} (open3d viewer).")
+        return True
+
+    def _send_select(self, msg: dict) -> None:
+        if self._select_pub is None:
+            return
+        try:
+            self._select_pub.send_string(json.dumps(msg))
+        except Exception:
+            pass
+
     def _drain_live_queue(self) -> None:
         while True:
             try:
@@ -665,6 +860,54 @@ class DearPyGuiTaskGraphApp:
             except queue.Empty:
                 return
             self._apply_live_event(msg)
+
+    def _poll_speech(self) -> None:
+        if self._speech is None:
+            return
+        dpg = self.dpg
+        events = self._speech.poll()
+
+        # Status label + color
+        status = self._speech.current_status
+        color, label = self._VOICE_STATUS_STYLE.get(
+            status, ((200, 200, 200, 255), status))
+        if self._speech.listening_active:
+            label = f"Listening  (wake word: \"{self._speech.wake_word}\")"
+        elif status == "idle":
+            label = f"Idle — say \"{self._speech.wake_word}\""
+        dpg.set_value("voice_status", label)
+        dpg.configure_item("voice_status", color=list(color))
+
+        # Timer
+        if self._speech.listening_active:
+            dpg.set_value("voice_timer", f"{self._speech.remaining_time:.0f}s remaining")
+        else:
+            dpg.set_value("voice_timer", "")
+
+        # RMS bar (clamp to [0, 1])
+        dpg.set_value("voice_rms", min(self._speech.current_rms * 10.0, 1.0))
+
+        # Transcript log
+        history = list(self._speech.transcript_history)
+        if history:
+            dpg.set_value("voice_transcripts", "\n".join(f"› {t}" for t in history))
+
+        # Log notable events to the terminal; optionally route transcripts to VLM
+        route_to_vlm = (self._vlm is not None
+                        and dpg.get_value("voice_to_vlm"))
+        for kind, payload in events:
+            if kind == "wake_word":
+                self.log("[Voice] Wake word detected — listening.")
+            elif kind == "transcript":
+                self.log(f"[Voice] {payload}")
+                if route_to_vlm:
+                    sent = self._vlm.submit_question(payload)
+                    if not sent:
+                        self.log("[Voice->VLM] Model busy — transcript dropped.")
+            elif kind == "timeout":
+                self.log("[Voice] Timed out — back to idle.")
+            elif kind == "error":
+                self.log(f"[Voice error] {payload}")
 
     def _apply_live_event(self, msg: dict) -> None:
         """Apply one controller event (main/UI thread): purple overlay + built-in complete/undo."""
@@ -677,16 +920,22 @@ class DearPyGuiTaskGraphApp:
             self.active_ids = set()
         elif event == "reset":
             self.graph.reset()
-            self.active_ids = set()
+            self.active_ids     = set()
+            self.recommended_id = None
             self.log("Live: controller reset all progress.")
+            self._notify_vlm("RESET: controller reset all progress")
         elif event == "complete":
-            for sid in ids:                              # dependency order
-                _, message = self.graph.complete(self.graph.by_id[sid])
+            for sid in ids:
+                ok, message = self.graph.complete(self.graph.by_id[sid])
                 self.log("Live: " + message)
+            if ids:
+                self._notify_vlm(f"COMPLETE (live): {', '.join(ids)}")
         elif event == "uncomplete":
-            for sid in reversed(ids):                    # reverse order for frontier-safe undo
-                _, message = self.graph.undo(self.graph.by_id[sid])
+            for sid in reversed(ids):
+                ok, message = self.graph.undo(self.graph.by_id[sid])
                 self.log("Live: " + message)
+            if ids:
+                self._notify_vlm(f"UNDO (live): {', '.join(ids)}")
         else:
             return
         self.refresh()
@@ -762,6 +1011,33 @@ class DearPyGuiTaskGraphApp:
                                     category=dpg.mvThemeCat_Nodes)
         self.themes["active"] = "node_theme_active"
 
+        # Gold/yellow "recommended" overlay theme — shown when the system recommends
+        # a step as the next to perform.
+        rec_color  = (255, 195, 0, 255)
+        background = tuple(max(18, int(channel * 0.48)) for channel in rec_color[:3]) + (255,)
+        selected_background = tuple(max(25, int(channel * 0.68)) for channel in rec_color[:3]) + (255,)
+        with dpg.theme(tag="node_theme_recommended"):
+            with dpg.theme_component(dpg.mvNode):
+                dpg.add_theme_color(dpg.mvThemeCol_Text, (255, 255, 255, 255),
+                                    category=dpg.mvThemeCat_Core)
+                dpg.add_theme_color(dpg.mvNodeCol_NodeBackground, background,
+                                    category=dpg.mvThemeCat_Nodes)
+                dpg.add_theme_color(dpg.mvNodeCol_NodeBackgroundHovered, selected_background,
+                                    category=dpg.mvThemeCat_Nodes)
+                dpg.add_theme_color(dpg.mvNodeCol_NodeBackgroundSelected, selected_background,
+                                    category=dpg.mvThemeCat_Nodes)
+                dpg.add_theme_color(dpg.mvNodeCol_NodeOutline, rec_color,
+                                    category=dpg.mvThemeCat_Nodes)
+                dpg.add_theme_color(dpg.mvNodeCol_TitleBar, rec_color,
+                                    category=dpg.mvThemeCat_Nodes)
+                dpg.add_theme_color(dpg.mvNodeCol_TitleBarHovered, rec_color,
+                                    category=dpg.mvThemeCat_Nodes)
+                dpg.add_theme_color(dpg.mvNodeCol_TitleBarSelected, rec_color,
+                                    category=dpg.mvThemeCat_Nodes)
+                dpg.add_theme_style(dpg.mvNodeStyleVar_NodeCornerRounding, 5.0,
+                                    category=dpg.mvThemeCat_Nodes)
+        self.themes["recommended"] = "node_theme_recommended"
+
     def _create_nodes(self) -> None:
         dpg = self.dpg
         stage_x = {0: 20, 1: 500, 2: 980, 3: 1460, 4: 1940, 5: 2420, 6: 2900}
@@ -814,6 +1090,8 @@ class DearPyGuiTaskGraphApp:
         dpg.add_spacer(height=5)
         dpg.add_button(label="Mark selected step complete", tag="complete_button",
                        callback=self._complete_selected, enabled=False, width=-1)
+        dpg.add_button(label="Recommend next step", tag="recommend_button",
+                       callback=self._recommend_callback, width=-1)
         dpg.add_button(label="Reset all progress", callback=self._reset_callback, width=-1)
         dpg.add_spacer(height=8)
         dpg.add_separator()
@@ -827,30 +1105,98 @@ class DearPyGuiTaskGraphApp:
         dpg.add_separator()
         dpg.add_text("Part / step terminal")
         dpg.add_input_text(tag="terminal_output", multiline=True, readonly=True,
-                           width=-1, height=205)
+                           width=-1, height=165)
         dpg.add_input_text(tag="command_input", hint="Enter a part name or command...",
                            width=-1, on_enter=True, callback=self._command_callback)
+
+        dpg.add_spacer(height=8)
+        dpg.add_separator()
+        dpg.add_text("Voice Input  (Parakeet ASR)", color=(225, 232, 240))
+        with dpg.group(horizontal=True):
+            dpg.add_text("Status:", color=(160, 170, 185))
+            dpg.add_text("—", tag="voice_status", color=(180, 180, 180, 255))
+        with dpg.group(horizontal=True):
+            dpg.add_text("Timer: ", color=(160, 170, 185))
+            dpg.add_text("", tag="voice_timer", color=(100, 220, 255, 255))
+        dpg.add_text("Level:", color=(160, 170, 185))
+        dpg.add_progress_bar(tag="voice_rms", default_value=0.0, width=-1)
+        dpg.add_spacer(height=4)
+        dpg.add_checkbox(label="Route transcripts to VLM", tag="voice_to_vlm",
+                         default_value=False)
+        dpg.add_spacer(height=4)
+        dpg.add_text("Transcripts:", color=(160, 170, 185))
+        dpg.add_input_text(tag="voice_transcripts", multiline=True, readonly=True,
+                           width=-1, height=120,
+                           default_value='Say "hey robot" to start...')
+
+    def _notify_vlm(self, event_label: str) -> None:
+        if self._vlm is not None:
+            self._vlm.notify_graph_event(event_label, _graph_state_summary(self.graph))
+
+    def _recommend_callback(self) -> None:
+        step = _recommend_next_step(self.graph)
+        if step is None:
+            self.log("[Recommend] No READY steps — assembly may be complete or stalled.")
+            return
+        self.recommended_id = step.id
+        self.refresh()
+        self.log(f"[Recommend] Highlighted: [{step.id}]  {step.title}")
+        if self._vlm is not None:
+            q = (
+                f"The system recommends the next step as:\n"
+                f"  [{step.id}] {step.title}\n\n"
+                f"Briefly explain what this step involves and why it is the right"
+                f" choice now according to the row-by-row assembly policy."
+            )
+            sent = self._vlm.submit_question(q)
+            if not sent:
+                self.log("[Recommend] VLM busy — explanation skipped.")
 
     def _select_callback(self, _sender, _app_data, user_data) -> None:
         self.selected_id = user_data
         self.refresh()
+        coords = control_coords_for_step(user_data)
+        if coords is not None:
+            self._send_select({"event": "select", "row": coords[0], "stage": coords[1],
+                               "step": user_data})
+        if self._vlm is not None:
+            step = self.graph.by_id[user_data]
+            state = self.graph.state(step)
+            missing = self.graph.missing(step)
+            focused = (
+                f"[{step.id}] {step.title}\n"
+                f"State: {state.upper()}\n"
+                f"Description: {step.description}\n"
+                f"Inputs: {', '.join(step.inputs)}\n"
+                f"Produces: {step.output}"
+            )
+            if missing:
+                focused += f"\nBlocked by: {', '.join(missing)}"
+            self._vlm.set_focused_step(focused)
 
     def _complete_selected(self) -> None:
         if not self.selected_id:
             return
         step = self.graph.by_id[self.selected_id]
         if self.graph.state(step) == "complete":
-            _, message = self.graph.undo(step)
+            ok, message = self.graph.undo(step)
+            if ok:
+                self._notify_vlm(f"UNDO: {step.id}")
         else:
-            _, message = self.graph.complete(step)
+            ok, message = self.graph.complete(step)
+            if ok:
+                self._notify_vlm(f"COMPLETE: {step.id} -> {step.output}")
         self.log(message)
         self.refresh()
 
     def _reset_callback(self) -> None:
         self.graph.reset()
-        self.selected_id = None
+        self.selected_id   = None
+        self.recommended_id = None
         self.log("All assembly progress was reset.")
         self.refresh()
+        self._send_select({"event": "clear"})
+        self._notify_vlm("RESET: all progress cleared")
 
     def _command_callback(self, sender, app_data) -> None:
         raw = (app_data or self.dpg.get_value(sender) or "").strip()
@@ -865,12 +1211,26 @@ class DearPyGuiTaskGraphApp:
 
     def refresh(self) -> None:
         dpg = self.dpg
+        # Auto-clear recommendation once the recommended step is completed.
+        if (self.recommended_id
+                and self.graph.state(self.graph.by_id[self.recommended_id]) == "complete"):
+            self.recommended_id = None
         for step in self.graph.steps:
-            state = self.graph.state(step)
-            active = step.id in self.active_ids
-            dpg.bind_item_theme(self.node_tags[step.id],
-                                self.themes["active"] if active else self.themes[state])
-            label = f"{step.title}  [{state.upper()}]" + ("  (open)" if active else "")
+            state  = self.graph.state(step)
+            active = step.id in self.active_ids or step.id == self.selected_id
+            rec    = step.id == self.recommended_id and not active
+            if active:
+                theme = self.themes["active"]
+            elif rec:
+                theme = self.themes["recommended"]
+            else:
+                theme = self.themes[state]
+            dpg.bind_item_theme(self.node_tags[step.id], theme)
+            label = f"{step.title}  [{state.upper()}]"
+            if active:
+                label += "  (open)"
+            elif rec:
+                label += "  [RECOMMENDED]"
             dpg.configure_item(self.node_tags[step.id], label=label)
             dpg.set_value(f"node_state::{step.id}", f"State: {state.upper()}")
 
@@ -977,9 +1337,11 @@ class DearPyGuiTaskGraphApp:
             matches = self.graph.find_steps(argument)
             if len(matches) == 1:
                 self.selected_id = matches[0].id
-                _, message = self.graph.complete(matches[0])
+                ok, message = self.graph.complete(matches[0])
                 self.log(message)
                 self.refresh()
+                if ok:
+                    self._notify_vlm(f"COMPLETE: {matches[0].id} -> {matches[0].output}")
             elif matches:
                 self.log("Ambiguous step. Matches: " + ", ".join(s.id for s in matches))
             else:
@@ -1006,15 +1368,18 @@ class DearPyGuiTaskGraphApp:
                 self.selected_id = requested.id
             elif self.graph.completed:
                 self.selected_id = self.graph.completed[-1]
-            _, message = self.graph.undo(requested)
+            ok, message = self.graph.undo(requested)
             self.log(message)
             self.refresh()
+            if ok:
+                self._notify_vlm(f"UNDO: {requested.id if requested else 'last step'}")
         elif command_lower == "add":
             if not argument:
                 self.log("Usage: add <part name>")
             else:
                 self.log(self.graph.add_part(argument.strip()))
                 self.refresh()
+                self._notify_vlm(f"ADD: {argument.strip()} added to inventory")
         elif command_lower == "reset":
             self._reset_callback()
         else:
@@ -1079,12 +1444,34 @@ def main() -> None:
                              f"(default: {_DEFAULT_TASKGRAPH_PORT})")
     parser.add_argument("--no-live", action="store_true",
                         help="Disable the live controller link (open the viewer standalone).")
+    parser.add_argument("--step-select-port", type=int, default=_DEFAULT_STEP_SELECT_PORT,
+                        help=f"Port to publish the selected step on for gearbox_control.py --open-3d "
+                             f"(default: {_DEFAULT_STEP_SELECT_PORT}).")
+    parser.add_argument("--no-step-select", action="store_true",
+                        help="Disable publishing the selected step to the --open-3d viewer.")
+    parser.add_argument("--voice-device", default="bluez_source.50_C2_ED_43_95_C8.handsfree_head_unit",
+                        help="PulseAudio source name for voice input (pass empty string to disable).")
+    parser.add_argument("--no-voice", action="store_true",
+                        help="Disable voice input.")
+    parser.add_argument("--wake-word", default="hey robot",
+                        help="Wake word to activate transcription (default: 'hey robot').")
+    parser.add_argument("--vlm-model", default=None,
+                        help="Enable VLM assistant with this model name "
+                             "(default when enabled: Qwen/Qwen2.5-VL-3B-Instruct). Omit to disable.")
     args = parser.parse_args()
     if args.self_test:
         run_self_test()
         return
-    live_port = None if args.no_live else args.task_graph_port
-    DearPyGuiTaskGraphApp().run(live_port)
+    live_port    = None if args.no_live  else args.task_graph_port
+    select_port  = None if args.no_step_select else args.step_select_port
+    voice_device = None if args.no_voice else args.voice_device
+    DearPyGuiTaskGraphApp().run(
+        live_port,
+        voice_device=voice_device,
+        wake_word=args.wake_word,
+        vlm_model=args.vlm_model,
+        select_port=select_port,
+    )
 
 
 if __name__ == "__main__":

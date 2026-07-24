@@ -47,7 +47,8 @@ public class MakeGearboxClickable : EditorWindow
             "• 'Set up gearbox parts' operates on every mesh under the selection whose name " +
             "contains \"Row\".\n" +
             "• 'Set up selected as UI' operates on exactly the selected objects — use it for the " +
-            "checkbox and X (name them \"__checkbox__\" and \"__reset__\").\n" +
+            "checkbox, X, and revert button (name them \"__checkbox__\", \"__reset__\", " +
+            "\"__revert__\"), then assign each on the GearboxCommandReceiver.\n" +
             $"• 'Update click port' rewrites every existing publisher under the selection to " +
             $"{ClickPort} — use it to migrate parts set up before the port changed.",
             MessageType.Info);
@@ -61,7 +62,7 @@ public class MakeGearboxClickable : EditorWindow
                 Run(Selection.gameObjects, onlyRowNamed: true);
 
             GUILayout.Space(4);
-            if (GUILayout.Button($"Set up {n} selected object(s) as UI (checkbox / X)"))
+            if (GUILayout.Button($"Set up {n} selected object(s) as UI (checkbox / X / revert)"))
                 Run(Selection.gameObjects, onlyRowNamed: false);
 
             GUILayout.Space(4);
