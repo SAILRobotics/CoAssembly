@@ -40,6 +40,7 @@ import time
 from pathlib import Path
 
 import cv2 as cv
+import dearpygui.dearpygui as dpg
 import numpy as np
 import open3d as o3d
 import zmq
@@ -446,6 +447,14 @@ class _WorldAnchor:
         if require_locked and not self.locked:
             return False
         self._T_wt = np.linalg.inv(cam_T @ T_cam_anchor)
+        return True
+
+    def lock_tracking_origin(self) -> bool:
+        """Lock the world frame to the Quest tracking origin — no marker, no
+        passthrough. The tracking origin is fixed at app start / recenter and is
+        gravity-aligned, so world == tracking frame (``_T_wt = identity``) gives
+        an upright scene. Used by the --no-passthrough manual 'l' lock."""
+        self._T_wt = np.eye(4, dtype=np.float64)
         return True
 
     def relock_from_world_marker(self, marker_id: int, T_cam_marker: np.ndarray,
@@ -1133,40 +1142,99 @@ class _GripPoseBridge:
 # =============================================================================
 
 class _OffsetTuner:
-    WIN       = "Offset Tuner (ArUco frame)"
-    SAVE_FILE = _FILE_DIR / "offset_config_passthrough.json"
-    _BTN      = (10, 10, 110, 44)
+    """DearPyGui panel to nudge the whole world (ArUco) frame live.
+
+    Every axis is a pure DELTA applied on top of the active lock via
+    ``Anchor.set_offset``.  Each axis has a coarse slider AND an editable text
+    box bound to the same value: drag the slider for a quick nudge, or type an
+    exact number in the box for fine tuning.
+    """
+    SAVE_FILE    = _FILE_DIR / "offset_config_passthrough.json"
+    POS_SPAN_M   = 3.0      # total slider travel for dX/dY/dZ  → ±1.5 m
+    POS_STEP_M   = 0.010    # slider snaps to 10 mm
+    YAW_SPAN_DEG = 360.0    # total slider travel for dYaw       → ±180°
+    YAW_STEP_DEG = 1.0
+
+    # (key, label, is_position)
+    _AXES = [
+        ("dx",  "Delta X  (m)",    True),
+        ("dy",  "Delta Y  (m)",    True),
+        ("dz",  "Delta Z  (m)",    True),
+        ("yaw", "Delta Yaw (deg)", False),
+    ]
 
     def __init__(self):
-        cv.namedWindow(self.WIN, cv.WINDOW_NORMAL)
-        cv.resizeWindow(self.WIN, 420, 260)
-        cv.createTrackbar("X  right  (mm×0.1)", self.WIN, 100, 200, lambda _: None)
-        cv.createTrackbar("Y  away   (mm×0.1)", self.WIN, 100, 200, lambda _: None)
-        cv.createTrackbar("Z  up     (mm×0.1)", self.WIN, 100, 200, lambda _: None)
-        cv.createTrackbar("Yaw CCW   (0.5°)",   self.WIN,  90, 180, lambda _: None)
+        self.dpg = dpg
+        self._alive = True
         self._flash_until = 0.0
-        self._load()
-        cv.setMouseCallback(self.WIN, self._on_mouse)
+        self._vals = {key: 0.0 for key, _, _ in self._AXES}
 
-    def _raw(self):
-        return {
-            "x":   cv.getTrackbarPos("X  right  (mm×0.1)", self.WIN),
-            "y":   cv.getTrackbarPos("Y  away   (mm×0.1)", self.WIN),
-            "z":   cv.getTrackbarPos("Z  up     (mm×0.1)", self.WIN),
-            "yaw": cv.getTrackbarPos("Yaw CCW   (0.5°)",   self.WIN),
-        }
+        dpg.create_context()
+        dpg.create_viewport(title="Offset Tuner (ArUco frame)",
+                            width=520, height=300)
+        with dpg.window(tag="offset_window"):
+            dpg.add_text("World-frame delta offset (applied on top of the lock)",
+                         color=(170, 180, 195))
+            dpg.add_text("Drag a slider for a quick nudge, or type an exact "
+                         "value in the box.", color=(140, 150, 165))
+            dpg.add_separator()
+            for key, label, is_pos in self._AXES:
+                half   = (self.POS_SPAN_M if is_pos else self.YAW_SPAN_DEG) / 2.0
+                s_fmt  = "%.2f" if is_pos else "%.0f"    # slider: 10 mm / 1°
+                i_fmt  = "%.3f" if is_pos else "%.1f"    # text box: finer
+                with dpg.group(horizontal=True):
+                    dpg.add_text(label, color=(200, 205, 215))
+                    dpg.add_slider_float(tag=f"off_slider_{key}", width=250,
+                                         default_value=0.0, min_value=-half,
+                                         max_value=half, format=s_fmt,
+                                         callback=self._on_slider, user_data=key)
+                    dpg.add_input_float(tag=f"off_input_{key}", width=120,
+                                        default_value=0.0, min_value=-half,
+                                        max_value=half, min_clamped=True,
+                                        max_clamped=True, step=0.0, format=i_fmt,
+                                        on_enter=True, callback=self._on_input,
+                                        user_data=key)
+            dpg.add_spacer(height=8)
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="SAVE", width=90, callback=self._save)
+                dpg.add_text("", tag="off_status", color=(0, 220, 120))
+
+        dpg.set_primary_window("offset_window", True)
+        dpg.setup_dearpygui()
+        dpg.show_viewport()
+        self._load()
+
+    def _sync(self, key, v):
+        """Set the canonical value and mirror it onto both widgets.
+        set_value is programmatic, so it does not re-fire the callbacks."""
+        self._vals[key] = v
+        self.dpg.set_value(f"off_slider_{key}", v)
+        self.dpg.set_value(f"off_input_{key}", v)
+
+    def _on_slider(self, sender, app_data, user_data):
+        v = float(app_data)
+        if user_data != "yaw":                       # snap position to 10 mm
+            v = round(v / self.POS_STEP_M) * self.POS_STEP_M
+        self._sync(user_data, v)
+
+    def _on_input(self, sender, app_data, user_data):
+        half = (self.YAW_SPAN_DEG if user_data == "yaw" else self.POS_SPAN_M) / 2.0
+        self._sync(user_data, max(-half, min(half, float(app_data))))
 
     def get(self):
-        r = self._raw()
-        return ((r["x"] - 100) * 0.001,
-                (r["y"] - 100) * 0.001,
-                (r["z"] - 100) * 0.001), (r["yaw"] - 90) * 0.5
+        return ((self._vals["dx"], self._vals["dy"], self._vals["dz"]),
+                self._vals["yaw"])
 
-    def _save(self):
-        with open(self.SAVE_FILE, "w") as f:
-            json.dump(self._raw(), f, indent=2)
-        self._flash_until = time.time() + 1.5
-        print(f"[OffsetTuner] Saved to {self.SAVE_FILE}")
+    def _save(self, *_):
+        try:
+            with open(self.SAVE_FILE, "w") as f:
+                json.dump({k: self._vals[k] for k in ("dx", "dy", "dz", "yaw")},
+                          f, indent=2)
+            self.dpg.set_value("off_status", "Saved!")
+            self._flash_until = time.time() + 1.5
+            print(f"[OffsetTuner] Saved to {self.SAVE_FILE}")
+        except Exception as e:
+            print(f"[OffsetTuner] Save error: {e}")
 
     def _load(self):
         if not self.SAVE_FILE.exists():
@@ -1174,40 +1242,32 @@ class _OffsetTuner:
         try:
             with open(self.SAVE_FILE) as f:
                 data = json.load(f)
-            cv.setTrackbarPos("X  right  (mm×0.1)", self.WIN, int(data.get("x",   100)))
-            cv.setTrackbarPos("Y  away   (mm×0.1)", self.WIN, int(data.get("y",   100)))
-            cv.setTrackbarPos("Z  up     (mm×0.1)", self.WIN, int(data.get("z",   100)))
-            cv.setTrackbarPos("Yaw CCW   (0.5°)",   self.WIN, int(data.get("yaw",  90)))
+            for k in ("dx", "dy", "dz", "yaw"):
+                if k in data:
+                    self._sync(k, float(data[k]))
             print(f"[OffsetTuner] Loaded from {self.SAVE_FILE}")
         except Exception as e:
             print(f"[OffsetTuner] Load error: {e}")
 
-    def _on_mouse(self, event, x, y, *_):
-        if event == cv.EVENT_LBUTTONDOWN:
-            x0, y0, x1, y1 = self._BTN
-            if x0 <= x <= x1 and y0 <= y <= y1:
-                self._save()
-
     def draw(self):
-        img = np.zeros((60, 420, 3), dtype=np.uint8)
-        x0, y0, x1, y1 = self._BTN
-        flashing   = time.time() < self._flash_until
-        btn_color  = (0, 200, 80)  if flashing else (50, 130, 50)
-        btn_border = (0, 255, 120) if flashing else (80, 200, 80)
-        label      = "  Saved!"   if flashing else "  SAVE"
-        cv.rectangle(img, (x0, y0), (x1, y1), btn_color, -1)
-        cv.rectangle(img, (x0, y0), (x1, y1), btn_border, 2)
-        cv.putText(img, label, (x0 + 4, y0 + 24),
-                   cv.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2, cv.LINE_AA)
-        (px, py, pz), yaw = self.get()
-        info = f"X={px*100:+.1f}cm  Y={py*100:+.1f}cm  Z={pz*100:+.1f}cm  Yaw={yaw:+.1f}°"
-        cv.putText(img, info, (10, 54),
-                   cv.FONT_HERSHEY_SIMPLEX, 0.42, (180, 180, 180), 1, cv.LINE_AA)
-        cv.imshow(self.WIN, img)
+        """Pump one DearPyGui frame; call once per main-loop iteration."""
+        if not self._alive:
+            return
+        dpg = self.dpg
+        if not dpg.is_dearpygui_running():
+            self._alive = False
+            return
+        if self._flash_until and time.time() > self._flash_until:
+            dpg.set_value("off_status", "")
+            self._flash_until = 0.0
+        dpg.render_dearpygui_frame()
 
     def close(self):
+        if not self._alive:
+            return
+        self._alive = False
         try:
-            cv.destroyWindow(self.WIN)
+            self.dpg.destroy_context()
         except Exception:
             pass
 
@@ -1349,6 +1409,7 @@ class MainScene:
                  use_calibrated_robot_base: bool = cfg.USE_CALIBRATED_ROBOT_BASE_POSE,
                  load_pegboard_from_file: bool = cfg.LOAD_PEGBOARD_FROM_FILE,
                  gripper_collision: bool = True,
+                 no_passthrough: bool = False,
                  flat_tcp_ori: bool = False):
 
         self.anchor_marker_id         = anchor_marker_id
@@ -1358,6 +1419,7 @@ class MainScene:
         self.board_marker_a           = board_marker_a
         self.board_marker_b           = board_marker_b
         self._load_pegboard_from_file   = load_pegboard_from_file
+        self._no_passthrough            = no_passthrough
 
         self._T_BOARD_FROM_MARKER = {
             board_marker_a: T_BOARD_FROM_MARKER_A,
@@ -1534,6 +1596,19 @@ class MainScene:
         (scene origin reset, pegboard-from-file load). Used both by the
         ENTER handler and by the auto-lock-on-sight check in run()."""
         self.anchor.lock(T_cam_anchor, self.cam.camera_T)
+        self._last_proximity_relock_time = time.time()
+        if self.robot is not None:
+            self.robot.set_scene_origin(np.eye(4))
+        if self._load_pegboard_from_file:
+            self._try_load_pegboard_from_file()
+
+    def _lock_anchor_tracking_origin(self) -> None:
+        """--no-passthrough manual lock: pin the world frame to the Quest
+        tracking origin (marker 100 assumed to sit at the initial/recenter
+        origin) and run the same follow-up steps as a marker lock (scene-origin
+        reset, pegboard-from-file load) so everything downstream unlocks
+        identically."""
+        self.anchor.lock_tracking_origin()
         self._last_proximity_relock_time = time.time()
         if self.robot is not None:
             self.robot.set_scene_origin(np.eye(4))
@@ -2163,6 +2238,7 @@ class MainScene:
                     cv.putText(disp,
                                f"ENTER: lock #{self.anchor_marker_id} (world+scene)  or"
                                f"  lock #{self.pegboard_marker_id} (pegboard)  "
+                               f"{'  L=lock@origin' if self._no_passthrough else ''}"
                                f"  M=jog  ESC=quit",
                                (12, disp.shape[0] - 14),
                                cv.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
@@ -2198,6 +2274,13 @@ class MainScene:
                             self._reachability_arrows_hide_at = time.time() + 5.0
                     else:
                         print("[R] Pegboard not locked yet — lock it first.")
+                elif (key == ord('l') or key == ord('L')) and self._no_passthrough:
+                    # --no-passthrough manual lock: pin the world to the Quest
+                    # tracking origin without needing marker 100 / passthrough.
+                    _was_locked = self.anchor.locked
+                    self._lock_anchor_tracking_origin()
+                    print(f"[L] {'Relocked' if _was_locked else 'Locked'} world to "
+                          f"Quest tracking origin (no passthrough)")
                 elif key == 13:  # ENTER
                     if self.cam.camera_T is None:
                         if not self.simulation:
@@ -2386,6 +2469,11 @@ def main():
                          "(skips needing marker 101 visible)")
     ap.add_argument("--gripper-collision", action=argparse.BooleanOptionalAction, default=True,
                     help="Include gripper spheres in CBF self-collision model (--gripper-collision / --no-gripper-collision)")
+    ap.add_argument("--no-passthrough", dest="no_passthrough", action="store_true",
+                    help="Passthrough/ArUco unavailable: enable a manual world lock to the "
+                         "Quest tracking origin via the 'l' key (marker 100 assumed to sit at "
+                         "the initial/recenter origin). Everything downstream unlocks exactly "
+                         "as it does on a marker lock.")
     args = ap.parse_args()
     if args.anchor_marker == args.pegboard_marker:
         ap.error("--anchor-marker and --pegboard-marker must be different.")
@@ -2409,7 +2497,8 @@ def main():
         board_marker_size_m        = args.board_marker_size,
         use_calibrated_robot_base  = args.calibrated_robot_base,
         load_pegboard_from_file    = args.load_pegboard_from_file,
-        gripper_collision          = args.gripper_collision)
+        gripper_collision          = args.gripper_collision,
+        no_passthrough             = args.no_passthrough)
     scene.run()
 
 
