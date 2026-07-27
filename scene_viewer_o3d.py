@@ -119,6 +119,12 @@ class SceneVis:
         self._tcp_target_axes       = None
         self._gripper_tip_target_axes = None
         self._tool_box_linesets: list = []
+        # Pegboard tool-box colours: neutral grey by default; boxes whose index is in
+        # _tool_highlight_indices turn cyan — mirroring gearbox_control.py --open-3d. The set is
+        # remembered so an update_tool_boxes() rebuild (e.g. on relock) keeps the highlight.
+        self._tool_box_neutral        = (0.55, 0.55, 0.58)
+        self._tool_box_highlight      = (0.0, 1.0, 1.0)
+        self._tool_highlight_indices: set = set()
 
         self.show_collision_spheres = True
         self._collision_sphere_ls = o3d.geometry.LineSet()
@@ -568,13 +574,29 @@ class SceneVis:
         for i, ls in enumerate(self._tool_box_linesets):
             if i < len(boxes):
                 pos, R, size = boxes[i]
-                new_ls = self.make_box_lineset(pos, R, size)
+                col = (self._tool_box_highlight if i in self._tool_highlight_indices
+                       else self._tool_box_neutral)
+                new_ls = self.make_box_lineset(pos, R, size, color=col)
                 ls.points = new_ls.points
                 ls.lines  = new_ls.lines
                 ls.colors = new_ls.colors
             else:
                 ls.points = _hidden_pts
                 ls.lines  = _box_edges
+            self.vis.update_geometry(ls)
+
+    def set_tool_highlight_indices(self, indices) -> None:
+        """Cyan-highlight the pegboard tool boxes at these list indices (box i == tool i in
+        tool_layout.world_boxes() order); every other box goes neutral. Recolours the existing
+        linesets in place and is remembered so a later update_tool_boxes() keeps the highlight.
+        Mirrors gearbox_control.py --open-3d's PegboardBoxViewer.set_highlight."""
+        self._tool_highlight_indices = {int(i) for i in indices}
+        for i, ls in enumerate(self._tool_box_linesets):
+            if len(np.asarray(ls.points)) != 8:
+                continue   # skip hidden/placeholder linesets
+            col = (self._tool_box_highlight if i in self._tool_highlight_indices
+                   else self._tool_box_neutral)
+            ls.colors = o3d.utility.Vector3dVector([list(col)] * 12)
             self.vis.update_geometry(ls)
 
     def update_robot(self, link_poses: list[np.ndarray]):

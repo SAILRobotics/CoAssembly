@@ -374,9 +374,3 @@ class IKScene:
 
         print(f"[IKScene] Robot loaded (id={self.robot_id}, "
               f"tool0_link={self.tool0_link_idx})")
-
-
-# ===========================================================================
-# Robot controller — re-exported here for convenience
-# ===========================================================================
-from pybullet_scene import RobotController, HandTrackController  # noqa: E402 — keep original intact

@@ -12,8 +12,9 @@ _HERE = Path(__file__).resolve().parent
 SCENE_LAYOUT_DIR = _HERE / "scene_layout"
 
 # ── Machine IPs ───────────────────────────────────────────────────────────────
-UNITY_IP   = "127.0.0.1"   # Quest / Windows machine running Unity
+UNITY_IP   = "192.168.50.167"   # Quest / Windows machine running Unity
 ROBOT_IP   = "192.168.50.70"    # UR10e robot controller
+LOCALHOST  = "127.0.0.1"        # loopback for same-machine inter-process comms
 
 # ── Ports (Unity → Python) ────────────────────────────────────────────────────
 CAM_FEED_PORT         = 5560   # camera feed frames + intrinsics
@@ -45,6 +46,8 @@ ROBOT_EVENT_PORT = 5021   # robot_control_server.py → main_with_robot.py: stat
 GEARBOX_CMD_PORT       = 5019   # gearbox_control.py → Unity  (GearboxCommandReceiver)
 GEARBOX_CLICK_PORT     = 5023   # Unity → gearbox_control.py  (GearboxClickPublisher)
 GEARBOX_TASKGRAPH_PORT = 5022   # gearbox_control.py → gearbox_task_graph.py (live mirror)
+GEARBOX_HIGHLIGHT_PORT = 5024   # gearbox_control.py → tool-highlight consumer (pegboard tool ids)
+GEARBOX_STEP_SELECT_PORT = 5025 # gearbox_task_graph.py → gearbox_control.py --open-3d (selected step)
 
 # ── Robot-control process tuning ──────────────────────────────────────────────
 ROBOT_CONTROL_HZ      = 120   # fixed-rate hardware loop, simulation

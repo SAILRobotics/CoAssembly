@@ -7291,6 +7291,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e9090ae501ff9cd459bec5271d40249c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Unity.Robotics.UrdfImporter::Unity.Robotics.UrdfImporter.UrdfVisuals
+--- !u!4 &688688324 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: 2978430856992945928, guid: 93a534df549f37349948c33d9bcb25d4, type: 3}
+  m_PrefabInstance: {fileID: 2113929391}
+  m_PrefabAsset: {fileID: 0}
 --- !u!1 &706664029
 GameObject:
   m_ObjectHideFlags: 0
@@ -16667,6 +16672,7 @@ Transform:
   - {fileID: 1032821183}
   - {fileID: 1667712771}
   - {fileID: 1849431678}
+  - {fileID: 688688324}
   - {fileID: 1296865209}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
@@ -19470,6 +19476,63 @@ Transform:
   - {fileID: 475432711}
   m_Father: {fileID: 256732544}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1001 &2113929391
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 1683168509}
+    m_Modifications:
+    - target: {fileID: 2978430856992945928, guid: 93a534df549f37349948c33d9bcb25d4, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 2978430856992945928, guid: 93a534df549f37349948c33d9bcb25d4, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 2978430856992945928, guid: 93a534df549f37349948c33d9bcb25d4, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 2978430856992945928, guid: 93a534df549f37349948c33d9bcb25d4, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 2978430856992945928, guid: 93a534df549f37349948c33d9bcb25d4, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 2978430856992945928, guid: 93a534df549f37349948c33d9bcb25d4, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 2978430856992945928, guid: 93a534df549f37349948c33d9bcb25d4, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 2978430856992945928, guid: 93a534df549f37349948c33d9bcb25d4, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 2978430856992945928, guid: 93a534df549f37349948c33d9bcb25d4, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 2978430856992945928, guid: 93a534df549f37349948c33d9bcb25d4, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3145587951568216638, guid: 93a534df549f37349948c33d9bcb25d4, type: 3}
+      propertyPath: m_Name
+      value: Gearbox Assembly Named Scripts
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: 93a534df549f37349948c33d9bcb25d4, type: 3}
 --- !u!1 &2118652277
 GameObject:
   m_ObjectHideFlags: 0
