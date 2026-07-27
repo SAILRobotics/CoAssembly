@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Dear PyGui bounding-box annotator with optional YOLOE suggestions."""
+"""Dear PyGui bounding-box annotator with SAM 3 concept suggestions."""
 
 from __future__ import annotations
 
 import argparse
 import queue
 import sys
-import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -34,7 +33,7 @@ CLASS_ALIASES = {
     "bearing": ["bearing"],
     "tool": ["tool", "hand tool"],
 }
-YOLOE_PROMPTS = [
+SAM3_PROMPTS = [
     prompt for class_name in CLASSES for prompt in CLASS_ALIASES[class_name]
 ]
 TEXT_PROMPT_TO_CLASS = {
@@ -86,6 +85,13 @@ def discover_images(folder: Path) -> list[Path]:
     )
 
 
+def select_frames(images: list[Path], frame_step: int) -> list[Path]:
+    """Select every Nth valid frame, starting with the first frame."""
+    if frame_step <= 1:
+        return images
+    return images[::frame_step]
+
+
 def read_yolo_labels(path: Path, width: int, height: int) -> list[Box]:
     boxes: list[Box] = []
     if not path.exists():
@@ -130,15 +136,18 @@ class AnnotationApp:
         model_name: str,
         confidence: float,
         device: str | None,
+        frame_step: int,
     ) -> None:
         import dearpygui.dearpygui as dpg
 
         self.dpg = dpg
         self.image_folder = image_folder
         self.labels_folder = labels_folder
-        self.images = discover_images(image_folder)
-        if not self.images:
+        all_images = discover_images(image_folder)
+        if not all_images:
             raise RuntimeError(f"No non-empty images found in {image_folder}")
+        self.total_image_count = len(all_images)
+        self.images = select_frames(all_images, frame_step)
 
         self.model_name = model_name
         self.confidence = confidence
@@ -157,10 +166,14 @@ class AnnotationApp:
         self.edit_start: tuple[float, float] | None = None
         self.edit_original: Box | None = None
         self.dirty = False
-        self.model = None
-        self.visual_model = None
+        self.sam_model = None
+        self.sam_processor = None
+        self.predictor_image: Path | None = None
+        self.vision_embeds = None
+        self.vision_original_sizes = None
         self.model_busy = False
         self.results_queue: queue.Queue[tuple[Path, list[Box] | None, str | None]] = queue.Queue()
+        self.pending_inference: tuple | None = None
         self.reference_path: Path | None = None
         self.reference_boxes: list[Box] = []
         self.annotated_count = 0
@@ -175,7 +188,7 @@ class AnnotationApp:
         dpg.create_context()
         self._build_gui()
         dpg.create_viewport(
-            title="CoAssembly AI Annotator",
+            title="CoAssembly SAM 3 Annotator",
             width=1320,
             height=880,
             min_width=1050,
@@ -185,10 +198,17 @@ class AnnotationApp:
         dpg.show_viewport()
         dpg.set_primary_window("primary_window", True)
         self._load_image(0)
+        self._show_model_readiness()
         self._maybe_auto_suggest()
         while dpg.is_dearpygui_running():
             self._poll_model_results()
             dpg.render_dearpygui_frame()
+            # Keep CUDA model loading/inference on Dear PyGui's main thread.
+            # Loading SAM 3 from a background thread can segfault in native code.
+            if self.pending_inference is not None:
+                job = self.pending_inference
+                self.pending_inference = None
+                self._prediction_worker(*job)
         self._save()
         dpg.destroy_context()
 
@@ -226,19 +246,28 @@ class AnnotationApp:
                         callback=self._change_selected_class,
                     )
                     dpg.add_separator()
-                    dpg.add_button(label="Suggest with YOLOE", callback=self._suggest, width=-1)
+                    dpg.add_button(
+                        label="Suggest with SAM 3",
+                        callback=self._suggest,
+                        width=-1,
+                        tag="suggest_button",
+                    )
                     dpg.add_checkbox(
                         label="Auto-suggest on unlabeled images",
                         default_value=False,
                         tag="auto_suggest",
                     )
                     dpg.add_checkbox(label="Use text prompts", default_value=True, tag="use_text")
-                    dpg.add_checkbox(label="Use visual reference", default_value=True, tag="use_visual")
+                    dpg.add_checkbox(
+                        label="Use selected exemplar",
+                        default_value=False,
+                        tag="use_visual",
+                    )
                     dpg.add_button(
-                        label="Set current boxes as visual reference",
+                        label="Set selected box as exemplar",
                         callback=self._set_visual_reference,
                     )
-                    dpg.add_text("Visual reference: none", tag="reference_status", wrap=270)
+                    dpg.add_text("Image exemplar: none", tag="reference_status", wrap=270)
                     dpg.add_slider_float(
                         label="Confidence",
                         min_value=0.05,
@@ -247,7 +276,7 @@ class AnnotationApp:
                         format="%.2f",
                         tag="confidence",
                     )
-                    dpg.add_text("Models load on first use.", color=(150, 160, 175))
+                    dpg.add_text("SAM 3 loads on first use.", color=(150, 160, 175))
                     dpg.add_text("", tag="model_status", wrap=270)
                     dpg.add_separator()
                     dpg.add_button(label="Delete selected  [Del]", callback=self._delete_selected)
@@ -319,7 +348,12 @@ class AnnotationApp:
         fitted = Image.new("RGBA", (CANVAS_WIDTH, CANVAS_HEIGHT), (20, 20, 20, 255))
         resized = image.resize((shown_width, shown_height), Image.Resampling.BILINEAR)
         fitted.alpha_composite(resized, (round(self.offset_x), round(self.offset_y)))
-        pixels = [channel / 255.0 for pixel in fitted.getdata() for channel in pixel]
+        pixel_data = (
+            fitted.get_flattened_data()
+            if hasattr(fitted, "get_flattened_data")
+            else fitted.getdata()
+        )
+        pixels = [channel / 255.0 for pixel in pixel_data for channel in pixel]
         self.dpg.set_value("image_texture", pixels)
 
         self.boxes = read_yolo_labels(
@@ -513,7 +547,8 @@ class AnnotationApp:
         dpg.set_value(
             "dataset_status",
             f"Labels: {self.labels_folder}\n"
-            f"Annotated files: {self.annotated_count}/{len(self.images)}",
+            f"Selected frames: {len(self.images)}/{self.total_image_count}\n"
+            f"Annotated selected frames: {self.annotated_count}/{len(self.images)}",
         )
 
     def _save(self, *_args) -> None:
@@ -528,7 +563,7 @@ class AnnotationApp:
 
     def _navigate(self, step: int) -> None:
         if self.model_busy:
-            self.dpg.set_value("model_status", "Wait for inference to finish.")
+            self.dpg.set_value("model_status", "Wait for SAM 3 inference to finish.")
             return
         if self.dirty:
             self._save()
@@ -540,7 +575,7 @@ class AnnotationApp:
         if target == self.index:
             return
         if self.model_busy:
-            self.dpg.set_value("model_status", "Wait for inference to finish.")
+            self.dpg.set_value("model_status", "Wait for SAM 3 inference to finish.")
             self.dpg.set_value("image_index", self.index + 1)
             return
         if self.dirty:
@@ -597,7 +632,7 @@ class AnnotationApp:
         if use_visual and (self.reference_path is None or not self.reference_boxes):
             if not use_text:
                 self.dpg.set_value(
-                    "model_status", "Set visual reference boxes before visual-only prediction."
+                    "model_status", "Select and set a same-image exemplar first."
                 )
                 return
             use_visual = False
@@ -608,37 +643,69 @@ class AnnotationApp:
             name for name, enabled in (("text", use_text), ("visual", use_visual)) if enabled
         )
         self.dpg.set_value(
-            "model_status", f"Running YOLOE ({modes}) on {path.name}…"
+            "model_status", f"Running SAM 3 ({modes}) on {path.name}…"
         )
-        threading.Thread(
-            target=self._prediction_worker,
-            args=(
-                path,
-                confidence,
-                use_text,
-                use_visual,
-                self.reference_path,
-                [Box(**vars(box)) for box in self.reference_boxes],
-            ),
-            daemon=True,
-        ).start()
+        self.pending_inference = (
+            path,
+            confidence,
+            use_text,
+            use_visual,
+            self.reference_path,
+            [Box(**vars(box)) for box in self.reference_boxes],
+        )
+
+    def _show_model_readiness(self) -> None:
+        try:
+            import transformers
+            from transformers import Sam3Model, Sam3Processor  # noqa: F401
+        except (ImportError, AttributeError):
+            version = getattr(transformers, "__version__", "not installed") if "transformers" in locals() else "not installed"
+            self.dpg.configure_item("suggest_button", enabled=False)
+            self.dpg.set_value(
+                "model_status",
+                f"SAM 3 NOT READY\nTransformers: {version}\n"
+                "Install a release containing Sam3Model and Sam3Processor, then restart.",
+            )
+            return
+
+        try:
+            from huggingface_hub import get_token
+            authenticated = bool(get_token())
+        except ImportError:
+            authenticated = False
+        self.dpg.configure_item("suggest_button", enabled=True)
+        if authenticated:
+            self.dpg.configure_item("suggest_button", enabled=True)
+            self.dpg.set_value(
+                "model_status",
+                f"SAM 3 READY\nModel: {self.model_name}\n"
+                "Hugging Face authentication found. The first run downloads weights.",
+            )
+        else:
+            self.dpg.set_value(
+                "model_status",
+                f"SAM 3 AUTH REQUIRED\nModel: {self.model_name}\n"
+                "Run `hf auth login`, accept access at huggingface.co/facebook/sam3, "
+                "then click Suggest.",
+            )
 
     def _set_visual_reference(self, *_args) -> None:
-        if not self.boxes:
+        if self.selected is None or self.selected >= len(self.boxes):
             self.dpg.set_value(
-                "model_status", "Draw or load reviewed boxes before setting a reference."
+                "model_status", "Select one reviewed box before setting an exemplar."
             )
             return
         self.reference_path = self.images[self.index]
-        self.reference_boxes = [Box(**vars(box)) for box in self.boxes]
-        classes = sorted({CLASSES[box.class_id] for box in self.reference_boxes})
+        self.reference_boxes = [Box(**vars(self.boxes[self.selected]))]
+        exemplar = self.reference_boxes[0]
         self.dpg.set_value(
             "reference_status",
-            f"{self.reference_path.name}: {len(self.reference_boxes)} example(s)\n"
-            + ", ".join(classes),
+            f"{self.reference_path.name}: {CLASSES[exemplar.class_id]}",
         )
+        self.dpg.set_value("use_visual", True)
         self.dpg.set_value(
-            "model_status", "Visual reference captured; navigate to a target image."
+            "model_status",
+            "Same-image exemplar set. Click Suggest with SAM 3 on this image.",
         )
 
     @staticmethod
@@ -670,20 +737,21 @@ class AnnotationApp:
         return kept
 
     @staticmethod
-    def _result_boxes(result, class_map: dict[int, int] | None = None) -> list[Box]:
+    def _transformers_result_boxes(result: dict, class_id: int) -> list[Box]:
         predictions: list[Box] = []
-        if result.boxes is None:
-            return predictions
-        for xyxy, class_id, score in zip(
-            result.boxes.xyxy.cpu().tolist(),
-            result.boxes.cls.cpu().tolist(),
-            result.boxes.conf.cpu().tolist(),
-        ):
-            predicted_id = int(class_id)
-            mapped_id = class_map.get(predicted_id) if class_map is not None else predicted_id
-            if mapped_id is not None and 0 <= mapped_id < len(CLASSES):
+        boxes = result.get("boxes", [])
+        scores = result.get("scores", [])
+        if hasattr(boxes, "detach"):
+            boxes = boxes.detach().cpu().tolist()
+        if hasattr(scores, "detach"):
+            scores = scores.detach().cpu().tolist()
+        for coordinates, score in zip(boxes, scores):
+            if len(coordinates) != 4:
+                continue
+            x1, y1, x2, y2 = map(float, coordinates)
+            if x2 > x1 and y2 > y1:
                 predictions.append(
-                    Box(mapped_id, *map(float, xyxy), confidence=float(score))
+                    Box(class_id, x1, y1, x2, y2, confidence=float(score))
                 )
         return predictions
 
@@ -697,7 +765,7 @@ class AnnotationApp:
         reference_boxes: list[Box],
     ) -> None:
         try:
-            predictions = self._run_yoloe(
+            predictions = self._run_sam3(
                 path,
                 confidence,
                 use_text,
@@ -709,7 +777,7 @@ class AnnotationApp:
         except Exception as error:
             self.results_queue.put((path, None, str(error)))
 
-    def _run_yoloe(
+    def _run_sam3(
         self,
         path: Path,
         confidence: float,
@@ -719,62 +787,93 @@ class AnnotationApp:
         reference_boxes: list[Box],
     ) -> list[Box]:
         try:
-            if self.model is None:
+            if self.sam_model is None or self.sam_processor is None:
                 try:
-                    from ultralytics import YOLOE
+                    from transformers import Sam3Model, Sam3Processor
                 except ImportError:
                     raise RuntimeError(
-                        "Ultralytics is not installed. Run: pip install -U ultralytics"
+                        "SAM 3 requires a current Transformers release. "
+                        "Run: pip install -U transformers accelerate"
                     ) from None
-                self.model = YOLOE(self.model_name)
-            common_kwargs = {"source": str(path), "conf": confidence, "verbose": False}
-            if self.device:
-                common_kwargs["device"] = self.device
+                load_kwargs = {"dtype": "auto"}
+                if self.device:
+                    self.sam_model = Sam3Model.from_pretrained(
+                        self.model_name, **load_kwargs
+                    ).to(self.device)
+                else:
+                    self.sam_model = Sam3Model.from_pretrained(
+                        self.model_name, device_map="auto", **load_kwargs
+                    )
+                self.sam_model.eval()
+                self.sam_processor = Sam3Processor.from_pretrained(self.model_name)
+            if self.predictor_image != path:
+                import torch
+
+                with Image.open(path) as source:
+                    image = source.convert("RGB")
+                image_inputs = self.sam_processor(
+                    images=image, return_tensors="pt"
+                ).to(self.sam_model.device)
+                with torch.no_grad():
+                    self.vision_embeds = self.sam_model.get_vision_features(
+                        pixel_values=image_inputs.pixel_values
+                    )
+                self.vision_original_sizes = image_inputs.get("original_sizes")
+                self.predictor_image = path
             predictions: list[Box] = []
             if use_text:
-                self.model.set_classes(YOLOE_PROMPTS)
-                text_result = self.model.predict(**common_kwargs)[0]
-                predictions.extend(
-                    self._result_boxes(text_result, TEXT_PROMPT_TO_CLASS)
-                )
-            if use_visual and reference_path is not None and reference_boxes:
-                import numpy as np
-                from ultralytics import YOLOE
-                from ultralytics.models.yolo.yoloe import YOLOEVPSegPredictor
+                import torch
 
-                # Ultralytics caches a predictor on each model instance. Keep visual
-                # prompting on its own instance so it cannot reuse the text predictor.
-                if self.visual_model is None:
-                    self.visual_model = YOLOE(self.model_name)
-                original_ids = sorted({box.class_id for box in reference_boxes})
-                original_to_local = {
-                    original_id: local_id for local_id, original_id in enumerate(original_ids)
-                }
-                local_to_original = {
-                    local_id: original_id for original_id, local_id in original_to_local.items()
-                }
-                visual_prompts = {
-                    "bboxes": np.asarray(
-                        [[box.x1, box.y1, box.x2, box.y2] for box in reference_boxes],
-                        dtype=np.float32,
-                    ),
-                    "cls": np.asarray(
-                        [original_to_local[box.class_id] for box in reference_boxes],
-                        dtype=np.int64,
-                    ),
-                }
-                visual_result = self.visual_model.predict(
-                    **common_kwargs,
-                    refer_image=str(reference_path),
-                    visual_prompts=visual_prompts,
-                    predictor=YOLOEVPSegPredictor,
-                )[0]
-                predictions.extend(self._result_boxes(visual_result, local_to_original))
+                for prompt_id, prompt in enumerate(SAM3_PROMPTS):
+                    text_inputs = self.sam_processor(
+                        text=prompt, return_tensors="pt"
+                    ).to(self.sam_model.device)
+                    with torch.no_grad():
+                        outputs = self.sam_model(
+                            vision_embeds=self.vision_embeds,
+                            **text_inputs,
+                        )
+                    result = self.sam_processor.post_process_instance_segmentation(
+                        outputs,
+                        threshold=confidence,
+                        mask_threshold=0.5,
+                        target_sizes=self.vision_original_sizes.tolist(),
+                    )[0]
+                    predictions.extend(
+                        self._transformers_result_boxes(
+                            result, TEXT_PROMPT_TO_CLASS[prompt_id]
+                        )
+                    )
+            if use_visual and reference_path == path and reference_boxes:
+                import torch
+
+                exemplar = reference_boxes[0]
+                with Image.open(path) as source:
+                    image = source.convert("RGB")
+                exemplar_inputs = self.sam_processor(
+                    images=image,
+                    input_boxes=[
+                        [[exemplar.x1, exemplar.y1, exemplar.x2, exemplar.y2]]
+                    ],
+                    input_boxes_labels=[[1]],
+                    return_tensors="pt",
+                ).to(self.sam_model.device)
+                with torch.no_grad():
+                    outputs = self.sam_model(**exemplar_inputs)
+                result = self.sam_processor.post_process_instance_segmentation(
+                    outputs,
+                    threshold=confidence,
+                    mask_threshold=0.5,
+                    target_sizes=exemplar_inputs.get("original_sizes").tolist(),
+                )
+                predictions.extend(
+                    self._transformers_result_boxes(result[0], exemplar.class_id)
+                )
             return predictions
         except RuntimeError:
             raise
         except Exception as error:
-            raise RuntimeError(f"YOLOE: {error}") from error
+            raise RuntimeError(f"SAM 3: {error}") from error
 
     def _poll_model_results(self) -> None:
         try:
@@ -783,7 +882,7 @@ class AnnotationApp:
             return
         self.model_busy = False
         if error:
-            self.dpg.set_value("model_status", f"YOLOE error: {error}")
+            self.dpg.set_value("model_status", f"SAM 3 error: {error}")
             return
         if path != self.images[self.index]:
             self.dpg.set_value("model_status", "Prediction finished for a different image.")
@@ -832,7 +931,13 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="YOLO label folder (default: <images>/labels)",
     )
-    parser.add_argument("--model", default="yoloe-26s-seg.pt")
+    parser.add_argument("--model", default="facebook/sam3")
+    parser.add_argument(
+        "--frame-step",
+        type=int,
+        default=3,
+        help="load every Nth valid image; 1 uses all images (default: 3)",
+    )
     parser.add_argument("--confidence", type=float, default=0.25)
     parser.add_argument("--device", help="inference device, e.g. cuda:0 or cpu")
     parser.add_argument("--self-test", action="store_true")
@@ -851,6 +956,9 @@ def main() -> int:
     if not 0 < args.confidence <= 1:
         print("Error: --confidence must be between 0 and 1.", file=sys.stderr)
         return 2
+    if args.frame_step < 1:
+        print("Error: --frame-step must be >= 1.", file=sys.stderr)
+        return 2
     labels = (args.labels or images.with_name(images.name + "_labels")).expanduser().resolve()
     try:
         AnnotationApp(
@@ -859,6 +967,7 @@ def main() -> int:
             args.model,
             args.confidence,
             args.device,
+            args.frame_step,
         ).run()
     except (ImportError, RuntimeError) as error:
         print(f"Error: {error}", file=sys.stderr)

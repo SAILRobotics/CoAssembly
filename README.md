@@ -75,12 +75,12 @@ temporarily paste the key into `ROBOFLOW_API_KEY` near the top of the script;
 leave it empty to read the key from the environment instead. Do not commit a
 private API key to source control.
 
-## AI-assisted image annotation
+## SAM 3-assisted image annotation
 
 Launch the Dear PyGui bounding-box annotator on the Dante captures:
 
 ```bash
-python3 task_graph/yoloe_annotator.py
+python3 task_graph/sam3_annotator.py
 ```
 
 The eight classes are `gear`, `gear_rod`, `gear_stand`, `baseboard`, `left_hand`,
@@ -91,27 +91,37 @@ handle to resize it, or drag inside the selected box to move it.
 Labels are auto-saved while navigating to `task_graph/dante_captures_labels`
 in YOLO detection format.
 
-For YOLOE suggestions, install Ultralytics:
+The annotator loads every third valid image from the continuous capture
+sequence by default. Use `--frame-step 1` to load all images or another positive
+value to change the sampling stride.
+
+For SAM 3 suggestions, install a current Transformers release and authenticate
+with Hugging Face:
 
 ```bash
-pip install -U ultralytics
+pip install -U transformers accelerate
+hf auth login
 ```
 
-Click **Suggest with YOLOE** to run inference. First use downloads the
-configured `yoloe-26s-seg.pt` weights. Suggestions replace the boxes currently
-shown for that image and must be reviewed before saving.
+Request and accept access to `facebook/sam3` on Hugging Face. The model is then
+downloaded and cached automatically on first use; no local `sam3.pt` file is
+required.
+Click **Suggest with SAM 3** to run text-prompt concept segmentation. SAM 3
+caches each frame's image features so all class-alias queries reuse one feature
+extraction. Suggestions replace the boxes currently shown and must be reviewed
+before saving.
 
-Enable **Auto-suggest on unlabeled images** to run YOLOE automatically after
+Enable **Auto-suggest on unlabeled images** to run SAM 3 automatically after
 using Previous/Next, A/D, or index navigation. Auto-suggest skips every image
 that already has a saved label file, including reviewed images with zero
 boxes, so navigating cannot overwrite saved work.
 
-Text and visual prompts can be combined. On a well-labeled image, click
-**Set current boxes as visual reference**, navigate to another image, leave
-both prompt checkboxes enabled and click **Suggest with YOLOE**. The annotator
-runs separate text- and visual-prompt passes and merges same-class overlapping
-boxes. A visual reference can contain multiple classes and multiple examples
-per class, but all examples must currently come from the same reference image.
+Text and image-exemplar prompts can be combined. Select a reviewed box, click
+**Set selected box as exemplar**, leave both prompt checkboxes enabled, and
+click **Suggest with SAM 3**. Ultralytics' documented exemplar interface uses a
+box on the current image; the annotator therefore does not carry exemplar boxes
+across frames. Text and exemplar results are merged with same-class overlap
+removal.
 Text aliases are configured in `CLASS_ALIASES` near the top of
-`task_graph/yoloe_annotator.py`; every alias prediction maps back to one
+`task_graph/sam3_annotator.py`; every alias prediction maps back to one
 canonical YOLO class.
