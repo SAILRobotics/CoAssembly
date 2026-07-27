@@ -28,41 +28,64 @@ import gearbox_control  # noqa: E402  (--with-controller: run the controller in-
 # Ports live canonically in main_setting.py; fall back to literals so the viewer still runs if that
 # import is unavailable.
 try:
-    import main_setting as _cfg
-    _LOCALHOST                = _cfg.LOCALHOST                  # loopback for same-machine Python IPC
-    _DEFAULT_TASKGRAPH_PORT   = _cfg.GEARBOX_TASKGRAPH_PORT     # live gearbox_control.py mirror (in)
-    _DEFAULT_STEP_SELECT_PORT = _cfg.GEARBOX_STEP_SELECT_PORT   # selected step -> --open-3d viewer (out)
+    import main_setting
+    _LOCALHOST                    = main_setting.LOCALHOST                  # loopback for same-machine Python IPC
+    # IN  — gearbox_control.py PUBs semantic assembly events (show/complete/uncomplete/reset) here
+    #        after every Unity click; this viewer SUBs and drives its TaskGraph model + node colors.
+    _DEFAULT_CTRL_EVENTS_IN_PORT  = main_setting.GEARBOX_TASKGRAPH_PORT    # 5022
+    # OUT — when a step node is selected in this viewer, it PUBs the matching (row, stage) here so
+    #        that a gearbox_control.py --open-3d window can highlight the corresponding pegboard tools.
+    _DEFAULT_STEP_OUT_PORT        = main_setting.GEARBOX_STEP_SELECT_PORT  # 5025
+    #In one sentence: 5022 is the viewer listening to assembly progress from Unity/controller; 
+    # 5025 is the viewer broadcasting which step you've clicked so a 3D tool viewer can react.
 except Exception:
     _LOCALHOST                = "127.0.0.1"
-    _DEFAULT_TASKGRAPH_PORT   = 5022
-    _DEFAULT_STEP_SELECT_PORT = 5025
+    _DEFAULT_CTRL_EVENTS_IN_PORT   = 5022   # IN  — gearbox_control.py -> this viewer (assembly events)
+    _DEFAULT_STEP_OUT_PORT = 5025   # OUT — this viewer -> gearbox_control.py --open-3d (selected step)
 
 
 @dataclass(frozen=True)
 class Step:
-    id: str
-    title: str
-    row: int
-    stage: int
-    inputs: tuple[str, ...]
-    output: str
-    description: str
-    context: tuple[str, ...] = ()
+    id: str                    # e.g. "r2_bearing_left"
+    title: str                 # e.g. "Row 2.1: bearing into left stand"
+    row: int                   # e.g. 2  (1-4 for regular rows; 0 for finish_gearbox)
+    stage: int                 # e.g. 0  (0=bearings, 1=gear rod, 2=fasten first, 3=insert rod+fit second, 4=fasten second, 5=crank handle, 6=verify)
+    inputs: tuple[str, ...]    # e.g. ("BEARING_ROW2_LEFT", "STAND_ROW2_LEFT")
+    output: str                # e.g. "BEARING_STAND_ROW2_LEFT_ASSEMBLY"
+    description: str           # e.g. "Insert BEARING_ROW2_LEFT into STAND_ROW2_LEFT."
+    context: tuple[str, ...] = ()  # e.g. ("BASE_BOARD",) — parts present but not consumed
 
 
 PROVIDED_PARTS = {
     "BASE_BOARD",
-    "BEARING_ROW1_LEFT", "BEARING_ROW1_RIGHT", "CRANK_HANDLE_ROW1",
-    "GEAR_ROD_ROW1", "GEAR_ROW1_LEFT", "PIN_ROW1_LEFT", "PIN_ROW1_RIGHT",
-    "SCREW_ROW1_LEFT", "SCREW_ROW1_RIGHT", "STAND_ROW1_LEFT", "STAND_ROW1_RIGHT",
-    "BEARING_ROW2_LEFT", "BEARING_ROW2_RIGHT", "GEAR_ROD_ROW2",
-    "GEAR_ROW2_LEFT", "GEAR_ROW2_RIGHT", "PIN_ROW2_LEFT", "PIN_ROW2_RIGHT",
-    "SCREW_ROW2_LEFT", "SCREW_ROW2_RIGHT", "STAND_ROW2_LEFT", "STAND_ROW2_RIGHT",
-    "BEARING_ROW3_LEFT", "BEARING_ROW3_RIGHT", "GEAR_ROD_ROW3",
-    "GEAR_ROW3_LEFT", "GEAR_ROW3_RIGHT", "PIN_ROW3_LEFT", "PIN_ROW3_RIGHT",
-    "SCREW_ROW3_LEFT", "SCREW_ROW3_RIGHT", "STAND_ROW3_LEFT", "STAND_ROW3_RIGHT",
-    "BEARING_ROW4_LEFT", "BEARING_ROW4_RIGHT", "GEAR_ROD_ROW4",
-    "GEAR_ROW4_LEFT", "PIN_ROW4_LEFT", "SCREW_ROW4_LEFT", "SCREW_ROW4_RIGHT",
+
+    "BEARING_ROW1_LEFT", "BEARING_ROW1_RIGHT", 
+    "CRANK_HANDLE_ROW1",
+    "GEAR_ROD_ROW1", 
+    "GEAR_ROW1_LEFT", 
+    "PIN_ROW1_LEFT", "PIN_ROW1_RIGHT",
+    "SCREW_ROW1_LEFT", "SCREW_ROW1_RIGHT", 
+    "STAND_ROW1_LEFT", "STAND_ROW1_RIGHT",
+
+    "BEARING_ROW2_LEFT", "BEARING_ROW2_RIGHT", 
+    "GEAR_ROD_ROW2",
+    "GEAR_ROW2_LEFT", "GEAR_ROW2_RIGHT", 
+    "PIN_ROW2_LEFT", "PIN_ROW2_RIGHT",
+    "SCREW_ROW2_LEFT", "SCREW_ROW2_RIGHT", 
+    "STAND_ROW2_LEFT", "STAND_ROW2_RIGHT",
+
+    "BEARING_ROW3_LEFT", "BEARING_ROW3_RIGHT", 
+    "GEAR_ROD_ROW3",
+    "GEAR_ROW3_LEFT", "GEAR_ROW3_RIGHT", 
+    "PIN_ROW3_LEFT", "PIN_ROW3_RIGHT",
+    "SCREW_ROW3_LEFT", "SCREW_ROW3_RIGHT", 
+    "STAND_ROW3_LEFT", "STAND_ROW3_RIGHT",
+
+    "BEARING_ROW4_LEFT", "BEARING_ROW4_RIGHT", 
+    "GEAR_ROD_ROW4",
+    "GEAR_ROW4_LEFT", 
+    "PIN_ROW4_LEFT", 
+    "SCREW_ROW4_LEFT", "SCREW_ROW4_RIGHT",
     "STAND_ROW4_LEFT", "STAND_ROW4_RIGHT",
 }
 
@@ -301,348 +324,125 @@ class TaskGraph:
             details.append(f"{step.id} is blocked by {', '.join(self.missing(step))}")
         return prefix + "WARNING: its next step should not happen yet: " + "; ".join(details)
 
-
-def validate_model() -> list[str]:
-    """Return model problems; missing raw inventory is reported separately by the GUI."""
-    graph = TaskGraph()
-    errors: list[str] = []
-    ids = [s.id for s in graph.steps]
-    outputs = [s.output for s in graph.steps]
-    if len(ids) != len(set(ids)):
-        errors.append("Duplicate step ID")
-    if len(outputs) != len(set(outputs)):
-        errors.append("Duplicate assembled-part output")
-    produced = set(outputs)
-    for step in graph.steps:
-        for part in step.inputs:
-            if part not in graph.initial_parts and part not in produced:
-                errors.append(f"Unknown input {part} in {step.id}")
-    return errors
-
-
-def taskgraph_steps(row: int, stage: int) -> list[str]:
-    """Bridge a gearbox_control.py (row, control-stage) to this graph's step id(s).
-
-    The two files number "stage" differently: gearbox_control uses per-row control-stages 1-8,
-    while this graph uses named steps. The control stages now map one-to-one onto task steps:
-    stage 5 is the rod-insert + right-stand fit, stage 6 the right-stand fastening."""
-    if stage == 8 or row == 0:
-        return ["finish_gearbox"]
-    if stage == 7:
-        return ["r1_attach_handle"] if row == 1 else []
-    return {
-        1: [f"r{row}_bearing_left"],
-        2: [f"r{row}_gear_rod"],
-        3: [f"r{row}_bearing_right"],
-        4: [f"r{row}_fasten_first_stand"],
-        5: [f"r{row}_insert_rod_and_fit_second"],
-        6: [f"r{row}_fasten_second_stand"],
-    }.get(stage, [])
-
-
-def control_coords_for_step(step_id: str):
-    """Inverse of taskgraph_steps: a task-step id -> the gearbox_control (row, control-stage) that
-    opens it, or None if the id isn't a mapped control step. Lets this viewer tell an external
-    (row, stage) consumer — e.g. gearbox_control.py --open-3d — which step was just selected."""
-    if step_id == "finish_gearbox":
-        return 0, 8
-    for row in range(1, 5):
-        for stage in range(1, 8):
-            if step_id in taskgraph_steps(row, stage):
-                return row, stage
-    return None
-
-
-class TkTaskGraphApp:
-    COLORS = {"complete": "#2e9d60", "ready": "#2784d8", "blocked": "#d18a27"}
-
-    def __init__(self, root):
-        import tkinter as tk
-        from tkinter import ttk
-
-        self.tk = tk
-        self.ttk = ttk
-        self.root = root
-        self.graph = TaskGraph()
-        self.selected_id: str | None = None
-        root.title("Gearbox Assembly Task Graph")
-        root.geometry("1500x900")
-        root.minsize(1080, 680)
-
-        outer = ttk.Panedwindow(root, orient="horizontal")
-        outer.pack(fill="both", expand=True, padx=8, pady=8)
-        graph_frame = ttk.Frame(outer)
-        side = ttk.Frame(outer, width=390)
-        outer.add(graph_frame, weight=4)
-        outer.add(side, weight=1)
-
-        ttk.Label(graph_frame, text="Gearbox Assembly Dependency Graph",
-                  font=("TkDefaultFont", 15, "bold")).pack(anchor="w", pady=(0, 5))
-        legend = ttk.Label(graph_frame,
-                           text="Blue = ready   Orange = blocked   Green = complete   Click a node for details")
-        legend.pack(anchor="w")
-        self.canvas = tk.Canvas(graph_frame, bg="#f5f6f8", highlightthickness=1,
-                                highlightbackground="#b8bec8", scrollregion=(0, 0, 1800, 900))
-        xbar = ttk.Scrollbar(graph_frame, orient="horizontal", command=self.canvas.xview)
-        ybar = ttk.Scrollbar(graph_frame, orient="vertical", command=self.canvas.yview)
-        self.canvas.configure(xscrollcommand=xbar.set, yscrollcommand=ybar.set)
-        self.canvas.pack(fill="both", expand=True, side="left", pady=(6, 0))
-        ybar.pack(fill="y", side="right", pady=(6, 0))
-        xbar.pack(fill="x", side="bottom")
-
-        ttk.Label(side, text="Selected step", font=("TkDefaultFont", 12, "bold")).pack(anchor="w")
-        self.details = tk.Text(side, height=13, wrap="word", state="disabled")
-        self.details.pack(fill="x", pady=5)
-        self.complete_button = ttk.Button(side, text="Mark selected step complete",
-                                          command=self.complete_selected)
-        self.complete_button.pack(fill="x")
-        ttk.Button(side, text="Reset all progress", command=self.reset).pack(fill="x", pady=(4, 10))
-
-        ttk.Label(side, text="Active assembled parts",
-                  font=("TkDefaultFont", 11, "bold")).pack(anchor="w")
-        self.assemblies = tk.Listbox(side, height=8)
-        self.assemblies.pack(fill="x", pady=(4, 10))
-
-        ttk.Label(side, text="Part / step terminal",
-                  font=("TkDefaultFont", 11, "bold")).pack(anchor="w")
-        self.terminal = tk.Text(side, height=13, bg="#17202a", fg="#e8f0f7",
-                                insertbackground="white", wrap="word", state="disabled")
-        self.terminal.pack(fill="both", expand=True, pady=4)
-        self.command = ttk.Entry(side)
-        self.command.pack(fill="x")
-        self.command.bind("<Return>", self.run_command)
-        self.command.focus_set()
-
-        self.positions: dict[str, tuple[float, float]] = {}
-        self.draw_graph()
-        self.refresh()
-        self.log("Type 'parts' to list the current parts, or type 'help' for all commands.")
-
-    def log(self, message: str) -> None:
-        self.terminal.configure(state="normal")
-        self.terminal.insert("end", message + "\n")
-        self.terminal.see("end")
-        self.terminal.configure(state="disabled")
-
-    def draw_graph(self) -> None:
-        self.canvas.delete("all")
-        stage_x = {0: 145, 1: 405, 2: 665, 3: 925, 4: 1185, 5: 1425, 6: 1645}
-        headers = {0: "Prepare stands", 1: "Assemble rods", 2: "Fasten first stand",
-                   3: "Insert rod & fit stand", 4: "Fasten second stand",
-                   5: "Add handle", 6: "Verify"}
-        for stage, title in headers.items():
-            self.canvas.create_text(stage_x[stage], 25, text=title, font=("TkDefaultFont", 10, "bold"))
-
-        stage_counts: dict[int, int] = {}
-        for step in self.graph.steps:
-            if step.stage == 0:
-                side_offset = 0 if step.id.endswith("left") else 75
-                y = 90 + (step.row - 1) * 190 + side_offset
-            elif step.row:
-                y = 125 + (step.row - 1) * 190
-            else:
-                y = 410
-            stage_counts[step.stage] = stage_counts.get(step.stage, 0) + 1
-            self.positions[step.id] = (stage_x[step.stage], y)
-
-        producer = {s.output: s.id for s in self.graph.steps}
-        for step in self.graph.steps:
-            x2, y2 = self.positions[step.id]
+    @classmethod
+    def validate(cls) -> list[str]:
+        """Return model problems; missing raw inventory is reported separately by the GUI."""
+        graph = cls()
+        errors: list[str] = []
+        ids = [s.id for s in graph.steps]
+        outputs = [s.output for s in graph.steps]
+        if len(ids) != len(set(ids)):
+            errors.append("Duplicate step ID")
+        if len(outputs) != len(set(outputs)):
+            errors.append("Duplicate assembled-part output")
+        produced = set(outputs)
+        for step in graph.steps:
             for part in step.inputs:
-                source = producer.get(part)
-                if source:
-                    x1, y1 = self.positions[source]
-                    self.canvas.create_line(x1 + 102, y1, x2 - 102, y2, arrow="last",
-                                            width=2, fill="#8b95a1")
+                if part not in graph.initial_parts and part not in produced:
+                    errors.append(f"Unknown input {part} in {step.id}")
+        return errors
 
-        for step in self.graph.steps:
-            x, y = self.positions[step.id]
-            state = self.graph.state(step)
-            outline = "#1b2631" if step.id == self.selected_id else "#ffffff"
-            width = 4 if step.id == self.selected_id else 2
-            tag = f"step:{step.id}"
-            self.canvas.create_rectangle(x - 102, y - 31, x + 102, y + 31,
-                                         fill=self.COLORS[state], outline=outline,
-                                         width=width, tags=(tag, "node"))
-            label = step.title.replace(": ", ":\n", 1)
-            self.canvas.create_text(x, y, text=label, width=190, fill="white",
-                                    justify="center", font=("TkDefaultFont", 9, "bold"),
-                                    tags=(tag, "node"))
-            self.canvas.tag_bind(tag, "<Button-1>", lambda _e, sid=step.id: self.select(sid))
+    @staticmethod
+    def steps_for_control(row: int, stage: int) -> list[str]:
+        """Bridge a gearbox_control.py (row, control-stage) to this graph's step id(s).
 
-    def select(self, step_id: str) -> None:
-        self.selected_id = step_id
-        self.refresh()
+        The two files number "stage" differently: gearbox_control uses per-row control-stages 1-8,
+        while this graph uses named steps. The control stages now map one-to-one onto task steps:
+        stage 5 is the rod-insert + right-stand fit, stage 6 the right-stand fastening."""
+        if stage == 8 or row == 0:
+            return ["finish_gearbox"]
+        if stage == 7:
+            return ["r1_attach_handle"] if row == 1 else []
+        return {
+            1: [f"r{row}_bearing_left"],
+            2: [f"r{row}_gear_rod"],
+            3: [f"r{row}_bearing_right"],
+            4: [f"r{row}_fasten_first_stand"],
+            5: [f"r{row}_insert_rod_and_fit_second"],
+            6: [f"r{row}_fasten_second_stand"],
+        }.get(stage, [])
 
-    def set_details(self, text: str) -> None:
-        self.details.configure(state="normal")
-        self.details.delete("1.0", "end")
-        self.details.insert("1.0", text)
-        self.details.configure(state="disabled")
-
-    def refresh(self) -> None:
-        self.draw_graph()
-        self.assemblies.delete(0, "end")
-        for part in sorted(p for p in self.graph.active_parts
-                           if p.endswith("_ASSEMBLY")):
-            self.assemblies.insert("end", part)
-        if not self.selected_id:
-            self.set_details("Select a graph node to see its inputs, output, and readiness.")
-            self.complete_button.configure(state="disabled")
-            return
-        step = self.graph.by_id[self.selected_id]
-        missing = self.graph.missing(step)
-        text = (f"{step.id}\n\n{step.description}\n\n"
-                f"Inputs: {', '.join(step.inputs)}\n"
-                f"Produces: {step.output}\n"
-                f"State: {self.graph.state(step).upper()}")
-        if missing and step.id not in self.graph.completed:
-            text += "\nBlocked by: " + ", ".join(missing)
-        self.set_details(text)
-        self.complete_button.configure(
-            state="normal" if self.graph.is_ready(step) else "disabled")
-
-    def complete_selected(self) -> None:
-        if not self.selected_id:
-            return
-        _, message = self.graph.complete(self.graph.by_id[self.selected_id])
-        self.log(message)
-        self.refresh()
-
-    def reset(self) -> None:
-        self.graph.reset()
-        self.selected_id = None
-        self.log("All assembly progress was reset.")
-        self.refresh()
-
-    def run_command(self, _event=None) -> None:
-        raw = self.command.get().strip()
-        self.command.delete(0, "end")
-        if not raw:
-            return
-        self.log("> " + raw)
-        command, _, argument = raw.partition(" ")
-        command_lower = command.lower()
-        if command_lower == "help":
-            self.log("Commands: <part name>, part <name>, step <id/title>, complete <id/title>, "
-                     "status, missing, add <part name>, reset, help")
-        elif command_lower in {"part", "find"}:
-            self.log(self.graph.trace_part(argument))
-        elif command_lower == "step":
-            self.inspect_steps(argument)
-        elif command_lower == "complete":
-            matches = self.graph.find_steps(argument)
-            if len(matches) == 1:
-                self.selected_id = matches[0].id
-                _, message = self.graph.complete(matches[0])
-                self.log(message)
-                self.refresh()
-            elif matches:
-                self.log("Ambiguous step. Matches: " + ", ".join(s.id for s in matches))
-            else:
-                self.log(f"WARNING: no step matches '{argument}'.")
-        elif command_lower == "status":
-            ready = [s.id for s in self.graph.steps if self.graph.is_ready(s)]
-            self.log(f"Completed {len(self.graph.completed)}/{len(self.graph.steps)}. "
-                     f"Ready: {', '.join(ready) if ready else 'none'}")
-        elif command_lower == "missing":
-            missing_raw = sorted({p for s in self.graph.steps for p in self.graph.missing(s)
-                                  if p not in {other.output for other in self.graph.steps}})
-            self.log("Missing raw inventory: " + (", ".join(missing_raw) or "none"))
-        elif command_lower == "add":
-            if not argument:
-                self.log("Usage: add <part name>")
-            else:
-                self.log(self.graph.add_part(argument.strip()))
-                self.refresh()
-        elif command_lower == "reset":
-            self.reset()
-        else:
-            # A bare part name is the primary terminal interaction.
-            self.log(self.graph.trace_part(raw))
-
-    def inspect_steps(self, query: str) -> None:
-        matches = self.graph.find_steps(query)
-        if not matches:
-            self.log(f"WARNING: no step matches '{query}'.")
-            return
-        if len(matches) == 1:
-            self.selected_id = matches[0].id
-            self.refresh()
-        self.log("; ".join(
-            f"{s.id} [{self.graph.state(s)}]"
-            + (f" blocked by {', '.join(self.graph.missing(s))}" if self.graph.missing(s) else "")
-            for s in matches[:12]))
-
-
-def _graph_state_summary(graph: TaskGraph) -> str:
-    """Build a concise state description for the VLM system context."""
-    completed  = graph.completed
-    ready      = [s for s in graph.steps if graph.is_ready(s)]
-    blocked    = [s for s in graph.steps
-                  if s.id not in graph.completed and not graph.is_ready(s)]
-    assemblies = sorted(p for p in graph.active_parts if p.endswith("_ASSEMBLY"))
-
-    lines = [f"Progress: {len(completed)} / {len(graph.steps)} steps completed"]
-
-    if completed:
-        lines.append("\nCompleted steps (most recent last):")
-        for sid in completed[-8:]:
-            step = graph.by_id[sid]
-            lines.append(f"  - {step.title}  ->  {step.output}")
-
-    if ready:
-        lines.append(
-            "\nREADY steps — ALL of these are currently unlocked and INDEPENDENT."
-            "\nThey have NO ordering requirement among themselves; the user may perform"
-            " them in any order they prefer:"
-        )
-        for step in ready[:8]:
-            lines.append(f"  - [{step.id}] {step.title}")
-
-    if blocked:
-        lines.append("\nBLOCKED steps (prerequisites not yet met):")
-        for step in blocked[:6]:
-            missing_parts  = graph.missing(step)
-            missing_steps  = []
-            missing_raw    = []
-            for part in missing_parts:
-                producer = graph.producer_for(part)
-                if producer:
-                    missing_steps.append(f"[{producer.id}]")
-                else:
-                    missing_raw.append(part)
-            needs = ", ".join(missing_steps + missing_raw)
-            lines.append(f"  - [{step.id}] {step.title}  (needs these steps first: {needs})")
-
-    if assemblies:
-        lines.append("\nActive assemblies in inventory:")
-        for a in assemblies[:12]:
-            lines.append(f"  - {a}")
-
-    lines.append(
-        "\nIMPORTANT: Base your answers ONLY on the dependency structure above."
-        " Do NOT infer ordering constraints from step descriptions — only the"
-        " BLOCKED list represents real prerequisites. If a step is READY, the"
-        " user may do it at any time regardless of the order steps are listed."
-    )
-
-    return "\n".join(lines)
-
-
-def _recommend_next_step(graph: TaskGraph) -> "Step | None":
-    """Row-by-row recommendation policy: pick the READY step with the lowest row
-    number, then lowest stage within that row. The finish step (row=0) is treated
-    as the highest row so it is only recommended when everything else is done."""
-    ready = [s for s in graph.steps if graph.is_ready(s)]
-    if not ready:
+    @staticmethod
+    def control_coords_for(step_id: str):
+        """Inverse of steps_for_control: a task-step id -> the gearbox_control (row, control-stage)
+        that opens it, or None if the id isn't a mapped control step. Lets this viewer tell an
+        external (row, stage) consumer — e.g. gearbox_control.py --open-3d — which step was
+        just selected."""
+        if step_id == "finish_gearbox":
+            return 0, 8
+        for row in range(1, 5):
+            for stage in range(1, 8):
+                if step_id in TaskGraph.steps_for_control(row, stage):
+                    return row, stage
         return None
 
-    def _priority(s: Step) -> tuple:
-        row = s.row if s.row > 0 else 999
-        return (row, s.stage, s.id)
+    def state_summary(self) -> str:
+        """Build a concise state description for the VLM system context."""
+        completed  = self.completed
+        ready      = [s for s in self.steps if self.is_ready(s)]
+        blocked    = [s for s in self.steps
+                      if s.id not in self.completed and not self.is_ready(s)]
+        assemblies = sorted(p for p in self.active_parts if p.endswith("_ASSEMBLY"))
 
-    return min(ready, key=_priority)
+        lines = [f"Progress: {len(completed)} / {len(self.steps)} steps completed"]
+
+        if completed:
+            lines.append("\nCompleted steps (most recent last):")
+            for sid in completed[-8:]:
+                step = self.by_id[sid]
+                lines.append(f"  - {step.title}  ->  {step.output}")
+
+        if ready:
+            lines.append(
+                "\nREADY steps — ALL of these are currently unlocked and INDEPENDENT."
+                "\nThey have NO ordering requirement among themselves; the user may perform"
+                " them in any order they prefer:"
+            )
+            for step in ready[:8]:
+                lines.append(f"  - [{step.id}] {step.title}")
+
+        if blocked:
+            lines.append("\nBLOCKED steps (prerequisites not yet met):")
+            for step in blocked[:6]:
+                missing_parts  = self.missing(step)
+                missing_steps  = []
+                missing_raw    = []
+                for part in missing_parts:
+                    producer = self.producer_for(part)
+                    if producer:
+                        missing_steps.append(f"[{producer.id}]")
+                    else:
+                        missing_raw.append(part)
+                needs = ", ".join(missing_steps + missing_raw)
+                lines.append(f"  - [{step.id}] {step.title}  (needs these steps first: {needs})")
+
+        if assemblies:
+            lines.append("\nActive assemblies in inventory:")
+            for a in assemblies[:12]:
+                lines.append(f"  - {a}")
+
+        lines.append(
+            "\nIMPORTANT: Base your answers ONLY on the dependency structure above."
+            " Do NOT infer ordering constraints from step descriptions — only the"
+            " BLOCKED list represents real prerequisites. If a step is READY, the"
+            " user may do it at any time regardless of the order steps are listed."
+        )
+
+        return "\n".join(lines)
+
+    def recommend_next_step(self) -> "Step | None":
+        """Row-by-row recommendation policy: pick the READY step with the lowest row
+        number, then lowest stage within that row. The finish step (row=0) is treated
+        as the highest row so it is only recommended when everything else is done."""
+        ready = [s for s in self.steps if self.is_ready(s)]
+        if not ready:
+            return None
+
+        def _priority(s: Step) -> tuple:
+            row = s.row if s.row > 0 else 999
+            return (row, s.stage, s.id)
+
+        return min(ready, key=_priority)
 
 
 class DearPyGuiTaskGraphApp:
@@ -916,7 +716,7 @@ class DearPyGuiTaskGraphApp:
         """Apply one controller event (main/UI thread): purple overlay + built-in complete/undo."""
         event = msg.get("event")
         row, stage = msg.get("row", 0), msg.get("stage", 0)
-        ids = [i for i in taskgraph_steps(row, stage) if i in self.graph.by_id]
+        ids = [i for i in TaskGraph.steps_for_control(row, stage) if i in self.graph.by_id]
         if event == "show":
             self.active_ids = set(ids)
         elif event == "close":
@@ -1134,10 +934,10 @@ class DearPyGuiTaskGraphApp:
 
     def _notify_vlm(self, event_label: str) -> None:
         if self._vlm is not None:
-            self._vlm.notify_graph_event(event_label, _graph_state_summary(self.graph))
+            self._vlm.notify_graph_event(event_label, self.graph.state_summary())
 
     def _recommend_callback(self) -> None:
-        step = _recommend_next_step(self.graph)
+        step = self.graph.recommend_next_step()
         if step is None:
             self.log("[Recommend] No READY steps — assembly may be complete or stalled.")
             return
@@ -1158,7 +958,7 @@ class DearPyGuiTaskGraphApp:
     def _select_callback(self, _sender, _app_data, user_data) -> None:
         self.selected_id = user_data
         self.refresh()
-        coords = control_coords_for_step(user_data)
+        coords = TaskGraph.control_coords_for(user_data)
         if coords is not None:
             self._send_select({"event": "select", "row": coords[0], "stage": coords[1],
                                "step": user_data})
@@ -1403,7 +1203,7 @@ class DearPyGuiTaskGraphApp:
 
 
 def run_self_test() -> None:
-    errors = validate_model()
+    errors = TaskGraph.validate()
     assert not errors, errors
     graph = TaskGraph()
     assert graph.is_ready(graph.by_id["r1_bearing_left"])
@@ -1442,16 +1242,8 @@ def run_self_test() -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--self-test", action="store_true", help="test the task model without opening the GUI")
-    parser.add_argument("--task-graph-port", type=int, default=_DEFAULT_TASKGRAPH_PORT,
-                        help=f"Port to listen on for live gearbox_control.py events "
-                             f"(default: {_DEFAULT_TASKGRAPH_PORT})")
     parser.add_argument("--no-live", action="store_true",
                         help="Disable the live controller link (open the viewer standalone).")
-    parser.add_argument("--step-select-port", type=int, default=_DEFAULT_STEP_SELECT_PORT,
-                        help=f"Port to publish the selected step on for gearbox_control.py --open-3d "
-                             f"(default: {_DEFAULT_STEP_SELECT_PORT}).")
-    parser.add_argument("--no-step-select", action="store_true",
-                        help="Disable publishing the selected step to the --open-3d viewer.")
     parser.add_argument("--voice-device", default="bluez_source.50_C2_ED_43_95_C8.handsfree_head_unit",
                         help="PulseAudio source name for voice input (pass empty string to disable).")
     parser.add_argument("--no-voice", action="store_true",
@@ -1466,23 +1258,24 @@ def main() -> None:
                              "controller). The controller drives Unity and mirrors here over the "
                              "live link; incompatible with --no-live and with the controller's "
                              "--open-3d mode (which needs the main thread).")
-    parser.add_argument("--controller-repl", action="store_true",
-                        help="With --with-controller, also run the typed 'gearbox>' REPL "
-                             "(on a background thread).")
     parser.add_argument("--unity-ip", default=gearbox_control._DEFAULT_IP,
                         help=f"With --with-controller: Unity host (default: {gearbox_control._DEFAULT_IP}).")
     parser.add_argument("--cmd-port", type=int, default=gearbox_control.DEFAULT_CMD_PORT,
-                        help=f"With --with-controller: commands -> Unity (default: {gearbox_control.DEFAULT_CMD_PORT}).")
+                        help=f"With --with-controller: port this script PUBs commands on to Unity "
+                             f"(show_row, stage, recolor, reset, …). "
+                             f"OUT: this script -> Unity. (default: {gearbox_control.DEFAULT_CMD_PORT})")
     parser.add_argument("--click-port", type=int, default=gearbox_control.DEFAULT_CLICK_PORT,
-                        help=f"With --with-controller: clicks <- Unity (default: {gearbox_control.DEFAULT_CLICK_PORT}).")
+                        help=f"With --with-controller: port this script SUBs on to receive part-click "
+                             f"events from Unity (part name + event type). "
+                             f"IN: Unity -> this script. (default: {gearbox_control.DEFAULT_CLICK_PORT})")
     parser.add_argument("--no-highlight", action="store_true",
                         help="With --with-controller: disable the controller's pegboard tool highlighting.")
     args = parser.parse_args()
     if args.self_test:
         run_self_test()
         return
-    live_port    = None if args.no_live  else args.task_graph_port
-    select_port  = None if args.no_step_select else args.step_select_port
+    live_port    = None if args.no_live else _DEFAULT_CTRL_EVENTS_IN_PORT
+    select_port  = _DEFAULT_STEP_OUT_PORT
     voice_device = None if args.no_voice else args.voice_device
 
     # Optionally co-launch gearbox_control.py in-process. DearPyGui owns the main thread, so the
@@ -1494,14 +1287,11 @@ def main() -> None:
             parser.error("--with-controller needs the live link; do not pass --no-live.")
         controller = gearbox_control.GearboxController(
             args.unity_ip, args.cmd_port, args.click_port,
-            _LOCALHOST, args.task_graph_port, no_highlight=args.no_highlight)
+            _LOCALHOST, _DEFAULT_CTRL_EVENTS_IN_PORT, no_highlight=args.no_highlight)
         threading.Thread(target=controller.run_click_loop, daemon=True).start()
-        if args.controller_repl:
-            threading.Thread(target=gearbox_control._run_repl,
-                             args=(controller,), daemon=True).start()
         print(f"[Controller] in-process — cmd -> {args.unity_ip}:{args.cmd_port}, "
               f"clicks <- {args.unity_ip}:{args.click_port}, "
-              f"mirror -> {_LOCALHOST}:{args.task_graph_port}")
+              f"mirror -> {_LOCALHOST}:{_DEFAULT_CTRL_EVENTS_IN_PORT}")
 
     try:
         DearPyGuiTaskGraphApp().run(

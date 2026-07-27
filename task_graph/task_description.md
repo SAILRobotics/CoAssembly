@@ -20,7 +20,7 @@ labeled `LEFT` and `RIGHT` must remain on their designated sides.
 - `GEAR_ROD_ROW1`
 - `GEAR_ROW1_LEFT` — large gear
 - `PIN_ROW1_LEFT`
-- `PIN_ROW1_RIGHT`
+- `PIN_ROW1_RIGHT` — this is for CRANK_HANDLE_ROW1
 - `SCREW_ROW1_LEFT`
 - `SCREW_ROW1_RIGHT`
 - `STAND_ROW1_LEFT`
@@ -84,7 +84,9 @@ labeled `LEFT` and `RIGHT` must remain on their designated sides.
    - Install one large gear onto `GEAR_ROD_ROW4`.
 
 3. Secure every gear to its gear rod using the corresponding wooden pin or
-   pins.
+   pins. Pins are generally used for fixing gears onto gear rods. The one
+   exception is `PIN_ROW1_RIGHT`, which is used to secure `CRANK_HANDLE_ROW1`
+   to `GEAR_ROD_ROW1` at the final Row 1 step.
 
 4. Fasten one bearing-and-stand assembly to `BASE_BOARD` before inserting the
    assembled gear rod. Do not fasten the second stand yet, because fixing both
