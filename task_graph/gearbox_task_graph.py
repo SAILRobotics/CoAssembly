@@ -16,6 +16,8 @@ import threading
 from dataclasses import dataclass
 from typing import Iterable
 
+import dearpygui.dearpygui as dpg
+
 # Ensure task_graph/ (this dir) and the repo root (its parent) are both importable, so we can pull
 # the canonical ports from main_setting.py even though the viewer runs from the task_graph/ subdir.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -99,10 +101,10 @@ def build_steps() -> list[Step]:
         4: ("GEAR_ROD_ROW4", "GEAR_ROW4_LEFT", "PIN_ROW4_LEFT"),
     }
     gear_text = {
-        1: "Attach the single large gear and secure it with the Row 1 pins.",
+        1: "Attach the single large gear and secure it with the pins.",
         2: "Attach the small and medium gears and secure both with their pins.",
         3: "Attach the small and medium gears and secure both with their pins.",
-        4: "Attach the single large gear and secure it with the supplied Row 4 pin.",
+        4: "Attach the single large gear and secure it with the pin.",
     }
 
     for row in range(1, 5):
@@ -195,21 +197,40 @@ class TaskGraph:
     def __init__(self, available_parts: Iterable[str] = PROVIDED_PARTS):
         self.steps = build_steps()
         self.by_id = {step.id: step for step in self.steps}
+
+        # print (len(self.by_id)) #26
+
         self.initial_parts = set(available_parts)
         self.active_parts = set(self.initial_parts)
         self.completed: list[str] = []
-        self.transform_history: dict[str, str] = {}
 
+        # In-memory mapping of each consumed input part to the assembly produced
+        # from it: {input_part: output_assembly}. For example, completing a step
+        # that transforms BEARING + ROD into BEARING_ROD_ASSEMBLY records:
+        # {
+        #     "BEARING": "BEARING_ROD_ASSEMBLY",
+        #     "ROD": "BEARING_ROD_ASSEMBLY",
+        # }
+        # If that assembly is consumed later, another entry creates a chain such
+        # as BEARING -> BEARING_ROD_ASSEMBLY -> GEAR_ROW_ASSEMBLY. trace_part()
+        # follows this chain to find what an original part has currently become.
+        # complete() adds entries, undo() removes the entries it reverses, and
+        # reset() clears the dictionary. This history is not persisted to a file
+        # or database, so it lasts only for the lifetime of this TaskGraph object.
+        self.transform_history: dict[str, str] = {}
+ 
     def reset(self) -> None:
         self.active_parts = set(self.initial_parts)
         self.completed.clear()
         self.transform_history.clear()
 
     def missing(self, step: Step) -> list[str]:
-        return [part for part in (*step.inputs, *step.context)
+        #combines the two collections into one tuple. inputs are consumed by the step. context must be present but is not consumed.
+        return [part for part in (*step.inputs, *step.context) 
                 if part not in self.active_parts]
 
     def is_ready(self, step: Step) -> bool:
+        # A step is ready when: It has not already been completed. Its missing-parts list is empty.
         return step.id not in self.completed and not self.missing(step)
 
     def state(self, step: Step) -> str:
@@ -233,10 +254,17 @@ class TaskGraph:
                       f"{step.output}.")
 
     def is_frontier(self, step: Step) -> bool:
-        """A completed step is frontier-safe when no completed step consumed its output."""
+        """A completed step is frontier-safe when no completed step consumed its output.
+        A “frontier” step is a completed step whose output still exists in the inventory.
+        Suppose:
+        Step A: X + Y → XY
+        Step B: XY + Z → XYZ
+        After Step B, XY no longer exists because it was consumed. 
+        Therefore, Step A cannot be undone until Step B is undone."""
         return step.id in self.completed and step.output in self.active_parts
 
     def completed_consumers(self, step: Step) -> list[Step]:
+        #This method finds all completed steps that used the given step’s output as an input.
         return [candidate for candidate in self.steps
                 if candidate.id in self.completed and step.output in candidate.inputs]
 
@@ -245,22 +273,58 @@ class TaskGraph:
                 if self.is_frontier(self.by_id[step_id])]
 
     def undo(self, step: Step | None = None) -> tuple[bool, str]:
-        """Undo any completed frontier node without invalidating dependent state."""
+        """Reverse a completed assembly step when doing so is dependency-safe.
+
+        If ``step`` is omitted, the most recently completed step is selected.
+        The target must be on the completed frontier: it must be complete and
+        its output must still exist in ``active_parts``. If a later completed
+        step has consumed that output, that dependent step must be undone first.
+
+        A successful undo reverses the inventory changes made by ``complete``:
+        it removes the assembled output, restores the consumed input parts,
+        deletes this step's transformation-history entries, and removes the
+        step ID from ``completed``. Context parts are not restored because
+        completing a step never consumes them.
+
+        Args:
+            step: The completed step to undo. When ``None``, use the most
+                recently completed step.
+
+        Returns:
+            A ``(success, message)`` tuple. ``success`` is ``True`` only when
+            the step was undone; ``message`` describes the result or explains
+            why the request was rejected.
+        """
+        # Nothing can be undone until at least one step has been completed.
         if not self.completed:
             return False, "WARNING: there is no completed step to undo."
+
+        # Use the requested step, or default to the latest completed step.
         target = step or self.by_id[self.completed[-1]]
+
+        # A step that has not happened cannot be reversed.
         if target.id not in self.completed:
             return False, f"WARNING: {target.id} is not complete, so it cannot be undone."
+
+        # Do not invalidate dependent state. If another completed step consumed
+        # this output, the consumer must be undone before this producer.
         if not self.is_frontier(target):
             consumers = self.completed_consumers(target)
             blocked_by = ", ".join(consumer.id for consumer in consumers) or "a dependent assembly"
             return False, (f"WARNING: {target.id} is not on the completed frontier. "
                            f"Undo its completed dependent step(s) first: {blocked_by}.")
+
+        # Reverse the inventory transformation: remove the assembled result and
+        # return all inputs that were consumed while completing the step.
         self.active_parts.remove(target.output)
         self.active_parts.update(target.inputs)
+
+        # Delete only history entries created by this particular transformation.
         for part in target.inputs:
             if self.transform_history.get(part) == target.output:
                 del self.transform_history[part]
+
+        # Mark the target step as no longer completed.
         self.completed.remove(target.id)
         return True, (f"UNDONE {target.id}: removed {target.output} and restored "
                       f"{', '.join(target.inputs)}.")
@@ -294,17 +358,64 @@ class TaskGraph:
         return matches
 
     def trace_part(self, part: str) -> str:
+        """Describe a part's current state and the next step that can use it.
+
+        The lookup is case-insensitive. The requested name is first searched
+        among active inventory items and then among consumed items recorded in
+        ``transform_history``. If the part was consumed, its transformation
+        chain is followed until the currently active assembly is found.
+
+        The method then examines incomplete steps that directly use the active
+        part or assembly as either an input or a context requirement. It reports
+        ready steps when available; otherwise it explains which prerequisites
+        are blocking the relevant steps.
+
+        When there is no exact active or consumed match, the method searches all
+        known input, output, and context names for partial matches. At most 12
+        suggestions are returned.
+
+        Args:
+            part: Part or assembly name to trace.
+
+        Returns:
+            A human-readable status message containing the current assembly,
+            possible name matches, a ready next step, or blocking details.
+        """
+        # Look for an exact name in both the current inventory and the history
+        # of parts that have already been consumed. Comparisons ignore case,
+        # while the stored spelling is preserved for display and later lookup.
         exact = next((p for p in self.active_parts if p.lower() == part.lower()), None)
+
+        # Example: after completing
+        #   BEARING_ROW1_LEFT + STAND_ROW1_LEFT
+        #       -> BEARING_STAND_ROW1_LEFT_ASSEMBLY
+        # transform_history contains:
+        # {
+        #     "BEARING_ROW1_LEFT": "BEARING_STAND_ROW1_LEFT_ASSEMBLY",
+        #     "STAND_ROW1_LEFT": "BEARING_STAND_ROW1_LEFT_ASSEMBLY",
+        # }
+        # This expression searches those dictionary keys case-insensitively and
+        # returns the stored key spelling, or None when the part was not consumed.
         consumed = next((p for p in self.transform_history if p.lower() == part.lower()), None)
         canonical = exact or consumed or part
+
+        # A consumed part may have passed through several transformations.
+        # Follow that chain to identify its latest assembly, for example:
+        # BEARING -> BEARING_ROD_ASSEMBLY -> GEAR_ROW_ASSEMBLY.
         if consumed:
             current = self.transform_history[consumed]
             while current in self.transform_history:
                 current = self.transform_history[current]
             prefix = f"{consumed} has already been transformed; its current assembly is {current}. "
             canonical = current
+
+        # An exact active match can be used directly when searching for the next
+        # applicable assembly step.
         elif exact:
             prefix = f"Found active part {exact}. "
+
+        # If no exact match exists, offer partial matches from every part and
+        # assembly name appearing anywhere in the graph.
         else:
             known = {p for s in self.steps for p in (*s.inputs, s.output, *s.context)}
             candidates = sorted(p for p in known if part.lower() in p.lower())
@@ -312,15 +423,28 @@ class TaskGraph:
                 return "Possible matches: " + ", ".join(candidates[:12])
             return f"WARNING: no part or assembly named '{part}' exists in this task graph."
 
+        # Find incomplete steps that directly require the current part or
+        # assembly. Context requirements count even though they are not consumed.
         candidates = [s for s in self.steps
                       if s.id not in self.completed and canonical in (*s.inputs, *s.context)]
         if not candidates:
             return prefix + "No remaining step directly uses it."
+
+        # Prefer reporting usable steps. Multiple steps can be ready at once
+        # because the task graph may contain independent assembly branches.
         ready = [s for s in candidates if self.is_ready(s)]
         if ready:
             return prefix + "Next READY step: " + "; ".join(f"{s.id} ({s.title})" for s in ready)
+
+        # Relevant steps exist, but none are ready. Explain the missing parts for
+        # each step so the caller knows which prerequisites must happen first.
         details = []
         for step in candidates:
+            # Example: if step.id is "r1_gear_rod" and missing(step) returns
+            # ["GEAR_ROW1", "ROD_ROW1"], this appends:
+            # "r1_gear_rod is blocked by GEAR_ROW1, ROD_ROW1"
+            # join() converts the list of missing-part names into one
+            # comma-separated string for the user-facing warning.
             details.append(f"{step.id} is blocked by {', '.join(self.missing(step))}")
         return prefix + "WARNING: its next step should not happen yet: " + "; ".join(details)
 
@@ -335,6 +459,13 @@ class TaskGraph:
             errors.append("Duplicate step ID")
         if len(outputs) != len(set(outputs)):
             errors.append("Duplicate assembled-part output")
+
+        # Collect every assembly that can be created by a graph step. Each step
+        # input must come from one of two valid sources:
+        #   1. a raw part included in the graph's initial inventory, or
+        #   2. an assembly produced as the output of another graph step.
+        # If an input appears in neither collection, its name is probably
+        # misspelled or the step that should produce it has not been defined.
         produced = set(outputs)
         for step in graph.steps:
             for part in step.inputs:
@@ -378,19 +509,19 @@ class TaskGraph:
 
     def state_summary(self) -> str:
         """Build a concise state description for the VLM system context."""
-        completed  = self.completed
-        ready      = [s for s in self.steps if self.is_ready(s)]
-        blocked    = [s for s in self.steps
-                      if s.id not in self.completed and not self.is_ready(s)]
+        completed = self.completed
+        ready = [s for s in self.steps if self.is_ready(s)]
         assemblies = sorted(p for p in self.active_parts if p.endswith("_ASSEMBLY"))
 
         lines = [f"Progress: {len(completed)} / {len(self.steps)} steps completed"]
 
         if completed:
             lines.append("\nCompleted steps (most recent last):")
-            for sid in completed[-8:]:
+            # Include every completed step so the VLM has the full progress
+            # history instead of only a truncated recent subset.
+            for sid in completed:
                 step = self.by_id[sid]
-                lines.append(f"  - {step.title}  ->  {step.output}")
+                lines.append(f"  - [{step.id}] {step.title}  ->  {step.output}")
 
         if ready:
             lines.append(
@@ -398,34 +529,34 @@ class TaskGraph:
                 "\nThey have NO ordering requirement among themselves; the user may perform"
                 " them in any order they prefer:"
             )
-            for step in ready[:8]:
+            # Include every ready step so no currently valid option is hidden
+            # from the VLM.
+            for step in ready:
                 lines.append(f"  - [{step.id}] {step.title}")
-
-        if blocked:
-            lines.append("\nBLOCKED steps (prerequisites not yet met):")
-            for step in blocked[:6]:
-                missing_parts  = self.missing(step)
-                missing_steps  = []
-                missing_raw    = []
-                for part in missing_parts:
-                    producer = self.producer_for(part)
-                    if producer:
-                        missing_steps.append(f"[{producer.id}]")
-                    else:
-                        missing_raw.append(part)
-                needs = ", ".join(missing_steps + missing_raw)
-                lines.append(f"  - [{step.id}] {step.title}  (needs these steps first: {needs})")
+        elif len(completed) == len(self.steps):
+            lines.append("\nNo READY steps: the assembly is complete.")
+        else:
+            lines.append(
+                "\nNo READY steps: assembly is stalled because required parts "
+                "or prerequisite assemblies are missing."
+            )
 
         if assemblies:
             lines.append("\nActive assemblies in inventory:")
-            for a in assemblies[:12]:
+            for a in assemblies:
                 lines.append(f"  - {a}")
 
         lines.append(
-            "\nIMPORTANT: Base your answers ONLY on the dependency structure above."
-            " Do NOT infer ordering constraints from step descriptions — only the"
-            " BLOCKED list represents real prerequisites. If a step is READY, the"
-            " user may do it at any time regardless of the order steps are listed."
+            "\nIMPORTANT: Any task step not listed as COMPLETED or READY is BLOCKED."
+            " Recommend only READY steps. Every listed READY step is valid and may"
+            " be performed because all of its prerequisites are satisfied. When"
+            " choosing among multiple READY steps, follow the user's recommendation"
+            " preference from the task description: prefer Row 1, then Row 2, then"
+            " Row 3, then Row 4, and choose the lowest stage within that row."
+            " Recommend the final gearbox step only when it is READY and no row"
+            " assembly step remains READY. This preference selects among valid"
+            " options; it is not an additional dependency or ordering constraint."
+            " Do NOT infer dependencies from descriptions or display order."
         )
 
         return "\n".join(lines)
@@ -449,25 +580,23 @@ class DearPyGuiTaskGraphApp:
     """Dear PyGui task-graph view and terminal controller."""
 
     COLORS = {
-        "complete": (46, 157, 96, 255),
-        "ready": (39, 132, 216, 255),
-        "blocked": (209, 138, 39, 255),
+        "complete": (46, 157, 96, 255),   # green
+        "ready":    (39, 132, 216, 255),  # blue
+        "blocked":  (209, 138, 39, 255),  # orange
     }
 
     # Status → (RGBA color, display label)
     _VOICE_STATUS_STYLE: dict[str, tuple[tuple, str]] = {
-        "loading":     ((180, 180, 180, 255), "Loading model..."),
-        "idle":        ((255, 220, 50,  255), "Idle"),
-        "speech":      ((50,  200, 255, 255), "Speech detected..."),
-        "queued":      ((200, 160, 50,  255), "Queued..."),
-        "transcribing":((255, 165, 50,  255), "Transcribing..."),
-        "listening":   ((50,  220, 80,  255), "Listening"),
-        "error":       ((255, 80,  80,  255), "Error"),
+        "loading":     ((180, 180, 180, 255), "Loading model..."),   # grey
+        "idle":        ((255, 220, 50,  255), "Idle"),               # yellow
+        "speech":      ((50,  200, 255, 255), "Speech detected..."), # cyan
+        "queued":      ((200, 160, 50,  255), "Queued..."),          # amber
+        "transcribing":((255, 165, 50,  255), "Transcribing..."),    # orange
+        "listening":   ((50,  220, 80,  255), "Listening"),          # green
+        "error":       ((255, 80,  80,  255), "Error"),              # red
     }
 
     def __init__(self) -> None:
-        import dearpygui.dearpygui as dpg
-
         self.dpg = dpg
         self.graph = TaskGraph()
         self.selected_id: str | None = None
@@ -485,6 +614,10 @@ class DearPyGuiTaskGraphApp:
         self._live_thread: threading.Thread | None = None
         self._live_sub = None
         self._select_pub = None   # PUB -> gearbox_control.py --open-3d viewer (selected step)
+
+        # Optional in-process controller (set by main() when --with-controller is used).
+        # Gives direct access to send commands to Unity without going through ZMQ.
+        self.controller: "gearbox_control.GearboxController | None" = None
 
         self._speech = None   # SpeechListener, set in run() if enabled
         self._vlm    = None   # VLMAssistant, set in run() if enabled
@@ -893,6 +1026,8 @@ class DearPyGuiTaskGraphApp:
         dpg.add_spacer(height=5)
         dpg.add_button(label="Mark selected step complete", tag="complete_button",
                        callback=self._complete_selected, enabled=False, width=-1)
+        dpg.add_button(label="Animate in Unity", tag="animate_unity_button",
+                       callback=self._animate_unity_callback, enabled=False, width=-1)
         dpg.add_button(label="Recommend next step", tag="recommend_button",
                        callback=self._recommend_callback, width=-1)
         dpg.add_button(label="Reset all progress", callback=self._reset_callback, width=-1)
@@ -955,6 +1090,31 @@ class DearPyGuiTaskGraphApp:
             if not sent:
                 self.log("[Recommend] VLM busy — explanation skipped.")
 
+    def _animate_unity_callback(self) -> None:
+        if self.controller is None or not self.selected_id:
+            return
+        coords = TaskGraph.control_coords_for(self.selected_id)
+        if coords is None:
+            self.log("[Animate] This step has no Unity stage mapping.")
+            return
+        row, stage = coords
+        step = self.graph.by_id[self.selected_id]
+        if row > 0:
+            done_stages = self.controller.sm._completed_stages(row)
+            blocked     = not self.controller.sm.unlocked(row, stage)
+            checked     = self.controller.sm.done[row][stage]
+        else:
+            done_stages = [s for s in range(1, 8)]
+            blocked     = False
+            checked     = self.controller.sm.done8
+        self.controller.send({"command": "stage", "row": row, "stage": stage,
+                               "done_stages": done_stages,
+                               "step_delay": gearbox_control.STEP_DELAY,
+                               "slide_seconds": gearbox_control.SLIDE_SECONDS})
+        self.controller.send({"command": "ui", "show": True, "row": row,
+                               "checked": checked, "blocked": blocked})
+        self.log(f"[Animate] Unity → row {row}, stage {stage}  [{step.id}]")
+
     def _select_callback(self, _sender, _app_data, user_data) -> None:
         self.selected_id = user_data
         self.refresh()
@@ -977,6 +1137,21 @@ class DearPyGuiTaskGraphApp:
                 focused += f"\nBlocked by: {', '.join(missing)}"
             self._vlm.set_focused_step(focused)
 
+    def _sync_sm_from_graph(self) -> None:
+        """Rebuild GearboxStateMachine.done from TaskGraph.completed.
+        Called after every GUI action that changes TaskGraph so the controller
+        always reflects the same state — TaskGraph is the single source of truth."""
+        if self.controller is None:
+            return
+        sm = self.controller.sm
+        for row in range(1, 5):
+            for stage in range(1, 8):
+                step_ids = TaskGraph.steps_for_control(row, stage)
+                sm.done[row][stage] = bool(step_ids) and all(
+                    sid in self.graph.completed
+                    for sid in step_ids if sid in self.graph.by_id)
+        sm.done8 = "finish_gearbox" in self.graph.completed
+
     def _complete_selected(self) -> None:
         if not self.selected_id:
             return
@@ -989,13 +1164,30 @@ class DearPyGuiTaskGraphApp:
             ok, message = self.graph.complete(step)
             if ok:
                 self._notify_vlm(f"COMPLETE: {step.id} -> {step.output}")
+        if ok and self.controller is not None:
+            self._sync_sm_from_graph()
+            coords = TaskGraph.control_coords_for(self.selected_id)
+            if coords is not None and coords[0] > 0:
+                row = coords[0]
+                self.controller.send({"command": "recolor", "row": row,
+                                      "done_stages": self.controller.sm._completed_stages(row)})
         self.log(message)
         self.refresh()
 
     def _reset_callback(self) -> None:
         self.graph.reset()
-        self.selected_id   = None
+        self.selected_id    = None
         self.recommended_id = None
+        if self.controller is not None:
+            # Sync sm state from the now-empty graph (all done = False), then send
+            # Unity commands directly — bypassing the ZMQ round-trip so we don't
+            # get a spurious "Live: controller reset" log from _apply_live_event.
+            self._sync_sm_from_graph()
+            self.controller.sm.history.clear()
+            self.controller.sm.current_row = self.controller.sm.current_stage = None
+            self.controller.send({"command": "reset"})    # clear Unity part colors
+            self.controller.send({"command": "show_all"}) # make all rows visible
+            self.controller.send({"command": "ui", "show": False})  # hide in-headset UI
         self.log("All assembly progress was reset.")
         self.refresh()
         self._send_select({"event": "clear"})
@@ -1043,6 +1235,7 @@ class DearPyGuiTaskGraphApp:
             dpg.configure_item("selection_notice", show=False)
             dpg.set_value("step_details", "Select a graph node to see its inputs, output, and readiness.")
             dpg.configure_item("complete_button", label="Mark selected step complete", enabled=False)
+            dpg.configure_item("animate_unity_button", enabled=False)
             return
         step = self.graph.by_id[self.selected_id]
         state = self.graph.state(step)
@@ -1082,6 +1275,9 @@ class DearPyGuiTaskGraphApp:
         else:
             dpg.configure_item("complete_button", label="Mark selected step complete",
                                enabled=self.graph.is_ready(step))
+        can_animate = (self.controller is not None
+                       and TaskGraph.control_coords_for(self.selected_id) is not None)
+        dpg.configure_item("animate_unity_button", enabled=can_animate)
 
     def _refresh_active_parts_tree(self) -> None:
         dpg = self.dpg
@@ -1281,6 +1477,7 @@ def main() -> None:
     # Optionally co-launch gearbox_control.py in-process. DearPyGui owns the main thread, so the
     # controller's click listener (+ optional REPL) run on daemon threads behind it; the two keep
     # talking over the localhost live link (task-graph port). Both files still run standalone.
+    app = DearPyGuiTaskGraphApp()
     controller = None
     if args.with_controller:
         if args.no_live:
@@ -1288,13 +1485,19 @@ def main() -> None:
         controller = gearbox_control.GearboxController(
             args.unity_ip, args.cmd_port, args.click_port,
             _LOCALHOST, _DEFAULT_CTRL_EVENTS_IN_PORT, no_highlight=args.no_highlight)
+        app.controller = controller
         threading.Thread(target=controller.run_click_loop, daemon=True).start()
         print(f"[Controller] in-process — cmd -> {args.unity_ip}:{args.cmd_port}, "
               f"clicks <- {args.unity_ip}:{args.click_port}, "
               f"mirror -> {_LOCALHOST}:{_DEFAULT_CTRL_EVENTS_IN_PORT}")
+        # Python restarted with a fresh (empty) TaskGraph — wipe any stale Unity visuals
+        # left over from the previous session before the user sees the app.
+        controller.send({"command": "reset"})
+        controller.send({"command": "show_all"})
+        controller.send({"command": "ui", "show": False})
 
     try:
-        DearPyGuiTaskGraphApp().run(
+        app.run(
             live_port,
             voice_device=voice_device,
             wake_word=args.wake_word,

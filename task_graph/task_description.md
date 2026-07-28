@@ -10,7 +10,27 @@ Each row is identified by its corresponding color and shape. A component may
 only be assembled with other components assigned to the same row. Components
 labeled `LEFT` and `RIGHT` must remain on their designated sides.
 
+## Visual Row Identification
+
+Use the following color-and-shape associations to identify the four gear rows
+and their corresponding components:
+
+1. **Gear Row 1:** white and circle
+2. **Gear Row 2:** red and triangle
+3. **Gear Row 3:** green and hexagon
+4. **Gear Row 4:** blue and square
+
+Each color and each shape uniquely identifies one gear row. The user may refer
+to a row by its row number, its color, its shape, or both attributes together.
+For example, `Row 1`, `white row`, `circle row`, and `white circle row` all
+refer to Gear Row 1.
+
 ## Component Inventory
+
+> **Note on part naming:** All bearings are physically identical to each other;
+> all pins are physically identical to each other. The row number and side label
+> in a part name (e.g. `BEARING_ROW2_LEFT`) indicate only *where* that part must
+> be installed, not that it is a distinct physical part type.
 
 ### Row 1 — One Large Gear
 
@@ -84,9 +104,10 @@ labeled `LEFT` and `RIGHT` must remain on their designated sides.
    - Install one large gear onto `GEAR_ROD_ROW4`.
 
 3. Secure every gear to its gear rod using the corresponding wooden pin or
-   pins. Pins are generally used for fixing gears onto gear rods. The one
-   exception is `PIN_ROW1_RIGHT`, which is used to secure `CRANK_HANDLE_ROW1`
-   to `GEAR_ROD_ROW1` at the final Row 1 step.
+   pins. All pins are physically the same part; their names (e.g. `PIN_ROW2_LEFT`)
+   only indicate which gear rod and side they belong to. The one exception is
+   `PIN_ROW1_RIGHT`, which is used to secure `CRANK_HANDLE_ROW1` to
+   `GEAR_ROD_ROW1` at the final Row 1 step rather than fixing a gear.
 
 4. Fasten one bearing-and-stand assembly to `BASE_BOARD` before inserting the
    assembled gear rod. Do not fasten the second stand yet, because fixing both
@@ -133,9 +154,10 @@ The gearbox assembly is complete when:
 - `CRANK_HANDLE_ROW1` is attached to `GEAR_ROD_ROW1`.
 - All gears rotate freely and mesh correctly with the adjacent gears.
 
-## Recommended Work Order
+## User Recommendation Preference
 
-Complete the gearbox row by row:
+When recommending the next step, the user prefers to complete the gearbox row
+by row:
 
 1. Finish **all steps in Row 1** before starting any work on Row 2.
 2. Finish **all steps in Row 2** before starting any work on Row 3.
@@ -154,5 +176,11 @@ Within each row, the recommended sequence is:
 6. Fasten the right (second) stand to `BASE_BOARD`.
 7. Row 1 only: attach `CRANK_HANDLE_ROW1` after both stands are fastened.
 
-This row-by-row order avoids interference between in-progress assemblies on
-different rows and keeps the workspace organised.
+Apply this preference only when choosing among steps that the task graph marks
+`READY`: prefer Row 1, then Row 2, then Row 3, then Row 4; within that row,
+prefer the lowest stage number. This is a recommendation preference, not an
+additional dependency. Any other `READY` step remains valid and may still be
+performed if the user chooses it.
+
+The preferred row-by-row order avoids interference between in-progress
+assemblies on different rows and keeps the workspace organised.
