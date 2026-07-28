@@ -607,8 +607,6 @@ class DearPyGuiTaskGraphApp:
         self.graph = TaskGraph()
         # Store the currently selected task-step ID, or None when unselected.
         self.selected_id: str | None = None
-        # Hold recent messages shown in the application's terminal panel.
-        self.log_lines: list[str] = []
         # Map task-step IDs to their Dear PyGui node tags.
         self.node_tags: dict[str, str] = {}
         # Map task-step IDs to their node input-pin tags.
@@ -713,8 +711,6 @@ class DearPyGuiTaskGraphApp:
         dpg.bind_item_theme("task_node_editor", "node_editor_theme")
         # Render current graph state into node colors, labels, and panels.
         self.refresh()
-        # Add initial usage guidance to the in-application terminal.
-        self.log("Type a part name, or type 'help' for commands.")
         # Finalize Dear PyGui after declaring the initial widgets.
         dpg.setup_dearpygui()
         # Make the operating-system window visible.
@@ -1201,7 +1197,7 @@ class DearPyGuiTaskGraphApp:
                                       parent="task_node_editor")
 
     def _create_side_panel(self) -> None:
-        """Create selection, action, inventory, terminal, and voice controls."""
+        """Create selection, action, inventory, and voice controls."""
         dpg = self.dpg
         dpg.add_text("Selected step", color=(225, 232, 240))
         dpg.add_separator()
@@ -1223,13 +1219,6 @@ class DearPyGuiTaskGraphApp:
         with dpg.child_window(tag="active_parts_panel", height=245,
                               horizontal_scrollbar=True):
             dpg.add_group(tag="active_parts_tree")
-        dpg.add_spacer(height=8)
-        dpg.add_separator()
-        dpg.add_text("Part / step terminal")
-        dpg.add_input_text(tag="terminal_output", multiline=True, readonly=True,
-                           width=-1, height=165)
-        dpg.add_input_text(tag="command_input", hint="Enter a part name or command...",
-                           width=-1, on_enter=True, callback=self._command_callback)
 
         dpg.add_spacer(height=8)
         dpg.add_separator()
@@ -1261,6 +1250,11 @@ class DearPyGuiTaskGraphApp:
         events = self._speech.poll()
 
         # Status label + color
+        # loading=model starting; idle=waiting for wake word;
+        # speech=someone is talking and audio is being captured right now;
+        # queued=captured audio is waiting for ASR; transcribing=ASR is running;
+        # listening=wake word was accepted and command mode remains active, even
+        # while the user is silent; error=capture or recognition failed.
         status = self._speech.current_status
         color, label = self._VOICE_STATUS_STYLE.get(
             status, ((200, 200, 200, 255), status))
@@ -1436,18 +1430,9 @@ class DearPyGuiTaskGraphApp:
         self._send_select({"event": "clear"})
         self._notify_vlm("RESET: all progress cleared")
 
-    def _command_callback(self, sender, app_data) -> None:
-        """Read and execute text submitted through the terminal input widget."""
-        raw = (app_data or self.dpg.get_value(sender) or "").strip()
-        self.dpg.set_value(sender, "")
-        if raw:
-            self.execute_command(raw)
-
     def log(self, message: str) -> None:
-        """Append a message to the bounded in-application terminal history."""
-        self.log_lines.append(message)
-        self.log_lines = self.log_lines[-200:]
-        self.dpg.set_value("terminal_output", "\n".join(self.log_lines))
+        """Write an operational message to the system console."""
+        print(message)
 
     # ── GUI state rendering and inventory tree ───────────────────────────────
 
@@ -1534,6 +1519,24 @@ class DearPyGuiTaskGraphApp:
                        and TaskGraph.control_coords_for(self.selected_id) is not None)
         dpg.configure_item("animate_unity_button", enabled=can_animate)
 
+    # Example: if active_parts contains
+    # {
+    #     "BASE_BOARD",
+    #     "BEARING_ROW1_RIGHT",
+    #     "BEARING_STAND_ROW1_LEFT_ASSEMBLY",
+    # }
+    # this method rebuilds the visible tree as:
+    #
+    # ROW 1 (2 active)
+    #   - BEARING_ROW1_RIGHT
+    #   - [ASSEMBLY] BEARING_STAND_ROW1_LEFT_ASSEMBLY
+    #       - BEARING_ROW1_LEFT
+    #       - STAND_ROW1_LEFT
+    # BASE / FINAL (1 active)
+    #   - BASE_BOARD
+    #
+    # Only active parts appear at the top level. _add_part_branch() recursively
+    # shows the consumed components inside an active assembly.
     def _refresh_active_parts_tree(self) -> None:
         """Rebuild the inventory tree from the graph's current active parts."""
         dpg = self.dpg
@@ -1572,92 +1575,6 @@ class DearPyGuiTaskGraphApp:
         dpg.bind_item_theme(assembly_node, "assembly_tree_theme")
         for component in producer.inputs:
             self._add_part_branch(component, assembly_node)
-
-    # ── Text-command parsing and inspection ──────────────────────────────────
-
-    def execute_command(self, raw: str) -> None:
-        """Parse and execute one command entered in the side-panel terminal."""
-        self.log("> " + raw)
-        command, _, argument = raw.partition(" ")
-        command_lower = command.lower()
-        if command_lower == "help":
-            self.log("Commands: <part name>, part <name>, step <id/title>, complete <id/title>, "
-                     "parts, status, frontier, missing, undo [step], add <part name>, reset, help")
-        elif command_lower in {"parts", "inventory", "list"}:
-            self.log(self.graph.active_parts_text())
-        elif command_lower in {"frontier", "undoable"}:
-            frontier = [step.id for step in self.graph.frontier_steps()]
-            self.log("UNDOABLE FRONTIER: " + (", ".join(frontier) or "none"))
-        elif command_lower in {"part", "find"}:
-            self.log(self.graph.trace_part(argument))
-        elif command_lower == "step":
-            self._inspect_steps(argument)
-        elif command_lower == "complete":
-            matches = self.graph.find_steps(argument)
-            if len(matches) == 1:
-                self.selected_id = matches[0].id
-                ok, message = self.graph.complete(matches[0])
-                self.log(message)
-                self.refresh()
-                if ok:
-                    self._notify_vlm(f"COMPLETE: {matches[0].id} -> {matches[0].output}")
-            elif matches:
-                self.log("Ambiguous step. Matches: " + ", ".join(s.id for s in matches))
-            else:
-                self.log(f"WARNING: no step matches '{argument}'.")
-        elif command_lower == "status":
-            ready = [s.id for s in self.graph.steps if self.graph.is_ready(s)]
-            frontier = [s.id for s in self.graph.frontier_steps()]
-            self.log(f"Completed {len(self.graph.completed)}/{len(self.graph.steps)}. "
-                     f"Ready: {', '.join(ready) if ready else 'none'}\n"
-                     f"Undoable frontier: {', '.join(frontier) if frontier else 'none'}")
-        elif command_lower == "missing":
-            produced = {other.output for other in self.graph.steps}
-            missing_raw = sorted({p for s in self.graph.steps for p in self.graph.missing(s)
-                                  if p not in produced})
-            self.log("Missing raw inventory: " + (", ".join(missing_raw) or "none"))
-        elif command_lower == "undo":
-            requested = None
-            if argument:
-                matches = self.graph.find_steps(argument)
-                if len(matches) != 1:
-                    self.log("WARNING: specify exactly one completed step to undo.")
-                    return
-                requested = matches[0]
-                self.selected_id = requested.id
-            elif self.graph.completed:
-                self.selected_id = self.graph.completed[-1]
-            ok, message = self.graph.undo(requested)
-            self.log(message)
-            self.refresh()
-            if ok:
-                self._notify_vlm(f"UNDO: {requested.id if requested else 'last step'}")
-        elif command_lower == "add":
-            if not argument:
-                self.log("Usage: add <part name>")
-            else:
-                self.log(self.graph.add_part(argument.strip()))
-                self.refresh()
-                self._notify_vlm(f"ADD: {argument.strip()} added to inventory")
-        elif command_lower == "reset":
-            self._reset_callback()
-        else:
-            self.log(self.graph.trace_part(raw))
-
-    def _inspect_steps(self, query: str) -> None:
-        """Find matching steps, select an exact match, and log their states."""
-        matches = self.graph.find_steps(query)
-        if not matches:
-            self.log(f"WARNING: no step matches '{query}'.")
-            return
-        if len(matches) == 1:
-            self.selected_id = matches[0].id
-            self.refresh()
-        self.log("; ".join(
-            f"{s.id} [{self.graph.state(s)}]"
-            + (f" blocked by {', '.join(self.graph.missing(s))}" if self.graph.missing(s) else "")
-            for s in matches[:12]))
-
 
 def run_self_test() -> None:
     errors = TaskGraph.validate()
