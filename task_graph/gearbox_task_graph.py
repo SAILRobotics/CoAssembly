@@ -396,7 +396,8 @@ class TaskGraph:
         # }
         # This expression searches those dictionary keys case-insensitively and
         # returns the stored key spelling, or None when the part was not consumed.
-        consumed = next((p for p in self.transform_history if p.lower() == part.lower()), None)
+        consumed = next((p for p in self.transform_history if p.lower() == part.lower()), None) 
+        #Then the code follows the chain starting from transform_history["BEARING_ROW1_LEFT"] to find what it eventually became
         canonical = exact or consumed or part
 
         # A consumed part may have passed through several transformations.
@@ -596,63 +597,107 @@ class DearPyGuiTaskGraphApp:
         "error":       ((255, 80,  80,  255), "Error"),              # red
     }
 
+    # ── Initialization and application lifecycle ─────────────────────────────
+
     def __init__(self) -> None:
+        """Initialize application state before any GUI widgets are created."""
+        # Keep the Dear PyGui module available to every instance method.
         self.dpg = dpg
+        # Create the assembly dependency graph and initial inventory.
         self.graph = TaskGraph()
+        # Store the currently selected task-step ID, or None when unselected.
         self.selected_id: str | None = None
+        # Hold recent messages shown in the application's terminal panel.
         self.log_lines: list[str] = []
+        # Map task-step IDs to their Dear PyGui node tags.
         self.node_tags: dict[str, str] = {}
+        # Map task-step IDs to their node input-pin tags.
         self.input_attributes: dict[str, str] = {}
+        # Map task-step IDs to their node output-pin tags.
         self.output_attributes: dict[str, str] = {}
+        # Map state names such as "ready" to Dear PyGui theme tags.
         self.themes: dict[str, str] = {}
 
         # Live-mirror state
+        # Track steps currently opened by the external controller.
         self.active_ids: set[str] = set()
+        # Track the step highlighted by the recommendation policy.
         self.recommended_id: str | None = None
+        # Transfer ZMQ messages safely from the listener thread to the GUI thread.
         self._live_queue: "queue.Queue[dict]" = queue.Queue()
+        # Tell the listener thread whether it should continue polling.
         self._live_running = False
+        # Retain the background ZMQ listener thread after startup.
         self._live_thread: threading.Thread | None = None
+        # Retain the ZeroMQ subscriber that receives controller events.
         self._live_sub = None
+        # Retain the ZeroMQ publisher that sends selected-step events.
         self._select_pub = None   # PUB -> gearbox_control.py --open-3d viewer (selected step)
 
         # Optional in-process controller (set by main() when --with-controller is used).
         # Gives direct access to send commands to Unity without going through ZMQ.
         self.controller: "gearbox_control.GearboxController | None" = None
 
+        # run() sets this to a SpeechListener when voice input is enabled.
         self._speech = None   # SpeechListener, set in run() if enabled
+        # run() sets this to a VLMAssistant when a model is enabled.
         self._vlm    = None   # VLMAssistant, set in run() if enabled
 
     def build(self) -> None:
+        """Construct, configure, and reveal the Dear PyGui interface."""
+        # Use a short local reference for repeated Dear PyGui calls.
         dpg = self.dpg
+        # Initialize Dear PyGui's internal item and resource registries.
         dpg.create_context()
+        # Create the operating-system window that contains the application.
         dpg.create_viewport(title="Gearbox Assembly Task Graph", width=3420, height=1400,
                             min_width=1400, min_height=800)
+        # Register themes before any GUI item tries to use them.
         self._create_themes()
 
+        # Create the root window whose contents fill the viewport.
         with dpg.window(tag="primary_window", label="Gearbox Assembly Task Graph"):
+            # Add the application heading.
             dpg.add_text("Gearbox Assembly Dependency Graph", color=(225, 232, 240),
                          tag="main_title")
+            # Add a legend explaining the node-state colors.
             dpg.add_text("Blue = ready     Orange = blocked     Green = complete"
                          "     Purple = selected / active     Gold = recommended",
                          color=(170, 180, 195))
+            # Use a resizable table as a three-column page layout.
             with dpg.table(header_row=False, resizable=True, policy=dpg.mvTable_SizingStretchProp):
+                # Give the dependency graph the largest proportional width.
                 dpg.add_table_column(init_width_or_weight=2.8)
+                # Give the controls panel a narrower proportional width.
                 dpg.add_table_column(init_width_or_weight=1.0)
+                # Give the VLM panel the remaining proportional width.
                 dpg.add_table_column(init_width_or_weight=1.1)
+                # Put the graph, controls, and VLM into one horizontal row.
                 with dpg.table_row():
+                    # First cell: dependency-graph canvas.
                     with dpg.table_cell():
+                        # Fill the cell and allow a wide graph to scroll.
                         with dpg.child_window(height=-1, horizontal_scrollbar=True):
+                            # Create the interactive graph canvas and minimap.
                             with dpg.node_editor(tag="task_node_editor", minimap=True,
                                                  minimap_location=dpg.mvNodeMiniMap_Location_BottomRight):
+                                # Add one visual node per assembly step.
                                 self._create_nodes()
+                                # Connect producer nodes to consumer nodes.
                                 self._create_links()
+                    # Second cell: task details and application controls.
                     with dpg.table_cell():
+                        # Fill the cell vertically with its own panel.
                         with dpg.child_window(height=-1):
                             self._create_side_panel()
+                    # Third cell: VLM assistant.
                     with dpg.table_cell():
+                        # Fill the cell vertically with its own panel.
                         with dpg.child_window(height=-1):
+                            # Build the assistant UI when a VLM is enabled.
                             if self._vlm is not None:
                                 self._vlm.build_inline()
+                            # Otherwise explain how to enable the assistant.
                             else:
                                 dpg.add_text("VLM Assistant",
                                              color=(225, 232, 240))
@@ -662,11 +707,17 @@ class DearPyGuiTaskGraphApp:
                                     "  --vlm-model Qwen/Qwen2.5-VL-7B-Instruct",
                                     color=(140, 155, 175))
 
+        # Make the root window automatically fill the viewport.
         dpg.set_primary_window("primary_window", True)
+        # Apply the previously created link and pin theme to the node editor.
         dpg.bind_item_theme("task_node_editor", "node_editor_theme")
+        # Render current graph state into node colors, labels, and panels.
         self.refresh()
+        # Add initial usage guidance to the in-application terminal.
         self.log("Type a part name, or type 'help' for commands.")
+        # Finalize Dear PyGui after declaring the initial widgets.
         dpg.setup_dearpygui()
+        # Make the operating-system window visible.
         dpg.show_viewport()
 
     def run(self, live_port: int | None = None,
@@ -675,6 +726,7 @@ class DearPyGuiTaskGraphApp:
             vlm_model: str | None = None,
             task_description_path: str | None = None,
             select_port: int | None = None) -> None:
+        """Start optional services, run the GUI loop, and clean up on exit."""
         # Pre-import transformers on the main thread before any worker threads start.
         # The VLM thread and ASR (NeMo) thread both import from transformers; if they
         # race during the initial import, Python's partially-initialized sys.modules
@@ -682,342 +734,474 @@ class DearPyGuiTaskGraphApp:
         try:
             import transformers as _tf  # noqa: F401
         except Exception:
+            # Voice/VLM initialization will report a useful error later if needed.
             pass
 
+        # Create the VLM assistant only when the caller supplies a model.
         if vlm_model is not None:
+            # Use the requested prompt file or the repository's default description.
             desc_path = task_description_path or str(
                 Path(__file__).parent / "task_description.md")
+            # Construct the assistant before build() so its panel can be created.
             self._vlm = VLMAssistant(self.dpg, desc_path, model_name=vlm_model)
+            # Report model selection in the operating-system terminal.
             print(f"[VLM] Assistant created: {vlm_model}")
+        # Build and show the Dear PyGui interface.
         self.build()
+        # Start receiving controller events when a live port was supplied.
         if live_port is not None:
             self.start_live_listener(live_port)
+        # Start publishing node selections when an output port was supplied.
         if select_port is not None:
             self.start_select_publisher(select_port)
+        # Start speech recognition only when an audio device was supplied.
         if voice_device is not None:
             try:
+                # Create and launch the background speech listener.
                 self._speech = SpeechListener(device=voice_device, wake_word=wake_word)
                 self._speech.start()
                 self.log(f"[Voice] Started on device: {voice_device}")
             except Exception as e:
+                # Keep the rest of the GUI usable if voice startup fails.
                 self.log(f"[Voice] Failed to start: {e}")
+        # Enable drag-and-drop images only when the VLM assistant exists.
         if self._vlm is not None:
             try:
+                # Route dropped files to the VLM assistant's image handler.
                 self.dpg.set_viewport_drop_callback(self._vlm.on_file_drop)
             except Exception:
                 pass  # older DPG versions may not support this
 
+        # Use a local reference in the high-frequency render loop.
         dpg = self.dpg
+        # Process background events and render until the window closes.
         while dpg.is_dearpygui_running():
+            # Apply queued controller messages on the main GUI thread.
             self._drain_live_queue()
+            # Apply speech status and transcript events on the main GUI thread.
             self._poll_speech()
+            # Display VLM status changes and completed responses.
             if self._vlm is not None:
                 self._vlm.tick()
+            # Draw one frame and process Dear PyGui interaction.
             dpg.render_dearpygui_frame()
+        # Tell the live listener thread to stop polling.
         self._live_running = False
+        # Release audio resources if speech recognition was active.
         if self._speech is not None:
             self._speech.close()
+        # Stop the model worker if the assistant was active.
         if self._vlm is not None:
             self._vlm.close()
+        # Release all Dear PyGui resources.
         dpg.destroy_context()
 
-    # ── Live mirror of gearbox_control.py ────────────────────────────────────
+    # ── ZeroMQ sending, receiving, and live-controller events ────────────────
+
     def start_live_listener(self, port: int) -> bool:
         """Bind a SUB (receiver binds, per the repo's Python<->Python convention) and drain
         controller events on a background thread. Failures are non-fatal — the GUI still opens."""
+        # Import ZeroMQ lazily so the GUI can still run without that dependency.
         try:
             import zmq
         except Exception as e:
             self.log(f"Live link disabled (zmq unavailable: {e}).")
             return False
+        # Create and bind the subscriber that receives controller events.
         try:
+            # Reuse ZeroMQ's process-wide context.
             ctx = zmq.Context.instance()
+            # Create a subscriber socket.
             sub = ctx.socket(zmq.SUB)
+            # Subscribe to every topic because messages are plain JSON strings.
             sub.setsockopt_string(zmq.SUBSCRIBE, "")
+            # Bind the receiver to the configured local port.
             sub.bind(f"tcp://{_LOCALHOST}:{port}")
         except Exception as e:
             self.log(f"Live link disabled (could not bind :{port}: {e}).")
             return False
+        # Retain the socket for the lifetime of the application.
         self._live_sub = sub
+        # Allow the listener loop to begin processing events.
         self._live_running = True
 
+        # Define the work performed by the background listener thread.
         def _loop() -> None:
+            # Use a poller so the thread can periodically check its stop flag.
             poller = zmq.Poller()
+            # Watch the subscriber for incoming messages.
             poller.register(sub, zmq.POLLIN)
+            # Continue until run() begins application shutdown.
             while self._live_running:
+                # Wait briefly and retry when no message has arrived.
                 if not dict(poller.poll(timeout=200)):
                     continue
+                # Drain every message currently waiting on the socket.
                 while True:
                     try:
+                        # Receive without blocking after the poller reported data.
                         raw = sub.recv_string(flags=zmq.NOBLOCK)
                     except zmq.Again:
                         break
                     try:
+                        # Decode JSON and hand it to the thread-safe GUI queue.
                         self._live_queue.put(json.loads(raw))
                     except json.JSONDecodeError:
+                        # Ignore malformed external messages.
                         continue
 
+        # Run network polling outside the GUI thread.
         self._live_thread = threading.Thread(target=_loop, daemon=True)
+        # Start receiving controller events immediately.
         self._live_thread.start()
+        # Report the active endpoint in the application's terminal.
         self.log(f"Live link listening on tcp://{_LOCALHOST}:{port} (controller mirror).")
         return True
 
     def start_select_publisher(self, port: int) -> bool:
         """Connect a PUB (sender connects, per convention) so pressing 'Select step' can tell an
         (row, stage) consumer — gearbox_control.py --open-3d — which step is selected. Non-fatal."""
+        # Import ZeroMQ lazily so this optional feature can fail independently.
         try:
             import zmq
         except Exception as e:
             self.log(f"Step-select link disabled (zmq unavailable: {e}).")
             return False
+        # Create and connect the selected-step publisher.
         try:
+            # Reuse ZeroMQ's process-wide context.
             ctx = zmq.Context.instance()
+            # Create a publisher socket for outgoing JSON events.
             pub = ctx.socket(zmq.PUB)
+            # Connect the sender to the external consumer.
             pub.connect(f"tcp://{_LOCALHOST}:{port}")
         except Exception as e:
             self.log(f"Step-select link disabled (could not connect :{port}: {e}).")
             return False
+        # Retain the publisher for later selection callbacks.
         self._select_pub = pub
+        # Report the outgoing endpoint in the application's terminal.
         self.log(f"Step-select link -> tcp://{_LOCALHOST}:{port} (open3d viewer).")
         return True
 
     def _send_select(self, msg: dict) -> None:
+        """Serialize and publish one selected-step event when connected."""
+        # Do nothing when the optional publisher was not started.
         if self._select_pub is None:
             return
         try:
+            # Convert the dictionary to JSON and send it as a text message.
             self._select_pub.send_string(json.dumps(msg))
         except Exception:
+            # Keep GUI selection usable if the external consumer disconnects.
             pass
 
     def _drain_live_queue(self) -> None:
+        """Apply all controller messages currently waiting for the GUI thread."""
+        # Continue until the thread-safe queue becomes empty.
         while True:
             try:
+                # Retrieve immediately rather than freezing the GUI while waiting.
                 msg = self._live_queue.get_nowait()
             except queue.Empty:
                 return
+            # Apply the event on the main thread, where GUI updates are safe.
             self._apply_live_event(msg)
-
-    def _poll_speech(self) -> None:
-        if self._speech is None:
-            return
-        dpg = self.dpg
-        events = self._speech.poll()
-
-        # Status label + color
-        status = self._speech.current_status
-        color, label = self._VOICE_STATUS_STYLE.get(
-            status, ((200, 200, 200, 255), status))
-        if self._speech.listening_active:
-            label = f"Listening  (wake word: \"{self._speech.wake_word}\")"
-        elif status == "idle":
-            label = f"Idle — say \"{self._speech.wake_word}\""
-        dpg.set_value("voice_status", label)
-        dpg.configure_item("voice_status", color=list(color))
-
-        # Timer
-        if self._speech.listening_active:
-            dpg.set_value("voice_timer", f"{self._speech.remaining_time:.0f}s remaining")
-        else:
-            dpg.set_value("voice_timer", "")
-
-        # RMS bar (clamp to [0, 1])
-        dpg.set_value("voice_rms", min(self._speech.current_rms * 10.0, 1.0))
-
-        # Transcript log
-        history = list(self._speech.transcript_history)
-        if history:
-            dpg.set_value("voice_transcripts", "\n".join(f"› {t}" for t in history))
-
-        # Log notable events to the terminal; optionally route transcripts to VLM
-        route_to_vlm = (self._vlm is not None
-                        and dpg.get_value("voice_to_vlm"))
-        for kind, payload in events:
-            if kind == "wake_word":
-                self.log("[Voice] Wake word detected — listening.")
-            elif kind == "transcript":
-                self.log(f"[Voice] {payload}")
-                if route_to_vlm:
-                    sent = self._vlm.submit_question(payload)
-                    if not sent:
-                        self.log("[Voice->VLM] Model busy — transcript dropped.")
-            elif kind == "timeout":
-                self.log("[Voice] Timed out — back to idle.")
-            elif kind == "error":
-                self.log(f"[Voice error] {payload}")
 
     def _apply_live_event(self, msg: dict) -> None:
         """Apply one controller event (main/UI thread): purple overlay + built-in complete/undo."""
+        # Read the event type and default missing coordinates to the global step.
         event = msg.get("event")
         row, stage = msg.get("row", 0), msg.get("stage", 0)
+        # Translate controller coordinates into task IDs that exist in this graph.
         ids = [i for i in TaskGraph.steps_for_control(row, stage) if i in self.graph.by_id]
+        # Highlight the step whose controller view was opened.
         if event == "show":
             self.active_ids = set(ids)
+        # Clear controller-driven highlighting when that view closes.
         elif event == "close":
             self.active_ids = set()
+        # Restore the graph to its initial state after a controller reset.
         elif event == "reset":
             self.graph.reset()
             self.active_ids     = set()
             self.recommended_id = None
             self.log("Live: controller reset all progress.")
             self._notify_vlm("RESET: controller reset all progress")
+        # Complete every task step represented by this controller stage.
         elif event == "complete":
             for sid in ids:
                 ok, message = self.graph.complete(self.graph.by_id[sid])
                 self.log("Live: " + message)
+            # Send the updated state to the VLM when the event mapped to a step.
             if ids:
                 self._notify_vlm(f"COMPLETE (live): {', '.join(ids)}")
+        # Undo mapped steps in reverse dependency order.
         elif event == "uncomplete":
             for sid in reversed(ids):
                 ok, message = self.graph.undo(self.graph.by_id[sid])
                 self.log("Live: " + message)
+            # Send the updated state to the VLM when the event mapped to a step.
             if ids:
                 self._notify_vlm(f"UNDO (live): {', '.join(ids)}")
+        # Ignore external event types this application does not recognize.
         else:
             return
+        # Redraw nodes and panels after applying the controller event.
         self.refresh()
 
+    # ── Dear PyGui construction ───────────────────────────────────────────────
+
     def _create_themes(self) -> None:
+        """Create and register every theme used by the task-graph interface."""
+        # Use the application's Dear PyGui module through a shorter local name.
         dpg = self.dpg
+
+        # Create a theme for assembly entries in the active-parts tree.
         with dpg.theme(tag="assembly_tree_theme"):
+            # Apply the enclosed settings specifically to tree-node widgets.
             with dpg.theme_component(dpg.mvTreeNode):
+                # Display assembly tree-node text in green.
                 dpg.add_theme_color(dpg.mvThemeCol_Text, (85, 235, 130, 255),
                                     category=dpg.mvThemeCat_Core)
+
+        # Create a theme for the node-editor canvas and its dependency links.
         with dpg.theme(tag="node_editor_theme"):
+            # Apply the enclosed settings specifically to node-editor widgets.
             with dpg.theme_component(dpg.mvNodeEditor):
+                # Draw dependency links in light blue normally.
                 dpg.add_theme_color(dpg.mvNodeCol_Link, (105, 190, 255, 255),
                                     category=dpg.mvThemeCat_Nodes)
+                # Brighten a dependency link while the pointer is over it.
                 dpg.add_theme_color(dpg.mvNodeCol_LinkHovered, (180, 225, 255, 255),
                                     category=dpg.mvThemeCat_Nodes)
+                # Draw a selected dependency link in yellow.
                 dpg.add_theme_color(dpg.mvNodeCol_LinkSelected, (255, 235, 120, 255),
                                     category=dpg.mvThemeCat_Nodes)
+                # Make dependency-link lines three pixels thick.
                 dpg.add_theme_style(dpg.mvNodeStyleVar_LinkThickness, 3.0,
                                     category=dpg.mvThemeCat_Nodes)
+                # Set the radius of each input/output connection pin to five pixels.
                 dpg.add_theme_style(dpg.mvNodeStyleVar_PinCircleRadius, 5.0,
                                     category=dpg.mvThemeCat_Nodes)
+
+        # Build one node theme for each TaskGraph state: complete, ready, and blocked.
         for state, color in self.COLORS.items():
+            # Give the theme a stable tag such as "node_theme_complete".
             tag = f"node_theme_{state}"
+            # Darken the state's RGB color for the normal node body; append full opacity.
             background = tuple(max(18, int(channel * 0.48)) for channel in color[:3]) + (255,)
+            # Use a brighter version of the same color for hover and selection.
             selected_background = tuple(max(25, int(channel * 0.68)) for channel in color[:3]) + (255,)
+
+            # Create the named theme that refresh() will later bind to nodes.
             with dpg.theme(tag=tag):
+                # Apply the enclosed settings specifically to node widgets.
                 with dpg.theme_component(dpg.mvNode):
+                    # Keep text white for contrast against colored backgrounds.
                     dpg.add_theme_color(dpg.mvThemeCol_Text, (255, 255, 255, 255),
                                         category=dpg.mvThemeCat_Core)
+                    # Set the node body's normal background color.
                     dpg.add_theme_color(dpg.mvNodeCol_NodeBackground, background,
                                         category=dpg.mvThemeCat_Nodes)
+                    # Set the node body's background while hovered.
                     dpg.add_theme_color(dpg.mvNodeCol_NodeBackgroundHovered, selected_background,
                                         category=dpg.mvThemeCat_Nodes)
+                    # Set the node body's background while selected.
                     dpg.add_theme_color(dpg.mvNodeCol_NodeBackgroundSelected, selected_background,
                                         category=dpg.mvThemeCat_Nodes)
+                    # Color the border with the state's full-strength color.
                     dpg.add_theme_color(dpg.mvNodeCol_NodeOutline, color,
                                         category=dpg.mvThemeCat_Nodes)
+                    # Color the title bar with the state's full-strength color.
                     dpg.add_theme_color(dpg.mvNodeCol_TitleBar, color,
                                         category=dpg.mvThemeCat_Nodes)
+                    # Keep the same title-bar color while hovered.
                     dpg.add_theme_color(dpg.mvNodeCol_TitleBarHovered, color,
                                         category=dpg.mvThemeCat_Nodes)
+                    # Keep the same title-bar color while selected.
                     dpg.add_theme_color(dpg.mvNodeCol_TitleBarSelected, color,
                                         category=dpg.mvThemeCat_Nodes)
+                    # Round the node's corners by five pixels.
                     dpg.add_theme_style(dpg.mvNodeStyleVar_NodeCornerRounding, 5.0,
                                         category=dpg.mvThemeCat_Nodes)
+
+            # Save state -> theme-tag so refresh() can select the correct theme.
             self.themes[state] = tag
 
         # Purple "active" overlay theme — bound to a node while its stage is open in the live
         # controller (a part was clicked in Unity), overriding its state color until the menu closes.
+        # Define the full-strength purple used for the outline and title bar.
         active_color = (168, 85, 247, 255)
+        # Create a darker purple for the normal node body.
         background = tuple(max(18, int(channel * 0.48)) for channel in active_color[:3]) + (255,)
+        # Create a brighter purple for the hovered or selected node body.
         selected_background = tuple(max(25, int(channel * 0.68)) for channel in active_color[:3]) + (255,)
+
+        # Create the active-node theme under a stable Dear PyGui tag.
         with dpg.theme(tag="node_theme_active"):
+            # Apply the enclosed settings specifically to node widgets.
             with dpg.theme_component(dpg.mvNode):
+                # Keep active-node text white for contrast.
                 dpg.add_theme_color(dpg.mvThemeCol_Text, (255, 255, 255, 255),
                                     category=dpg.mvThemeCat_Core)
+                # Set the active node's normal body to dark purple.
                 dpg.add_theme_color(dpg.mvNodeCol_NodeBackground, background,
                                     category=dpg.mvThemeCat_Nodes)
+                # Brighten the active node's body while hovered.
                 dpg.add_theme_color(dpg.mvNodeCol_NodeBackgroundHovered, selected_background,
                                     category=dpg.mvThemeCat_Nodes)
+                # Brighten the active node's body while selected.
                 dpg.add_theme_color(dpg.mvNodeCol_NodeBackgroundSelected, selected_background,
                                     category=dpg.mvThemeCat_Nodes)
+                # Draw the active node's outline in full-strength purple.
                 dpg.add_theme_color(dpg.mvNodeCol_NodeOutline, active_color,
                                     category=dpg.mvThemeCat_Nodes)
+                # Draw the active node's title bar in full-strength purple.
                 dpg.add_theme_color(dpg.mvNodeCol_TitleBar, active_color,
                                     category=dpg.mvThemeCat_Nodes)
+                # Preserve the purple title bar while hovered.
                 dpg.add_theme_color(dpg.mvNodeCol_TitleBarHovered, active_color,
                                     category=dpg.mvThemeCat_Nodes)
+                # Preserve the purple title bar while selected.
                 dpg.add_theme_color(dpg.mvNodeCol_TitleBarSelected, active_color,
                                     category=dpg.mvThemeCat_Nodes)
+                # Round the active node's corners by five pixels.
                 dpg.add_theme_style(dpg.mvNodeStyleVar_NodeCornerRounding, 5.0,
                                     category=dpg.mvThemeCat_Nodes)
+
+        # Make the active theme available through self.themes["active"].
         self.themes["active"] = "node_theme_active"
 
         # Gold/yellow "recommended" overlay theme — shown when the system recommends
         # a step as the next to perform.
+        # Define the full-strength gold used for the outline and title bar.
         rec_color  = (255, 195, 0, 255)
+        # Create a darker gold for the normal node body.
         background = tuple(max(18, int(channel * 0.48)) for channel in rec_color[:3]) + (255,)
+        # Create a brighter gold for the hovered or selected node body.
         selected_background = tuple(max(25, int(channel * 0.68)) for channel in rec_color[:3]) + (255,)
+
+        # Create the recommendation theme under a stable Dear PyGui tag.
         with dpg.theme(tag="node_theme_recommended"):
+            # Apply the enclosed settings specifically to node widgets.
             with dpg.theme_component(dpg.mvNode):
+                # Keep recommended-node text white for contrast.
                 dpg.add_theme_color(dpg.mvThemeCol_Text, (255, 255, 255, 255),
                                     category=dpg.mvThemeCat_Core)
+                # Set the recommended node's normal body to dark gold.
                 dpg.add_theme_color(dpg.mvNodeCol_NodeBackground, background,
                                     category=dpg.mvThemeCat_Nodes)
+                # Brighten the recommended node's body while hovered.
                 dpg.add_theme_color(dpg.mvNodeCol_NodeBackgroundHovered, selected_background,
                                     category=dpg.mvThemeCat_Nodes)
+                # Brighten the recommended node's body while selected.
                 dpg.add_theme_color(dpg.mvNodeCol_NodeBackgroundSelected, selected_background,
                                     category=dpg.mvThemeCat_Nodes)
+                # Draw the recommended node's outline in full-strength gold.
                 dpg.add_theme_color(dpg.mvNodeCol_NodeOutline, rec_color,
                                     category=dpg.mvThemeCat_Nodes)
+                # Draw the recommended node's title bar in full-strength gold.
                 dpg.add_theme_color(dpg.mvNodeCol_TitleBar, rec_color,
                                     category=dpg.mvThemeCat_Nodes)
+                # Preserve the gold title bar while hovered.
                 dpg.add_theme_color(dpg.mvNodeCol_TitleBarHovered, rec_color,
                                     category=dpg.mvThemeCat_Nodes)
+                # Preserve the gold title bar while selected.
                 dpg.add_theme_color(dpg.mvNodeCol_TitleBarSelected, rec_color,
                                     category=dpg.mvThemeCat_Nodes)
+                # Round the recommended node's corners by five pixels.
                 dpg.add_theme_style(dpg.mvNodeStyleVar_NodeCornerRounding, 5.0,
                                     category=dpg.mvThemeCat_Nodes)
+
+        # Make the recommendation theme available through self.themes["recommended"].
         self.themes["recommended"] = "node_theme_recommended"
 
     def _create_nodes(self) -> None:
+        """Create and position one node-editor node for every task step."""
+        # Use a short local reference for repeated Dear PyGui calls.
         dpg = self.dpg
-        stage_x = {0: 20, 1: 500, 2: 980, 3: 1460, 4: 1940, 5: 2420, 6: 2900}
+        # Displayed stages 1-3 form a vertical stack. Stage 4 sits beside stage 1,
+        # while stages 5-7 form a horizontal line at the height of stage 2.
+        # Display stages differ from Step.stage, which represents dependency depth.
+        stage_x = {
+            1: 20, 2: 20, 3: 20,
+            4: 500, 5: 980, 6: 1460,
+            7: 1940, 8: 2420,
+        }
+        # Build a visual node for every Step in the task graph.
         for step in self.graph.steps:
+            # Create stable item tags from the unique step ID.
             node_tag = f"node::{step.id}"
             in_tag = f"node_in::{step.id}"
             out_tag = f"node_out::{step.id}"
+            # Save tags so refresh() and _create_links() can find these items.
             self.node_tags[step.id] = node_tag
             self.input_attributes[step.id] = in_tag
             self.output_attributes[step.id] = out_tag
+            # Create the node using the step title as its visible heading.
             with dpg.node(label=step.title, tag=node_tag):
+                # Create the connection pin for dependencies entering this step.
                 with dpg.node_attribute(tag=in_tag, attribute_type=dpg.mvNode_Attr_Input):
                     dpg.add_text("INPUTS", color=(255, 255, 255))
+                # Create non-connectable content in the middle of the node.
                 with dpg.node_attribute(attribute_type=dpg.mvNode_Attr_Static):
+                    # Display the step instructions with wrapping.
                     dpg.add_text(step.description, color=(255, 255, 255), wrap=270)
+                    # Add a small visual gap before the dynamic state label.
                     dpg.add_spacer(height=3)
+                    # Reserve a tagged text item that refresh() updates.
                     dpg.add_text("", tag=f"node_state::{step.id}",
                                  color=(255, 235, 120))
+                    # Pass the step ID to the callback when this button is pressed.
                     dpg.add_button(label="Select step", callback=self._select_callback,
                                    user_data=step.id, width=120)
+                # Create the connection pin representing this step's output.
                 with dpg.node_attribute(tag=out_tag, attribute_type=dpg.mvNode_Attr_Output):
                     dpg.add_text(step.output, color=(175, 255, 210), wrap=260)
 
-            if step.stage == 0:
-                side_offset = 0 if step.id.endswith("left") else 240
-                y = 60 + (step.row - 1) * 520 + side_offset
-            elif step.row:
-                y = 180 + (step.row - 1) * 520
+            # Convert the task ID to the displayed/controller stage used for layout.
+            control_coords = TaskGraph.control_coords_for(step.id)
+            display_stage = control_coords[1] if control_coords else 8
+
+            # Put stages 1 and 4 on the top level; put stages 2, 5, 6, and 7
+            # on the middle level; leave stage 3 on the bottom level.
+            if step.row:
+                row_top = 60 + (step.row - 1) * 720
+                stage_offset = {
+                    1: 0, 2: 240, 3: 480,
+                    4: 0, 5: 240, 6: 240,
+                    7: 240,
+                }
+                y = row_top + stage_offset.get(display_stage, 0)
+            # Center the global finish step between the four row groups.
             else:
-                y = 960
-            dpg.set_item_pos(node_tag, (stage_x[step.stage], y))
+                y = 1140
+
+            # Position the node by displayed stage horizontally and row vertically.
+            dpg.set_item_pos(node_tag, (stage_x[display_stage], y))
 
     def _create_links(self) -> None:
+        """Draw dependency links from producer steps to consumer steps."""
+        # Use a short local reference for repeated Dear PyGui calls.
         dpg = self.dpg
+        # Map each produced assembly name to the step ID that creates it.
         producer = {step.output: step.id for step in self.graph.steps}
+        # Inspect every step that may consume another step's output.
         for step in self.graph.steps:
+            # Check each input required by the consumer step.
             for part in step.inputs:
+                # Find the producer, or None when the input is a raw part.
                 source_id = producer.get(part)
+                # Raw inputs have no producer node, so only link assembled inputs.
                 if source_id:
+                    # Connect the producer output pin to the consumer input pin.
                     dpg.add_node_link(self.output_attributes[source_id],
                                       self.input_attributes[step.id],
                                       parent="task_node_editor")
 
     def _create_side_panel(self) -> None:
+        """Create selection, action, inventory, terminal, and voice controls."""
         dpg = self.dpg
         dpg.add_text("Selected step", color=(225, 232, 240))
         dpg.add_separator()
@@ -1067,11 +1251,66 @@ class DearPyGuiTaskGraphApp:
                            width=-1, height=120,
                            default_value='Say "hey robot" to start...')
 
+    # ── Voice input and VLM integration ──────────────────────────────────────
+
+    def _poll_speech(self) -> None:
+        """Refresh voice widgets and handle all newly available speech events."""
+        if self._speech is None:
+            return
+        dpg = self.dpg
+        events = self._speech.poll()
+
+        # Status label + color
+        status = self._speech.current_status
+        color, label = self._VOICE_STATUS_STYLE.get(
+            status, ((200, 200, 200, 255), status))
+        if self._speech.listening_active:
+            label = f"Listening  (wake word: \"{self._speech.wake_word}\")"
+        elif status == "idle":
+            label = f"Idle — say \"{self._speech.wake_word}\""
+        dpg.set_value("voice_status", label)
+        dpg.configure_item("voice_status", color=list(color))
+
+        # Timer
+        if self._speech.listening_active:
+            dpg.set_value("voice_timer", f"{self._speech.remaining_time:.0f}s remaining")
+        else:
+            dpg.set_value("voice_timer", "")
+
+        # RMS bar (clamp to [0, 1])
+        dpg.set_value("voice_rms", min(self._speech.current_rms * 10.0, 1.0))
+
+        # Transcript log
+        history = list(self._speech.transcript_history)
+        if history:
+            dpg.set_value("voice_transcripts", "\n".join(f"› {t}" for t in history))
+
+        # Log notable events to the terminal; optionally route transcripts to VLM
+        route_to_vlm = (self._vlm is not None
+                        and dpg.get_value("voice_to_vlm"))
+        for kind, payload in events:
+            if kind == "wake_word":
+                self.log("[Voice] Wake word detected — listening.")
+            elif kind == "transcript":
+                self.log(f"[Voice] {payload}")
+                if route_to_vlm:
+                    sent = self._vlm.submit_question(payload)
+                    if not sent:
+                        self.log("[Voice->VLM] Model busy — transcript dropped.")
+            elif kind == "timeout":
+                self.log("[Voice] Timed out — back to idle.")
+            elif kind == "error":
+                self.log(f"[Voice error] {payload}")
+
     def _notify_vlm(self, event_label: str) -> None:
+        """Replace the VLM's stored graph context after a state-changing event."""
         if self._vlm is not None:
             self._vlm.notify_graph_event(event_label, self.graph.state_summary())
 
+    # ── User actions and GUI callbacks ───────────────────────────────────────
+
     def _recommend_callback(self) -> None:
+        """Highlight the preferred ready step and ask the VLM to explain it."""
         step = self.graph.recommend_next_step()
         if step is None:
             self.log("[Recommend] No READY steps — assembly may be complete or stalled.")
@@ -1091,6 +1330,7 @@ class DearPyGuiTaskGraphApp:
                 self.log("[Recommend] VLM busy — explanation skipped.")
 
     def _animate_unity_callback(self) -> None:
+        """Ask the in-process controller to animate the selected task stage."""
         if self.controller is None or not self.selected_id:
             return
         coords = TaskGraph.control_coords_for(self.selected_id)
@@ -1116,6 +1356,7 @@ class DearPyGuiTaskGraphApp:
         self.log(f"[Animate] Unity → row {row}, stage {stage}  [{step.id}]")
 
     def _select_callback(self, _sender, _app_data, user_data) -> None:
+        """Select a graph step and update external viewers and VLM focus."""
         self.selected_id = user_data
         self.refresh()
         coords = TaskGraph.control_coords_for(user_data)
@@ -1153,6 +1394,7 @@ class DearPyGuiTaskGraphApp:
         sm.done8 = "finish_gearbox" in self.graph.completed
 
     def _complete_selected(self) -> None:
+        """Complete a ready selected step or undo a completed frontier step."""
         if not self.selected_id:
             return
         step = self.graph.by_id[self.selected_id]
@@ -1175,6 +1417,7 @@ class DearPyGuiTaskGraphApp:
         self.refresh()
 
     def _reset_callback(self) -> None:
+        """Reset graph, controller, Unity visualization, selection, and VLM state."""
         self.graph.reset()
         self.selected_id    = None
         self.recommended_id = None
@@ -1194,17 +1437,22 @@ class DearPyGuiTaskGraphApp:
         self._notify_vlm("RESET: all progress cleared")
 
     def _command_callback(self, sender, app_data) -> None:
+        """Read and execute text submitted through the terminal input widget."""
         raw = (app_data or self.dpg.get_value(sender) or "").strip()
         self.dpg.set_value(sender, "")
         if raw:
             self.execute_command(raw)
 
     def log(self, message: str) -> None:
+        """Append a message to the bounded in-application terminal history."""
         self.log_lines.append(message)
         self.log_lines = self.log_lines[-200:]
         self.dpg.set_value("terminal_output", "\n".join(self.log_lines))
 
+    # ── GUI state rendering and inventory tree ───────────────────────────────
+
     def refresh(self) -> None:
+        """Redraw node themes, labels, inventory, and selected-step controls."""
         dpg = self.dpg
         # Auto-clear recommendation once the recommended step is completed.
         if (self.recommended_id
@@ -1214,7 +1462,14 @@ class DearPyGuiTaskGraphApp:
             state  = self.graph.state(step)
             active = step.id in self.active_ids or step.id == self.selected_id
             rec    = step.id == self.recommended_id and not active
-            if active:
+
+            # Completion color has the highest priority. Keep the node selected
+            # so its details remain visible, but render it green immediately
+            # after completion instead of leaving the active/selected purple
+            # theme in place until another node is clicked.
+            if state == "complete":
+                theme = self.themes["complete"]
+            elif active:
                 theme = self.themes["active"]
             elif rec:
                 theme = self.themes["recommended"]
@@ -1280,6 +1535,7 @@ class DearPyGuiTaskGraphApp:
         dpg.configure_item("animate_unity_button", enabled=can_animate)
 
     def _refresh_active_parts_tree(self) -> None:
+        """Rebuild the inventory tree from the graph's current active parts."""
         dpg = self.dpg
         dpg.delete_item("active_parts_tree", children_only=True)
         grouped: dict[str, list[str]] = {
@@ -1303,6 +1559,7 @@ class DearPyGuiTaskGraphApp:
                 self._add_part_branch(part, group_node)
 
     def _add_part_branch(self, part: str, parent) -> None:
+        """Recursively add a raw part or expandable assembly to the inventory tree."""
         dpg = self.dpg
         producer = self.graph.producer_for(part)
         if producer is None:
@@ -1316,7 +1573,10 @@ class DearPyGuiTaskGraphApp:
         for component in producer.inputs:
             self._add_part_branch(component, assembly_node)
 
+    # ── Text-command parsing and inspection ──────────────────────────────────
+
     def execute_command(self, raw: str) -> None:
+        """Parse and execute one command entered in the side-panel terminal."""
         self.log("> " + raw)
         command, _, argument = raw.partition(" ")
         command_lower = command.lower()
@@ -1385,6 +1645,7 @@ class DearPyGuiTaskGraphApp:
             self.log(self.graph.trace_part(raw))
 
     def _inspect_steps(self, query: str) -> None:
+        """Find matching steps, select an exact match, and log their states."""
         matches = self.graph.find_steps(query)
         if not matches:
             self.log(f"WARNING: no step matches '{query}'.")
