@@ -65,6 +65,14 @@ public class GearboxCommandReceiver : MonoBehaviour
     [Tooltip("Offset of the revert button above the whole-gearbox center (board's own frame).")]
     [SerializeField] private Vector3 revertOffset = new Vector3(0f, 0.30f, 0f);
 
+    [Header("Billboarding (buttons face the user)")]
+    [Tooltip("The user's head (e.g. OVRCameraRig/CenterEyeAnchor). Left empty → falls back to " +
+             "Camera.main at runtime. The checkbox/reset/revert always face this, and the checkbox↔" +
+             "reset pair is laid out along the user's right so it reads side-by-side from any angle.")]
+    [SerializeField] private Transform userHead;
+    [Tooltip("Flip which face points at the user. Toggle this if the buttons end up facing away.")]
+    [SerializeField] private bool billboardFaceFlip = false;
+
     [Header("Assembly animation")]
     [Tooltip("Default offset a part starts at before sliding into its final place (drops in from " +
              "above). Interpreted in the BOARD's own frame, so it rotates with the gearbox when " +
@@ -198,6 +206,7 @@ public class GearboxCommandReceiver : MonoBehaviour
     {
         if (gearboxRoot == null) gearboxRoot = transform;
         restRotation = gearboxRoot.rotation;   // baseline the animation offsets against the load pose
+        if (userHead == null && Camera.main != null) userHead = Camera.main.transform;
 
         BuildPartIndex();
 
@@ -501,20 +510,55 @@ public class GearboxCommandReceiver : MonoBehaviour
         ApplyCheckboxVisual(isChecked, blocked);
     }
 
-    // Place the checkbox + reset-X at the active row's centroid (row 0 = whole gearbox). Uses the
-    // parts' CURRENT parent transform, so the anchor moves and rotates with the gearbox; the offsets
-    // are interpreted in the board's own frame (BoardOffset) so the button cluster rotates with it.
+    // Place the checkbox + reset-X above the active row's centroid (row 0 = whole gearbox), facing the
+    // user. The vertical raise stays board-up (BoardOffset of a vertical vector), which is yaw-
+    // invariant, so a pure yaw of the board doesn't move the cluster. The checkbox↔reset separation is
+    // laid out along the USER's right (not the board), so from the user's view they're always side-by-
+    // side — never one in front of / behind the other — and both are billboarded to face the user.
     private void PositionUi(int row)
     {
         Vector3 basePos = RowCentroid(row) + BoardOffset(uiOffset);
-        if (checkboxObject) checkboxObject.position = basePos;
-        if (resetObject)    resetObject.position = basePos + BoardOffset(resetOffsetFromCheckbox);
+        float   spacing = resetOffsetFromCheckbox.magnitude;   // reuse the authored gap as a scalar
+        Vector3 right   = UserRight(basePos);
+        if (checkboxObject) { checkboxObject.position = basePos;                   FaceUser(checkboxObject); }
+        if (resetObject)    { resetObject.position    = basePos + right * spacing; FaceUser(resetObject); }
     }
 
-    // Place the revert button above the whole gearbox (row 0 centroid), tracking it as it's grabbed.
+    // Place the revert button above the whole gearbox (row 0 centroid), facing the user, tracking it as
+    // it's grabbed. Raise stays board-up (yaw-invariant); orientation billboards to the user.
     private void PositionRevert()
     {
-        if (revertObject) revertObject.position = RowCentroid(0) + BoardOffset(revertOffset);
+        if (!revertObject) return;
+        revertObject.position = RowCentroid(0) + BoardOffset(revertOffset);
+        FaceUser(revertObject);
+    }
+
+    // The user's head, resolved lazily (the OVR rig may not be ready in Start).
+    private Transform HeadOrNull()
+    {
+        if (userHead == null && Camera.main != null) userHead = Camera.main.transform;
+        return userHead;
+    }
+
+    // Full billboard: rotate the object so its face points straight at the user's head (tilts up/down
+    // when the user is above/below). Flip billboardFaceFlip if the wrong face ends up toward the user.
+    private void FaceUser(Transform t)
+    {
+        Transform head = HeadOrNull();
+        if (t == null || head == null) return;
+        Vector3 dir = billboardFaceFlip ? (head.position - t.position) : (t.position - head.position);
+        if (dir.sqrMagnitude > 1e-6f) t.rotation = Quaternion.LookRotation(dir, Vector3.up);
+    }
+
+    // Horizontal axis pointing to the user's right, as seen from `pos` — perpendicular to the viewing
+    // direction. Laying the pair out along this makes them read side-by-side from any angle. Falls back
+    // to the board frame if the head is unknown or the user is directly above/below (degenerate).
+    private Vector3 UserRight(Vector3 pos)
+    {
+        Transform head = HeadOrNull();
+        if (head == null) return BoardOffset(Vector3.right);
+        Vector3 right = Vector3.Cross(Vector3.up, pos - head.position);  // ⟂ to view, horizontal
+        return right.sqrMagnitude > 1e-6f ? right.normalized : BoardOffset(Vector3.right);
     }
 
     // Centroid of a row's parts at their REST positions in world space (all parts when row==0),
