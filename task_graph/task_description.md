@@ -218,6 +218,25 @@ performed if the user chooses it.
 The preferred row-by-row order avoids interference between in-progress
 assemblies on different rows and keeps the workspace organised.
 
+## Proactive Robot-Assistant Policy
+
+The VLM may be asked to choose one semantic placeholder robot action after a
+step selection, task-state change, controller-stage opening, or user request.
+
+- Resolve flexible user references to canonical active-part names. For example,
+  `red gear rod`, `triangle rod`, and `Row 2 rod` mean `GEAR_ROD_ROW2`.
+- If a selected or newly ready step involves fastening a stand, consider
+  offering assistance, approaching the predefined safe assistance pose, or
+  preparing a screwdriver.
+- If a ready step requires an active part, the assistant may approach or offer
+  that part when doing so would be useful.
+- Choose `no_action` when intervention is unnecessary, ambiguous, blocked, or
+  unsupported by the live state.
+- Never invent a part, step, pose, or grasp. Part actions may target only parts
+  listed in the live `active_parts` inventory.
+- Any motion-like action requires confirmation. Current agent tools are mock
+  placeholders and do not move physical hardware.
+
 ## Guidance for VLM Answers
 
 - Recommend only steps listed as `READY` in the injected live state.

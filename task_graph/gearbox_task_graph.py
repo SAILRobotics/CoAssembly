@@ -739,7 +739,12 @@ class DearPyGuiTaskGraphApp:
             desc_path = task_description_path or str(
                 Path(__file__).parent / "task_description.md")
             # Construct the assistant before build() so its panel can be created.
-            self._vlm = VLMAssistant(self.dpg, desc_path, model_name=vlm_model)
+            self._vlm = VLMAssistant(
+                self.dpg,
+                desc_path,
+                model_name=vlm_model,
+                agent_context_provider=self._agent_context,
+            )
             # Report model selection in the operating-system terminal.
             print(f"[VLM] Assistant created: {vlm_model}")
         # Build and show the Dear PyGui interface.
@@ -945,6 +950,10 @@ class DearPyGuiTaskGraphApp:
             return
         # Redraw nodes and panels after applying the controller event.
         self.refresh()
+        if event == "show":
+            self._request_agent_decision("controller_stage_opened")
+        elif event in {"reset", "complete", "uncomplete"}:
+            self._request_agent_decision("task_state_changed")
 
     # ── Dear PyGui construction ───────────────────────────────────────────────
 
@@ -1288,9 +1297,8 @@ class DearPyGuiTaskGraphApp:
             elif kind == "transcript":
                 self.log(f"[Voice] {payload}")
                 if route_to_vlm:
-                    sent = self._vlm.submit_question(payload)
-                    if not sent:
-                        self.log("[Voice->VLM] Model busy — transcript dropped.")
+                    self._request_agent_decision(
+                        "user_request", user_text=payload)
             elif kind == "timeout":
                 self.log("[Voice] Timed out — back to idle.")
             elif kind == "error":
@@ -1300,6 +1308,73 @@ class DearPyGuiTaskGraphApp:
         """Replace the VLM's stored graph context after a state-changing event."""
         if self._vlm is not None:
             self._vlm.notify_graph_event(event_label, self.graph.state_summary())
+
+    def _agent_context(self, user_text: str | None = None) -> dict:
+        """Build deterministic live context for one proactive VLM decision."""
+        ready = [step for step in self.graph.steps if self.graph.is_ready(step)]
+        known_parts = sorted({
+            part
+            for step in self.graph.steps
+            for part in (*step.inputs, step.output, *step.context)
+        })
+        context = {
+            "execution_mode": "placeholder_only_no_robot_motion",
+            "user_text": user_text or "",
+            "completed_steps": list(self.graph.completed),
+            "ready_steps": [step.id for step in ready],
+            "ready_step_details": [
+                {
+                    "step_id": step.id,
+                    "row": step.row,
+                    "stage": TaskGraph.control_coords_for(step.id)[1]
+                    if TaskGraph.control_coords_for(step.id) else None,
+                    "title": step.title,
+                    "inputs": list(step.inputs),
+                    "output": step.output,
+                }
+                for step in ready
+            ],
+            "selected_step": self.selected_id,
+            "controller_open_steps": sorted(self.active_ids),
+            "active_parts": sorted(self.graph.active_parts),
+            "known_parts": known_parts,
+            "known_steps": [step.id for step in self.graph.steps],
+            "step_inputs": {
+                step.id: list(step.inputs)
+                for step in self.graph.steps
+            },
+            "robot_connected": False,
+            "robot_busy": False,
+        }
+        if self.selected_id:
+            step = self.graph.by_id[self.selected_id]
+            context["selected_step_details"] = {
+                "step_id": step.id,
+                "row": step.row,
+                "stage": TaskGraph.control_coords_for(step.id)[1]
+                if TaskGraph.control_coords_for(step.id) else None,
+                "state": self.graph.state(step),
+                "title": step.title,
+                "description": step.description,
+                "inputs": list(step.inputs),
+                "missing": self.graph.missing(step),
+                "output": step.output,
+            }
+        return context
+
+    def _request_agent_decision(
+        self,
+        trigger: str,
+        user_text: str | None = None,
+    ) -> bool:
+        """Request one mock proactive action when the VLM is available."""
+        if self._vlm is None:
+            return False
+        accepted = self._vlm.request_agent_decision(
+            trigger, self._agent_context(user_text))
+        if not accepted:
+            self.log(f"[ProactiveAgent] Skipped {trigger}: VLM is busy.")
+        return accepted
 
     # ── User actions and GUI callbacks ───────────────────────────────────────
 
@@ -1371,6 +1446,7 @@ class DearPyGuiTaskGraphApp:
             if missing:
                 focused += f"\nBlocked by: {', '.join(missing)}"
             self._vlm.set_focused_step(focused)
+            self._request_agent_decision("step_selected")
 
     def _sync_sm_from_graph(self) -> None:
         """Rebuild GearboxStateMachine.done from TaskGraph.completed.
@@ -1409,6 +1485,8 @@ class DearPyGuiTaskGraphApp:
                                       "done_stages": self.controller.sm._completed_stages(row)})
         self.log(message)
         self.refresh()
+        if ok:
+            self._request_agent_decision("task_state_changed")
 
     def _reset_callback(self) -> None:
         """Reset graph, controller, Unity visualization, selection, and VLM state."""
@@ -1429,6 +1507,7 @@ class DearPyGuiTaskGraphApp:
         self.refresh()
         self._send_select({"event": "clear"})
         self._notify_vlm("RESET: all progress cleared")
+        self._request_agent_decision("task_state_changed")
 
     def log(self, message: str) -> None:
         """Write an operational message to the system console."""
