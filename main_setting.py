@@ -37,6 +37,7 @@ WORKSPACE_BOUND_PORT = 5015 # robot workspace boundary wireframe (bounds + proxi
 CENTER_EYE_OVERRIDE_PORT = 5016 # override CenterEyeAnchor pose from Python
 RELOCK_CUBE_PORT   = 5017   # secondary relock-cube world poses (matches RelockCubePoseReceiver)
 HANDOVER_SPHERE_PORT = 5018 # handover target sphere world position (matches HandoverSphereReceiver)
+WORKHOLDING_BOX_PORT = 5026 # workholding_testing.py AR box → WorkholdingBoxReceiver (own port, not 5012)
 
 # ── Ports (Python ↔ Python: dedicated robot-control process) ─────────────────
 ROBOT_CMD_PORT   = 5020   # main_with_robot.py → robot_control_server.py: commands
@@ -186,3 +187,39 @@ LOAD_PEGBOARD_FROM_FILE = True
 # ── Helpers (kept for compatibility with code that calls cfg.to_unity() etc.) ─
 def to_unity(port: int) -> str:
     return f"tcp://{UNITY_IP}:{port}"
+
+
+# ── Workholding AR-box test harness (workholding_testing.py) ───────────────────
+# Separate from ROBOT_TARGET_WORKSPACE_MARGIN_M (robot CBF/target clamping) so tuning the
+# test poses' clearance from the workspace border never touches real robot safety margins.
+WORKHOLDING_TEST_MARGIN_M = 0.15   # metres inset from WORKSPACE_LO/HI for the 10 test poses
+
+
+def workholding_test_poses():
+    """Ten (position_xyz_m, euler_xyz_deg) AR-box poses spanning the inset workspace AABB.
+
+    Eight AABB corners (inset by WORKHOLDING_TEST_MARGIN_M) + the centre + one interior
+    point, each with an assorted rotation so both position and orientation are exercised.
+    Positions are in the world (robot) frame, metres; the harness reads the count from
+    ``len(...)`` so there is no separate magic number.
+    """
+    m   = float(WORKHOLDING_TEST_MARGIN_M)
+    lo  = [float(WORKSPACE_LO[i]) + m for i in range(3)]
+    hi  = [float(WORKSPACE_HI[i]) - m for i in range(3)]
+    ctr = [(lo[i] + hi[i]) * 0.5 for i in range(3)]
+
+    # 8 corners of the inset box (bit c: x=hi if bit0, y=hi if bit1, z=hi if bit2)
+    corners = [[hi[0] if c & 1 else lo[0],
+                hi[1] if c & 2 else lo[1],
+                hi[2] if c & 4 else lo[2]] for c in range(8)]
+    interior = [ctr[0], ctr[1], hi[2]]          # centred in XY, high in Z
+
+    positions = corners + [ctr, interior]        # 10 total
+    eulers = [
+        [0, 0, 0], [0, 0, 90], [0, 90, 0], [90, 0, 0],
+        [0, 45, 0], [45, 0, 45], [0, 0, -90], [30, 60, 0],
+        [0, 0, 0], [90, 0, 90],
+    ]
+    return [([float(p[0]), float(p[1]), float(p[2])],
+             [float(e[0]), float(e[1]), float(e[2])])
+            for p, e in zip(positions, eulers)]
