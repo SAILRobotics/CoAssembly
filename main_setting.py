@@ -12,7 +12,7 @@ _HERE = Path(__file__).resolve().parent
 SCENE_LAYOUT_DIR = _HERE / "scene_layout"
 
 # ── Machine IPs ───────────────────────────────────────────────────────────────
-UNITY_IP   = "192.168.50.167"   # Quest / Windows machine running Unity
+UNITY_IP   = "192.168.68.124"   # Quest / Windows machine running Unity
 ROBOT_IP   = "192.168.50.70"    # UR10e robot controller
 LOCALHOST  = "127.0.0.1"        # loopback for same-machine inter-process comms
 
@@ -166,8 +166,8 @@ ROBOT_DEFAULT_JOINT_DEG = [-105.97, -29.43, 87.53, 33.17, 92.40, 168.95]
 # JOINT_MAX_DEG = [ 360,    360,  360,   360,   360,   360]
 
 # ── Gripper / box geometry ────────────────────────────────────────────────────
-BOX_FORWARD_OFFSET = 0.17          # metres from TCP to box centre along gripper Z
-BOX_SIZE           = [0.0254, 0.20, 0.25]   # metres (X, Y, Z in pegboard frame)
+BOX_FORWARD_OFFSET = 0.25          # metres from TCP to box centre along gripper Z
+BOX_SIZE           = [0.015, 0.225, 0.1625]   # metres (X, Y, Z in pegboard frame)
 
 # ── Runtime defaults ──────────────────────────────────────────────────────────
 SIMULATION = True   # True → fixed joint angles; False → live RTDE
