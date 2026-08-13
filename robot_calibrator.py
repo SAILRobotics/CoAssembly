@@ -24,6 +24,7 @@ Final Open3D visualisation (world frame):
 """
 
 import os
+import sys
 import json
 import time
 import threading
@@ -806,6 +807,14 @@ class HandEyeCalibrator:
             handcam_ls.paint_uniform_color([1.0, 0.15, 0.15])  # red
             vis.add_geometry(handcam_ls)
 
+        if self.T_world_base is not None:
+            b = self.T_world_base[:3, 3]
+            rpy = ScipyR.from_matrix(self.T_world_base[:3, :3]).as_euler('xyz', degrees=True)
+            print(f"[Visualize] Robot base in world : x={b[0]:+.4f}  y={b[1]:+.4f}  z={b[2]:+.4f}  m")
+            print(f"[Visualize] Robot base rotation : r={rpy[0]:+.3f}°  p={rpy[1]:+.3f}°  y={rpy[2]:+.3f}°")
+        if self.T_world_deskcam is not None:
+            c = self.T_world_deskcam[:3, 3]
+            print(f"[Visualize] Desk cam in world   : x={c[0]:+.4f}  y={c[1]:+.4f}  z={c[2]:+.4f}  m")
         print(f"[Visualize] Running — close window to exit.")
 
         running = True
@@ -924,12 +933,12 @@ class HandEyeCalibrator:
         T_base_tcp  = self._fk()
         p_tcp_world = (self.T_world_base @ np.append(T_base_tcp[:3, 3], 1.0))[:3]
         error       = target_xyz - p_tcp_world
-        correction  = np.array([error[0], error[1], 0.0])   # Z not corrected
+        correction  = error.copy()
         print(f"\n[Refine] TCP world (computed) : x={p_tcp_world[0]:+.4f}  y={p_tcp_world[1]:+.4f}  z={p_tcp_world[2]:+.4f}  m")
         print(f"[Refine] TCP world (target)   : x={target_xyz[0]:+.4f}  y={target_xyz[1]:+.4f}  z={target_xyz[2]:+.4f}  m")
-        print(f"[Refine] XY error (ignored Z) : dx={error[0]*1000:+.2f}  dy={error[1]*1000:+.2f}  dz={error[2]*1000:+.2f}  mm  (|xy|={np.linalg.norm(error[:2])*1000:.2f} mm)")
+        print(f"[Refine] XYZ error : dx={error[0]*1000:+.2f}  dy={error[1]*1000:+.2f}  dz={error[2]*1000:+.2f}  mm  (|xyz|={np.linalg.norm(error)*1000:.2f} mm)")
         if np.linalg.norm(correction) > 0.050:
-            print(f"[Refine] WARNING: XY correction is {np.linalg.norm(correction)*1000:.1f} mm — larger than 50 mm.")
+            print(f"[Refine] WARNING: XYZ correction is {np.linalg.norm(correction)*1000:.1f} mm — larger than 50 mm.")
             print(f"[Refine] This may mean the TCP was not at the correct physical point, or the target coords are wrong.")
             resp2 = input("[Refine] Apply anyway?  ENTER=yes  s=skip: ").strip().lower()
             if resp2 == "s":
@@ -1247,7 +1256,7 @@ class HandEyeCalibrator:
 
 # Phase 1 — Eye-in-base: desk camera must see both ArUco (world) and ChArUco (TCP)
 POSES_EYE_IN_BASE = [
-    [-281.11, -144.42, -107.58, -34.38, 137.03, 70.43],
+    [-73.04, -80.00, -152.43, -69.43, 68.53, 329.21],
     # Add more poses here for better calibration accuracy (aim for 10–15)
 ]
 
@@ -1258,8 +1267,8 @@ POSES_EYE_IN_HAND = [
 ]
 
 # Refine-base — approach pose (hover) then lower pose (near reference point)
-POSE_REFINE_APPROACH = [-295.69, -138.54, -102.44, -28.75, 89.03, 65.30]
-POSE_REFINE_TARGET   = [-295.85, -150.18,  -98.67, -20.86, 88.99, 65.15]
+POSE_REFINE_APPROACH = [-40.67, -74.98, -135.61, -58.54, 89.41, 49.58]
+POSE_REFINE_TARGET   = [-40.68, -97.56, -146.23, -25.34, 89.24, 49.65]
 
 
 # =============================================================================
@@ -1277,8 +1286,8 @@ def _build_calibrator():
     return HandEyeCalibrator(
         robot_ip           = "192.168.50.70",
         save_dir           = "hand_eye_data",
-        world_marker_id    = 10,                   # defines world origin
-        marker_sizes       = {10: 0.090, 50: 0.040},  # world + object markers
+        world_marker_id    = 100,                  # defines world origin
+        marker_sizes       = {100: 0.100},         # world marker only
         charuco_squares_x  = 4,
         charuco_squares_y  = 4,
         charuco_square_len = 0.046,
@@ -1335,7 +1344,7 @@ if __name__ == "__main__":
     cal = _build_calibrator()
 
     POSES_FILE = cal.save_dir / "eye_in_base_poses.json"
-
+    
     if args.phase == "record-poses":
         if POSES_FILE.exists():
             with open(POSES_FILE) as f:
@@ -1429,6 +1438,7 @@ if __name__ == "__main__":
     elif args.phase == "visualize":
         cal.visualize()
 
+
     elif args.phase == "refine-base":
         # Step 1: move to approach (hover) pose
         print("[Refine] Moving to approach pose …")
@@ -1437,13 +1447,10 @@ if __name__ == "__main__":
         # Step 2: descend to the reference point
         print("[Refine] Descending to target pose …")
         cal.move_joints(POSE_REFINE_TARGET)
-        # Step 3: full 6-DOF correction at fixture point A
-        #   tcp_z_world : fixture forces TCP Z straight down  → [0, 0, -1]
-        #   tcp_x_world : fixture forces TCP X to this world direction → measure physically
+        # Step 3: translation-only correction — Phase 1 already gives good rotation,
+        # so we only fix the XY translation offset here.
         _, T_base_tcp_A = cal.refine_base_pose(
-            [0.0750, 0, 0.17250],
-            tcp_z_world=[0, 0, -1],
-            tcp_x_world=[0, -1, 0],  # TCP X → world -Y  (measured at fixture)
+            [0.0, 0.085, 0.1646],
             skip_initial_move=True, speed=0.3, accel=0.3,
         )
         # Step 4: move to marker 50 — verification only, no correction applied
@@ -1466,7 +1473,7 @@ if __name__ == "__main__":
         # print(f"\n[MoveToOrigin] Descending above world origin → base ({p_hover_base[0]:+.4f}, {p_hover_base[1]:+.4f}, {p_hover_base[2]:+.4f})")
         # cal.robot_ctrl.moveL([*p_hover_base, *ori], 0.3, 0.3)
         
-        
+        cal.move_joints(POSE_REFINE_APPROACH)
 
         
 

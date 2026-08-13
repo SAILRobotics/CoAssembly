@@ -1,0 +1,760 @@
+{
+  "tools": [
+    {
+      "id": 0,
+      "type": "wrench_10",
+      "category": "tool",
+      "planar": true,
+      "peg_pos": [
+        -0.527,
+        -0.0721,
+        -0.0039
+      ],
+      "size": [
+        0.02,
+        0.026,
+        0.145
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 1,
+      "type": "wrench_12",
+      "category": "tool",
+      "planar": true,
+      "peg_pos": [
+        -0.4567,
+        -0.0795,
+        -0.0032
+      ],
+      "size": [
+        0.02,
+        0.026,
+        0.18
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 2,
+      "type": "wrench_13",
+      "category": "tool",
+      "planar": true,
+      "peg_pos": [
+        -0.3884,
+        -0.0869,
+        -0.0025
+      ],
+      "size": [
+        0.02,
+        0.026,
+        0.2
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 3,
+      "type": "wrench_14",
+      "category": "tool",
+      "planar": true,
+      "peg_pos": [
+        -0.3252,
+        -0.0896,
+        -0.0018
+      ],
+      "size": [
+        0.02,
+        0.026,
+        0.21
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 4,
+      "type": "wrench_15",
+      "category": "tool",
+      "planar": true,
+      "peg_pos": [
+        -0.2547,
+        -0.1022,
+        -0.001
+      ],
+      "size": [
+        0.02,
+        0.032,
+        0.23
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 5,
+      "type": "caliper",
+      "category": "tool",
+      "planar": true,
+      "peg_pos": [
+        -0.1888,
+        -0.0999,
+        -0.0004
+      ],
+      "size": [
+        0.025,
+        0.072,
+        0.25
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 6,
+      "type": "thread_checker",
+      "category": "tool",
+      "planar": true,
+      "peg_pos": [
+        -0.5441,
+        -0.3958,
+        -0.0072
+      ],
+      "size": [
+        0.101,
+        0.033,
+        0.259
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 7,
+      "type": "bit_screwdriver",
+      "category": "tool",
+      "planar": true,
+      "peg_pos": [
+        -0.4752,
+        -0.2779,
+        0.0025
+      ],
+      "size": [
+        0.03,
+        0.055,
+        0.19
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 8,
+      "type": "box_cutter",
+      "category": "tool",
+      "planar": true,
+      "peg_pos": [
+        -0.3866,
+        -0.2747,
+        0.0033
+      ],
+      "size": [
+        0.03,
+        0.055,
+        0.182
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 9,
+      "type": "bit_wrench",
+      "category": "tool",
+      "planar": true,
+      "peg_pos": [
+        -0.3078,
+        -0.3019,
+        0.0043
+      ],
+      "size": [
+        0.03,
+        0.055,
+        0.207
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 10,
+      "type": "philips_screwdriver",
+      "category": "tool",
+      "planar": true,
+      "peg_pos": [
+        -0.2247,
+        -0.2989,
+        0.0051
+      ],
+      "size": [
+        0.037,
+        0.055,
+        0.24
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 11,
+      "type": "flathead_screwdriver",
+      "category": "tool",
+      "planar": true,
+      "peg_pos": [
+        -0.1567,
+        -0.2964,
+        0.0058
+      ],
+      "size": [
+        0.037,
+        0.055,
+        0.24
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 12,
+      "type": "sander",
+      "category": "tool",
+      "planar": true,
+      "peg_pos": [
+        -0.1121,
+        -0.1096,
+        -0.0448
+      ],
+      "size": [
+        0.037,
+        0.046,
+        0.086
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 13,
+      "type": "magnet_pole_checker",
+      "category": "tool",
+      "planar": true,
+      "peg_pos": [
+        -0.1043,
+        -0.2955,
+        -0.0519
+      ],
+      "size": [
+        0.037,
+        0.05,
+        0.16
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 14,
+      "type": "GEAR_ROD_ROW1",
+      "category": "part",
+      "planar": true,
+      "peg_pos": [
+        -0.4232,
+        -0.796,
+        0.7048
+      ],
+      "size": [
+        0.07,
+        0.07,
+        0.211
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 15,
+      "type": "GEAR_ROD_ROW2",
+      "category": "part",
+      "planar": true,
+      "peg_pos": [
+        -0.417,
+        -0.808,
+        0.6008
+      ],
+      "size": [
+        0.07,
+        0.07,
+        0.18
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 16,
+      "type": "GEAR_ROD_ROW3",
+      "category": "part",
+      "planar": true,
+      "peg_pos": [
+        -0.413,
+        -0.7897,
+        0.5191
+      ],
+      "size": [
+        0.07,
+        0.07,
+        0.18
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 17,
+      "type": "GEAR_ROD_ROW4",
+      "category": "part",
+      "planar": true,
+      "peg_pos": [
+        -0.4069,
+        -0.8014,
+        0.4429
+      ],
+      "size": [
+        0.07,
+        0.07,
+        0.18
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 18,
+      "type": "GEAR_STAND_ROW1_LEFT",
+      "category": "part",
+      "planar": true,
+      "peg_pos": [
+        -0.3699,
+        -0.5739,
+        0.0282
+      ],
+      "size": [
+        0.085,
+        0.07,
+        0.11
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 19,
+      "type": "GEAR_STAND_ROW1_RIGHT",
+      "category": "part",
+      "planar": true,
+      "peg_pos": [
+        -0.3731,
+        -0.5772,
+        0.1197
+      ],
+      "size": [
+        0.085,
+        0.07,
+        0.11
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 20,
+      "type": "GEAR_STAND_ROW2_LEFT",
+      "category": "part",
+      "planar": true,
+      "peg_pos": [
+        -0.2963,
+        -0.573,
+        0.0431
+      ],
+      "size": [
+        0.085,
+        0.07,
+        0.11
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 21,
+      "type": "GEAR_STAND_ROW2_RIGHT",
+      "category": "part",
+      "planar": true,
+      "peg_pos": [
+        -0.2872,
+        -0.5761,
+        0.1358
+      ],
+      "size": [
+        0.085,
+        0.07,
+        0.11
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 22,
+      "type": "GEAR_STAND_ROW3_LEFT",
+      "category": "part",
+      "planar": true,
+      "peg_pos": [
+        -0.1984,
+        -0.5734,
+        0.1087
+      ],
+      "size": [
+        0.085,
+        0.07,
+        0.11
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 23,
+      "type": "GEAR_STAND_ROW3_RIGHT",
+      "category": "part",
+      "planar": true,
+      "peg_pos": [
+        -0.1957,
+        -0.5706,
+        0.0306
+      ],
+      "size": [
+        0.085,
+        0.07,
+        0.11
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 24,
+      "type": "GEAR_STAND_ROW4_LEFT",
+      "category": "part",
+      "planar": true,
+      "peg_pos": [
+        -0.1017,
+        -0.5687,
+        0.0272
+      ],
+      "size": [
+        0.085,
+        0.07,
+        0.11
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 25,
+      "type": "GEAR_STAND_ROW4_RIGHT",
+      "category": "part",
+      "planar": true,
+      "peg_pos": [
+        -0.105,
+        -0.5723,
+        0.1229
+      ],
+      "size": [
+        0.085,
+        0.07,
+        0.11
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 26,
+      "type": "GEAR_ROW1_LEFT",
+      "category": "part",
+      "planar": true,
+      "peg_pos": [
+        -0.0377,
+        -0.7066,
+        0.076
+      ],
+      "size": [
+        0.025,
+        0.11,
+        0.09
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 27,
+      "type": "GEAR_ROW2_LEFT",
+      "category": "part",
+      "planar": true,
+      "peg_pos": [
+        -0.2171,
+        -0.7241,
+        0.043
+      ],
+      "size": [
+        0.03,
+        0.05,
+        0.069
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 28,
+      "type": "GEAR_ROW2_RIGHT",
+      "category": "part",
+      "planar": true,
+      "peg_pos": [
+        -0.1556,
+        -0.7047,
+        0.0683
+      ],
+      "size": [
+        0.021,
+        0.081,
+        0.074
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 29,
+      "type": "GEAR_ROW3_LEFT",
+      "category": "part",
+      "planar": true,
+      "peg_pos": [
+        -0.3405,
+        -0.7386,
+        0.0318
+      ],
+      "size": [
+        0.041,
+        0.088,
+        0.066
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 30,
+      "type": "GEAR_ROW3_RIGHT",
+      "category": "part",
+      "planar": true,
+      "peg_pos": [
+        -0.2936,
+        -0.7301,
+        0.0279
+      ],
+      "size": [
+        0.042,
+        0.098,
+        0.056
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 31,
+      "type": "GEAR_ROW4_LEFT",
+      "category": "part",
+      "planar": true,
+      "peg_pos": [
+        -0.095,
+        -0.7109,
+        0.0575
+      ],
+      "size": [
+        0.025,
+        0.129,
+        0.09
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 32,
+      "type": "SCREWS",
+      "category": "part",
+      "planar": true,
+      "peg_pos": [
+        -0.1291,
+        -0.7661,
+        0.2168
+      ],
+      "size": [
+        0.085,
+        0.08,
+        0.07
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 33,
+      "type": "BEARINGS",
+      "category": "part",
+      "planar": true,
+      "peg_pos": [
+        -0.0288,
+        -0.7643,
+        0.2204
+      ],
+      "size": [
+        0.085,
+        0.08,
+        0.07
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 34,
+      "type": "PINS",
+      "category": "part",
+      "planar": true,
+      "peg_pos": [
+        -0.0084,
+        -0.5726,
+        0.1036
+      ],
+      "size": [
+        0.085,
+        0.08,
+        0.07
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 35,
+      "type": "MISC",
+      "category": "part",
+      "planar": true,
+      "peg_pos": [
+        -0.246,
+        -0.7682,
+        0.2133
+      ],
+      "size": [
+        0.085,
+        0.08,
+        0.07
+      ],
+      "rotation_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
+  ]
+}

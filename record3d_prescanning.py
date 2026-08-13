@@ -78,8 +78,8 @@ except ImportError:
 # Constants
 # ---------------------------------------------------------------------------
 
-WORLD_MARKER_ID   = 10
-WORLD_MARKER_SIZE = 0.09    # 9 cm
+WORLD_MARKER_ID   = 100
+WORLD_MARKER_SIZE = 0.10    # 10 cm
 
 PEG_MARKER_ID   = 101
 PEG_MARKER_SIZE = 0.10     # 10 cm
@@ -748,12 +748,9 @@ class AnnotateApp:
     tool_layout.json so it can be dropped in as a replacement.
     """
 
-    _CAL_DIR    = Path("calibration_data/results")
+    _CAL_DIR    = Path("hand_eye_data/results")
     _LAYOUT_DIR = SCENE_LAYOUT_DIR
 
-    # OBJ → TCP frame: rotate Y_mesh → Z_tcp, shift fingertip to TCP origin.
-    # If the mesh appears shifted on the real robot, adjust _GRIPPER_FINGERTIP_Y.
-    _GRIPPER_FINGERTIP_Y: float = 0.1661  # OBJ Y at fingertip centre (m)
 
     # ── init ──────────────────────────────────────────────────────────────
 
@@ -805,10 +802,13 @@ class AnnotateApp:
             self._pb_scene = IKScene(T_world_base=self.T_world_base)
             self._pb_scene.build()
             self._pb_scene.set_joint_limits(
-                lower=[-170.80, -108.07, -44.04 , -140.02, -124.86, -206.99],
-                upper=[ -78.53,    26.07, 163.78,  40.02,  130.50,  6.67],
+                lower=[-360.0] * 6,
+                upper=[ 360.0] * 6,
                 degrees=True,
             )
+            if self._no_robot:
+                _HOME_Q = np.deg2rad([-40.67, -74.98, -135.61, -58.54, 89.41, 49.58])
+                self._pb_scene.update_robot(_HOME_Q)
             print("[Annotate] PyBullet IK ready — servo loop will use servoJ.")
         except Exception as e:
             print(f"[Annotate] PyBullet IK unavailable, falling back to servoL: {e}")
@@ -844,6 +844,10 @@ class AnnotateApp:
         self._win          = None
         self._scene_widget = None
         self._box_geom_names: list[str] = []
+
+        # UR10e visual mesh templates (deepcopy-transformed each update)
+        self._robot_mesh_templates: list = []   # list of (mesh|None, T_vis 4×4)
+        self._robot_link_names: list[str] = []  # "__robot_link_0" … "_6"
 
         # DearPyGUI tag constants
         self._TAG_LIST    = "box_listbox"
@@ -1077,7 +1081,12 @@ class AnnotateApp:
             print(f"[Gripper] Connecting → {self.robot_ip}:63352")
             g = RobotiqGripper()
             g.connect(self.robot_ip, 63352)
-            g.activate()
+            try:
+                g.activate()
+            except Exception as _ae:
+                if "STOPPED_INNER_OBJECT" not in str(_ae):
+                    raise
+                print("[Gripper] Activation stopped by object in gripper — continuing")
             self._gripper = g
             print("[Gripper] Ready.")
         return self._gripper
@@ -1217,7 +1226,8 @@ class AnnotateApp:
                 + ScipyR.from_matrix(T_base[:3, :3]).as_rotvec().tolist())
 
     def _on_test_grasp(self):
-        if self._robot_off():
+        sim_only = self._no_robot and self._pb_scene is not None
+        if not sim_only and self._robot_off():
             return
         if not (0 <= self._selected_idx < len(self._boxes)):
             dpg.set_value(self._TAG_STATUS, "Select a box first.")
@@ -1227,53 +1237,106 @@ class AnnotateApp:
             dpg.set_value(self._TAG_STATUS, "No grasp pose saved for this box.")
             return
 
+        # Capture current pose BEFORE modifying pb_scene for FK
+        if sim_only:
+            current_q = self._pb_scene.current_q.copy()
+        else:
+            recv_pre  = self._get_rtde_recv()
+            current_q = np.array(recv_pre.getActualQ(), dtype=np.float64)
 
-        # Pre-compute all waypoints from FK of grasp_joints before any motion
-        grasp_q = np.array(box["grasp_joints"], dtype=np.float64)
+        # FK: set robot to grasp joints to read TCP world pose
+        grasp_q   = np.array(box["grasp_joints"], dtype=np.float64)
         self._pb_scene.update_robot(grasp_q)
-        T_grasp_w   = self._pb_scene.update_tcp_bodies()
+        T_grasp_w = self._pb_scene.update_tcp_bodies()
         self._print_pose_wrt_peg("Grasp (FK)", T_grasp_w)
-        normal      = self._plane_n / (np.linalg.norm(self._plane_n) + 1e-9)
-        pos_grasp   = T_grasp_w[:3, 3]
-        quat_grasp  = ScipyR.from_matrix(T_grasp_w[:3, :3]).as_quat().tolist()
-        is_part     = box.get("category", "tool") == "part"
+        pos_grasp  = T_grasp_w[:3, 3]
+        quat_grasp = ScipyR.from_matrix(T_grasp_w[:3, :3]).as_quat().tolist()
+
+        name     = box.get("name", "")
+        category = box.get("category", "tool")
+        is_tool     = (category == "tool")
+        is_gear_rod = name.startswith("GEAR_ROD")
+
+        # Approach direction: project peg normal onto world XY plane so the
+        # approach stays at the same Z (height) as the grasp pose.
+        _n = self._plane_n.copy()
+        _n[2] = 0.0
+        peg_normal = _n / (np.linalg.norm(_n) + 1e-9)
+        approach_dir = np.array([1.0, 0.0, 0.0]) if is_gear_rod else peg_normal
 
         def _solve_ik(label, pos_w, seed_q):
-            pos_w = list(pos_w)
-            self._pb_scene.update_robot(seed_q)
-            q = seed_q.copy()
-            for _ in range(200):
-                q = self._pb_scene.step_ik(q, pos_w, quat_grasp, dt=1.0)
-                T_fk = self._pb_scene.update_tcp_bodies()
-                if (T_fk is not None and
-                        np.linalg.norm(T_fk[:3, 3] - np.array(pos_w)) < 0.005):
-                    break
-            T_fk = self._pb_scene.update_tcp_bodies()
-            if T_fk is not None:
-                err = np.linalg.norm(T_fk[:3, 3] - np.array(pos_w))
-                print(f"[IK {label}] {'Converged' if err < 0.005 else 'WARNING'}"
-                      f"  err {err*1000:.1f} mm")
+            q = self._pb_scene.solve_ik(seed_q, list(pos_w), quat_grasp)
+            print(f"[IK {label}] done")
             return q
 
-        recv_pre    = self._get_rtde_recv()
-        current_q   = np.array(recv_pre.getActualQ(), dtype=np.float64)
+        pos_approach = pos_grasp + 0.30 * approach_dir
+        q_approach   = _solve_ik("approach", pos_approach, grasp_q)
 
-        if is_part:
-            pos_above    = pos_grasp + np.array([0.0, 0.0, 0.05])
-            pos_approach = pos_above  + 0.10 * normal
-            q_approach   = _solve_ik("approach", pos_approach, current_q)
-            q_above      = _solve_ik("above",    pos_above,    q_approach)
-        else:
-            pos_approach = pos_grasp + 0.10 * normal
-            q_approach   = _solve_ik("approach", pos_approach, current_q)
+        q_above = None
+        q_above_approach = None
+        pos_above_approach = None
+        if not is_tool:
+            pos_above = pos_grasp + np.array([0.0, 0.0, 0.05])
+            q_above   = _solve_ik("above", pos_above, grasp_q)
+            pos_above_approach = pos_approach + np.array([0.0, 0.0, 0.05])
+            q_above_approach   = _solve_ik("above_approach", pos_above_approach, q_approach)
+
+        # ── Ghost gripper visualisation ────────────────────────────────────
+        # Build poses from the *intended* target positions + grasp orientation
+        # so ghosts show the planned waypoints regardless of IK convergence.
+        R_grasp = ScipyR.from_quat(quat_grasp).as_matrix()
+        def _make_T(pos):
+            T = np.eye(4, dtype=np.float64)
+            T[:3, :3] = R_grasp
+            T[:3, 3]  = pos
+            return T
+
+        _ghost_poses = [_make_T(pos_approach), T_grasp_w]
+        if q_above is not None:
+            _ghost_poses.append(_make_T(pos_above))
+            _ghost_poses.append(_make_T(pos_above_approach))
+
+        if self._win is not None:
+            gui.Application.instance.post_to_main_thread(
+                self._win,
+                lambda wp=_ghost_poses: self._draw_approach_ghosts(wp))
+        self._pb_scene.update_robot(current_q)  # restore for sim start
 
         def _worker():
             try:
+                if sim_only:
+                    # ── Simulation path ───────────────────────────────────
+                    dpg.set_value(self._TAG_STATUS, "[SIM] Moving to approach…")
+                    self._sim_movej(q_approach)
+
+                    dpg.set_value(self._TAG_STATUS, "[SIM] Moving to grasp pose…")
+                    self._sim_movej(grasp_q, steps=20)
+
+                    dpg.set_value(self._TAG_STATUS, "[SIM] Gripper close (simulated)…")
+                    time.sleep(0.3)
+
+                    if is_tool:
+                        dpg.set_value(self._TAG_STATUS, "[SIM] Gripper open (simulated)…")
+                        time.sleep(0.2)
+                        dpg.set_value(self._TAG_STATUS, "[SIM] Retracting to approach…")
+                        self._sim_movej(q_approach)
+                    else:
+                        dpg.set_value(self._TAG_STATUS, "[SIM] Lifting 5 cm…")
+                        self._sim_movej(q_above, steps=15)
+                        dpg.set_value(self._TAG_STATUS, "[SIM] Retracting above approach…")
+                        self._sim_movej(q_above_approach)
+                        dpg.set_value(self._TAG_STATUS, "[SIM] Gripper open (simulated)…")
+                        time.sleep(0.2)
+
+                    dpg.set_value(self._TAG_STATUS, "✅ Simulation complete.")
+                    return
+
+                # ── Real robot path ───────────────────────────────────────
                 ctrl = self._stop_servo_and_get_ctrl()
                 recv = self._get_rtde_recv()
                 g    = self._get_gripper()
 
-                # 0. Move to viewing pose first (safe neutral standoff)
+                # 0. Move to safe viewing pose
                 dpg.set_value(self._TAG_STATUS, "Moving to viewing pose…")
                 view_pose = self._compute_robot_view_pose()
                 T_view = np.eye(4)
@@ -1297,44 +1360,38 @@ class AnnotateApp:
                 dpg.set_value(self._TAG_STATUS, "Opening gripper…")
                 g.move_and_wait_for_pos(g.get_open_position(), 255, 10)
 
-                # 2. Approach
+                # 2. Move to approach (30 cm away)
                 dpg.set_value(self._TAG_STATUS, "Moving to approach…")
                 ctrl.moveJ(q_approach.tolist(), speed=0.5, acceleration=0.5)
 
-                if is_part:
-                    # 3p. Move in along normal to directly above grasp
-                    dpg.set_value(self._TAG_STATUS, "Moving in along normal…")
-                    ctrl.moveJ(q_above.tolist(), speed=0.3, acceleration=0.3)
-
-                # 4. Descend to grasp pose
+                # 3. Move to grasp pose
                 dpg.set_value(self._TAG_STATUS, "Moving to grasp pose…")
                 ctrl.moveJ(box["grasp_joints"], speed=0.2, acceleration=0.2)
 
+                # 4. Close gripper (STOPPED_INNER_OBJECT = object detected = success)
                 dpg.set_value(self._TAG_STATUS, "Closing gripper…")
-                g.move_and_wait_for_pos(g.get_closed_position(), 255, 100)
+                try:
+                    g.move_and_wait_for_pos(g.get_closed_position(), 255, 100)
+                except Exception as _ge:
+                    if "STOPPED_INNER_OBJECT" not in str(_ge):
+                        raise
+                    print("[TestGrasp] Object detected in gripper — continuing")
                 time.sleep(0.3)
 
-                # Retract (reverse of approach)
-                if is_part:
-                    dpg.set_value(self._TAG_STATUS, "Lifting to above…")
-                    ctrl.moveJ(q_above.tolist(), speed=0.2, acceleration=0.2)
-                    dpg.set_value(self._TAG_STATUS, "Pulling out to approach…")
-                    ctrl.moveJ(q_approach.tolist(), speed=0.3, acceleration=0.3)
-
-                    # Put back: reverse of pick
-                    dpg.set_value(self._TAG_STATUS, "Returning — moving in along normal…")
-                    ctrl.moveJ(q_above.tolist(), speed=0.3, acceleration=0.3)
-                    dpg.set_value(self._TAG_STATUS, "Lowering to grasp pose…")
-                    ctrl.moveJ(box["grasp_joints"], speed=0.2, acceleration=0.2)
-                else:
-                    dpg.set_value(self._TAG_STATUS, "Pulling back to approach…")
+                if is_tool:
+                    # Tool: release in place, then retract to approach
+                    dpg.set_value(self._TAG_STATUS, "Releasing gripper…")
+                    g.move_and_wait_for_pos(g.get_open_position(), 255, 10)
+                    dpg.set_value(self._TAG_STATUS, "Retracting to approach…")
                     ctrl.moveJ(q_approach.tolist(), speed=0.5, acceleration=0.5)
-                    dpg.set_value(self._TAG_STATUS, "Returning to grasp pose…")
-                    ctrl.moveJ(box["grasp_joints"], speed=0.3, acceleration=0.3)
-
-                # Release
-                dpg.set_value(self._TAG_STATUS, "Releasing gripper…")
-                g.move_and_wait_for_pos(g.get_open_position(), 255, 10)
+                else:
+                    # Parts: lift 5 cm, retract to above_approach, then release
+                    dpg.set_value(self._TAG_STATUS, "Lifting 5 cm…")
+                    ctrl.moveJ(q_above.tolist(), speed=0.2, acceleration=0.2)
+                    dpg.set_value(self._TAG_STATUS, "Retracting above approach…")
+                    ctrl.moveJ(q_above_approach.tolist(), speed=0.3, acceleration=0.3)
+                    dpg.set_value(self._TAG_STATUS, "Releasing gripper…")
+                    g.move_and_wait_for_pos(g.get_open_position(), 255, 10)
 
                 dpg.set_value(self._TAG_STATUS, "✅ Test grasp complete.")
             except Exception as e:
@@ -1484,6 +1541,9 @@ class AnnotateApp:
                     if self._win is not None:
                         gui.Application.instance.post_to_main_thread(
                             self._win, self._do_update_tcp_viz)
+                    if self._pb_scene is not None:
+                        self._pb_scene.update_robot(np.array(q, dtype=np.float64))
+                        self._post_robot_vis()
                 except Exception:
                     pass
                 time.sleep(0.2)
@@ -1504,15 +1564,10 @@ class AnnotateApp:
 
         # Gripper mesh
         if self._gripper_mesh_raw is not None:
-            fy = self._GRIPPER_FINGERTIP_Y
-            T_tcp_mesh = np.array([
-                [1,  0,  0,  0],
-                [0,  0, -1,  0],
-                [0,  1,  0, -fy],
-                [0,  0,  0,  1],
-            ], dtype=float)
+            T_grip_offset = np.eye(4, dtype=np.float64)
+            T_grip_offset[:3, :3] = ScipyR.from_euler('x', np.pi / 2).as_matrix()
             mesh = copy.deepcopy(self._gripper_mesh_raw)
-            mesh.transform(T @ T_tcp_mesh)
+            mesh.transform(T @ T_grip_offset)
             mat_mesh = rendering.MaterialRecord()
             mat_mesh.shader = "defaultLit"
             mat_mesh.base_color = [0.7, 0.7, 0.75, 1.0]
@@ -1520,6 +1575,113 @@ class AnnotateApp:
             scene.add_geometry("__gripper_mesh", mesh, mat_mesh)
 
         self._scene_widget.force_redraw()
+
+    # Ghost waypoint names (fixed so they get replaced on each test grasp)
+    _GHOST_NAMES  = ["__ghost_approach", "__ghost_grasp", "__ghost_above",
+                     "__ghost_above_approach"]
+    _GHOST_COLORS = [[0.15, 0.85, 0.15],   # green  — approach
+                     [1.00, 0.42, 0.10],   # orange — grasp
+                     [0.25, 0.55, 1.00],   # blue   — above
+                     [0.80, 0.20, 0.90]]   # purple — above_approach
+
+    def _draw_approach_ghosts(self, waypoint_poses: list):
+        """Main thread: ghost grippers + yellow lineset for approach-to-grasp path.
+        waypoint_poses: [T_approach, T_grasp] or [..., T_above, T_above_approach]."""
+        if self._scene_widget is None:
+            return
+        scene = self._scene_widget.scene
+        T_grip_offset = np.eye(4, dtype=np.float64)
+        T_grip_offset[:3, :3] = ScipyR.from_euler('x', np.pi / 2).as_matrix()
+
+        # Clear previous ghosts and lineset
+        for name in self._GHOST_NAMES:
+            scene.remove_geometry(name)
+        scene.remove_geometry("__approach_lineset")
+
+        pts = []
+        for i, T_tcp in enumerate(waypoint_poses[:len(self._GHOST_NAMES)]):
+            name  = self._GHOST_NAMES[i]
+            color = self._GHOST_COLORS[i]
+            if self._gripper_mesh_raw is not None:
+                m = copy.deepcopy(self._gripper_mesh_raw)
+                m.paint_uniform_color(color)
+                m.transform(T_tcp @ T_grip_offset)
+                mat = rendering.MaterialRecord()
+                mat.shader = "defaultLit"
+                scene.add_geometry(name, m, mat)
+            pts.append(T_tcp[:3, 3])
+
+        if len(pts) >= 2:
+            ls = o3d.geometry.LineSet()
+            ls.points = o3d.utility.Vector3dVector(pts)
+            ls.lines  = o3d.utility.Vector2iVector(
+                [[i, i + 1] for i in range(len(pts) - 1)])
+            ls.colors = o3d.utility.Vector3dVector(
+                [[1.0, 1.0, 0.0]] * (len(pts) - 1))
+            mat_line = rendering.MaterialRecord()
+            mat_line.shader    = "unlitLine"
+            mat_line.line_width = 3.0
+            scene.add_geometry("__approach_lineset", ls, mat_line)
+
+        self._scene_widget.force_redraw()
+
+    def _do_update_robot_vis(self, link_poses: list):
+        """Main-thread: re-draw all robot link meshes at new world poses."""
+        if self._scene_widget is None:
+            return
+        scene = self._scene_widget.scene
+        _mat = rendering.MaterialRecord()
+        _mat.shader = "defaultLit"
+        for i, ((tmpl, _), T_world) in enumerate(
+                zip(self._robot_mesh_templates, link_poses)):
+            name = self._robot_link_names[i]
+            scene.remove_geometry(name)
+            if tmpl is None:
+                continue
+            m = copy.deepcopy(tmpl)
+            m.transform(T_world)
+            scene.add_geometry(name, m, _mat)
+        self._scene_widget.force_redraw()
+
+    def _post_robot_vis(self, link_poses=None):
+        """Thread-safe: post robot mesh update to the O3D main thread."""
+        if self._win is None or self._pb_scene is None:
+            return
+        if link_poses is None:
+            link_poses = self._pb_scene.get_arm_link_world_poses()
+        gui.Application.instance.post_to_main_thread(
+            self._win,
+            lambda lp=link_poses: self._do_update_robot_vis(lp))
+
+    def _post_sim_vis(self):
+        """Thread-safe: post robot arm + gripper/TCP update to O3D main thread."""
+        if self._win is None or self._pb_scene is None:
+            return
+        link_poses = self._pb_scene.get_arm_link_world_poses()
+        T_tcp = self._pb_scene.update_tcp_bodies()
+        if T_tcp is not None:
+            self._tcp_world_T   = T_tcp
+            self._tcp_world_pos = T_tcp[:3, 3]
+        gui.Application.instance.post_to_main_thread(
+            self._win, lambda lp=link_poses: self._do_update_robot_vis(lp))
+        if T_tcp is not None:
+            gui.Application.instance.post_to_main_thread(
+                self._win, self._do_update_tcp_viz)
+
+    def _sim_movej(self, q_target: np.ndarray, steps: int = 30, dt: float = 0.04):
+        """Animate a joint move in PyBullet + update O3D robot vis. Blocking."""
+        q_start = self._pb_scene.current_q.copy()
+        q_target = np.asarray(q_target, dtype=np.float64)
+        for i in range(steps + 1):
+            t = i / steps
+            q = q_start + t * (q_target - q_start)
+            self._pb_scene.update_robot(q)
+            self._post_sim_vis()
+            q_deg = np.degrees(q)
+            dpg.set_value(self._TAG_JOINT_TXT,
+                f"J1:{q_deg[0]:6.1f}  J2:{q_deg[1]:6.1f}  J3:{q_deg[2]:6.1f}\n"
+                f"J4:{q_deg[3]:6.1f}  J5:{q_deg[4]:6.1f}  J6:{q_deg[5]:6.1f}")
+            time.sleep(dt)
 
     # ── Geometry helpers ──────────────────────────────────────────────────
 
@@ -1741,6 +1903,46 @@ class AnnotateApp:
 
         # Initial box wireframes
         self._refresh_boxes()
+
+        # ── UR10e robot visual meshes ──────────────────────────────────────
+        _UR10E_VIS = [
+            ("base.obj",     [0, 0, 0      ], [0,        0,      np.pi    ]),
+            ("shoulder.obj", [0, 0, 0      ], [0,        0,      np.pi    ]),
+            ("upperarm.obj", [0, 0, 0.1762 ], [np.pi/2,  0,     -np.pi/2 ]),
+            ("forearm.obj",  [0, 0, 0.0393 ], [np.pi/2,  0,     -np.pi/2 ]),
+            ("wrist1.obj",   [0, 0, -0.135 ], [np.pi/2,  0,      0       ]),
+            ("wrist2.obj",   [0, 0, -0.12  ], [0,        0,      0       ]),
+            ("wrist3.obj",   [0, 0, -0.1168], [np.pi/2,  0,      0       ]),
+        ]
+        _mesh_dir = SCENE_LAYOUT_DIR.parent / "robot_assets" / "meshes" / "ur10e" / "visual"
+        _mat_robot = rendering.MaterialRecord()
+        _mat_robot.shader = "defaultLit"
+        for _idx, (_fname, _xyz, _rpy) in enumerate(_UR10E_VIS):
+            _path = _mesh_dir / _fname
+            _name = f"__robot_link_{_idx}"
+            self._robot_link_names.append(_name)
+            if _path.exists():
+                _m = o3d.io.read_triangle_mesh(str(_path))
+                _m.compute_vertex_normals()
+                _m.paint_uniform_color([0.50, 0.52, 0.58])
+                _T_vis = np.eye(4, dtype=np.float64)
+                _T_vis[:3, :3] = ScipyR.from_euler('xyz', _rpy).as_matrix()
+                _T_vis[:3, 3]  = _xyz
+                _m.transform(_T_vis)
+                self._robot_mesh_templates.append((_m, np.eye(4, dtype=np.float64)))
+                scene.add_geometry(_name, copy.deepcopy(_m), _mat_robot)
+            else:
+                self._robot_mesh_templates.append((None, np.eye(4, dtype=np.float64)))
+        if any(t[0] is not None for t in self._robot_mesh_templates):
+            print(f"[Annotate] Loaded UR10e visual meshes from {_mesh_dir}")
+            if self._pb_scene is not None:
+                link_poses = self._pb_scene.get_arm_link_world_poses()
+                self._do_update_robot_vis(link_poses)
+                T_tcp = self._pb_scene.update_tcp_bodies()
+                if T_tcp is not None:
+                    self._tcp_world_T   = T_tcp
+                    self._tcp_world_pos = T_tcp[:3, 3]
+                    self._do_update_tcp_viz()
 
         # Camera: look at pegboard centre
         cx = (PEG_X_MIN + PEG_X_MAX) / 2.0
@@ -2035,8 +2237,8 @@ class AnnotateApp:
 
             dpg.add_separator()
             dpg.add_text("Joint Angles")
-            dpg.add_text("J: —  —  —  —  —  —", tag=self._TAG_JOINT_TXT)
-            dpg.add_text("TCP world: —", tag=self._TAG_TCP_TXT)
+            dpg.add_text("J: -   -   -   -   -   -", tag=self._TAG_JOINT_TXT)
+            dpg.add_text("TCP world: -", tag=self._TAG_TCP_TXT)
             with dpg.group(horizontal=True):
                 dpg.add_button(label="Save Grasp Pose", width=-130,
                                callback=lambda: self._on_save_grasp())
