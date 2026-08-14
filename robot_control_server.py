@@ -118,7 +118,7 @@ def _wrap_nearest(q_target: np.ndarray, q_ref: np.ndarray) -> np.ndarray:
 
 def _build_pb_scene(simulation: bool, use_calibrated_robot_base: bool,
                     sim_q: np.ndarray) -> "PyBulletScene | None":
-    calib_dir = _FILE_DIR / "calibration_data" / "results"
+    calib_dir = _FILE_DIR / "hand_eye_data" / "results"
     scene: "PyBulletScene | None" = None
     if simulation:
         if use_calibrated_robot_base and calib_dir.exists():
