@@ -154,13 +154,13 @@ HANDOVER_STANDOFF_M    = 0.15   # TCP stops this far short of the point along th
 # JOINT_MIN_DEG  = [-180.00, -90.00,  50,  -360,  -360,  -360]
 # JOINT_MAX_DEG  = [ -90.00, -20.00,  150,   360,   360,   360]
 JOINT_MIN_DEG  = [-170.00, -150.00, -160,  -360,  -360,  -360]
-JOINT_MAX_DEG  = [  25.41,  -60.00,  -70,   360,   360,   360]
+JOINT_MAX_DEG  = [  25.41,  -60.00,  -30,   360,   360,   360]
 #                   J1       J2      J3     J4     J5      J6
-JOINT_REST_DEG = [-116.76, -38.40, 101.14, -62.16, 95.94, -177.66]
+JOINT_REST_DEG = [ -90.27, -71.20, -156.59, -131.43, -95.93, 179.08]
 
 # Shared pose reached automatically when robot_control_server starts.  This was
 # previously the implicit simulation-only initial pose.
-ROBOT_DEFAULT_JOINT_DEG = [-105.97, -29.43, 87.53, 33.17, 92.40, 168.95]
+ROBOT_DEFAULT_JOINT_DEG = [-90.27, -71.20, -156.59, -131.43, -95.93, 179.08]
 
 
 # JOINT_MIN_DEG = [-360.00, -360,  -360,  -360,  -360,  -360]

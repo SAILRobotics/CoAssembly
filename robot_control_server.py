@@ -159,7 +159,7 @@ class RobotControlServer:
     _STATE_INTERVAL          = 1.0 / 30.0
     _BASE_YAW_CORRECTION_DEG = -90.0
     _MOVE_POS_TOL_M          = 0.03
-    _MOVE_ANGLE_TOL_RAD      = np.deg2rad(20.0)
+    _MOVE_ANGLE_TOL_RAD      = np.deg2rad(10.0)
     _MOVE_DWELL_S            = 0.30
     _MOVE_STALL_TIMEOUT_S     = 3.0
     _MOVE_PROGRESS_POS_M      = 0.002
@@ -207,9 +207,10 @@ class RobotControlServer:
         self._grasp_phase:        "str | None"        = None
         self._grasp_on_complete:  "Callable | None"   = None
         self._grasp_on_phase:     "Callable | None"   = None
-        self._grasp_joints: "np.ndarray | None" = None
-        self._grasp_q_approach:   "np.ndarray | None" = None
-        self._grasp_q_above:      "np.ndarray | None" = None
+        self._grasp_joints:            "np.ndarray | None" = None
+        self._grasp_q_approach:        "np.ndarray | None" = None
+        self._grasp_q_above:           "np.ndarray | None" = None
+        self._grasp_q_above_approach:  "np.ndarray | None" = None
         self._grasp_runner       = None          # sim only: _PbJointRunner
         self._grasp_move_sent:    bool           = False   # real only: async moveJ sent
         self._grasp_settle_start: "float | None" = None    # real only: close+settle timer
@@ -364,6 +365,7 @@ class RobotControlServer:
                 msg["grasp_joints"],
                 category     = msg.get("category", "tool"),
                 board_normal = msg.get("board_normal"),
+                tool_type    = msg.get("tool_type", ""),
                 on_complete  = lambda ok, rid=rid: self._publish_event(
                     "grasp_done", rid, ok=bool(ok)),
                 on_phase     = lambda phase, rid=rid: self._publish_event(
@@ -373,7 +375,8 @@ class RobotControlServer:
             self.move_to_pose(
                 pos  = msg["pos"],
                 quat = msg.get("quat"),
-                board_move = bool(msg.get("board_move", False)),
+                board_move      = bool(msg.get("board_move", False)),
+                force_pybullet_ik = bool(msg.get("force_pybullet_ik", False)),
                 on_complete = lambda ok, rid=rid: self._publish_event(
                     "move_done", rid, ok=bool(ok)))
 
@@ -462,39 +465,41 @@ class RobotControlServer:
             return
         cq = self.pb_scene.current_q.copy()
         if self._grasp_phase == 'approach':
-            if self._grasp_q_above is not None:
-                self._grasp_runner = _PbJointRunner(cq, self._grasp_q_above)
-                self._grasp_phase  = 'above'
-                print("[Robot sim] At approach → moveJ to above")
-            else:
-                self._grasp_runner = _PbJointRunner(cq, self._grasp_joints)
-                self._grasp_phase  = 'grasp'
-                print("[Robot sim] At approach → moveJ to grasp")
-                self._fire_phase(self._grasp_on_phase, "grasping")
-        elif self._grasp_phase == 'above':
+            # approach → grasp (same for tools and parts)
             self._grasp_runner = _PbJointRunner(cq, self._grasp_joints)
             self._grasp_phase  = 'grasp'
-            print("[Robot sim] At above → moveJ to grasp")
+            print("[Robot sim] At approach → moveJ to grasp")
             self._fire_phase(self._grasp_on_phase, "grasping")
         elif self._grasp_phase == 'grasp':
             self._fire_phase(self._grasp_on_phase, "grasped")
             if self._grasp_q_above is not None:
+                # parts: lift 5 cm above grasp
                 self._grasp_runner = _PbJointRunner(cq, self._grasp_q_above)
-                self._grasp_phase  = 'ret_above'
-                print("[Robot sim] Grasp done → lifting to above")
+                self._grasp_phase  = 'lift'
+                print("[Robot sim] Grasp done → lifting 5 cm")
                 self._fire_phase(self._grasp_on_phase, "retracting")
             elif self._grasp_q_approach is not None:
+                # tools: retract straight to approach
                 self._grasp_runner = _PbJointRunner(cq, self._grasp_q_approach)
                 self._grasp_phase  = 'retract'
                 print("[Robot sim] Grasp done → retracting to approach")
                 self._fire_phase(self._grasp_on_phase, "retracting")
             else:
                 self._finish_grasp(True)
-        elif self._grasp_phase == 'ret_above':
-            self._grasp_runner = _PbJointRunner(cq, self._grasp_q_approach)
-            self._grasp_phase  = 'retract'
-            print("[Robot sim] At above → retracting to approach")
+        elif self._grasp_phase == 'lift':
+            if self._grasp_q_above_approach is not None:
+                # parts: retract to 5 cm above approach, stay there
+                self._grasp_runner = _PbJointRunner(cq, self._grasp_q_above_approach)
+                self._grasp_phase  = 'ret_above_approach'
+                print("[Robot sim] Lifted → retracting to above_approach")
+            elif self._grasp_q_approach is not None:
+                self._grasp_runner = _PbJointRunner(cq, self._grasp_q_approach)
+                self._grasp_phase  = 'retract'
+                print("[Robot sim] Lifted → retracting to approach")
+            else:
+                self._finish_grasp(True)
         else:
+            # ret_above_approach or retract → done
             self._finish_grasp(True)
 
     def _tick_startup_pose(self, dt: float) -> None:
@@ -541,12 +546,13 @@ class RobotControlServer:
 
     def _finish_grasp(self, success: bool) -> None:
         cb = self._grasp_on_complete
-        self._grasp_runner       = None
-        self._grasp_phase        = None
-        self._grasp_on_complete  = None
-        self._grasp_joints = None
-        self._grasp_q_approach   = None
-        self._grasp_q_above      = None
+        self._grasp_runner            = None
+        self._grasp_phase             = None
+        self._grasp_on_complete       = None
+        self._grasp_joints            = None
+        self._grasp_q_approach        = None
+        self._grasp_q_above           = None
+        self._grasp_q_above_approach  = None
         if cb is not None:
             try:
                 cb(success)
@@ -699,6 +705,7 @@ class RobotControlServer:
             self._arm_board_force(None)
 
     def move_to_pose(self, pos, quat=None, board_move: bool = False,
+                     force_pybullet_ik: bool = False,
                      on_complete: "Callable[[bool], None] | None" = None) -> None:
         """Stream IK+CBF servoJ toward a fixed Cartesian target until convergence."""
         if self._startup_active:
@@ -734,6 +741,7 @@ class RobotControlServer:
         self._move_smooth_q    = None
         self._move_conv_start  = None
         self._move_diag_t      = 0.0
+        self._move_force_pybullet_ik = force_pybullet_ik
         self._reset_move_progress()
         self._move_phase       = 'moving_to_pose'
         if board_move:
@@ -876,7 +884,9 @@ class RobotControlServer:
                 self._move_conv_start = None
 
         # Velocity command
-        if self.use_diff_ik and self._frax is not None:
+        _use_pybullet = (getattr(self, '_move_force_pybullet_ik', False)
+                         or not self.use_diff_ik)
+        if not _use_pybullet and self._frax is not None:
             # OSC + CBF: Cartesian-space differential IK — deterministic, no PyBullet IK needed
             target_rot = ScipyR.from_quat(target_quat).as_matrix()
             try:
@@ -958,6 +968,7 @@ class RobotControlServer:
         q_above:      "list | np.ndarray | None"      = None,
         category:     str                              = "tool",
         board_normal: "list | np.ndarray | None"      = None,
+        tool_type:    str                              = "",
     ) -> None:
         if self._startup_active:
             print("[Robot] Grasp blocked — startup move is active")
@@ -976,13 +987,21 @@ class RobotControlServer:
             print("[Robot] Grasp already running — cancel first.")
             return
 
-        # Auto-compute approach waypoint from board_normal when not pre-supplied
+        # Auto-compute waypoints from board_normal when not pre-supplied.
+        # Sequence (parts):  approach → grasp → lift → above_approach → done
+        # Sequence (tools):  approach → grasp → retract to approach → done
+        # Approach is at grasp height (board normal projected to XY so no Z drift).
+        q_above_approach = None
         if board_normal is not None and q_approach is None and self.pb_scene is not None:
             gj_arr  = np.array(grasp_joints, dtype=float)
-            is_part = (category == "part")
+            is_part = (category != "tool")
             saved_q = self.pb_scene.current_q.copy()
-            bn      = np.array(board_normal, float)
-            bn     /= (np.linalg.norm(bn) + 1e-9)
+            if tool_type.startswith("GEAR_ROD"):
+                bn = np.array([1.0, 0.0, 0.0])        # gear rods: approach along world +X
+            else:
+                bn = np.array(board_normal, float)
+                bn[2] = 0.0                            # project to XY — keeps approach at grasp height
+                bn /= (np.linalg.norm(bn) + 1e-9)
             try:
                 self.pb_scene.update_robot(gj_arr)
                 grasp_T = self.pb_scene.update_tcp_bodies()
@@ -991,28 +1010,32 @@ class RobotControlServer:
             if grasp_T is not None:
                 tcp_pos  = grasp_T[:3, 3]
                 tcp_quat = ScipyR.from_matrix(grasp_T[:3, :3]).as_quat().tolist()
-                if is_part:
-                    pos_above    = tcp_pos + np.array([0., 0., 0.05])
-                    pos_approach = pos_above + self._approach_dist * bn
-                else:
-                    pos_approach = tcp_pos + self._approach_dist * bn
+                pos_approach = tcp_pos + self._approach_dist * bn
                 q_approach = _wrap_nearest(
                     self.solve_ik_from_config(gj_arr, pos_approach, tcp_quat), saved_q)
                 if is_part:
+                    pos_above          = tcp_pos + np.array([0., 0., 0.05])
+                    pos_above_approach = pos_approach + np.array([0., 0., 0.05])
                     q_above = _wrap_nearest(
-                        self.solve_ik_from_config(gj_arr, pos_above, tcp_quat), q_approach)
+                        self.solve_ik_from_config(gj_arr, pos_above, tcp_quat),
+                        _wrap_nearest(gj_arr, q_approach))
+                    q_above_approach = _wrap_nearest(
+                        self.solve_ik_from_config(gj_arr, pos_above_approach, tcp_quat),
+                        q_approach)
                     grasp_joints = _wrap_nearest(gj_arr, q_above)
                 else:
                     grasp_joints = _wrap_nearest(gj_arr, q_approach)
 
         if self.simulation:
-            self._grasp_on_complete  = on_complete
-            self._grasp_on_phase     = on_phase
-            self._grasp_joints = np.array(grasp_joints, dtype=float)
-            self._grasp_q_approach   = (np.array(q_approach, dtype=float)
-                                      if q_approach is not None else None)
-            self._grasp_q_above      = (np.array(q_above, dtype=float)
-                                      if q_above is not None else None)
+            self._grasp_on_complete       = on_complete
+            self._grasp_on_phase          = on_phase
+            self._grasp_joints            = np.array(grasp_joints, dtype=float)
+            self._grasp_q_approach        = (np.array(q_approach, dtype=float)
+                                             if q_approach is not None else None)
+            self._grasp_q_above           = (np.array(q_above, dtype=float)
+                                             if q_above is not None else None)
+            self._grasp_q_above_approach  = (np.array(q_above_approach, dtype=float)
+                                             if q_above_approach is not None else None)
             if self._grasp_q_approach is not None:
                 self._grasp_runner = _PbJointRunner(
                     self.pb_scene.current_q.copy(), self._grasp_q_approach)
@@ -1032,14 +1055,16 @@ class RobotControlServer:
                     on_complete(False)
                 return
             self.servoStop()
-            self._grasp_phase         = None
-            self._grasp_joints = np.array(grasp_joints, dtype=float)
-            self._grasp_q_approach   = (np.array(q_approach, dtype=float)
-                                       if q_approach is not None else None)
-            self._grasp_q_above      = (np.array(q_above, dtype=float)
-                                       if q_above is not None else None)
-            self._grasp_on_complete  = on_complete
-            self._grasp_on_phase     = on_phase
+            self._grasp_phase             = None
+            self._grasp_joints            = np.array(grasp_joints, dtype=float)
+            self._grasp_q_approach        = (np.array(q_approach, dtype=float)
+                                             if q_approach is not None else None)
+            self._grasp_q_above           = (np.array(q_above, dtype=float)
+                                             if q_above is not None else None)
+            self._grasp_q_above_approach  = (np.array(q_above_approach, dtype=float)
+                                             if q_above_approach is not None else None)
+            self._grasp_on_complete       = on_complete
+            self._grasp_on_phase          = on_phase
             self._grasp_move_sent    = False
             self._grasp_settle_start = None
             self._grasp_phase         = 'open_pre'
@@ -1077,15 +1102,15 @@ class RobotControlServer:
             print("[Robot] Cancel queued — will open gripper then retract")
             return
 
-        if phase in ('open_pre', 'approach', 'above'):
+        if phase in ('open_pre', 'approach', 'grasp'):
             if self._grasp_move_sent:
                 try:
                     self._rtde_ctrl_conn().stopJ(2.0)
                 except Exception as e:
                     print(f"[Robot] cancel_grasp stopJ failed: {e}")
                 self._grasp_move_sent = False
-            if self._grasp_q_above is not None:
-                self._grasp_phase = 'ret_above'
+            if self._grasp_q_above_approach is not None:
+                self._grasp_phase = 'ret_above_approach'
             elif self._grasp_q_approach is not None:
                 self._grasp_phase = 'retract'
             else:
@@ -1096,7 +1121,7 @@ class RobotControlServer:
             print("[Robot] Grasp cancelled — retracting")
             return
 
-        if phase in ('ret_above', 'retract'):
+        if phase in ('lift', 'ret_above_approach', 'retract'):
             if self._grasp_move_sent:
                 try:
                     self._rtde_ctrl_conn().stopJ(2.0)
@@ -1116,10 +1141,11 @@ class RobotControlServer:
         self._grasp_on_complete    = None
         self._grasp_on_phase       = None
         self._grasp_runner         = None
-        self._grasp_joints         = None
-        self._grasp_q_approach     = None
-        self._grasp_q_above        = None
-        self._grasp_cancel_pending = False
+        self._grasp_joints            = None
+        self._grasp_q_approach        = None
+        self._grasp_q_above           = None
+        self._grasp_q_above_approach  = None
+        self._grasp_cancel_pending    = False
         if not self.simulation:
             if startup_was_active and self._startup_move_sent:
                 try:
@@ -1339,29 +1365,22 @@ class RobotControlServer:
             except Exception as e:
                 print(f"[Robot] open_gripper failed: {e}")
             self._fire_phase(self._grasp_on_phase, "approaching")
-            if self._grasp_q_approach is not None:
-                _next('approach')
-            elif self._grasp_q_above is not None:
-                _next('above')
-            else:
-                _next('grasp')
+            _next('approach' if self._grasp_q_approach is not None else 'grasp')
 
-        elif phase in ('approach', 'above', 'grasp',
-                       'ret_above', 'retract'):
+        elif phase in ('approach', 'grasp', 'lift', 'ret_above_approach', 'retract'):
             target = {
-                'approach':  self._grasp_q_approach,
-                'above':     self._grasp_q_above,
-                'grasp':      self._grasp_joints,
-                'ret_above': self._grasp_q_above,
-                'retract':   self._grasp_q_approach,
+                'approach':          self._grasp_q_approach,
+                'grasp':             self._grasp_joints,
+                'lift':              self._grasp_q_above,
+                'ret_above_approach': self._grasp_q_above_approach,
+                'retract':           self._grasp_q_approach,
             }[phase]
             speed = {
-                'approach':  0.5 * sc,
-                'above':     0.3 * sc,
-                'grasp':      0.2 * sc,
-                'ret_above': 0.2 * sc,
-                'retract':   (0.3 * sc if self._grasp_q_above is not None
-                                   else 0.5 * sc),
+                'approach':          0.5 * sc,
+                'grasp':             0.2 * sc,
+                'lift':              0.2 * sc,
+                'ret_above_approach': 0.3 * sc,
+                'retract':           0.5 * sc,
             }[phase]
             if not self._grasp_move_sent:
                 c = _ctrl()
@@ -1382,16 +1401,15 @@ class RobotControlServer:
                 try:
                     if c.isSteady():
                         if phase == 'approach':
-                            _next('above' if self._grasp_q_above is not None
-                                  else 'grasp')
-                        elif phase == 'above':
                             _next('grasp')
                         elif phase == 'grasp':
                             self._fire_phase(self._grasp_on_phase, "grasping")
                             _next('close')
-                        elif phase == 'ret_above':
-                            _next('retract')
-                        elif phase == 'retract':
+                        elif phase == 'lift':
+                            _next('ret_above_approach'
+                                  if self._grasp_q_above_approach is not None
+                                  else 'retract')
+                        elif phase in ('ret_above_approach', 'retract'):
                             _done(self._grasp_ok)
                 except Exception as e:
                     print(f"[Robot] isSteady failed ({phase}): {e}")
@@ -1418,7 +1436,7 @@ class RobotControlServer:
                                      "grasped" if self._grasp_ok else "grasp_failed")
                     self._fire_phase(self._grasp_on_phase, "retracting")
                     if self._grasp_q_above is not None:
-                        _next('ret_above')
+                        _next('lift')
                     elif self._grasp_q_approach is not None:
                         _next('retract')
                     else:
@@ -1431,7 +1449,7 @@ class RobotControlServer:
                 print(f"[Robot] open_gripper (cancel) failed: {e}")
             self._fire_phase(self._grasp_on_phase, "retracting")
             if self._grasp_q_above is not None:
-                _next('ret_above')
+                _next('lift')
             elif self._grasp_q_approach is not None:
                 _next('retract')
             else:
@@ -1472,7 +1490,7 @@ class RobotControlServer:
                 print(f"[Robot] open_gripper (put_back) failed: {e}")
             self._fire_phase(self._grasp_on_phase, "retracting")
             if self._grasp_q_above is not None:
-                _next('ret_above')
+                _next('lift')
             elif self._grasp_q_approach is not None:
                 _next('retract')
             else:

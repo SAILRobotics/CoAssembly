@@ -12,19 +12,10 @@ The VLM runs on a background thread so the UI never freezes.
 
 from __future__ import annotations
 
-import json
 import queue
 import re
 import threading
 from pathlib import Path
-from typing import Callable
-
-from agent_tools import (
-    PlaceholderAgentTools,
-    decision_schema_text,
-    parse_decision,
-    validate_decision,
-)
 
 _THUMB_W, _THUMB_H = 96, 72
 _ANSWER_H          = 520
@@ -282,7 +273,6 @@ class VLMAssistant:
         dpg,
         task_description_path: str,
         model_name: str = "Qwen/Qwen2.5-VL-3B-Instruct",
-        agent_context_provider: Callable[[str | None], dict] | None = None,
     ) -> None:
         self.dpg = dpg
         self._model_name = model_name
@@ -302,10 +292,6 @@ class VLMAssistant:
         self._pending_question: str = ""
         self._current_status = "loading"
         self._history_count = 0   # tracks number of Q/A pairs stored in worker
-        self._agent_context_provider = agent_context_provider
-        self._agent_tools = PlaceholderAgentTools()
-        self._pending_agent_trigger: str = ""
-        self._pending_agent_context: dict = {}
 
     # ── Public: called by the task graph on every state change ────────────────
 
@@ -329,43 +315,6 @@ class VLMAssistant:
         queued = self._worker.submit(text, self._image_paths)
         if queued:
             _print_console_block("VLM QUESTION", text)
-        return queued
-
-    def request_agent_decision(self, trigger: str, context: dict) -> bool:
-        """Ask the VLM to choose one validated placeholder robot action."""
-        if self._current_status != "ready" or self._pending_agent_trigger:
-            return False
-
-        agent_context = dict(context)
-        agent_context["trigger"] = trigger
-        prompt = (
-            "You are now the decision-making layer for a proactive assembly robot.\n"
-            "Choose exactly one semantic action from the available tools.\n"
-            "Never invent a part or step. Part actions may target only a part in "
-            "active_parts. A step_id, when supplied, must be in ready_steps.\n"
-            "Any motion-like action must set requires_confirmation to true.\n"
-            "When the trigger is step_selected or task_state_changed, consider "
-            "whether assistance is genuinely useful; no_action is valid.\n"
-            "For a READY stand-fastening step, consider approaching the safe "
-            "human-assistance pose or preparing a screwdriver. For a user request, "
-            "resolve flexible color/shape language to the canonical active part.\n\n"
-            f"Trigger: {trigger}\n"
-            "Live agent context:\n"
-            f"{json.dumps(agent_context, indent=2, sort_keys=True)}\n\n"
-            f"{decision_schema_text()}"
-        )
-        self._pending_agent_trigger = trigger
-        self._pending_agent_context = agent_context
-        queued = self._worker.submit(prompt, [], result_kind="agent_decision")
-        if queued:
-            request = context.get("user_text") or "(proactive evaluation)"
-            _print_console_block(
-                "VLM AGENT REQUEST",
-                f"Trigger: {trigger}\nRequest: {request}",
-            )
-        if not queued:
-            self._pending_agent_trigger = ""
-            self._pending_agent_context = {}
         return queued
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -412,8 +361,6 @@ class VLMAssistant:
         with dpg.group(horizontal=True):
             dpg.add_button(label="Ask", tag="vlm_ask_button",
                            callback=self._ask, width=90, enabled=False)
-            dpg.add_button(label="Agent action", tag="vlm_agent_button",
-                           callback=self._ask_agent, width=120, enabled=False)
             dpg.add_button(label="Clear history", callback=self._clear_history, width=110)
         dpg.add_separator()
 
@@ -435,13 +382,8 @@ class VLMAssistant:
                 self._set_status(payload)
                 if payload == "ready":
                     self.dpg.configure_item("vlm_ask_button", enabled=True)
-                    self.dpg.configure_item(
-                        "vlm_agent_button",
-                        enabled=self._agent_context_provider is not None,
-                    )
                 elif payload == "thinking":
                     self.dpg.configure_item("vlm_ask_button", enabled=False)
-                    self.dpg.configure_item("vlm_agent_button", enabled=False)
 
             elif kind == "answer":
                 answer = _strip_md(payload)
@@ -453,64 +395,16 @@ class VLMAssistant:
                 self._render_history()
                 self._update_history_label()
                 self.dpg.configure_item("vlm_ask_button", enabled=True)
-                self.dpg.configure_item(
-                    "vlm_agent_button",
-                    enabled=self._agent_context_provider is not None,
-                )
-
-            elif kind == "agent_decision":
-                trigger = self._pending_agent_trigger or "unknown"
-                _print_console_block("VLM AGENT RAW RESPONSE", payload)
-                try:
-                    decision = parse_decision(payload)
-                    valid, problem = validate_decision(
-                        decision, self._pending_agent_context)
-                    if not valid:
-                        result = f"Rejected VLM action: {problem}"
-                    else:
-                        result = self._agent_tools.execute(decision)
-                    detail = (
-                        f"{result}\n"
-                        f"Decision: {decision.action}\n"
-                        f"Reason: {decision.reason or '(none supplied)'}"
-                    )
-                except Exception as exc:
-                    detail = (
-                        f"Rejected malformed VLM action: {exc}\n"
-                        f"Raw response: {payload}"
-                    )
-                _print_console_block("VLM AGENT RESULT", detail)
-                self._exchanges.append((f"[Proactive trigger: {trigger}]", detail))
-                self._pending_agent_trigger = ""
-                self._pending_agent_context = {}
-                self._render_history()
-                self.dpg.configure_item("vlm_ask_button", enabled=True)
-                self.dpg.configure_item(
-                    "vlm_agent_button",
-                    enabled=self._agent_context_provider is not None,
-                )
 
             elif kind == "error":
                 error_text = _strip_md(payload)
                 _print_console_block("VLM ERROR", error_text)
-                if self._pending_agent_trigger:
-                    self._exchanges.append((
-                        f"[Proactive trigger: {self._pending_agent_trigger}]",
-                        f"[AGENT ERROR] {error_text}",
-                    ))
-                    self._pending_agent_trigger = ""
-                    self._pending_agent_context = {}
-                else:
-                    self._exchanges.append(
-                        (self._pending_question or "?", f"[ERROR] {error_text}"))
-                    self._pending_question = ""
+                self._exchanges.append(
+                    (self._pending_question or "?", f"[ERROR] {error_text}"))
+                self._pending_question = ""
                 self._render_history()
                 self._set_status("error")
                 self.dpg.configure_item("vlm_ask_button", enabled=True)
-                self.dpg.configure_item(
-                    "vlm_agent_button",
-                    enabled=self._agent_context_provider is not None,
-                )
 
             elif kind == "state_updated":
                 # Graph state changed — clear conversation and show a banner
@@ -580,15 +474,6 @@ class VLMAssistant:
         self._render_history(pending=True)
         if self._worker.submit(question, self._image_paths):
             _print_console_block("VLM QUESTION", question)
-
-    def _ask_agent(self) -> None:
-        """Treat the typed text as a request for one placeholder robot action."""
-        question = (self.dpg.get_value("vlm_question") or "").strip()
-        if not question or self._agent_context_provider is None:
-            return
-        self.dpg.set_value("vlm_question", "")
-        context = self._agent_context_provider(question)
-        self.request_agent_decision("typed_user_request", context)
 
     def _clear_history(self) -> None:
         self._worker.reset_history()
