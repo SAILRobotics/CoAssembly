@@ -149,9 +149,8 @@ class IKScene:
                     when target_quat_xyzw is None.
 
         Tries two seeds and picks the solution with smaller FK position error:
-          1. current_q    — stays close to the current configuration
-          2. _rest_poses  — biases toward the preferred arm pose (set via
-                            set_rest_poses); falls back to limit midpoints."""
+          1. _rest_poses  — biases toward JOINT_REST_DEG preferred arm pose
+          2. current_q    — stays close to the current configuration (fallback)"""
         if self._rest_poses:
             bias_map  = dict(zip(self.arm_indices, self._rest_poses))
             bias_rest = [float(bias_map.get(j, (l + u) / 2.0))
@@ -162,7 +161,7 @@ class IKScene:
                          for l, u in zip(self._lower_limits, self._upper_limits)]
 
         best_q, best_err = None, float('inf')
-        for seed_q in (current_q, None):   # None → use bias_rest seed
+        for seed_q in (None, current_q):   # None → use bias_rest (JOINT_REST_DEG) seed first
             arm_q_map  = (dict(zip(self.arm_indices, seed_q))
                           if seed_q is not None else {})
             rest_poses = [float(arm_q_map.get(j, bias_rest[i]))

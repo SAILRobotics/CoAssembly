@@ -218,7 +218,7 @@ INDEX_HTML = r'''<!doctype html>
     'BaseBoard.stl':['Part_1.013'],
     'Bearing.stl':['Part_1','Part_1.005','Part_1.008','Part_1.016','Part_1.018','Part_1.019','Part_1.023','Part_1.024'],
     'Handle.stl':['Part_1.022'],
-    'Row1_GearRod.stl':['Part_1.027'], 'Row1_GearStand_Left.stl':['Part_1.002'], 'Row1_GearStand_Right.stl':['Part_1.004'],
+    'Row1_GearRod.stl':['Part_1.027'], 'Row1_GearStand_Left.stl':['Part_1.004'], 'Row1_GearStand_Right.stl':['Part_1.002'],
     'Row1_Gear_Left.stl':['Spur_gear_(42_teeth).001'], 'Row1_Screws.stl':['90751A122_18-8_Stainless_Steel_Socket_Head_Screws','90751A122_18-8_Stainless_Steel_Socket_Head_Screws.001'],
     'Row2.stl':['Part_1.029'], 'Row2_GearStand_Left.stl':['Part_1.026'], 'Row2_GearStand_Right.stl':['Part_1.014'],
     'Row2_Gear_Left.stl':['Spur_gear_(20_teeth).001'], 'Row2_Gear_Right.stl':['Spur_gear_(32_teeth)'], 'Row2_Screws.stl':['90358A118_Ultra-Low-Profile_Socket_Head_Screw','90358A118_Ultra-Low-Profile_Socket_Head_Screw.001'],

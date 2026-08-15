@@ -12,7 +12,7 @@ _HERE = Path(__file__).resolve().parent
 SCENE_LAYOUT_DIR = _HERE / "scene_layout"
 
 # ── Machine IPs ───────────────────────────────────────────────────────────────
-UNITY_IP   = "192.168.68.124"   # Quest / Windows machine running Unity
+UNITY_IP   = "192.168.50.103"   # Quest / Windows machine running Unity
 ROBOT_IP   = "192.168.50.70"    # UR10e robot controller
 LOCALHOST  = "127.0.0.1"        # loopback for same-machine inter-process comms
 
@@ -88,8 +88,8 @@ WORLD_MARKERS_RELOCK_COOLDOWN = 1.0                  # seconds between secondary
 # ── Robot workspace boundary (world frame, metres) ────────────────────────────
 # Used by the SceneVis boundary box, Unity workspace publisher, and frax CBF.
 # WORKSPACE_LO = [-1.0474, -0.3082, 0.05]   # [x_min, y_min, z_min]
-WORKSPACE_LO = [-0.6000, -0.3082, 0.05]   # [x_min, y_min, z_min]
-WORKSPACE_HI = [ 0.7942,  0.4220, 0.750]   # [x_max, y_max, z_max]
+WORKSPACE_LO = [-1.3300, -0.3000, 0.05]   # [x_min, y_min, z_min]
+WORKSPACE_HI = [ 0.9500,  0.7900, 0.800]   # [x_max, y_max, z_max]
 
 # Keep commanded TCP targets slightly inside the CBF workspace rather than
 # directly on its boundary.  Both main_with_robot.py (visual target) and the
@@ -153,14 +153,14 @@ HANDOVER_STANDOFF_M    = 0.15   # TCP stops this far short of the point along th
 #            J1      J2     J3     J4      J5      J6
 # JOINT_MIN_DEG  = [-180.00, -90.00,  50,  -360,  -360,  -360]
 # JOINT_MAX_DEG  = [ -90.00, -20.00,  150,   360,   360,   360]
-JOINT_MIN_DEG  = [-200.00, -110.00,  30,  -360,  -360,  -360]
-JOINT_MAX_DEG  = [ -70.00, -0.00,  180,   360,   360,   360]
+JOINT_MIN_DEG  = [-170.00, -150.00, -160,  -360,  -360,  -360]
+JOINT_MAX_DEG  = [  25.41,  -60.00,  -30,   360,   360,   360]
 #                   J1       J2      J3     J4     J5      J6
-JOINT_REST_DEG = [-116.76, -38.40, 101.14, -62.16, 95.94, -177.66]
+JOINT_REST_DEG = [ -90.27, -71.20, -156.59, -131.43, -95.93, 179.08]
 
 # Shared pose reached automatically when robot_control_server starts.  This was
 # previously the implicit simulation-only initial pose.
-ROBOT_DEFAULT_JOINT_DEG = [-105.97, -29.43, 87.53, 33.17, 92.40, 168.95]
+ROBOT_DEFAULT_JOINT_DEG = [-90.27, -71.20, -156.59, -131.43, -95.93, 179.08]
 
 
 # JOINT_MIN_DEG = [-360.00, -360,  -360,  -360,  -360,  -360]

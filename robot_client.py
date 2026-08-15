@@ -37,7 +37,7 @@ def _build_local_viz_scene(simulation: bool, use_calibrated_robot_base: bool,
                             sim_q: np.ndarray) -> "PyBulletScene | None":
     """FK-only mirror of the server's pb_scene base-pose selection, so the
     locally rendered mesh starts in the same place the server's robot does."""
-    calib_dir = _FILE_DIR / "calibration_data" / "results"
+    calib_dir = _FILE_DIR / "hand_eye_data" / "results"
     try:
         if simulation:
             if use_calibrated_robot_base and calib_dir.exists():
@@ -204,7 +204,8 @@ class RobotClient:
 
     def execute_grasp(self, grasp_joints, on_complete: "Callable[[bool], None] | None" = None,
                       on_phase: "Callable[[str], None] | None" = None,
-                      category: str = "tool", board_normal=None) -> None:
+                      category: str = "tool", board_normal=None,
+                      tool_type: str = "") -> None:
         rid = None
         if on_complete is not None or on_phase is not None:
             rid = self._next_request_id
@@ -217,12 +218,14 @@ class RobotClient:
             "cmd":           "execute_grasp",
             "grasp_joints":  np.asarray(grasp_joints, dtype=float).tolist(),
             "category":      category,
+            "tool_type":     tool_type,
             "board_normal":  (np.asarray(board_normal, dtype=float).tolist()
                               if board_normal is not None else None),
             "request_id":    rid,
         })
 
     def move_to_pose(self, pos, quat=None, *, board_move: bool = False,
+                     force_pybullet_ik: bool = False,
                      on_complete: "Callable[[bool], None] | None" = None) -> None:
         """Stream IK+CBF toward a fixed Cartesian target; fires on_complete(ok) on arrival."""
         rid = None
@@ -231,11 +234,12 @@ class RobotClient:
             self._next_request_id += 1
             self._callbacks[rid] = lambda msg: on_complete(bool(msg.get("ok", False)))
         self._send({
-            "cmd":        "move_to_pose",
-            "pos":        np.asarray(pos, float).tolist(),
-            "quat":       np.asarray(quat, float).tolist() if quat is not None else None,
-            "board_move": bool(board_move),
-            "request_id": rid,
+            "cmd":              "move_to_pose",
+            "pos":              np.asarray(pos, float).tolist(),
+            "quat":             np.asarray(quat, float).tolist() if quat is not None else None,
+            "board_move":       bool(board_move),
+            "force_pybullet_ik": bool(force_pybullet_ik),
+            "request_id":       rid,
         })
 
     def start_board_interaction(self) -> None:
