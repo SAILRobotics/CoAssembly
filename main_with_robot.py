@@ -1225,6 +1225,108 @@ class _GripPoseBridge:
 
 
 
+# =============================================================================
+# Gearbox pose mirror (Unity -> Open3D, port 5027)
+# =============================================================================
+
+class _GearboxPoseReceiver:
+    """Receives live Unity gearbox part poses for the Open3D mirror."""
+
+    def __init__(self, quest_ip: str, port: int = cfg.GEARBOX_POSE_PORT):
+        ctx = zmq.Context.instance()
+        self._sub = ctx.socket(zmq.SUB)
+        self._sub.connect(f"tcp://{quest_ip}:{port}")
+        self._sub.setsockopt_string(zmq.SUBSCRIBE, "")
+        self._sub.setsockopt(zmq.CONFLATE, 1)
+        self._sub.setsockopt(zmq.RCVTIMEO, 0)
+        self.states: dict | None = None
+        self._first_rx_logged = False
+        self._last_wait_log = 0.0
+
+    @staticmethod
+    def _unity_part_pose_to_T(pos_u, q_u) -> np.ndarray:
+        pos_w = unity_to_open3d_vector({"x": pos_u[0], "y": pos_u[1], "z": pos_u[2]})
+        q_o3d = unity_to_open3d_quaternion([q_u[3], q_u[0], q_u[1], q_u[2]])
+        R_w = ScipyR.from_quat(
+            [q_o3d[1], q_o3d[2], q_o3d[3], q_o3d[0]]).as_matrix()
+        T = np.eye(4, dtype=np.float64)
+        T[:3, :3] = R_w
+        T[:3, 3] = pos_w
+        return T
+
+    @staticmethod
+    def _unity_scale_to_o3d(scale_u):
+        if scale_u is None:
+            return None
+        return unity_to_open3d_vector({"x": scale_u[0], "y": scale_u[1], "z": scale_u[2]})
+
+    @staticmethod
+    def _normalize_name(name: str) -> str:
+        # Unity prefabs in this repo use underscores, but nested imported mesh
+        # children can arrive as "occurrence of Part_Name" from older builds.
+        prefix = "occurrence of "
+        name = name.strip()
+        while name.lower().startswith(prefix):
+            name = name[len(prefix):].strip()
+        if "_" in name or name == "BaseBoard":
+            return name
+        for prefix in ("Bearing", "Stand", "GearRod", "Gear", "Pin", "Screw"):
+            if name.startswith(prefix + "Row"):
+                rest = name[len(prefix):]
+                for side in ("Left", "Right"):
+                    if rest.endswith(side):
+                        return f"{prefix}_{rest[:-len(side)]}_{side}"
+                return f"{prefix}_{rest}"
+        if name == "CrankHandle":
+            return "CrankHandle_Row1"
+        return name
+
+    def poll(self) -> dict | None:
+        latest = None
+        while True:
+            try:
+                raw = self._sub.recv_string(flags=zmq.NOBLOCK)
+            except zmq.Again:
+                if latest is not None:
+                    self.states = latest
+                elif self.states is None:
+                    now = time.time()
+                    if now - self._last_wait_log > 5.0:
+                        print(f"[GearboxPose] waiting for Unity poses on :{cfg.GEARBOX_POSE_PORT}")
+                        self._last_wait_log = now
+                return latest
+            try:
+                data = json.loads(raw)
+                if data.get("type") != "gearbox_pose":
+                    continue
+                states = {}
+                for part in data.get("parts", []):
+                    name = self._normalize_name(str(part.get("name", "")))
+                    pos = part.get("pos")
+                    rot = part.get("rot_xyzw")
+                    if not name or pos is None or rot is None:
+                        continue
+                    states[name] = {
+                        "active": bool(part.get("active", True)),
+                        "T": self._unity_part_pose_to_T(pos, rot),
+                        "scale": self._unity_scale_to_o3d(part.get("scale")),
+                    }
+                latest = states
+                if not self._first_rx_logged:
+                    print(f"[GearboxPose] first pose message: {len(states)} named parts")
+                    self._first_rx_logged = True
+            except Exception as e:
+                if not self._first_rx_logged:
+                    print(f"[GearboxPose] ignored malformed message: {e}")
+                continue
+
+    def close(self) -> None:
+        try:
+            self._sub.close(0)
+        except Exception:
+            pass
+
+
 
 
 
@@ -1575,6 +1677,7 @@ class MainScene:
         self._tool_id_to_box_index = {int(t["id"]): i
                                       for i, t in enumerate(self.tool_layout._tools)}
         self.grip_pose_bridge = _GripPoseBridge(quest_ip)
+        self.gearbox_pose_rx = _GearboxPoseReceiver(quest_ip)
         self.workspace_bound_pub = _WorkspaceBoundPublisher(quest_ip)
 
         # Cubes around the anchor marker (world origin) — ids 0, 1, 2
@@ -1832,6 +1935,7 @@ class MainScene:
                 if self.tools.drain_highlights(timeout_ms=0):
                     self._sync_vis_highlight()   # mirror the cyan highlight onto the Open3D boxes
                 self.hands.poll()
+                gearbox_states = self.gearbox_pose_rx.poll()
                 _link_poses = None
                 if self.robot is not None:
                     self.robot.poll()   # drain robot_control_server.py state/events
@@ -2322,6 +2426,7 @@ class MainScene:
                                                     fx, fy, cx, cy)
                 self.vis.update_pegboard(self.anchor.T_pegboard_in_world)
                 self.vis.update_board(self.anchor.T_board_in_world)
+                self.vis.update_gearbox_mirror(gearbox_states)
                 self.vis.update_tracking(T_wt)
                 self.vis.update_head(T_world_center)
                 self.vis.update_hands(left_pts, right_pts)
@@ -2582,6 +2687,7 @@ class MainScene:
         # self.handover_sphere.close()
         self.tool_layout.close()
         self.grip_pose_bridge.close()
+        self.gearbox_pose_rx.close()
         self.workspace_bound_pub.close()
         self.hands.close()
         self.cam.close()
