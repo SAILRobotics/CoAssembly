@@ -1268,7 +1268,9 @@ class _GearboxPoseReceiver:
         name = name.strip()
         while name.lower().startswith(prefix):
             name = name[len(prefix):].strip()
-        if "_" in name or name == "BaseBoard":
+        if name.startswith("BaseBoard"):
+            return "BaseBoard"
+        if "_" in name:
             return name
         for prefix in ("Bearing", "Stand", "GearRod", "Gear", "Pin", "Screw"):
             if name.startswith(prefix + "Row"):
