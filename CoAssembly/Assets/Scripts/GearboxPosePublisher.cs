@@ -129,6 +129,7 @@ public class GearboxPosePublisher : MonoBehaviour
         {
             n = n.Substring(occurrencePrefix.Length).Trim();
         }
+        if (n.StartsWith("BaseBoard", StringComparison.OrdinalIgnoreCase)) return "BaseBoard";
         return n;
     }
 

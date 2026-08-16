@@ -29,59 +29,51 @@ class SceneVis:
     _HANDOVER_VALID_COLOR  = np.array([0.20, 0.90, 0.40])
     _HANDOVER_SPHERE_COLOR = (1.0, 0.85, 0.10)
 
-    _GEARBOX_UNITY_TO_STL = {
-        "BaseBoard": "BaseBoard.stl",
-        "Bearing_Row1_Left": "Bearing.stl",
-        "Bearing_Row1_Right": "Bearing.stl",
-        "Bearing_Row2_Left": "Bearing.stl",
-        "Bearing_Row2_Right": "Bearing.stl",
-        "Bearing_Row3_Left": "Bearing.stl",
-        "Bearing_Row3_Right": "Bearing.stl",
-        "Bearing_Row4_Left": "Bearing.stl",
-        "Bearing_Row4_Right": "Bearing.stl",
-        "Stand_Row1_Left": "Row1_GearStand_Left.stl",
-        "Stand_Row1_Right": "Row1_GearStand_Right.stl",
-        "Stand_Row2_Left": "Row2_GearStand_Left.stl",
-        "Stand_Row2_Right": "Row2_GearStand_Right.stl",
-        "Stand_Row3_Left": "Row3_GearStand_Left.stl",
-        "Stand_Row3_Right": "Row3_GearStand_Right.stl",
-        "Stand_Row4_Left": "Row4_GearStand_Left.stl",
-        "Stand_Row4_Right": "Row4_GearStand_Right.stl",
-        "GearRod_Row1": "Row1_GearRod.stl",
-        "GearRod_Row2": "Row2_GearRod.stl",
-        "GearRod_Row3": "Row3_GearRod.stl",
-        "GearRod_Row4": "Row4_GearRod.stl",
-        "Gear_Row1_Left": "Row1_Gear_Left.stl",
-        "Gear_Row2_Left": "Row2_Gear_Left.stl",
-        "Gear_Row2_Right": "Row2_Gear_Right.stl",
-        "Gear_Row3_Left": "Row3_Gear_Left.stl",
-        "Gear_Row3_Right": "Row3_Gear_Right.stl",
-        "Gear_Row4_Left": "Row4_Gear_Left.stl",
-        "Pin_Row1_Left": "WoodenPin.stl",
-        "Pin_Row1_Right": "WoodenPin.stl",
-        "Pin_Row2_Left": "WoodenPin.stl",
-        "Pin_Row2_Right": "WoodenPin.stl",
-        "Pin_Row3_Left": "WoodenPin.stl",
-        "Pin_Row3_Right": "WoodenPin.stl",
-        "Pin_Row4_Left": "WoodenPin.stl",
-        "Screw_Row1_Left": "Row1_Screws.stl",
-        "Screw_Row1_Right": "Row1_Screws.stl",
-        "Screw_Row2_Left": "Row2_Screws.stl",
-        "Screw_Row2_Right": "Row2_Screws.stl",
-        "Screw_Row3_Left": "Row3_Screws.stl",
-        "Screw_Row3_Right": "Row3_Screws.stl",
-        "Screw_Row4_Left": "Row4_Screws.stl",
-        "Screw_Row4_Right": "Row4_Screws.stl",
-        "CrankHandle_Row1": "Handle.stl",
+    _GEARBOX_UNITY_TO_OBJ_PREFIX = {
+        "BaseBoard": "BaseBoard",
+        "Bearing_Row1_Left": "Row1_Bearing_Left",
+        "Bearing_Row1_Right": "Row1_Bearing_Right",
+        "Bearing_Row2_Left": "Row2_Bearing_Left",
+        "Bearing_Row2_Right": "Row2_Bearing_Right",
+        "Bearing_Row3_Left": "Row3_Bearing_Left",
+        "Bearing_Row3_Right": "Row3_Bearing_Right",
+        "Bearing_Row4_Left": "Row4_Bearing_Left",
+        "Bearing_Row4_Right": "Row4_Bearing_Right",
+        "Stand_Row1_Left": "Row1_GearStand_Left",
+        "Stand_Row1_Right": "Row1_GearStand_Right",
+        "Stand_Row2_Left": "Row2_GearStand_Left",
+        "Stand_Row2_Right": "Row2_GearStand_Right",
+        "Stand_Row3_Left": "Row3_GearStand_Left",
+        "Stand_Row3_Right": "Row3_GearStand_Right",
+        "Stand_Row4_Left": "Row4_GearStand_Left",
+        "Stand_Row4_Right": "Row4_GearStand_Right",
+        "GearRod_Row1": "Row1_GearRod",
+        "GearRod_Row2": "Row2_GearRod",
+        "GearRod_Row3": "Row3_GearRod",
+        "GearRod_Row4": "Row4_GearRod",
+        "Gear_Row1_Left": "Row1_Gear_Left",
+        "Gear_Row2_Left": "Row2_Gear_Left",
+        "Gear_Row2_Right": "Row2_Gear_Right",
+        "Gear_Row3_Left": "Row3_Gear_Left",
+        "Gear_Row3_Right": "Row3_Gear_Right",
+        "Gear_Row4_Left": "Row4_Gear_Left",
+        "Pin_Row1_Left": "Row1_Pin_Left",
+        "Pin_Row1_Right": "Row1_Pin_Right",
+        "Pin_Row2_Left": "Row2_Pin_Left",
+        "Pin_Row2_Right": "Row2_Pin_Right",
+        "Pin_Row3_Left": "Row3_Pin_Left",
+        "Pin_Row3_Right": "Row3_Pin_Right",
+        "Pin_Row4_Left": "Row4_Pin_Left",
+        "Screw_Row1_Left": "Row1_Screw_Left",
+        "Screw_Row1_Right": "Row1_Screw_Right",
+        "Screw_Row2_Left": "Row2_Screw_Left",
+        "Screw_Row2_Right": "Row2_Screw_Right",
+        "Screw_Row3_Left": "Row3_Screw_Left",
+        "Screw_Row3_Right": "Row3_Screw_Right",
+        "Screw_Row4_Left": "Row4_Screw_Left",
+        "Screw_Row4_Right": "Row4_Screw_Right",
+        "CrankHandle_Row1": "Row1_Handle",
     }
-
-    _GEARBOX_STL_COLORS = {
-        "BaseBoard.stl": [0.02, 0.02, 0.02],
-        "Bearing.stl": [0.02, 0.02, 0.02],
-        "Handle.stl": [0.95, 0.95, 0.95],
-        "WoodenPin.stl": [0.55, 0.30, 0.12],
-    }
-
     # ── Static geometry helpers ───────────────────────────────────────────────
 
     @staticmethod
@@ -260,6 +252,9 @@ class SceneVis:
 
         self._gearbox_parts = {}
         self._gearbox_first_update_logged = False
+        self._gearbox_initial_states = None
+        self._gearbox_root_initial_T = None
+        self._gearbox_pose_frames = {}
         self._load_gearbox_mirror_meshes()
 
 
@@ -347,40 +342,124 @@ class SceneVis:
         T[:3, 3] = [0., -1.5, 0.]
         return T
 
-    def _gearbox_color_for_stl(self, stl_name: str):
-        if stl_name in self._GEARBOX_STL_COLORS:
-            return self._GEARBOX_STL_COLORS[stl_name]
-        if stl_name.startswith("Row1_"):
+    @staticmethod
+    def _gearbox_pre_rotation_T():
+        T = np.eye(4, dtype=np.float64)
+        T[:3, :3] = ScipyR.from_euler('x', -90, degrees=True).as_matrix()
+        return T
+
+    @staticmethod
+    def _gearbox_post_rotation_T():
+        T = np.eye(4, dtype=np.float64)
+        T[:3, :3] = ScipyR.from_euler('z', 180, degrees=True).as_matrix()
+        return T
+
+    @classmethod
+    def _gearbox_corrected_T(cls, T_pose: np.ndarray) -> np.ndarray:
+        # Apply the gearbox basis correction to orientation only. Left-multiplying
+        # a full Rz(180) transform would also rotate translation, mirroring +X/-Y
+        # motion into -X/+Y. Keep the received Unity/Open3D position intact.
+        T = np.asarray(T_pose, dtype=np.float64).copy()
+        R_pre = cls._gearbox_pre_rotation_T()[:3, :3]
+        R_post = cls._gearbox_post_rotation_T()[:3, :3]
+        T[:3, :3] = R_post @ T[:3, :3] @ R_pre
+        return T
+
+    def _gearbox_color_for_part(self, unity_name: str):
+        if unity_name == "BaseBoard" or unity_name.startswith("Bearing_"):
+            return [0.02, 0.02, 0.02]
+        if unity_name == "CrankHandle_Row1":
             return [0.95, 0.95, 0.95]
-        if stl_name.startswith("Row2_"):
+        if unity_name.startswith("Pin_"):
+            return [0.55, 0.30, 0.12]
+        if "_Row1" in unity_name:
+            return [0.95, 0.95, 0.95]
+        if "_Row2" in unity_name:
             return [0.9, 0.05, 0.05]
-        if stl_name.startswith("Row3_"):
+        if "_Row3" in unity_name:
             return [0.05, 0.75, 0.1]
-        if stl_name.startswith("Row4_"):
+        if "_Row4" in unity_name:
             return [0.05, 0.2, 0.9]
         return [0.65, 0.65, 0.65]
 
-    def _load_gearbox_mirror_meshes(self):
-        stl_dir = cfg.SCENE_LAYOUT_DIR.parent / "robot_assets" / "gearbox_parts" / "completed" / "colored_stl"
-        hidden = self._hidden_T()
-        for unity_name, stl_name in self._GEARBOX_UNITY_TO_STL.items():
-            stl_path = stl_dir / stl_name
-            if not stl_path.exists():
-                print(f"[SceneVis] gearbox STL missing for {unity_name}: {stl_path}")
+    @staticmethod
+    def _clean_obj_group_name(name: str) -> str:
+        if ".001_mesh" in name:
+            return name.split(".001_mesh", 1)[0]
+        if "_mesh" in name:
+            return name.split("_mesh", 1)[0]
+        return name
+
+    @staticmethod
+    def _obj_face_index(token: str, vertex_count: int) -> int:
+        idx = int(token.split("/", 1)[0])
+        return idx - 1 if idx > 0 else vertex_count + idx
+
+    def _load_obj_group_meshes(self, obj_path):
+        vertices = []
+        faces_by_group = {}
+        current_group = None
+        with open(obj_path, "r", encoding="utf-8", errors="ignore") as fh:
+            for line in fh:
+                if line.startswith("v "):
+                    parts = line.split()
+                    if len(parts) >= 4:
+                        vertices.append([float(parts[1]), float(parts[2]), float(parts[3])])
+                elif line.startswith("g ") or line.startswith("o "):
+                    current_group = self._clean_obj_group_name(line[2:].strip())
+                    faces_by_group.setdefault(current_group, [])
+                elif line.startswith("f ") and current_group is not None:
+                    refs = [self._obj_face_index(tok, len(vertices)) for tok in line.split()[1:]]
+                    if len(refs) >= 3:
+                        for i in range(1, len(refs) - 1):
+                            faces_by_group[current_group].append([refs[0], refs[i], refs[i + 1]])
+
+        verts = np.asarray(vertices, dtype=np.float64)
+        meshes = {}
+        for group, faces in faces_by_group.items():
+            if not faces:
                 continue
-            mesh = o3d.io.read_triangle_mesh(str(stl_path))
+            used = sorted({idx for face in faces for idx in face})
+            remap = {old: new for new, old in enumerate(used)}
+            local_faces = [[remap[idx] for idx in face] for face in faces]
+            mesh = o3d.geometry.TriangleMesh()
+            mesh.vertices = o3d.utility.Vector3dVector(verts[used])
+            mesh.triangles = o3d.utility.Vector3iVector(np.asarray(local_faces, dtype=np.int32))
             mesh.compute_vertex_normals()
-            mesh.paint_uniform_color(self._gearbox_color_for_stl(stl_name))
+            meshes[group] = mesh
+        return meshes
+
+    def _load_gearbox_mirror_meshes(self):
+        obj_path = cfg.SCENE_LAYOUT_DIR.parent / "robot_assets" / "gearbox_parts" / "GearBoxAssembly_Uncolored.obj"
+        if not obj_path.exists():
+            print(f"[SceneVis] gearbox OBJ missing: {obj_path}")
+            return
+        obj_meshes = self._load_obj_group_meshes(obj_path)
+        hidden = self._hidden_T()
+        for unity_name, group_name in self._GEARBOX_UNITY_TO_OBJ_PREFIX.items():
+            mesh = obj_meshes.get(group_name)
+            if mesh is None:
+                print(f"[SceneVis] gearbox OBJ group missing for {unity_name}: {group_name}")
+                continue
+            mesh.paint_uniform_color(self._gearbox_color_for_part(unity_name))
             mesh.transform(hidden)
             self.vis.add_geometry(mesh)
-            self._gearbox_parts[unity_name] = {"mesh": mesh, "T": hidden.copy()}
-        print(f"[SceneVis] gearbox mirror loaded {len(self._gearbox_parts)} STL instances")
+
+            frame_size = 0.08 if unity_name == "BaseBoard" else 0.025
+            pose_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=frame_size)
+            pose_frame.transform(hidden)
+            self.vis.add_geometry(pose_frame)
+
+            self._gearbox_parts[unity_name] = {
+                "mesh": mesh,
+                "T": hidden.copy(),
+                "pose_frame": pose_frame,
+                "pose_frame_T": hidden.copy(),
+            }
+        print(f"[SceneVis] gearbox mirror loaded {len(self._gearbox_parts)} OBJ group instances from {obj_path.name}")
 
     @staticmethod
     def _T_from_pose_scale(T_pose: np.ndarray, scale) -> np.ndarray:
-        # Gearbox STLs are already exported in meters at their intended size.
-        # Unity lossyScale mostly reflects import-helper transforms, so applying
-        # it here shrinks/warps parts such as pins, rods, and gear mesh children.
         return np.array(T_pose, dtype=np.float64, copy=True)
 
     def _make_hand(self, color: list):
@@ -593,23 +672,50 @@ class SceneVis:
         if states is None:
             return
         hidden = self._hidden_T()
+        if self._gearbox_initial_states is None:
+            self._gearbox_initial_states = {
+                name: np.array(state["T"], dtype=np.float64, copy=True)
+                for name, state in states.items()
+                if state is not None and "T" in state
+            }
+            root_state = states.get("BaseBoard")
+            if root_state is not None and "T" in root_state:
+                self._gearbox_root_initial_T = np.array(root_state["T"], dtype=np.float64, copy=True)
+            else:
+                self._gearbox_root_initial_T = np.eye(4, dtype=np.float64)
+
         matched = 0
         active = 0
         for name, entry in self._gearbox_parts.items():
             state = states.get(name)
-            if state is None or not state.get("active", True):
+            T_initial = self._gearbox_initial_states.get(name) if self._gearbox_initial_states else None
+            if state is None or T_initial is None or not state.get("active", True):
                 T_new = hidden
             else:
                 matched += 1
                 active += 1
-                T_new = self._T_from_pose_scale(state["T"], state.get("scale"))
+                T_current = self._gearbox_corrected_T(self._T_from_pose_scale(state["T"], state.get("scale")))
+                T_initial_corr = self._gearbox_corrected_T(T_initial)
+                root_initial_corr = self._gearbox_corrected_T(self._gearbox_root_initial_T)
+                # OBJ groups are already in assembled rest coordinates. Move them by
+                # the live Unity rigid-body delta from the first received rest pose.
+                T_new = T_current @ np.linalg.inv(T_initial_corr) @ root_initial_corr
             delta = T_new @ np.linalg.inv(entry["T"])
             entry["mesh"].transform(delta)
             entry["T"] = np.array(T_new, dtype=np.float64, copy=True)
             self.vis.update_geometry(entry["mesh"])
+
+            frame_T = hidden
+            if state is not None and state.get("active", True) and "T" in state:
+                frame_T = self._gearbox_corrected_T(self._T_from_pose_scale(state["T"], state.get("scale")))
+            frame_delta = frame_T @ np.linalg.inv(entry["pose_frame_T"])
+            entry["pose_frame"].transform(frame_delta)
+            entry["pose_frame_T"] = np.array(frame_T, dtype=np.float64, copy=True)
+            self.vis.update_geometry(entry["pose_frame"])
         if not self._gearbox_first_update_logged:
             missing = sorted(set(self._gearbox_parts) - set(states))[:8]
-            print(f"[SceneVis] gearbox mirror first update: matched={matched}/{len(self._gearbox_parts)} active={active}; sample_missing={missing}")
+            root_note = "BaseBoard" if "BaseBoard" in states else "identity fallback"
+            print(f"[SceneVis] gearbox mirror first update: matched={matched}/{len(self._gearbox_parts)} active={active}; root={root_note}; sample_missing={missing}")
             self._gearbox_first_update_logged = True
 
     def update_tcp(self, T: np.ndarray | None):
