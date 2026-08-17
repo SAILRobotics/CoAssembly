@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -83,6 +84,17 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["predicted_part_file"], self.part_file)
         self.assertEqual(self.resolver.received[1], "the small gear on the left")
+
+    def test_every_babylon_mapping_uses_a_real_study_part(self):
+        mapping = re.search(
+            r"const assemblyParts = \{(?P<body>.*?)\n  \};",
+            study.INDEX_HTML,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(mapping)
+        mapped_files = set(re.findall(r"'([^']+\.stl)'\s*:", mapping.group("body")))
+        self.assertTrue(mapped_files)
+        self.assertEqual(mapped_files - set(study.part_files()), set())
 
     def test_response_and_prediction_are_logged_separately(self):
         with tempfile.TemporaryDirectory() as directory:
