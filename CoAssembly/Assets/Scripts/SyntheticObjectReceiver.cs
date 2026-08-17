@@ -160,8 +160,10 @@ public class SyntheticObjectReceiver : MonoBehaviour
             }
 
             // Scene-authored visuals listed in skipAutoVisualIds (notably TCP
-            // ID 3) keep their own color-control path. Port 5006 owns only
-            // their pose/scale; ToolColorReceiver on port 5010 owns TCP color.
+            // ID 3) keep their own color-control AND scale — they have their
+            // own mesh authored at a fixed size, so port 5006's box-size
+            // dimensions (meant for wireframe debug cubes) must not stomp it.
+            // ToolColorReceiver on port 5010 owns TCP color.
             if (!ShouldSkipAutoVisual(obj.id))
                 ApplyColor(obj);
 
@@ -176,7 +178,8 @@ public class SyntheticObjectReceiver : MonoBehaviour
                                                   obj.rotation_xyzw[2],
                                                   obj.rotation_xyzw[3]);
 
-            if (applyScale && obj.size != null && obj.size.Length == 3)
+            if (applyScale && !ShouldSkipAutoVisual(obj.id)
+                    && obj.size != null && obj.size.Length == 3)
                 tf.localScale = new Vector3(obj.size[0], obj.size[1], obj.size[2]);
         }
     }
