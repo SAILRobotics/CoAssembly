@@ -935,6 +935,7 @@ class _ToolSelectionManager:
         self._highlighted:      set[int]                = set()
         self._assembly_events:  list[dict]              = []
         self._on_cancel = None
+        self._last_color_refresh = 0.0
 
     def poll(self, timeout_ms: int = 0) -> bool:
         poller = zmq.Poller()
@@ -1043,6 +1044,23 @@ class _ToolSelectionManager:
             self._pub.send_string(json.dumps(msg))
         except Exception as e:
             print(f"[ToolSelection] Publish error: {e}")
+
+    def refresh_colors(self, interval_s: float = 1.0) -> None:
+        """Republish effective colors so late port-5010 subscribers catch up."""
+        now = time.monotonic()
+        if now - self._last_color_refresh < interval_s:
+            return
+        self._last_color_refresh = now
+        for tool_id, resting_color in self._category_colors.items():
+            if tool_id == self._active_tool_id:
+                color = self.SELECTED_COLOR
+            elif tool_id == self._hovered_tool_id:
+                color = self.HOVER_COLOR
+            elif tool_id in self._highlighted:
+                color = self.HIGHLIGHT_COLOR
+            else:
+                color = resting_color
+            self.send_color(tool_id, color)
 
     @property
     def active_tool_id(self) -> int | None:
@@ -1706,6 +1724,12 @@ class MainScene:
 
         self.anchor      = _WorldAnchor(quest_ip)
         self.tools       = _ToolSelectionManager(quest_ip)
+        # Register TCPMarker's resting state immediately, independently of the
+        # pegboard/anchor lifecycle. refresh_colors() will keep advertising it
+        # until Unity's port-5010 subscriber is connected.
+        self.tools.set_category_color(
+            _ToolSelectionManager.TCP_TOOL_ID,
+            _ToolSelectionManager.TCP_COLOR)
         self.tuner       = _OffsetTuner()
         self.jog_gui     = _JogGUI()
         self.synth       = _SyntheticObjectPublisher(quest_ip)
@@ -2074,6 +2098,9 @@ class MainScene:
 
                 # ── Poll streams ──────────────────────────────────────────────
                 self.tools.poll(timeout_ms=0)
+                # PUB/SUB has no retained state; repeat the current colors at a
+                # low rate so Unity also receives them after a late connection.
+                self.tools.refresh_colors()
                 if self.tools.drain_highlights(timeout_ms=0):
                     self._sync_vis_highlight()   # mirror the cyan highlight onto the Open3D boxes
                     for event in self.tools.pop_assembly_events():
