@@ -45,3 +45,34 @@ Run the dependency/state-engine check without opening a window:
 ```bash
 python3 task_graph/gearbox_task_graph.py --self-test
 ```
+
+## Study 1: referring-expression grounding
+
+The Babylon study can collect participant descriptions without a model:
+
+```bash
+python referring_expression_test_babylon.py
+```
+
+To let a local Florence-2 model identify the described part, install the
+Study 1 dependencies and enable the resolver:
+
+```bash
+python -m pip install -r requirements-study1.txt
+python referring_expression_test_babylon.py --resolver florence2
+```
+
+Open `http://127.0.0.1:5050`, enter a description, and click **Ask model**.
+The target box is removed before the browser captures the assembly, so the
+model cannot see the answer. The prediction is mapped back to a Babylon mesh
+and displayed in cyan. Human responses remain in
+`referring_expression_responses.csv`; model predictions, correctness,
+optional model confidence, box-to-mesh mapping score, and latency are written to
+`referring_expression_predictions.csv`.
+
+The model is downloaded and loaded on the first evaluation. Override it with
+`--model MODEL_ID`. Run the focused tests with:
+
+```bash
+python -m unittest tests.test_referring_expression
+```
