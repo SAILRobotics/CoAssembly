@@ -66,6 +66,8 @@ public class SyntheticObjectReceiver : MonoBehaviour
     private readonly ConcurrentQueue<List<ObjectData>> dataQueue = new();
     private bool[]  _visualReady;
     private float[] _lastSeenTime;
+    private Material[] _faceMaterials;
+    private Material[] _edgeMaterials;
 
     [Serializable] private class ObjectData
     {
@@ -73,6 +75,7 @@ public class SyntheticObjectReceiver : MonoBehaviour
         public float[] position;
         public float[] rotation_xyzw;
         public float[] size;
+        public float[] color;
     }
     [Serializable] private class Payload { public List<ObjectData> objects; }
 
@@ -81,6 +84,8 @@ public class SyntheticObjectReceiver : MonoBehaviour
     {
         _visualReady  = new bool[objects.Length];
         _lastSeenTime = new float[objects.Length];
+        _faceMaterials = new Material[objects.Length];
+        _edgeMaterials = new Material[objects.Length];
         NetMQManager.RegisterReceiver();
         isRunning = true;
         receiveThread = new Thread(ReceiveLoop) { IsBackground = true };
@@ -154,6 +159,10 @@ public class SyntheticObjectReceiver : MonoBehaviour
                 _visualReady[obj.id] = true;
             }
 
+            // Color is supplied by Python on port 5006. Apply it on every
+            // update so Python can also change an object's color at runtime.
+            ApplyColor(obj);
+
             if (obj.position != null && obj.position.Length == 3)
                 tf.localPosition = new Vector3(obj.position[0],
                                                obj.position[1],
@@ -180,7 +189,20 @@ public class SyntheticObjectReceiver : MonoBehaviour
 
     private void SetupVisual(int id, Transform tf)
     {
-        if (ShouldSkipAutoVisual(id)) return;
+        if (ShouldSkipAutoVisual(id))
+        {
+            // Keep the scene-authored visual (for example the TCP sphere), but
+            // instance its material so colors received on port 5006 can still
+            // be applied without changing other objects that share it.
+            var existingRenderer = tf.GetComponent<Renderer>();
+            if (existingRenderer != null && existingRenderer.sharedMaterial != null)
+            {
+                var existingMaterial = new Material(existingRenderer.sharedMaterial);
+                existingRenderer.material = existingMaterial;
+                _faceMaterials[id] = existingMaterial;
+            }
+            return;
+        }
         Color c = id < ObjectColors.Length ? ObjectColors[id] : Color.white;
 
         // Face — instance the user's template material, tint it
@@ -190,21 +212,53 @@ public class SyntheticObjectReceiver : MonoBehaviour
             if (rend != null)
             {
                 var mat = new Material(templateMaterial);
-                float a = templateMaterial.color.a;   // preserve the alpha you set
-                // Cover both Built-in (_Color) and URP (_BaseColor)
-                mat.SetColor("_Color",     new Color(c.r, c.g, c.b, a));
-                mat.SetColor("_BaseColor", new Color(c.r, c.g, c.b, a));
                 rend.material = mat;
+                _faceMaterials[id] = mat;
             }
         }
 
         // Edges — thin wireframe via MeshTopology.Lines
         var old = tf.Find("Edges");
         if (old != null) Destroy(old.gameObject);
-        AddEdges(tf, new Color(c.r, c.g, c.b, 1f));
+        _edgeMaterials[id] = AddEdges(tf, new Color(c.r, c.g, c.b, 1f));
     }
 
-    private void AddEdges(Transform parent, Color color)
+    private void ApplyColor(ObjectData obj)
+    {
+        Color fallback = obj.id < ObjectColors.Length
+            ? ObjectColors[obj.id]
+            : Color.white;
+        float alpha = templateMaterial != null ? templateMaterial.color.a : 1f;
+        var face = _faceMaterials[obj.id];
+        if (ShouldSkipAutoVisual(obj.id) && face != null)
+            alpha = face.color.a;
+        Color c = fallback;
+        if (obj.color != null && obj.color.Length >= 3)
+        {
+            if (obj.color.Length >= 4) alpha = obj.color[3];
+            c = new Color(obj.color[0], obj.color[1], obj.color[2], alpha);
+        }
+        else
+        {
+            c.a = alpha;
+        }
+
+        if (face != null)
+        {
+            face.SetColor("_Color", c);
+            face.SetColor("_BaseColor", c);
+        }
+
+        var edge = _edgeMaterials[obj.id];
+        if (edge != null)
+        {
+            var edgeColor = new Color(c.r, c.g, c.b, 1f);
+            edge.SetColor("_Color", edgeColor);
+            edge.SetColor("_BaseColor", edgeColor);
+        }
+    }
+
+    private Material AddEdges(Transform parent, Color color)
     {
         var go = new GameObject("Edges");
         go.transform.SetParent(parent, false);
@@ -223,6 +277,7 @@ public class SyntheticObjectReceiver : MonoBehaviour
         mr.material = mat;
 
         mf.mesh = BuildCubeEdgeMesh();
+        return mat;
     }
 
     private static Mesh BuildCubeEdgeMesh()

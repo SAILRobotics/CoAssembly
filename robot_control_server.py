@@ -224,6 +224,13 @@ class RobotControlServer:
         self._board_force_baseline: "np.ndarray | None" = None
         self._board_force_hits = 0
         self._board_force_last_t = 0.0
+        # General tool/part handover: hold the gripper closed until the human
+        # applies a sustained pull, then open and acknowledge the request.
+        self._handover_pull_active = False
+        self._handover_force_baseline: "np.ndarray | None" = None
+        self._handover_force_hits = 0
+        self._handover_force_last_t = 0.0
+        self._handover_request_id = None
 
         # Move-to-pose state machine (IK + CBF servo loop, driven by tick())
         self._move_phase:       "str | None"        = None
@@ -331,6 +338,7 @@ class RobotControlServer:
             "board_state":        self._board_state,
             "board_interaction_active": self._board_force_mode is not None
                                         or self._board_state != "inactive",
+            "object_handover_waiting": self._handover_pull_active,
         })
 
     def _poll_commands(self) -> None:
@@ -390,6 +398,9 @@ class RobotControlServer:
             self.cancel_motion()
         elif cmd == "cancel_grasp":
             self.cancel_grasp()
+
+        elif cmd == "wait_for_handover_pull":
+            self.start_object_handover_pull(rid)
 
         elif cmd == "start_board_interaction":
             self.start_board_interaction()
@@ -453,6 +464,8 @@ class RobotControlServer:
             return
         if self._board_force_mode is not None:
             self._tick_board_interaction()
+        if self._handover_pull_active:
+            self._tick_object_handover_pull()
         if not self.simulation:
             if self._grasp_phase is not None:
                 self._tick_real_grasp(dt)
@@ -637,7 +650,7 @@ class RobotControlServer:
         try:
             return np.asarray(self._recv_conn().getActualTCPForce()[:3], float)
         except Exception as e:
-            print(f"[Robot] Board force read failed: {e}")
+            print(f"[Robot] TCP force read failed: {e}")
             return None
 
     def _tick_board_interaction(self) -> None:
@@ -704,6 +717,73 @@ class RobotControlServer:
             self._set_board_state("inactive")
             self._arm_board_force(None)
 
+    def start_object_handover_pull(self, request_id) -> None:
+        """Hold a grasped object until a sustained human pull is detected."""
+        if self._startup_active or self._grasp_phase is not None or self._move_phase is not None:
+            print("[Robot] Object handover pull monitor blocked — robot is moving")
+            self._publish_event("release_done", request_id, ok=False)
+            return
+        if self._board_force_mode is not None or self._board_state != "inactive":
+            print("[Robot] Object handover pull monitor blocked — board interaction active")
+            self._publish_event("release_done", request_id, ok=False)
+            return
+        if self.simulation:
+            # PyBullet has no wrist-force or gripper simulation. Treat the
+            # virtual human pull as immediate so the full lifecycle remains testable.
+            print("[Robot sim] Virtual handover pull → release acknowledged")
+            self._publish_event("release_done", request_id, ok=True)
+            return
+        self.servoStop()
+        self._handover_pull_active = True
+        self._handover_force_baseline = None
+        self._handover_force_hits = 0
+        self._handover_force_last_t = 0.0
+        self._handover_request_id = request_id
+        print(f"[Robot] Waiting for human pull on object "
+              f"(threshold={cfg.OBJECT_HANDOVER_PULL_THRESHOLD_N:.1f} N)")
+
+    def _finish_object_handover_pull(self, ok: bool) -> None:
+        request_id = self._handover_request_id
+        self._handover_pull_active = False
+        self._handover_force_baseline = None
+        self._handover_force_hits = 0
+        self._handover_force_last_t = 0.0
+        self._handover_request_id = None
+        self._publish_event("release_done", request_id, ok=bool(ok))
+
+    def _tick_object_handover_pull(self) -> None:
+        """Open the gripper only after a debounced force change from the baseline."""
+        if self.simulation or not self._handover_pull_active:
+            return
+        now = time.perf_counter()
+        if (self._handover_force_last_t > 0.0
+                and now - self._handover_force_last_t
+                    < 1.0 / cfg.OBJECT_HANDOVER_FORCE_POLL_HZ):
+            return
+        self._handover_force_last_t = now
+        force = self._poll_tcp_force()
+        if force is None:
+            return
+        if self._handover_force_baseline is None:
+            self._handover_force_baseline = force
+            print(f"[Robot] Object handover force baseline captured "
+                  f"({np.round(force, 1).tolist()} N)")
+            return
+        delta = float(np.linalg.norm(force - self._handover_force_baseline))
+        self._handover_force_hits = (
+            self._handover_force_hits + 1
+            if delta > cfg.OBJECT_HANDOVER_PULL_THRESHOLD_N else 0)
+        if self._handover_force_hits < cfg.OBJECT_HANDOVER_DEBOUNCE_HITS:
+            return
+        print(f"[Robot] Human pull detected ({delta:.1f} N) → opening gripper")
+        try:
+            self.open_gripper()
+        except Exception as e:
+            print(f"[Robot] Object handover gripper release failed: {e}")
+            self._finish_object_handover_pull(False)
+            return
+        self._finish_object_handover_pull(True)
+
     def move_to_pose(self, pos, quat=None, board_move: bool = False,
                      force_pybullet_ik: bool = False,
                      on_complete: "Callable[[bool], None] | None" = None) -> None:
@@ -715,6 +795,11 @@ class RobotControlServer:
             return
         if self._grasp_phase is not None:
             print("[Robot] move_to_pose blocked — grasp in progress")
+            if on_complete:
+                on_complete(False)
+            return
+        if self._handover_pull_active:
+            print("[Robot] move_to_pose blocked — waiting for object handover pull")
             if on_complete:
                 on_complete(False)
             return
@@ -975,6 +1060,11 @@ class RobotControlServer:
             if on_complete:
                 on_complete(False)
             return
+        if self._handover_pull_active:
+            print("[Robot] Grasp blocked — waiting for object handover pull")
+            if on_complete:
+                on_complete(False)
+            return
         self._prepare_board_state_for_motion()
         if (self._board_state != "inactive"
                 or self._board_force_mode is not None):
@@ -1132,6 +1222,9 @@ class RobotControlServer:
             print("[Robot] Grasp cancelled — returning tool to board")
 
     def cancel_motion(self) -> None:
+        if self._handover_pull_active:
+            print("[Robot] Object handover pull wait cancelled; gripper remains closed")
+            self._finish_object_handover_pull(False)
         startup_was_active = self._startup_active
         self._startup_active = False
         self._startup_runner = None

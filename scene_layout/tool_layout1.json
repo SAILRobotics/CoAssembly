@@ -922,7 +922,7 @@
     },
     {
       "id": 32,
-      "type": "SCREWS",
+      "type": "ROW3_KIT",
       "category": "part",
       "planar": true,
       "peg_pos": [
@@ -951,7 +951,7 @@
     },
     {
       "id": 33,
-      "type": "BEARINGS",
+      "type": "ROW4_KIT",
       "category": "part",
       "planar": true,
       "peg_pos": [
@@ -980,7 +980,7 @@
     },
     {
       "id": 34,
-      "type": "PINS",
+      "type": "ROW2_KIT",
       "category": "part",
       "planar": true,
       "peg_pos": [
@@ -1009,7 +1009,7 @@
     },
     {
       "id": 35,
-      "type": "MISC",
+      "type": "ROW1_KIT",
       "category": "part",
       "planar": true,
       "peg_pos": [

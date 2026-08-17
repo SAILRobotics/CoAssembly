@@ -66,6 +66,9 @@ BOARD_GRASP_FORCE_THRESHOLD_N   = 4.0
 BOARD_RELEASE_FORCE_THRESHOLD_N = 15.0
 BOARD_FORCE_DEBOUNCE_HITS       = 5
 BOARD_FORCE_POLL_HZ             = 20
+OBJECT_HANDOVER_PULL_THRESHOLD_N = 15.0
+OBJECT_HANDOVER_DEBOUNCE_HITS    = 5
+OBJECT_HANDOVER_FORCE_POLL_HZ    = 20
 
 # ── ArUco marker IDs ──────────────────────────────────────────────────────────
 ANCHOR_MARKER_ID   = 100   # world frame + PyBullet scene origin

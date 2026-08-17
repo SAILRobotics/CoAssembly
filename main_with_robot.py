@@ -788,6 +788,7 @@ class _ToolLayoutManager:
 
     def __init__(self, json_path: str, ip: str):
         self._tools: list = []
+        self._delivered_ids: set[int] = set()
         ctx = zmq.Context()
         self._pub = ctx.socket(zmq.PUB)
         self._pub.connect(f"tcp://{ip}:{self.PORT}")
@@ -820,6 +821,8 @@ class _ToolLayoutManager:
     def publish(self, T: np.ndarray) -> None:
         out = []
         for t in self._tools:
+            if int(t["id"]) in self._delivered_ids:
+                continue
             pos_w, R_world, sz = self._tool_box_world(t, T)
             q_xyzw  = ScipyR.from_matrix(R_world).as_quat()
 
@@ -841,6 +844,10 @@ class _ToolLayoutManager:
             self._pub.send_string(json.dumps({"tools": out}))
         except Exception as e:
             print(f"[ToolLayout] Publish error: {e}")
+
+    def mark_delivered(self, tool_id: int) -> None:
+        """Exclude an object from subsequent Unity layout publications."""
+        self._delivered_ids.add(int(tool_id))
 
     def _tool_world_data(self, t: dict, T: np.ndarray) -> tuple:
         sz      = t.get("size", [0.05, 0.05, 0.05])
@@ -1763,6 +1770,8 @@ class MainScene:
         self._last_ar_board_T: "np.ndarray | None"    = None   # last AR box pose from _GripPoseBridge; persists between polls
         self._pending_grasp_tool_id: "int | None"           = None   # tool ID being grasped (set on click, not yet read back)
         self._grasped_objects: list                          = []     # [(id, name)] of successfully grasped objects (cancelled grasps excluded)
+        self._handed_over_objects: list                      = []     # [(id, name)] released successfully to the human
+        self._handover_tool_id: "int | None"                 = None   # object currently awaiting/in handover
         self._last_left_pts:  "list | None"                 = None   # most recent left  hand joints from world_joints()
         self._last_right_pts: "list | None"                 = None   # most recent right hand joints from world_joints()
         self._pending_handover: bool                         = False  # set True after successful grasp to trigger handover on next frame
@@ -1859,23 +1868,65 @@ class MainScene:
         """Mirror the pegboard tool highlight (received by self.tools on 5024 and applied to the
         Unity tools) onto the local Open3D tool boxes — cyan, exactly like gearbox_control --open-3d.
         Always on; no argument gates it."""
+        handed_over = {tid for tid, _ in self._handed_over_objects}
         idxs = [self._tool_id_to_box_index[tid]
                 for tid in self.tools.highlighted
-                if tid in self._tool_id_to_box_index]
+                if tid in self._tool_id_to_box_index and tid not in handed_over]
         self.vis.set_tool_highlight_indices(idxs)
 
     def _record_grasped_object(self, tool_id: int) -> None:
-        """Record a successful grasp and remove its Open3D pegboard box."""
+        """Record a successful grasp; do not hide it until handover release."""
         name = self.tool_layout.get_name(tool_id)
         if not any(tid == tool_id for tid, _ in self._grasped_objects):
             self._grasped_objects.append((tool_id, name))
+        self._handover_tool_id = tool_id
+
+    def _record_handed_over_object(self, tool_id: int) -> None:
+        """Record confirmed release and remove its Open3D pegboard box."""
+        name = self.tool_layout.get_name(tool_id)
+        if not any(tid == tool_id for tid, _ in self._handed_over_objects):
+            self._handed_over_objects.append((tool_id, name))
+        self.tool_layout.mark_delivered(tool_id)
         hidden = [self._tool_id_to_box_index[tid]
-                  for tid, _ in self._grasped_objects
+                  for tid, _ in self._handed_over_objects
                   if tid in self._tool_id_to_box_index]
         self.vis.set_tool_hidden_indices(hidden)
         T_wp = self.anchor.T_pegboard_in_world
         if T_wp is not None:
             self.vis.update_tool_boxes(self.tool_layout.world_boxes(T_wp))
+            # ToolSpawner despawns IDs omitted from a refreshed full layout.
+            self.tool_layout.publish(T_wp)
+
+    def _on_object_released(self, ok: bool) -> None:
+        tool_id = self._handover_tool_id
+        self._robot_state = None
+        self._motion_source = None
+        self._tracking_hand_side = None
+        self._tcp_target_T = None
+        if ok and tool_id is not None:
+            self._record_handed_over_object(tool_id)
+            print(f"[Handover] Released '{self.tool_layout.get_name(tool_id)}' "
+                  f"(id={tool_id}) to human — box removed")
+            print(f"[Handed over so far] "
+                  f"{[n for _, n in self._handed_over_objects]}")
+            self._handover_tool_id = None
+            self._pending_handover = False
+        else:
+            print("[Handover] Gripper release failed — object remains visible; retrying")
+            self._pending_handover = True
+
+    def _on_object_handover_target_reached(self, ok: bool) -> None:
+        self._robot_state = None
+        self._motion_source = None
+        self._tracking_hand_side = None
+        self._tcp_target_T = None
+        if ok and self.robot is not None and self._handover_tool_id is not None:
+            self._robot_state = 'waiting_for_handover_pull'
+            print("[Handover] Hand target reached → hold object; waiting for human pull")
+            self.robot.wait_for_handover_pull(on_complete=self._on_object_released)
+        else:
+            print("[Handover] Hand-target move failed — object remains visible; retrying")
+            self._pending_handover = True
 
     def _apply_tool_category_colors(self) -> None:
         """Send each tool's category color via ToolColorReceiver (port 5010)
@@ -1942,7 +1993,8 @@ class MainScene:
         self._motion_source = None
         self._tcp_target_T = None
 
-    def _summon_to_hand(self, target_side: str, hand_pts) -> bool:
+    def _summon_to_hand(self, target_side: str, hand_pts,
+                        on_complete=None) -> bool:
         """Move the robot TCP toward a hand palm.
 
         ``target_side`` is 'left' or 'right'; ``hand_pts`` is the world-frame
@@ -1994,7 +2046,7 @@ class MainScene:
         self._tcp_target_T   = _T_tgt
         self.robot.move_to_pose(
             target_pos, target_quat,
-            on_complete=self._on_hand_target_reached,
+            on_complete=on_complete or self._on_hand_target_reached,
         )
         return True
 
@@ -2138,13 +2190,16 @@ class MainScene:
                         and not self.robot.tool_grasp_running
                         and not self.robot.move_running
                         and self.anchor.locked):
-                    self._pending_handover = False
                     _hpts = (self._last_right_pts if self._HANDOVER_SIDE == 'right'
                              else self._last_left_pts)
                     if _hpts is None:
-                        print(f"[Handover] {self._HANDOVER_SIDE} hand not visible — skipping")
+                        # Keep the request pending; begin as soon as the hand is visible.
+                        pass
                     else:
-                        self._summon_to_hand(self._HANDOVER_SIDE, _hpts)
+                        if self._summon_to_hand(
+                                self._HANDOVER_SIDE, _hpts,
+                                on_complete=self._on_object_handover_target_reached):
+                            self._pending_handover = False
 
                 # ── Workspace boundary (fades in as head/hands approach/exit) ──
                 if self.anchor.locked:
@@ -2324,6 +2379,12 @@ class MainScene:
 
                 # ── Tool click → grasp ────────────────────────────────────────
                 _tid = self.tools.active_tool_id
+                if (_tid is not None
+                        and any(done_id == _tid
+                                for done_id, _ in self._handed_over_objects)):
+                    print(f"[User] Ignoring id={_tid}; object was already handed over")
+                    self.tools.deselect(_tid)
+                    _tid = None
                 if (_tid is not None
                         and self._pending_grasp_tool_id is not None):
                     if _tid == self._pending_grasp_tool_id:

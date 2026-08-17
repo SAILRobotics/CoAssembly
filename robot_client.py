@@ -269,6 +269,16 @@ class RobotClient:
         """Cancel mid-grasp and retract to approach position."""
         self._send({"cmd": "cancel_grasp"})
 
+    def wait_for_handover_pull(self,
+                               on_complete: "Callable[[bool], None] | None" = None) -> None:
+        """Wait for a sustained human pull, then open and report release."""
+        rid = None
+        if on_complete is not None:
+            rid = self._next_request_id
+            self._next_request_id += 1
+            self._callbacks[rid] = lambda msg: on_complete(bool(msg.get("ok", False)))
+        self._send({"cmd": "wait_for_handover_pull", "request_id": rid})
+
     def close(self) -> None:
         try:
             self._cmd_pub.close(0)
