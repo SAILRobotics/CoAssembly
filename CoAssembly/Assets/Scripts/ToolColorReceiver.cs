@@ -36,7 +36,6 @@ public class ToolColorReceiver : MonoBehaviour
     // ── Per-instance state ───────────────────────────────────────────────────
     private readonly ConcurrentQueue<Color> pendingColor = new();
     private MaterialPropertyBlock propertyBlock;
-    private Renderer[] targetRenderers;
     private static readonly int BaseColorID = Shader.PropertyToID("_BaseColor");
     private static readonly int ColorID = Shader.PropertyToID("_Color");
     private static readonly int BaseColorFactorID = Shader.PropertyToID("_BaseColorFactor");
@@ -56,18 +55,6 @@ public class ToolColorReceiver : MonoBehaviour
             enabled = false;
             return;
         }
-
-        // Imported glTF tools can be split across several sibling renderers.
-        // When an explicit renderer is assigned, find its top-level branch
-        // beneath this interactable and tint every renderer in that branch.
-        // This includes the coupling, adapter and gripper meshes, but excludes
-        // the separate TCPMarker cube renderer on this GameObject.
-        Transform visualRoot = targetRenderer.transform;
-        while (visualRoot.parent != null && visualRoot.parent != transform)
-            visualRoot = visualRoot.parent;
-        targetRenderers = visualRoot.GetComponentsInChildren<Renderer>(true);
-        if (targetRenderers.Length == 0)
-            targetRenderers = new[] { targetRenderer };
 
         Material mat = targetRenderer.sharedMaterial;
         propertyBlock = new MaterialPropertyBlock();
@@ -164,17 +151,15 @@ public class ToolColorReceiver : MonoBehaviour
         while (pendingColor.TryDequeue(out Color c))
         {
             Debug.Log($"[ToolColorReceiver:{toolId}] 🎨 Applying ({c.r:F2},{c.g:F2},{c.b:F2},{c.a:F2}) " +
-            $"to {targetRenderers.Length} renderer(s) under '{gameObject.name}'");
-            foreach (Renderer rendererToTint in targetRenderers)
-            {
-                rendererToTint.GetPropertyBlock(propertyBlock);
-                // Cover Built-in, URP and common glTF shader conventions. A
-                // renderer-wide block applies to every material slot.
-                propertyBlock.SetColor(BaseColorID, c);
-                propertyBlock.SetColor(ColorID, c);
-                propertyBlock.SetColor(BaseColorFactorID, c);
-                rendererToTint.SetPropertyBlock(propertyBlock);
-            }
+            $"to renderer '{targetRenderer.name}' on '{gameObject.name}'");
+            targetRenderer.GetPropertyBlock(propertyBlock);
+            // Cover Built-in, URP and common glTF shader conventions. A
+            // renderer-wide property block applies the color to every material
+            // slot on the imported GripperWithAdapters mesh.
+            propertyBlock.SetColor(BaseColorID, c);
+            propertyBlock.SetColor(ColorID, c);
+            propertyBlock.SetColor(BaseColorFactorID, c);
+            targetRenderer.SetPropertyBlock(propertyBlock);
         }
     }
 
