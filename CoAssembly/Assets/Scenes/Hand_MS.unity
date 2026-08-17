@@ -4216,9 +4216,6 @@ PrefabInstance:
       addedObject: {fileID: 515608914}
     - targetCorrespondingSourceObject: {fileID: 4483412089648533218, guid: a7e4cd16177d0764fa03c50435c8125f, type: 3}
       insertIndex: -1
-      addedObject: {fileID: 515608913}
-    - targetCorrespondingSourceObject: {fileID: 4483412089648533218, guid: a7e4cd16177d0764fa03c50435c8125f, type: 3}
-      insertIndex: -1
       addedObject: {fileID: 515608912}
   m_SourcePrefab: {fileID: 100100000, guid: a7e4cd16177d0764fa03c50435c8125f, type: 3}
 --- !u!4 &372005378 stripped
@@ -5747,21 +5744,6 @@ MonoBehaviour:
   _eventWrapper: {fileID: 515608915}
   _leftInteractor: {fileID: 2040879273}
   _rightInteractor: {fileID: 734095223}
---- !u!114 &515608913
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 515608908}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: da103c2bbdfcb9643bf22f35f493434d, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::ToolColorReceiver
-  toolId: 200
-  targetRenderer: {fileID: 0}
-  port: 5010
 --- !u!114 &515608914
 MonoBehaviour:
   m_ObjectHideFlags: 0
