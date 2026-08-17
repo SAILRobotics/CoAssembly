@@ -1744,6 +1744,11 @@ class MainScene:
         # highlight ids from gearbox_control.py can be mirrored onto the local Open3D tool boxes.
         self._tool_id_to_box_index = {int(t["id"]): i
                                       for i, t in enumerate(self.tool_layout._tools)}
+        # TEMP DEBUG: send tool category colors immediately at startup, independent
+        # of the anchor-lock flow, to isolate whether TCPMarker's gold color is a
+        # "never sent" issue vs a Unity-side receiving/wiring issue.
+        self._apply_tool_category_colors()
+
         self.grip_pose_bridge = _GripPoseBridge(quest_ip)
         self.gearbox_pose_rx = _GearboxPoseReceiver(quest_ip)
         self.taskgraph_o3d_rx = _TaskGraphOpen3DReceiver()
