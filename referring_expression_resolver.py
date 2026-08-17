@@ -137,7 +137,6 @@ class Florence2Resolver(ReferringExpressionResolver):
                 return
             try:
                 import torch
-                from transformers import AutoModelForCausalLM, AutoProcessor
             except ImportError as exc:
                 raise RuntimeError(
                     "Florence-2 requires torch, transformers, Pillow, and accelerate"
@@ -145,15 +144,35 @@ class Florence2Resolver(ReferringExpressionResolver):
 
             device = "cuda" if torch.cuda.is_available() else "cpu"
             dtype = torch.float16 if device == "cuda" else torch.float32
-            model = AutoModelForCausalLM.from_pretrained(
-                self.model_name,
-                torch_dtype=dtype,
-                trust_remote_code=True,
-            ).to(device)
-            processor = AutoProcessor.from_pretrained(
-                self.model_name,
-                trust_remote_code=True,
-            )
+            try:
+                # Current Transformers releases ship Florence-2 natively. Use
+                # those classes so Microsoft model repositories cannot select
+                # an older, incompatible remote configuration implementation.
+                from transformers import Florence2ForConditionalGeneration, Florence2Processor
+
+                model = Florence2ForConditionalGeneration.from_pretrained(
+                    self.model_name,
+                    torch_dtype=dtype,
+                ).to(device)
+                processor = Florence2Processor.from_pretrained(self.model_name)
+            except ImportError:
+                # Compatibility path for older Transformers releases that
+                # predate the native Florence-2 implementation.
+                try:
+                    from transformers import AutoModelForCausalLM, AutoProcessor
+                except ImportError as exc:
+                    raise RuntimeError(
+                        "Florence-2 requires a compatible Transformers installation"
+                    ) from exc
+                model = AutoModelForCausalLM.from_pretrained(
+                    self.model_name,
+                    torch_dtype=dtype,
+                    trust_remote_code=True,
+                ).to(device)
+                processor = AutoProcessor.from_pretrained(
+                    self.model_name,
+                    trust_remote_code=True,
+                )
             model.eval()
             self._model, self._processor = model, processor
             self._device, self._dtype = device, dtype

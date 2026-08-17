@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import base64
 import re
+import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -56,6 +58,50 @@ class ResolverTests(unittest.TestCase):
             Candidate.from_payload({
                 "part_file": "part.stl", "mesh_name": "mesh", "bbox": [5, 5, 1, 1]
             })
+
+    def test_florence_loader_prefers_native_transformers_classes(self):
+        calls = []
+
+        class FakeModel:
+            @classmethod
+            def from_pretrained(cls, model_name, **kwargs):
+                calls.append(("model", model_name, kwargs))
+                return cls()
+
+            def to(self, device):
+                calls.append(("device", device))
+                return self
+
+            def eval(self):
+                calls.append(("eval",))
+
+        class FakeProcessor:
+            @classmethod
+            def from_pretrained(cls, model_name, **kwargs):
+                calls.append(("processor", model_name, kwargs))
+                return cls()
+
+        fake_torch = types.ModuleType("torch")
+        fake_torch.cuda = types.SimpleNamespace(is_available=lambda: True)
+        fake_torch.float16 = "float16"
+        fake_torch.float32 = "float32"
+        fake_transformers = types.ModuleType("transformers")
+        fake_transformers.Florence2ForConditionalGeneration = FakeModel
+        fake_transformers.Florence2Processor = FakeProcessor
+
+        from referring_expression_resolver import Florence2Resolver
+
+        resolver = Florence2Resolver("microsoft/test-florence")
+        with patch.dict(sys.modules, {
+            "torch": fake_torch,
+            "transformers": fake_transformers,
+        }):
+            resolver._load()
+
+        self.assertEqual(calls[0][0:2], ("model", "microsoft/test-florence"))
+        self.assertNotIn("trust_remote_code", calls[0][2])
+        self.assertIn(("processor", "microsoft/test-florence", {}), calls)
+        self.assertEqual(resolver._device, "cuda")
 
 
 class ApiTests(unittest.TestCase):
