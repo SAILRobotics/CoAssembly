@@ -66,7 +66,7 @@ public class SyntheticObjectReceiver : MonoBehaviour
     private readonly ConcurrentQueue<List<ObjectData>> dataQueue = new();
     private bool[]  _visualReady;
     private float[] _lastSeenTime;
-    private Material[] _faceMaterials;
+    private List<Material>[] _faceMaterials;
     private Material[] _edgeMaterials;
 
     [Serializable] private class ObjectData
@@ -84,7 +84,7 @@ public class SyntheticObjectReceiver : MonoBehaviour
     {
         _visualReady  = new bool[objects.Length];
         _lastSeenTime = new float[objects.Length];
-        _faceMaterials = new Material[objects.Length];
+        _faceMaterials = new List<Material>[objects.Length];
         _edgeMaterials = new Material[objects.Length];
         NetMQManager.RegisterReceiver();
         isRunning = true;
@@ -191,15 +191,21 @@ public class SyntheticObjectReceiver : MonoBehaviour
     {
         if (ShouldSkipAutoVisual(id))
         {
-            // Keep the scene-authored visual (for example the TCP sphere), but
-            // instance its material so colors received on port 5006 can still
-            // be applied without changing other objects that share it.
-            var existingRenderer = tf.GetComponent<Renderer>();
-            if (existingRenderer != null && existingRenderer.sharedMaterial != null)
+            // Keep the scene-authored visual (for example TCPMarker), but
+            // instance every material on it and its children so the complete
+            // hierarchy can accept colors received on port 5006.
+            _faceMaterials[id] = new List<Material>();
+            foreach (var existingRenderer in tf.GetComponentsInChildren<Renderer>(true))
             {
-                var existingMaterial = new Material(existingRenderer.sharedMaterial);
-                existingRenderer.material = existingMaterial;
-                _faceMaterials[id] = existingMaterial;
+                var shared = existingRenderer.sharedMaterials;
+                var instanced = new Material[shared.Length];
+                for (int i = 0; i < shared.Length; i++)
+                {
+                    if (shared[i] == null) continue;
+                    instanced[i] = new Material(shared[i]);
+                    _faceMaterials[id].Add(instanced[i]);
+                }
+                existingRenderer.materials = instanced;
             }
             return;
         }
@@ -213,7 +219,7 @@ public class SyntheticObjectReceiver : MonoBehaviour
             {
                 var mat = new Material(templateMaterial);
                 rend.material = mat;
-                _faceMaterials[id] = mat;
+                _faceMaterials[id] = new List<Material> { mat };
             }
         }
 
@@ -229,9 +235,9 @@ public class SyntheticObjectReceiver : MonoBehaviour
             ? ObjectColors[obj.id]
             : Color.white;
         float alpha = templateMaterial != null ? templateMaterial.color.a : 1f;
-        var face = _faceMaterials[obj.id];
-        if (ShouldSkipAutoVisual(obj.id) && face != null)
-            alpha = face.color.a;
+        var faces = _faceMaterials[obj.id];
+        if (ShouldSkipAutoVisual(obj.id) && faces != null && faces.Count > 0)
+            alpha = faces[0].color.a;
         Color c = fallback;
         if (obj.color != null && obj.color.Length >= 3)
         {
@@ -243,10 +249,13 @@ public class SyntheticObjectReceiver : MonoBehaviour
             c.a = alpha;
         }
 
-        if (face != null)
+        if (faces != null)
         {
-            face.SetColor("_Color", c);
-            face.SetColor("_BaseColor", c);
+            foreach (var face in faces)
+            {
+                face.SetColor("_Color", c);
+                face.SetColor("_BaseColor", c);
+            }
         }
 
         var edge = _edgeMaterials[obj.id];
