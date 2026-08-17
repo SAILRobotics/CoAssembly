@@ -159,9 +159,11 @@ public class SyntheticObjectReceiver : MonoBehaviour
                 _visualReady[obj.id] = true;
             }
 
-            // Color is supplied by Python on port 5006. Apply it on every
-            // update so Python can also change an object's color at runtime.
-            ApplyColor(obj);
+            // Scene-authored visuals listed in skipAutoVisualIds (notably TCP
+            // ID 3) keep their own color-control path. Port 5006 owns only
+            // their pose/scale; ToolColorReceiver on port 5010 owns TCP color.
+            if (!ShouldSkipAutoVisual(obj.id))
+                ApplyColor(obj);
 
             if (obj.position != null && obj.position.Length == 3)
                 tf.localPosition = new Vector3(obj.position[0],
@@ -190,25 +192,7 @@ public class SyntheticObjectReceiver : MonoBehaviour
     private void SetupVisual(int id, Transform tf)
     {
         if (ShouldSkipAutoVisual(id))
-        {
-            // Keep the scene-authored visual (for example TCPMarker), but
-            // instance every material on it and its children so the complete
-            // hierarchy can accept colors received on port 5006.
-            _faceMaterials[id] = new List<Material>();
-            foreach (var existingRenderer in tf.GetComponentsInChildren<Renderer>(true))
-            {
-                var shared = existingRenderer.sharedMaterials;
-                var instanced = new Material[shared.Length];
-                for (int i = 0; i < shared.Length; i++)
-                {
-                    if (shared[i] == null) continue;
-                    instanced[i] = new Material(shared[i]);
-                    _faceMaterials[id].Add(instanced[i]);
-                }
-                existingRenderer.materials = instanced;
-            }
             return;
-        }
         Color c = id < ObjectColors.Length ? ObjectColors[id] : Color.white;
 
         // Face — instance the user's template material, tint it
@@ -236,8 +220,6 @@ public class SyntheticObjectReceiver : MonoBehaviour
             : Color.white;
         float alpha = templateMaterial != null ? templateMaterial.color.a : 1f;
         var faces = _faceMaterials[obj.id];
-        if (ShouldSkipAutoVisual(obj.id) && faces != null && faces.Count > 0)
-            alpha = faces[0].color.a;
         Color c = fallback;
         if (obj.color != null && obj.color.Length >= 3)
         {

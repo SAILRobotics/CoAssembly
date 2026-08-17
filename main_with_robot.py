@@ -904,6 +904,8 @@ class _ToolLayoutManager:
 # =============================================================================
 
 class _ToolSelectionManager:
+    TCP_TOOL_ID     = 200
+    TCP_COLOR       = [1.0, 0.8, 0.2, 1.0]       # gold resting color; sent on port 5010
     SELECTED_COLOR = [0.0, 1.0, 0.0, 0.25]     #when cursor clicks
     HOVER_COLOR    = [1.0, 0.5, 0.0, 0.25]     #when cursor hovers
     RESET_COLOR    = [-1.0, -1.0, -1.0, -1.0]   # sentinel → restores to resting color
@@ -1931,6 +1933,11 @@ class MainScene:
     def _apply_tool_category_colors(self) -> None:
         """Send each tool's category color via ToolColorReceiver (port 5010)
         and register it as the resting color so hover/reset cycles preserve it."""
+        # TCPMarker pose comes from synthetic-object port 5006, but its
+        # GripperWithAdapters appearance is owned exclusively by port 5010.
+        self.tools.set_category_color(
+            _ToolSelectionManager.TCP_TOOL_ID,
+            _ToolSelectionManager.TCP_COLOR)
         for t in self.tool_layout._tools:
             tid  = int(t["id"])
             cat  = t.get("category", "tool")

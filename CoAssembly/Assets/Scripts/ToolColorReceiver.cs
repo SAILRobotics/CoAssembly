@@ -36,13 +36,17 @@ public class ToolColorReceiver : MonoBehaviour
     // ── Per-instance state ───────────────────────────────────────────────────
     private readonly ConcurrentQueue<Color> pendingColor = new();
     private MaterialPropertyBlock propertyBlock;
-    private int colorID;
+    private static readonly int BaseColorID = Shader.PropertyToID("_BaseColor");
+    private static readonly int ColorID = Shader.PropertyToID("_Color");
+    private static readonly int BaseColorFactorID = Shader.PropertyToID("_BaseColorFactor");
     private Color originalColor; 
+    private bool hasExplicitTarget;
 
     private void Start()
     {
         Debug.Log($"[ToolColorReceiver] 🟢 Start() called on GameObject '{gameObject.name}', toolId={toolId}");
 
+        hasExplicitTarget = targetRenderer != null;
         if (targetRenderer == null) targetRenderer = GetComponent<Renderer>();
         if (targetRenderer == null) targetRenderer = GetComponentInChildren<Renderer>();
         if (targetRenderer == null)
@@ -53,14 +57,23 @@ public class ToolColorReceiver : MonoBehaviour
         }
 
         Material mat = targetRenderer.sharedMaterial;
-        colorID = mat.HasProperty("_BaseColor")
-            ? Shader.PropertyToID("_BaseColor")
-            : Shader.PropertyToID("_Color");
         propertyBlock = new MaterialPropertyBlock();
-        originalColor = mat.GetColor(colorID);
+        if (mat.HasProperty(BaseColorID))
+            originalColor = mat.GetColor(BaseColorID);
+        else if (mat.HasProperty(ColorID))
+            originalColor = mat.GetColor(ColorID);
+        else if (mat.HasProperty(BaseColorFactorID))
+            originalColor = mat.GetColor(BaseColorFactorID);
+        else
+            originalColor = Color.white;
         lock (sharedLock)
         {
-            instances[toolId] = this;
+            // Prefer an Inspector-assigned renderer (TCPMarker) over receivers
+            // that merely auto-discovered a renderer. This makes duplicate IDs
+            // deterministic while legacy scene components are being cleaned up.
+            if (!instances.TryGetValue(toolId, out ToolColorReceiver existing)
+                    || hasExplicitTarget || !existing.hasExplicitTarget)
+                instances[toolId] = this;
 
             if (sharedSocket == null)
             {
@@ -140,7 +153,12 @@ public class ToolColorReceiver : MonoBehaviour
             Debug.Log($"[ToolColorReceiver:{toolId}] 🎨 Applying ({c.r:F2},{c.g:F2},{c.b:F2},{c.a:F2}) " +
             $"to renderer '{targetRenderer.name}' on '{gameObject.name}'");
             targetRenderer.GetPropertyBlock(propertyBlock);
-            propertyBlock.SetColor(colorID, c);
+            // Cover Built-in, URP and common glTF shader conventions. A
+            // renderer-wide property block applies the color to every material
+            // slot on the imported GripperWithAdapters mesh.
+            propertyBlock.SetColor(BaseColorID, c);
+            propertyBlock.SetColor(ColorID, c);
+            propertyBlock.SetColor(BaseColorFactorID, c);
             targetRenderer.SetPropertyBlock(propertyBlock);
         }
     }
@@ -149,7 +167,9 @@ public class ToolColorReceiver : MonoBehaviour
     {
         lock (sharedLock)
         {
-            instances.Remove(toolId);
+            if (instances.TryGetValue(toolId, out ToolColorReceiver registered)
+                    && object.ReferenceEquals(registered, this))
+                instances.Remove(toolId);
             sharedRefCount = Mathf.Max(0, sharedRefCount - 1);
 
             if (sharedRefCount == 0 && sharedSocket != null)
