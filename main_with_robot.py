@@ -2554,7 +2554,6 @@ class MainScene:
                             self.robot.move_to_pose(
                                 _tcp_pos, _tcp_quat,
                                 board_move=True,
-                                force_pybullet_ik=True,
                                 on_complete=self._on_board_move_complete)
 
                     if self._T_world_tcp is not None:

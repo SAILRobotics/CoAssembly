@@ -178,7 +178,7 @@ BOX_SIZE           = [0.015, 0.225, 0.1625]   # metres (X, Y, Z in pegboard fram
 SIMULATION = True   # True → fixed joint angles; False → live RTDE
 
 # ── Scene setup flags ─────────────────────────────────────────────────────────
-# If True, load T_world_base + T_tcp_handcam from calibration_data/results/
+# If True, load T_world_base + T_tcp_handcam from hand_eye_data/results/
 # even in simulation mode (robot appears at its real calibrated position).
 # Has no effect when SIMULATION=False (calibration is always used then).
 USE_CALIBRATED_ROBOT_BASE_POSE = True
