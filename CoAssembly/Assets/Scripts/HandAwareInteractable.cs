@@ -15,7 +15,6 @@ using Oculus.Interaction;
 /// WorldMarkerInteractable is NOT required on this GameObject.
 /// </summary>
 [RequireComponent(typeof(ToolClickPublisher))]
-[RequireComponent(typeof(ToolColorReceiver))]
 public class HandAwareInteractable : MonoBehaviour
 {
     [SerializeField] private PointableUnityEventWrapper _eventWrapper;
