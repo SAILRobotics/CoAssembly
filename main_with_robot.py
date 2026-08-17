@@ -924,6 +924,7 @@ class _ToolSelectionManager:
         self._active_hand:      str | None              = None
         self._category_colors:  dict[int, list[float]]  = {}
         self._highlighted:      set[int]                = set()
+        self._assembly_events:  list[dict]              = []
         self._on_cancel = None
 
     def poll(self, timeout_ms: int = 0) -> bool:
@@ -1078,8 +1079,14 @@ class _ToolSelectionManager:
                 self._apply_highlight_clear()
             elif event == "highlight":
                 self._apply_highlight(msg.get("ids", []))
+            elif event == "assembly_state":
+                self._assembly_events.append(msg)
             processed = True
         return processed
+
+    def pop_assembly_events(self) -> list[dict]:
+        events, self._assembly_events = self._assembly_events, []
+        return events
 
     def _apply_highlight(self, ids) -> None:
         new = {int(i) for i in ids}
@@ -1320,6 +1327,32 @@ class _GearboxPoseReceiver:
             except Exception as e:
                 if not self._first_rx_logged:
                     print(f"[GearboxPose] ignored malformed message: {e}")
+                continue
+
+    def close(self) -> None:
+        try:
+            self._sub.close(0)
+        except Exception:
+            pass
+
+
+class _TaskGraphOpen3DReceiver:
+    """Receives direct GUI selection/progress events from gearbox_task_graph.py."""
+
+    def __init__(self, port: int = cfg.GEARBOX_STEP_SELECT_PORT):
+        ctx = zmq.Context.instance()
+        self._sub = ctx.socket(zmq.SUB)
+        self._sub.setsockopt_string(zmq.SUBSCRIBE, "")
+        self._sub.bind(f"tcp://0.0.0.0:{port}")
+
+    def poll(self) -> list[dict]:
+        events = []
+        while True:
+            try:
+                events.append(json.loads(self._sub.recv_string(flags=zmq.NOBLOCK)))
+            except zmq.Again:
+                return events
+            except (json.JSONDecodeError, TypeError):
                 continue
 
     def close(self) -> None:
@@ -1680,6 +1713,7 @@ class MainScene:
                                       for i, t in enumerate(self.tool_layout._tools)}
         self.grip_pose_bridge = _GripPoseBridge(quest_ip)
         self.gearbox_pose_rx = _GearboxPoseReceiver(quest_ip)
+        self.taskgraph_o3d_rx = _TaskGraphOpen3DReceiver()
         self.workspace_bound_pub = _WorkspaceBoundPublisher(quest_ip)
 
         # Cubes around the anchor marker (world origin) — ids 0, 1, 2
@@ -1740,6 +1774,10 @@ class MainScene:
         self._prev_jog_active:    bool                  = False   # tracks jog_gui.active edge
         self._jog_last_pos: "np.ndarray | None"         = None    # last pos issued to move_to_pose in jog mode
         self._jog_diag_t:   float                       = 0.0     # throttle for jog diagnostic prints
+        self._last_vis_pegboard_T: "np.ndarray | None" = None
+
+        if self._load_pegboard_from_file:
+            self._preview_pegboard_from_file()
 
         print(f"\n[Running]  quest_ip={quest_ip}  "
               f"anchor_marker=#{anchor_marker_id}  "
@@ -1787,6 +1825,36 @@ class MainScene:
             self.vis.update_tool_boxes(boxes)
         return True
 
+    def _preview_pegboard_from_file(self) -> bool:
+        """Draw the saved pegboard in Open3D before marker 100 is locked.
+
+        This is local-only: Unity and the robot do not receive this pose until
+        the anchor locks and _try_load_pegboard_from_file() runs normally.
+        """
+        npz_path = cfg.SCENE_LAYOUT_DIR / "T_world10_pegboard101.npz"
+        if not npz_path.exists():
+            print(f"[PegboardPreview] Not found: {npz_path}")
+            return False
+        try:
+            data = np.load(npz_path)
+            T_wp = np.asarray(data["T_world10_pegboard"], dtype=np.float64)
+            self.vis.set_pegboard_outline(
+                offset_x=float(data["marker_offset_right_m"]),
+                offset_y=float(data["marker_offset_top_m"]),
+                width=float(data["pegboard_width_m"]),
+                height=float(data["pegboard_height_m"]),
+            )
+            self.vis.update_pegboard(T_wp)
+            self.vis.update_tool_boxes(self.tool_layout.world_boxes(T_wp))
+            self._last_vis_pegboard_T = T_wp.copy()
+            self._sync_vis_highlight()
+        except Exception as e:
+            print(f"[PegboardPreview] Load failed: {e}")
+            return False
+        print(f"[PegboardPreview] Showing saved pegboard in Open3D before marker "
+              f"#{self.anchor_marker_id} locks")
+        return True
+
     def _sync_vis_highlight(self) -> None:
         """Mirror the pegboard tool highlight (received by self.tools on 5024 and applied to the
         Unity tools) onto the local Open3D tool boxes — cyan, exactly like gearbox_control --open-3d.
@@ -1795,6 +1863,19 @@ class MainScene:
                 for tid in self.tools.highlighted
                 if tid in self._tool_id_to_box_index]
         self.vis.set_tool_highlight_indices(idxs)
+
+    def _record_grasped_object(self, tool_id: int) -> None:
+        """Record a successful grasp and remove its Open3D pegboard box."""
+        name = self.tool_layout.get_name(tool_id)
+        if not any(tid == tool_id for tid, _ in self._grasped_objects):
+            self._grasped_objects.append((tool_id, name))
+        hidden = [self._tool_id_to_box_index[tid]
+                  for tid, _ in self._grasped_objects
+                  if tid in self._tool_id_to_box_index]
+        self.vis.set_tool_hidden_indices(hidden)
+        T_wp = self.anchor.T_pegboard_in_world
+        if T_wp is not None:
+            self.vis.update_tool_boxes(self.tool_layout.world_boxes(T_wp))
 
     def _apply_tool_category_colors(self) -> None:
         """Send each tool's category color via ToolColorReceiver (port 5010)
@@ -1936,8 +2017,21 @@ class MainScene:
                 self.tools.poll(timeout_ms=0)
                 if self.tools.drain_highlights(timeout_ms=0):
                     self._sync_vis_highlight()   # mirror the cyan highlight onto the Open3D boxes
+                    for event in self.tools.pop_assembly_events():
+                        self.vis.apply_gearbox_assembly_event(event)
                 self.hands.poll()
                 gearbox_states = self.gearbox_pose_rx.poll()
+                for event in self.taskgraph_o3d_rx.poll():
+                    if event.get("event") == "select":
+                        self.tools._apply_highlight(event.get("ids", []))
+                        self._sync_vis_highlight()
+                        self.vis.apply_gearbox_assembly_event(
+                            {**event, "event": "show"})
+                    else:
+                        if event.get("event") == "reset":
+                            self.tools._apply_highlight_clear()
+                            self._sync_vis_highlight()
+                        self.vis.apply_gearbox_assembly_event(event)
                 _link_poses = None
                 if self.robot is not None:
                     self.robot.poll()   # drain robot_control_server.py state/events
@@ -2280,8 +2374,7 @@ class MainScene:
                                     setattr(self, '_robot_state', None),
                                     setattr(self, '_motion_source', None),
                                     setattr(self, '_pending_grasp_tool_id', None),
-                                    self._grasped_objects.append(
-                                        (tid, self.tool_layout.get_name(tid))) if ok else None,
+                                    self._record_grasped_object(tid) if ok else None,
                                     print(f"[Robot] Grasp '{self.tool_layout.get_name(tid)}' (id={tid}) — "
                                           f"{'OK ✓ (object in gripper)' if ok else 'FAILED ✗ (empty) — not tracked'}"),
                                     print(f"[Grasped so far] {[n for _, n in self._grasped_objects]}") if ok else None,
@@ -2426,7 +2519,16 @@ class MainScene:
                     self.vis.update_passthrough_cam(T_world_passthrough,
                                                     self.cam.width, self.cam.height,
                                                     fx, fy, cx, cy)
-                self.vis.update_pegboard(self.anchor.T_pegboard_in_world)
+                T_vis_pegboard = self.anchor.T_pegboard_in_world
+                if T_vis_pegboard is not None:
+                    self.vis.update_pegboard(T_vis_pegboard)
+                    if (self._last_vis_pegboard_T is None
+                            or not np.allclose(T_vis_pegboard,
+                                               self._last_vis_pegboard_T,
+                                               atol=1e-7)):
+                        self.vis.update_tool_boxes(
+                            self.tool_layout.world_boxes(T_vis_pegboard))
+                        self._last_vis_pegboard_T = T_vis_pegboard.copy()
                 self.vis.update_board(self.anchor.T_board_in_world)
                 self.vis.update_gearbox_mirror(gearbox_states)
                 self.vis.update_tracking(T_wt)
@@ -2690,6 +2792,7 @@ class MainScene:
         self.tool_layout.close()
         self.grip_pose_bridge.close()
         self.gearbox_pose_rx.close()
+        self.taskgraph_o3d_rx.close()
         self.workspace_bound_pub.close()
         self.hands.close()
         self.cam.close()

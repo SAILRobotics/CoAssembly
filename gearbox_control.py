@@ -350,7 +350,8 @@ class GearboxStateMachine:
                     "step_delay": STEP_DELAY, "slide_seconds": SLIDE_SECONDS})
         self._send({"command": "ui", "show": True, "row": row,
                     "checked": self.done[row][stage], "blocked": blocked})
-        self._notify({"event": "show", "row": row, "stage": stage})
+        self._notify({"event": "show", "row": row, "stage": stage,
+                      "blocked": blocked})
         # Light up the pegboard tools for the parts appearing at this stage. A stage that's already
         # complete has no appearing parts (they're orange, off the pegboard), so pass complete=True
         # to request an empty set. Locked/blocked stages still highlight (informational).
@@ -593,11 +594,11 @@ class GearboxController:
         # loaded regardless; --no-highlight only silences the 5024 PUB.
         self._tool_index = load_tool_index(self._tool_json)
         self._highlight_enabled = bool(self._tool_index) and not no_highlight
-        if self._highlight_enabled:
-            self._hl_pub = self._ctx.socket(zmq.PUB)
-            self._hl_pub.connect(f"tcp://{self.hl_ip}:{self.hl_port}")
-        else:
-            self._hl_pub = None
+        # This channel also carries semantic assembly-state events for the
+        # integrated Open3D gearbox mirror. Keep it alive even when pegboard
+        # highlighting itself is disabled with --no-highlight.
+        self._hl_pub = self._ctx.socket(zmq.PUB)
+        self._hl_pub.connect(f"tcp://{self.hl_ip}:{self.hl_port}")
 
         # --open-3d: receive the task-graph viewer's selected step (Python<->Python: we BIND a SUB,
         # gearbox_task_graph.py CONNECTs a PUB) and recolour the local pegboard boxes accordingly.
@@ -623,6 +624,11 @@ class GearboxController:
         """Thread-safe send of a semantic (row, stage) event to the task-graph viewer."""
         with self._send_lock:
             self._tg_pub.send_string(json.dumps(msg))
+            # The integrated Open3D viewer already subscribes to the highlight
+            # channel. Mirror semantic progress there as well so it can compute
+            # gearbox colours directly, independently of Unity materials.
+            if self._hl_pub is not None:
+                self._hl_pub.send_string(json.dumps({"event": "assembly_state", **msg}))
 
     def send_highlight(self, msg: dict):
         """Thread-safe send of a pegboard tool-highlight event (ids only, no colour)."""

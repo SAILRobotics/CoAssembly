@@ -1,0 +1,5 @@
+1. Change the parts to row1_kit, row2_kit, row3_kit, ...
+2. Default pose for a specific step
+3. Removal of parts / tools from pegboard based on not only handed over part but also task progression 
+4. Right Side GearStand first 
+5. Referring expression output template and answer and then highlight as well

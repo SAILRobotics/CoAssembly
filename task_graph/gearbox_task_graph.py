@@ -1358,8 +1358,13 @@ class DearPyGuiTaskGraphApp:
         self.refresh()
         coords = TaskGraph.control_coords_for(user_data)
         if coords is not None:
-            self._send_select({"event": "select", "row": coords[0], "stage": coords[1],
-                               "step": user_data})
+            row, stage = coords
+            index = gearbox_control.load_tool_index(gearbox_control._DEFAULT_TOOL_JSON)
+            ids = (gearbox_control.appearing_ids(index, row, stage)
+                   if row > 0 else [])
+            self._send_select({"event": "select", "row": row, "stage": stage,
+                               "step": user_data, "ids": ids,
+                               "blocked": self.graph.state(self.graph.by_id[user_data]) == "blocked"})
         if self._vlm is not None:
             step = self.graph.by_id[user_data]
             state = self.graph.state(step)
@@ -1395,7 +1400,8 @@ class DearPyGuiTaskGraphApp:
         if not self.selected_id:
             return
         step = self.graph.by_id[self.selected_id]
-        if self.graph.state(step) == "complete":
+        was_complete = self.graph.state(step) == "complete"
+        if was_complete:
             ok, message = self.graph.undo(step)
             if ok:
                 self._notify_vlm(f"UNDO: {step.id}")
@@ -1410,6 +1416,12 @@ class DearPyGuiTaskGraphApp:
                 row = coords[0]
                 self.controller.send({"command": "recolor", "row": row,
                                       "done_stages": self.controller.sm._completed_stages(row)})
+        if ok:
+            coords = TaskGraph.control_coords_for(self.selected_id)
+            if coords is not None:
+                self._send_select({"event": "uncomplete" if was_complete else "complete",
+                                   "row": coords[0], "stage": coords[1],
+                                   "step": self.selected_id})
         self.log(message)
         self.refresh()
 
@@ -1418,6 +1430,7 @@ class DearPyGuiTaskGraphApp:
         self.graph.reset()
         self.selected_id    = None
         self.recommended_id = None
+        self._send_select({"event": "reset"})
         if self.controller is not None:
             # Sync sm state from the now-empty graph (all done = False), then send
             # Unity commands directly — bypassing the ZMQ round-trip so we don't

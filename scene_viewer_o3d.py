@@ -170,6 +170,7 @@ class SceneVis:
         self._tool_box_neutral        = (0.55, 0.55, 0.58)
         self._tool_box_highlight      = (0.0, 1.0, 1.0)
         self._tool_highlight_indices: set = set()
+        self._tool_hidden_indices: set = set()
 
         self.show_collision_spheres = True
         self._collision_sphere_ls = o3d.geometry.LineSet()
@@ -255,6 +256,8 @@ class SceneVis:
         self._gearbox_initial_states = None
         self._gearbox_root_initial_T = None
         self._gearbox_pose_frames = {}
+        self._gearbox_done = {row: set() for row in range(1, 5)}
+        self._gearbox_blocked_view = None
         self._load_gearbox_mirror_meshes()
 
 
@@ -366,21 +369,116 @@ class SceneVis:
         return T
 
     def _gearbox_color_for_part(self, unity_name: str):
-        if unity_name == "BaseBoard" or unity_name.startswith("Bearing_"):
-            return [0.02, 0.02, 0.02]
-        if unity_name == "CrankHandle_Row1":
-            return [0.95, 0.95, 0.95]
-        if unity_name.startswith("Pin_"):
-            return [0.55, 0.30, 0.12]
-        if "_Row1" in unity_name:
-            return [0.95, 0.95, 0.95]
-        if "_Row2" in unity_name:
-            return [0.9, 0.05, 0.05]
-        if "_Row3" in unity_name:
-            return [0.05, 0.75, 0.1]
-        if "_Row4" in unity_name:
-            return [0.05, 0.2, 0.9]
-        return [0.65, 0.65, 0.65]
+        """Neutral baseline for every part in the Open3D gearbox mirror."""
+        return [0.55, 0.55, 0.55]
+
+    @staticmethod
+    def _gearbox_part_fields(unity_name: str):
+        """Return (type, row, side) using the Unity gearbox naming convention."""
+        clean = unity_name.replace("_", "")
+        idx = clean.find("Row")
+        if idx < 0:
+            return ("BaseBoard", 0, "") if unity_name == "BaseBoard" else (None, None, None)
+        ptype = clean[:idx]
+        i = idx + 3
+        digits = ""
+        while i < len(clean) and clean[i].isdigit():
+            digits += clean[i]
+            i += 1
+        return (ptype, int(digits), clean[i:]) if digits else (None, None, None)
+
+    @staticmethod
+    def _gearbox_part_stages(ptype: str, row: int, side: str):
+        """Python copy of Unity's appear/place/seat stage definitions."""
+        left = side == "Left"
+        if ptype in ("Bearing", "Stand"):
+            return (1, 4, 4) if left else (3, 5, 6)
+        if ptype == "Pin" and row == 1 and side == "Right":
+            return 7, 7, 7
+        if ptype in ("GearRod", "Gear", "Pin"):
+            return 2, 5, 5
+        if ptype == "Screw":
+            return (4, 4, 4) if left else (6, 6, 6)
+        if ptype == "CrankHandle":
+            return 7, 7, 7
+        return None, None, None
+
+    @staticmethod
+    def _gearbox_part_in_stage(ptype: str, row: int, side: str,
+                               selected_row: int, stage: int) -> bool:
+        """Whether a part participates in a selected control stage.
+
+        This mirrors Unity's GroupsForStage selectors, excluding BaseBoard so
+        a blocked operation flags the actionable components rather than the
+        whole assembly foundation.
+        """
+        if row != selected_row or ptype == "BaseBoard":
+            return False
+        if stage == 1:
+            return ptype in ("Stand", "Bearing") and side == "Left"
+        if stage == 2:
+            return ptype in ("GearRod", "Gear", "Pin")
+        if stage == 3:
+            return ptype in ("Stand", "Bearing") and side == "Right"
+        if stage == 4:
+            return ((ptype in ("Stand", "Bearing") and side == "Left")
+                    or (ptype == "Screw" and side == "Left"))
+        if stage == 5:
+            return (ptype in ("GearRod", "Gear", "Pin")
+                    or (ptype in ("Stand", "Bearing") and side == "Right"))
+        if stage == 6:
+            return ptype == "Screw" and side == "Right"
+        if stage == 7:
+            return (selected_row == 1
+                    and (ptype == "CrankHandle"
+                         or (ptype == "Pin" and side == "Right")))
+        return False
+
+    def _refresh_gearbox_assembly_colors(self):
+        seated = [0.15, 0.80, 0.20]
+        built = [1.0, 0.55, 0.0]
+        blocked = [0.85, 0.15, 0.15]
+        for name, entry in self._gearbox_parts.items():
+            ptype, row, side = self._gearbox_part_fields(name)
+            color = self._gearbox_color_for_part(name)
+            if row in self._gearbox_done:
+                appear, _place, seat = self._gearbox_part_stages(ptype, row, side)
+                done = self._gearbox_done[row]
+                if seat in done:
+                    color = seated
+                elif appear in done:
+                    color = built
+                blocked_view = self._gearbox_blocked_view
+                if (blocked_view is not None
+                        and self._gearbox_part_in_stage(
+                            ptype, row, side, blocked_view[0], blocked_view[1])):
+                    color = blocked
+            entry["mesh"].paint_uniform_color(color)
+            self.vis.update_geometry(entry["mesh"])
+
+    def apply_gearbox_assembly_event(self, msg: dict) -> None:
+        """Update Open3D colors directly from gearbox_control semantic events."""
+        event = msg.get("event")
+        row = int(msg.get("row", 0))
+        stage = int(msg.get("stage", 0))
+        if event == "reset":
+            for done in self._gearbox_done.values():
+                done.clear()
+            self._gearbox_blocked_view = None
+        elif event == "complete" and row in self._gearbox_done:
+            self._gearbox_done[row].add(stage)
+            self._gearbox_blocked_view = None
+        elif event == "uncomplete" and row in self._gearbox_done:
+            self._gearbox_done[row].discard(stage)
+            self._gearbox_blocked_view = None
+        elif event == "show":
+            self._gearbox_blocked_view = ((row, stage)
+                                          if msg.get("blocked", False) else None)
+        elif event == "close":
+            self._gearbox_blocked_view = None
+        else:
+            return
+        self._refresh_gearbox_assembly_colors()
 
     @staticmethod
     def _clean_obj_group_name(name: str) -> str:
@@ -795,7 +893,7 @@ class SceneVis:
         _box_edges  = o3d.utility.Vector2iVector(
             [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]])
         for i, ls in enumerate(self._tool_box_linesets):
-            if i < len(boxes):
+            if i < len(boxes) and i not in self._tool_hidden_indices:
                 pos, R, size = boxes[i]
                 col = (self._tool_box_highlight if i in self._tool_highlight_indices
                        else self._tool_box_neutral)
@@ -815,12 +913,20 @@ class SceneVis:
         Mirrors gearbox_control.py --open-3d's PegboardBoxViewer.set_highlight."""
         self._tool_highlight_indices = {int(i) for i in indices}
         for i, ls in enumerate(self._tool_box_linesets):
+            if i in self._tool_hidden_indices:
+                continue
             if len(np.asarray(ls.points)) != 8:
                 continue   # skip hidden/placeholder linesets
             col = (self._tool_box_highlight if i in self._tool_highlight_indices
                    else self._tool_box_neutral)
             ls.colors = o3d.utility.Vector3dVector([list(col)] * 12)
             self.vis.update_geometry(ls)
+
+    def set_tool_hidden_indices(self, indices) -> None:
+        """Hide boxes for successfully grasped objects while preserving box order."""
+        self._tool_hidden_indices = {int(i) for i in indices}
+        # Rebuild from the last geometry is intentionally avoided here; callers
+        # invoke update_tool_boxes immediately after changing this set.
 
     def update_robot(self, link_poses: list[np.ndarray]):
         """Move UR10e arm meshes to the given PyBullet link world poses.
