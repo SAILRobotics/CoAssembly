@@ -309,6 +309,14 @@ public class GearboxCommandReceiver : MonoBehaviour
                 case "bearing":          p.leader = FindPart("Stand",   p.rowNum, p.side);   break;
             }
         }
+
+        // Make the runtime mapping visible in the Unity console. The suffix in
+        // the correctly named GameObject is used directly; no visual-side flip
+        // is applied here or later by the stage selectors.
+        foreach (var p in parts)
+            if (p.type == "Stand" || p.type == "Bearing" || p.type == "Screw")
+                Debug.Log($"[GearboxPartMap] {p.go.name}: side={p.side}, " +
+                          $"stages={p.appearStage}/{p.placeStage}/{p.seatStage}");
     }
 
     // First indexed part matching type (+ row, and side when non-null). Used to resolve sub-assembly
@@ -328,27 +336,27 @@ public class GearboxCommandReceiver : MonoBehaviour
     //            board-level parts like screws);
     //   place  = stage it DROPS into place (STAGING → FINAL position);
     //   seat   = stage it is FASTENED down and turns green (>= place).
-    // These coincide for every part EXCEPT the right bearing-stand: it is fitted over the rod end at
-    // stage 5 (place=5, dropping WITH the geared rod) but only fastened when the right screw drives
+    // The right stand is first in the workflow. These coincide for every part
+    // EXCEPT the left bearing-stand, which is fitted at stage 5 but only
+    // fastened when its screw drives
     // at stage 6 (seat=6) — so it sits in place but stays "unseated"-colored until the screw.
     private static void StagesOf(string type, string side, int row,
                                  out int appear, out int place, out int seat)
     {
-        bool left  = string.Equals(side, "Left",  StringComparison.OrdinalIgnoreCase);
         bool right = string.Equals(side, "Right", StringComparison.OrdinalIgnoreCase);
         switch (type.ToLowerInvariant())
         {
             case "bearing": case "stand":
-                appear = left ? 1 : 3;
-                place  = left ? 4 : 5;             // right bearing-stand drops into place at stage 5
-                seat   = left ? 4 : 6;             // but isn't fastened (green) until the screw @ 6
+                appear = right ? 1 : 3;
+                place  = right ? 4 : 5;
+                seat   = right ? 4 : 6;
                 break;
             case "pin":                                                   // row-1 right pin secures
                 if (row == 1 && right) { appear = 7; place = 7; seat = 7; } // the crank at stage 7;
                 else                   { appear = 2; place = 5; seat = 5; } // others build with the rod
                 break;
             case "gearrod": case "gear":   appear = 2; place = 5; seat = 5; break;
-            case "screw":  appear = left ? 4 : 6; place = left ? 4 : 6; seat = left ? 4 : 6; break;
+            case "screw":  appear = right ? 4 : 6; place = right ? 4 : 6; seat = right ? 4 : 6; break;
             case "crankhandle":            appear = 7; place = 7; seat = 7; break;
             case "baseboard":              appear = 4; place = 4; seat = 4; break;
             default:                       appear = 0; place = 0; seat = 0; break;
@@ -829,19 +837,16 @@ public class GearboxCommandReceiver : MonoBehaviour
     {
         switch (n)
         {
-            case 1: return new[] { new[] { "Stand:Left",  "Bearing:Left"  } };
+            case 1: return new[] { new[] { "Stand:Right", "Bearing:Right" } };
             case 2: return new[] { new[] { "GearRod:Any" }, new[] { "Gear:Any" }, new[] { "Pin:Any" } };
-            case 3: return new[] { new[] { "Stand:Right", "Bearing:Right" } };
+            case 3: return new[] { new[] { "Stand:Left",  "Bearing:Left"  } };
             case 4: return new[] { new[] { "BaseBoard:Any" },
-                                   new[] { "Bearing:Left", "Stand:Left" },
-                                   new[] { "Screw:Left" } };
-            // Stage 5: insert the geared rod through the fastened left stand while fitting the
-            // right bearing-stand over the other end (task rule: "at the same time") — they drop
-            // together. The right screw is a separate stage now (stage 6).
+                                   new[] { "Bearing:Right", "Stand:Right" },
+                                   new[] { "Screw:Right" } };
+            // Stage 5: insert through the fastened right stand while fitting the left stand.
             case 5: return new[] { new[] { "GearRod:Any", "Gear:Any", "Pin:Any",
-                                           "Bearing:Right", "Stand:Right" } };
-            // Stage 6: drive the right screw, fastening the fitted right bearing-stand.
-            case 6: return new[] { new[] { "Screw:Right" } };
+                                           "Bearing:Left", "Stand:Left" } };
+            case 6: return new[] { new[] { "Screw:Left" } };
             // Stage 7 (row 1 only): attach the crank handle, then secure it with the right pin.
             case 7: return new[] { new[] { "CrankHandle:Any" }, new[] { "Pin:Right" } };
             default: return Array.Empty<string[]>();   // stage 8 (and any other): nothing animates

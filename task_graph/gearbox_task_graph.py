@@ -108,16 +108,18 @@ def build_steps() -> list[Step]:
     }
 
     for row in range(1, 5):
-        for side in ("Left", "Right"):
+        for side in ("Right", "Left"):
             steps.append(Step(
                 id=f"r{row}_bearing_{side.lower()}",
-                title=f"Row {row}.{1 if side == 'Left' else 3}: bearing into {side.lower()} stand",
+                title=f"Row {row}.{1 if side == 'Right' else 3}: bearing into {side.lower()} stand",
                 row=row,
                 stage=0,
                 inputs=(f"BEARING_ROW{row}_{side.upper()}", f"STAND_ROW{row}_{side.upper()}"),
                 output=f"BEARING_STAND_ROW{row}_{side.upper()}_ASSEMBLY",
                 description=(f"Insert BEARING_ROW{row}_{side.upper()} into "
                              f"STAND_ROW{row}_{side.upper()}."),
+                context=((f"BEARING_STAND_ROW{row}_RIGHT_ASSEMBLY",)
+                         if side == "Left" else ()),
             ))
 
         steps.append(Step(
@@ -130,7 +132,7 @@ def build_steps() -> list[Step]:
             description=gear_text[row],
         ))
 
-        first, second = "Left", "Right"
+        first, second = "Right", "Left"
         steps.append(Step(
             id=f"r{row}_fasten_first_stand",
             title=f"Row {row}.4: fasten {first.lower()} stand",
@@ -139,7 +141,7 @@ def build_steps() -> list[Step]:
             inputs=(f"BEARING_STAND_ROW{row}_{first.upper()}_ASSEMBLY",
                     f"SCREW_ROW{row}_{first.upper()}"),
             output=f"FASTENED_STAND_ROW{row}_{first.upper()}_ASSEMBLY",
-            context=("BASE_BOARD",),
+            context=("BASE_BOARD", f"BEARING_STAND_ROW{row}_{second.upper()}_ASSEMBLY"),
             description=(f"Fasten the {first.lower()} bearing-stand assembly to BASE_BOARD "
                          f"with SCREW_ROW{row}_{first.upper()} before inserting the gear rod."),
         ))
@@ -261,12 +263,16 @@ class TaskGraph:
         Step B: XY + Z → XYZ
         After Step B, XY no longer exists because it was consumed. 
         Therefore, Step A cannot be undone until Step B is undone."""
-        return step.id in self.completed and step.output in self.active_parts
+        return (step.id in self.completed
+                and step.output in self.active_parts
+                and not self.completed_consumers(step))
 
     def completed_consumers(self, step: Step) -> list[Step]:
-        #This method finds all completed steps that used the given step’s output as an input.
+        # Context dependencies also block undo even though they do not consume
+        # the producer's output.
         return [candidate for candidate in self.steps
-                if candidate.id in self.completed and step.output in candidate.inputs]
+                if candidate.id in self.completed
+                and step.output in (*candidate.inputs, *candidate.context)]
 
     def frontier_steps(self) -> list[Step]:
         return [self.by_id[step_id] for step_id in self.completed
@@ -480,15 +486,15 @@ class TaskGraph:
 
         The two files number "stage" differently: gearbox_control uses per-row control-stages 1-8,
         while this graph uses named steps. The control stages now map one-to-one onto task steps:
-        stage 5 is the rod-insert + right-stand fit, stage 6 the right-stand fastening."""
+        stage 5 is the rod-insert + left-stand fit, stage 6 the left-stand fastening."""
         if stage == 8 or row == 0:
             return ["finish_gearbox"]
         if stage == 7:
             return ["r1_attach_handle"] if row == 1 else []
         return {
-            1: [f"r{row}_bearing_left"],
+            1: [f"r{row}_bearing_right"],
             2: [f"r{row}_gear_rod"],
-            3: [f"r{row}_bearing_right"],
+            3: [f"r{row}_bearing_left"],
             4: [f"r{row}_fasten_first_stand"],
             5: [f"r{row}_insert_rod_and_fit_second"],
             6: [f"r{row}_fasten_second_stand"],
@@ -1596,19 +1602,20 @@ def run_self_test() -> None:
     errors = TaskGraph.validate()
     assert not errors, errors
     graph = TaskGraph()
+    assert graph.is_ready(graph.by_id["r1_bearing_right"])
+    assert not graph.is_ready(graph.by_id["r1_bearing_left"])
+    ok, _ = graph.complete(graph.by_id["r1_bearing_right"])
+    assert ok
     assert graph.is_ready(graph.by_id["r1_bearing_left"])
     ok, _ = graph.complete(graph.by_id["r1_bearing_left"])
     assert ok and "BEARING_STAND_ROW1_LEFT_ASSEMBLY" in graph.active_parts
-    assert "BEARING_ROW1_LEFT" not in graph.active_parts
-    assert "STAND_ROW1_LEFT" not in graph.active_parts
-    ok, _ = graph.complete(graph.by_id["r1_bearing_right"])
-    assert ok
-    # Both independent bearing steps are frontier nodes, so the older one can
-    # be undone even though it was not the most recently completed step.
+    ok, warning = graph.undo(graph.by_id["r1_bearing_right"])
+    assert not ok and "r1_bearing_left" in warning
     ok, _ = graph.undo(graph.by_id["r1_bearing_left"])
-    assert ok and "BEARING_ROW1_LEFT" in graph.active_parts
+    assert ok
     ok, _ = graph.undo(graph.by_id["r1_bearing_right"])
     assert ok and "BEARING_ROW1_RIGHT" in graph.active_parts
+    graph.complete(graph.by_id["r1_bearing_right"])
     graph.complete(graph.by_id["r1_bearing_left"])
     graph.complete(graph.by_id["r1_fasten_first_stand"])
     ok, warning = graph.undo(graph.by_id["r1_bearing_left"])

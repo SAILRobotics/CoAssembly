@@ -9,6 +9,7 @@ Used by main_with_robot.py:
     from scene_viewer_o3d import SceneVis
 """
 
+import copy
 import numpy as np
 import open3d as o3d
 from scipy.spatial.transform import Rotation as ScipyR
@@ -255,25 +256,51 @@ class SceneVis:
         self._gearbox_first_update_logged = False
         self._gearbox_initial_states = None
         self._gearbox_root_initial_T = None
-        self._gearbox_pose_frames = {}
         self._gearbox_done = {row: set() for row in range(1, 5)}
         self._gearbox_blocked_view = None
         self._load_gearbox_mirror_meshes()
 
 
         self._tcp_gripper_mesh = None
+        self._left_hand_gripper_mesh = None
         self._tcp_T = self._hidden_T()
-        _gripper_path = cfg.SCENE_LAYOUT_DIR / "gripperWtihAdapters.obj"
+        self._left_hand_gripper_T = self._hidden_T()
+        # Full gripper/adapter model whose OBJ origin is authored at the robot
+        # TCP. It follows the same live/commanded TCP transform used by the
+        # handover visualization in update_tcp().
+        _gripper_path = (_asset_dir / "RobotiqGripperWithAdapters.obj")
         if _gripper_path.exists():
             _mesh = o3d.io.read_triangle_mesh(str(_gripper_path))
             _mesh.compute_vertex_normals()
             _mesh.paint_uniform_color([0.75, 0.75, 0.75])
-            _T_fix_gripper = np.eye(4, dtype=np.float64)
-            _T_fix_gripper[:3, :3] = ScipyR.from_euler('x', 90, degrees=True).as_matrix()
-            _mesh.transform(_T_fix_gripper)
+            # Keep the known-good original robot-TCP alignment separate from
+            # the left-hand preview's additional OBJ-local Y flip.
+            _R_fix_x = ScipyR.from_euler('x', 90, degrees=True).as_matrix()
+            _R_flip_y = ScipyR.from_euler('y', 180, degrees=True).as_matrix()
+            _R_flip_tcp_z = ScipyR.from_euler('z', 180, degrees=True).as_matrix()
+
+            _left_mesh = copy.deepcopy(_mesh)
+            _T_fix_left = np.eye(4, dtype=np.float64)
+            # Right multiplication: rotate around the model's own Y first.
+            _T_fix_left[:3, :3] = _R_fix_x @ _R_flip_y
+            _left_mesh.transform(_T_fix_left)
+            _left_mesh.paint_uniform_color([0.20, 0.90, 0.40])
+            _left_mesh.transform(self._hidden_T())
+            self.vis.add_geometry(_left_mesh)
+            self._left_hand_gripper_mesh = _left_mesh
+
+            _T_fix_robot = np.eye(4, dtype=np.float64)
+            # Left multiplication rotates the already-aligned mesh around the
+            # TCP frame's Z axis.
+            _T_fix_robot[:3, :3] = _R_flip_tcp_z @ _R_fix_x
+            _mesh.transform(_T_fix_robot)
             _mesh.transform(self._hidden_T())
             self.vis.add_geometry(_mesh)
             self._tcp_gripper_mesh = _mesh
+            print(f"[SceneVis] TCP gripper loaded from {_gripper_path.name} "
+                  f"({len(_mesh.vertices)} verts)")
+        else:
+            print(f"[SceneVis] TCP gripper not found at {_gripper_path}")
 
         _UR10E_VIS = [
             ("base.obj",     [0,       0,      0      ], [0,         0,       np.pi       ]),
@@ -390,15 +417,17 @@ class SceneVis:
     @staticmethod
     def _gearbox_part_stages(ptype: str, row: int, side: str):
         """Python copy of Unity's appear/place/seat stage definitions."""
-        left = side == "Left"
+        # Unity part names are authoritative: Right means the physical right
+        # part in both the Unity assembly and its Open3D mirror.
+        first = side == "Right"
         if ptype in ("Bearing", "Stand"):
-            return (1, 4, 4) if left else (3, 5, 6)
+            return (1, 4, 4) if first else (3, 5, 6)
         if ptype == "Pin" and row == 1 and side == "Right":
             return 7, 7, 7
         if ptype in ("GearRod", "Gear", "Pin"):
             return 2, 5, 5
         if ptype == "Screw":
-            return (4, 4, 4) if left else (6, 6, 6)
+            return (4, 4, 4) if first else (6, 6, 6)
         if ptype == "CrankHandle":
             return 7, 7, 7
         return None, None, None
@@ -415,19 +444,19 @@ class SceneVis:
         if row != selected_row or ptype == "BaseBoard":
             return False
         if stage == 1:
-            return ptype in ("Stand", "Bearing") and side == "Left"
+            return ptype in ("Stand", "Bearing") and side == "Right"
         if stage == 2:
             return ptype in ("GearRod", "Gear", "Pin")
         if stage == 3:
-            return ptype in ("Stand", "Bearing") and side == "Right"
+            return ptype in ("Stand", "Bearing") and side == "Left"
         if stage == 4:
-            return ((ptype in ("Stand", "Bearing") and side == "Left")
-                    or (ptype == "Screw" and side == "Left"))
+            return ((ptype in ("Stand", "Bearing") and side == "Right")
+                    or (ptype == "Screw" and side == "Right"))
         if stage == 5:
             return (ptype in ("GearRod", "Gear", "Pin")
-                    or (ptype in ("Stand", "Bearing") and side == "Right"))
+                    or (ptype in ("Stand", "Bearing") and side == "Left"))
         if stage == 6:
-            return ptype == "Screw" and side == "Right"
+            return ptype == "Screw" and side == "Left"
         if stage == 7:
             return (selected_row == 1
                     and (ptype == "CrankHandle"
@@ -543,16 +572,9 @@ class SceneVis:
             mesh.transform(hidden)
             self.vis.add_geometry(mesh)
 
-            frame_size = 0.08 if unity_name == "BaseBoard" else 0.025
-            pose_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=frame_size)
-            pose_frame.transform(hidden)
-            self.vis.add_geometry(pose_frame)
-
             self._gearbox_parts[unity_name] = {
                 "mesh": mesh,
                 "T": hidden.copy(),
-                "pose_frame": pose_frame,
-                "pose_frame_T": hidden.copy(),
             }
         print(f"[SceneVis] gearbox mirror loaded {len(self._gearbox_parts)} OBJ group instances from {obj_path.name}")
 
@@ -803,13 +825,6 @@ class SceneVis:
             entry["T"] = np.array(T_new, dtype=np.float64, copy=True)
             self.vis.update_geometry(entry["mesh"])
 
-            frame_T = hidden
-            if state is not None and state.get("active", True) and "T" in state:
-                frame_T = self._gearbox_corrected_T(self._T_from_pose_scale(state["T"], state.get("scale")))
-            frame_delta = frame_T @ np.linalg.inv(entry["pose_frame_T"])
-            entry["pose_frame"].transform(frame_delta)
-            entry["pose_frame_T"] = np.array(frame_T, dtype=np.float64, copy=True)
-            self.vis.update_geometry(entry["pose_frame"])
         if not self._gearbox_first_update_logged:
             missing = sorted(set(self._gearbox_parts) - set(states))[:8]
             root_note = "BaseBoard" if "BaseBoard" in states else "identity fallback"
@@ -833,6 +848,16 @@ class SceneVis:
             self._tcp_gripper_mesh.transform(delta)
             self.vis.update_geometry(self._tcp_gripper_mesh)
         self._tcp_T = T_new
+
+    def update_left_hand_gripper(self, T: "np.ndarray | None") -> None:
+        """Keep the green handover-preview gripper at the left-hand target."""
+        if self._left_hand_gripper_mesh is None:
+            return
+        T_new = T if T is not None else self._hidden_T()
+        delta = T_new @ np.linalg.inv(self._left_hand_gripper_T)
+        self._left_hand_gripper_mesh.transform(delta)
+        self.vis.update_geometry(self._left_hand_gripper_mesh)
+        self._left_hand_gripper_T = T_new
 
     def update_tcp_target(self, T: "np.ndarray | None"):
         """Draw the move_to_pose target as a magenta sphere + RGB axes frame."""
