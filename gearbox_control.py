@@ -73,10 +73,10 @@ RESET_NAME    = "__reset__"
 REVERT_NAME   = "__revert__"
 
 # 8-stage per-row assembly dependency model (mirrors task_graph/gearbox_task_graph.py):
-#   1 left bearing->stand   2 gears->rod+pins   3 right bearing->stand
-#   4 fasten left stand to board (needs 1)
-#   5 insert rod + fit right bearing/stand together (needs 2, 3 & 4)
-#   6 drive right screw (needs 5)
+#   1 right bearing->stand  2 gears->rod+pins   3 left bearing->stand
+#   4 fasten right stand to board (needs 1)
+#   5 insert rod + fit left bearing/stand together (needs 2, 3 & 4)
+#   6 drive left screw (needs 5)
 #   7 crank handle (row 1 only, needs 6)        8 verify (global, all rows done)
 FINAL_STAGE = {1: 7, 2: 6, 3: 6, 4: 6}   # last per-row stage that must be complete
 
@@ -106,18 +106,20 @@ def part_stages(ptype: str, side: str, row: int):
         appear = the stage that first reveals the part
         place  = the stage it drops into its final position (>= appear)
         seat   = the stage it is fastened down / turns green (>= place)
-    These coincide for every part EXCEPT the right bearing-stand, which drops into place with the
-    rod at stage 5 (place=5) but isn't fastened until the right screw drives at stage 6 (seat=6).
-    Clicking a placed-but-unfastened part advances to its seat stage (see _handle_part)."""
-    left = side == "Left"
+    These coincide for every part EXCEPT the left bearing-stand, which drops into place with the
+    rod at stage 5 (place=5) but isn't fastened until the left screw drives at stage 6 (seat=6).
+    Stand/bearing clicks always select their named side's appear stage. Later
+    fastening stages are selected with that side's screw; rod-family parts may
+    advance from their build stage to their insertion stage."""
+    first = side == "Right"
     if ptype in ("Bearing", "Stand"):
-        return (1, 4, 4) if left else (3, 5, 6)
+        return (1, 4, 4) if first else (3, 5, 6)
     if ptype == "Pin" and row == 1 and side == "Right":
         return 7, 7, 7                  # Row-1 right pin secures the crank handle at stage 7
     if ptype in ("GearRod", "Gear", "Pin"):
         return 2, 5, 5
     if ptype == "Screw":
-        return (4, 4, 4) if left else (6, 6, 6)
+        return (4, 4, 4) if first else (6, 6, 6)
     if ptype == "CrankHandle":
         return 7, 7, 7
     return None, None, None
@@ -329,16 +331,17 @@ class GearboxStateMachine:
         if appear is None:
             print(f"  (ignored '{name}': type '{ptype}' not stage-mapped)")
             return
-        # A part participates in its appear, place, and seat stages. Clicking it jumps FORWARD to
-        # the furthest of those whose prerequisites are met — so once stages 1 & 2 are done a
-        # stage-1/2 part triggers the stage-4 drop, and a part that's already dropped into place but
-        # not yet fastened (the right bearing-stand: place 5, seat 6) advances to its fasten stage
-        # so it can be completed. Falls back to `appear` (possibly blocked) when nothing is unlocked.
+        # A named stand/bearing is an unambiguous side selector: repeated clicks
+        # must replay that side's bearing-into-stand step, never walk through
+        # later stages or appear to alternate sides. Screws select fastening
+        # directly. Only the rod-family subassembly advances from its build
+        # stage (2) to its insertion stage (5) once stage 5 is unlocked.
         stage = appear
-        for cand in (seat, place):
-            if cand > appear and self.unlocked(row, cand):
-                stage = cand
-                break
+        if ptype in ("GearRod", "Gear", "Pin"):
+            for cand in (seat, place):
+                if cand > appear and self.unlocked(row, cand):
+                    stage = cand
+                    break
         if stage == 7 and row != 1:
             print(f"  (ignored '{name}': stage 7 is row 1 only)")
             return

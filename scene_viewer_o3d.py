@@ -417,15 +417,17 @@ class SceneVis:
     @staticmethod
     def _gearbox_part_stages(ptype: str, row: int, side: str):
         """Python copy of Unity's appear/place/seat stage definitions."""
-        left = side == "Left"
+        # Unity part names are authoritative: Right means the physical right
+        # part in both the Unity assembly and its Open3D mirror.
+        first = side == "Right"
         if ptype in ("Bearing", "Stand"):
-            return (1, 4, 4) if left else (3, 5, 6)
+            return (1, 4, 4) if first else (3, 5, 6)
         if ptype == "Pin" and row == 1 and side == "Right":
             return 7, 7, 7
         if ptype in ("GearRod", "Gear", "Pin"):
             return 2, 5, 5
         if ptype == "Screw":
-            return (4, 4, 4) if left else (6, 6, 6)
+            return (4, 4, 4) if first else (6, 6, 6)
         if ptype == "CrankHandle":
             return 7, 7, 7
         return None, None, None
@@ -442,19 +444,19 @@ class SceneVis:
         if row != selected_row or ptype == "BaseBoard":
             return False
         if stage == 1:
-            return ptype in ("Stand", "Bearing") and side == "Left"
+            return ptype in ("Stand", "Bearing") and side == "Right"
         if stage == 2:
             return ptype in ("GearRod", "Gear", "Pin")
         if stage == 3:
-            return ptype in ("Stand", "Bearing") and side == "Right"
+            return ptype in ("Stand", "Bearing") and side == "Left"
         if stage == 4:
-            return ((ptype in ("Stand", "Bearing") and side == "Left")
-                    or (ptype == "Screw" and side == "Left"))
+            return ((ptype in ("Stand", "Bearing") and side == "Right")
+                    or (ptype == "Screw" and side == "Right"))
         if stage == 5:
             return (ptype in ("GearRod", "Gear", "Pin")
-                    or (ptype in ("Stand", "Bearing") and side == "Right"))
+                    or (ptype in ("Stand", "Bearing") and side == "Left"))
         if stage == 6:
-            return ptype == "Screw" and side == "Right"
+            return ptype == "Screw" and side == "Left"
         if stage == 7:
             return (selected_row == 1
                     and (ptype == "CrankHandle"
