@@ -1827,6 +1827,8 @@ class MainScene:
         self._handover_tool_id: "int | None"                 = None   # object currently awaiting/in handover
         self._last_left_pts:  "list | None"                 = None   # most recent left  hand joints from world_joints()
         self._last_right_pts: "list | None"                 = None   # most recent right hand joints from world_joints()
+        self._stable_hand_quat: dict[str, "np.ndarray | None"] = {
+            "left": None, "right": None}
         self._pending_handover: bool                         = False  # set True after successful grasp to trigger handover on next frame
         self._synth_cubes_added                  = False  # True once PEGBOARD_CUBES have been added to synth._objects
         self._synth_cube_start_idx: "int | None"     = None   # index into synth._objects where the PEGBOARD_CUBES entries begin
@@ -2103,15 +2105,14 @@ class MainScene:
             target_pos  = palm_pos - 0.185 * hz
         else:
             target_quat = _palm_quat(hand_pts, is_left=is_left)
-            if ScipyR.from_quat(target_quat).apply([0., 1., 0.])[2] > 0:
-                target_quat = (ScipyR.from_quat(target_quat)
-                               * ScipyR.from_euler('z', 180, degrees=True)).as_quat()
             gripper_z   = ScipyR.from_quat(target_quat).apply([0., 0., 1.])
             centroid    = (np.asarray(hand_pts[3], float)
                            + np.asarray(hand_pts[1], float)
                            + np.asarray(hand_pts[6], float)) / 3.0
             target_pos  = centroid - gripper_z * self._PALM_TCP_STANDOFF_M
             target_quat = target_quat.tolist()
+        target_quat = self._stabilize_hand_orientation(
+            target_quat, target_side).tolist()
         target_pos = np.asarray(
             cfg.project_robot_target_position(target_pos, self._T_world_tcp[:3, 3]), float)
         print(f"[Handover] Move to {target_side} hand "
@@ -2130,6 +2131,25 @@ class MainScene:
         )
         return True
 
+    def _stabilize_hand_orientation(self, quat_xyzw,
+                                    side: str) -> np.ndarray:
+        """Choose the continuous member of the hand pose's 180°-Z pair."""
+        base = ScipyR.from_quat(quat_xyzw)
+        flipped = base * ScipyR.from_euler('z', 180, degrees=True)
+        previous = self._stable_hand_quat.get(side)
+        if previous is None:
+            # Preserve the former camera-facing preference only for the first
+            # tracked frame; subsequent frames are selected by continuity.
+            chosen = (flipped if base.apply([0., 1., 0.])[2] > 0 else base)
+        else:
+            prev = ScipyR.from_quat(previous)
+            base_delta = (prev.inv() * base).magnitude()
+            flipped_delta = (prev.inv() * flipped).magnitude()
+            chosen = base if base_delta <= flipped_delta else flipped
+        quat = chosen.as_quat()
+        self._stable_hand_quat[side] = quat
+        return quat
+
     def _left_hand_gripper_preview_T(self, hand_pts) -> "np.ndarray | None":
         """Pose the persistent ghost at the same left-hand handover offset."""
         if hand_pts is None:
@@ -2143,18 +2163,18 @@ class MainScene:
             hz_n = float(np.linalg.norm(hz))
             hz = hz / hz_n if hz_n > 1e-3 else np.array([1.0, 0.0, 0.0])
             hy = np.array([0.0, 0.0, 1.0])
-            R = np.column_stack([np.cross(hy, hz), hy, hz])
+            quat = ScipyR.from_matrix(
+                np.column_stack([np.cross(hy, hz), hy, hz])).as_quat()
             pos = palm - 0.185 * hz
         else:
             quat = _palm_quat(hand_pts, is_left=True)
-            if ScipyR.from_quat(quat).apply([0., 1., 0.])[2] > 0:
-                quat = (ScipyR.from_quat(quat)
-                        * ScipyR.from_euler('z', 180, degrees=True)).as_quat()
-            R = ScipyR.from_quat(quat).as_matrix()
             centroid = (np.asarray(hand_pts[3], float)
                         + np.asarray(hand_pts[1], float)
                         + np.asarray(hand_pts[6], float)) / 3.0
-            pos = centroid - R[:, 2] * self._PALM_TCP_STANDOFF_M
+            pos = (centroid - ScipyR.from_quat(quat).apply([0., 0., 1.])
+                   * self._PALM_TCP_STANDOFF_M)
+        quat = self._stabilize_hand_orientation(quat, "left")
+        R = ScipyR.from_quat(quat).as_matrix()
         T = np.eye(4)
         T[:3, :3] = R
         T[:3, 3] = pos
@@ -2297,6 +2317,10 @@ class MainScene:
                 left_pts, right_pts = self.hands.world_joints(T_wt)
                 self._last_left_pts  = left_pts
                 self._last_right_pts = right_pts
+                if left_pts is None:
+                    self._stable_hand_quat["left"] = None
+                if right_pts is None:
+                    self._stable_hand_quat["right"] = None
 
                 # ── Pending handover after successful grasp ───────────────────
                 if (self._pending_handover
@@ -2603,9 +2627,6 @@ class MainScene:
                         else:
                             _is_left = (self._tracking_hand_side == 'left')
                             _tq      = _palm_quat(_track_pts, is_left=_is_left)
-                            if ScipyR.from_quat(_tq).apply([0., 1., 0.])[2] > 0:
-                                _tq = (ScipyR.from_quat(_tq)
-                                       * ScipyR.from_euler('z', 180, degrees=True)).as_quat()
                             _gz       = ScipyR.from_quat(_tq).apply([0., 0., 1.])
                             _centroid = (np.asarray(_track_pts[3], float)
                                          + np.asarray(_track_pts[1], float)
@@ -2613,6 +2634,8 @@ class MainScene:
                             _tp = (_centroid - _gz
                                    * self._PALM_TCP_STANDOFF_M).tolist()
                             _tq  = _tq.tolist()
+                        _tq = self._stabilize_hand_orientation(
+                            _tq, self._tracking_hand_side).tolist()
                         _target_origin = (self._T_world_tcp[:3, 3]
                                           if self._T_world_tcp is not None else None)
                         _tp = cfg.project_robot_target_position(

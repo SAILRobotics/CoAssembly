@@ -274,18 +274,27 @@ class SceneVis:
             _mesh = o3d.io.read_triangle_mesh(str(_gripper_path))
             _mesh.compute_vertex_normals()
             _mesh.paint_uniform_color([0.75, 0.75, 0.75])
-            # Align the OBJ to the TCP frame, then turn it 180 degrees about
-            # the gripper's own (local) Z axis.
-            _T_fix_gripper = np.eye(4, dtype=np.float64)
+            # Keep the known-good original robot-TCP alignment separate from
+            # the left-hand preview's additional OBJ-local Y flip.
             _R_fix_x = ScipyR.from_euler('x', 90, degrees=True).as_matrix()
-            _R_flip_local_z = ScipyR.from_euler('z', 180, degrees=True).as_matrix()
-            _T_fix_gripper[:3, :3] = _R_fix_x @ _R_flip_local_z
-            _mesh.transform(_T_fix_gripper)
+            _R_flip_y = ScipyR.from_euler('y', 180, degrees=True).as_matrix()
+            _R_flip_tcp_z = ScipyR.from_euler('z', 180, degrees=True).as_matrix()
+
             _left_mesh = copy.deepcopy(_mesh)
+            _T_fix_left = np.eye(4, dtype=np.float64)
+            # Right multiplication: rotate around the model's own Y first.
+            _T_fix_left[:3, :3] = _R_fix_x @ _R_flip_y
+            _left_mesh.transform(_T_fix_left)
             _left_mesh.paint_uniform_color([0.20, 0.90, 0.40])
             _left_mesh.transform(self._hidden_T())
             self.vis.add_geometry(_left_mesh)
             self._left_hand_gripper_mesh = _left_mesh
+
+            _T_fix_robot = np.eye(4, dtype=np.float64)
+            # Left multiplication rotates the already-aligned mesh around the
+            # TCP frame's Z axis.
+            _T_fix_robot[:3, :3] = _R_flip_tcp_z @ _R_fix_x
+            _mesh.transform(_T_fix_robot)
             _mesh.transform(self._hidden_T())
             self.vis.add_geometry(_mesh)
             self._tcp_gripper_mesh = _mesh
