@@ -258,8 +258,12 @@ class RobotClient:
         self._send({"cmd": "cancel_board_interaction"})
 
     def arm_board_release(self) -> None:
-        """Exit freedrive and allow a subsequent deliberate pull to open."""
+        """Toggle a held board between locked and pull-to-release modes."""
         self._send({"cmd": "arm_board_release"})
+
+    def simulate_board_pull(self) -> None:
+        """Complete a virtual board pull; accepted only by a simulation server."""
+        self._send({"cmd": "simulate_board_pull"})
 
     def update_move_target(self, pos, quat=None) -> None:
         """Update the target of an in-progress move_to_pose without restarting it."""

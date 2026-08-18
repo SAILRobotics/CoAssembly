@@ -905,7 +905,7 @@ class _ToolLayoutManager:
 
 class _ToolSelectionManager:
     TCP_TOOL_ID     = 200
-    TCP_COLOR       = [1.0, 0.8, 0.2, 1.0]       # gold resting color; sent on port 5010
+    TCP_COLOR       = [0.0, 0.0, 0.0, 1.0]       # black resting/inactive color; port 5010
     TCP_READY_COLOR = [0.0, 1.0, 0.0, 1.0]       # board may be inserted/removed
     TCP_LOCKED_COLOR = [1.0, 0.0, 0.0, 1.0]      # board latched; pull cannot release
     SELECTED_COLOR = [0.0, 1.0, 0.0, 0.25]     #when cursor clicks
@@ -2458,8 +2458,11 @@ class MainScene:
                         print("[TCP] Locked board clicked → disable freedrive and arm pull-to-release")
                         self.robot.arm_board_release()
                     elif (self.robot is not None
-                          and self.robot.board_state in
-                              ("waiting_for_board", "release_armed")):
+                          and self.robot.board_state == "release_armed"):
+                        print("[TCP] Release-armed board clicked → lock board again")
+                        self.robot.arm_board_release()
+                    elif (self.robot is not None
+                          and self.robot.board_state == "waiting_for_board"):
                         print(f"[TCP] Board interaction already active: "
                               f"{self.robot.board_state}")
                     elif (self.robot is not None
@@ -2795,6 +2798,15 @@ class MainScene:
                             self._reachability_arrows_hide_at = time.time() + 5.0
                     else:
                         print("[R] Pegboard not locked yet — lock it first.")
+                elif key == ord('p') or key == ord('P'):
+                    if (self.simulation and self.robot is not None
+                            and self.robot.board_state == "release_armed"):
+                        print("[P] Simulating board pull")
+                        self.robot.simulate_board_pull()
+                    elif self.simulation:
+                        print("[P] Virtual pull requires a green release-armed board")
+                    else:
+                        print("[P] Virtual board pull is simulation-only")
                 elif (key == ord('l') or key == ord('L')) and self._no_passthrough:
                     # --no-passthrough manual lock: pin the world to the Quest
                     # tracking origin without needing marker 100 / passthrough.

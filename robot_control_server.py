@@ -413,6 +413,9 @@ class RobotControlServer:
         elif cmd == "arm_board_release":
             self.arm_board_release()
 
+        elif cmd == "simulate_board_pull":
+            self.simulate_board_pull()
+
         else:
             print(f"[RobotServer] Unknown command: {cmd!r}")
 
@@ -647,7 +650,15 @@ class RobotControlServer:
             return False
 
     def arm_board_release(self) -> None:
-        """Allow pull-to-open only after an explicit TCPMarker click."""
+        """Toggle a held board between locked and pull-to-release modes."""
+        if self._board_state == "release_armed":
+            # A second click means the first was accidental: cancel release,
+            # restore the latch indication, and return to freedrive.
+            self._arm_board_force(None)
+            self._set_board_state("holding_board")
+            self._set_board_freedrive(True)
+            print("[Robot] Board release cancelled → locked again")
+            return
         if self._board_state != "holding_board":
             print(f"[Robot] Board release ignored — state is '{self._board_state}'")
             return
@@ -656,7 +667,20 @@ class RobotControlServer:
         self._set_board_state("release_armed")
         self._arm_board_force(None if self.simulation else "release")
         if self.simulation:
-            print("[Robot sim] Board release armed; pull detection unavailable")
+            print("[Robot sim] Board release armed; press P to simulate pull")
+
+    def simulate_board_pull(self) -> None:
+        """Testing hook: complete a board pull only in simulation mode."""
+        if not self.simulation:
+            print("[Robot] simulate_board_pull ignored on real hardware")
+            return
+        if self._board_state != "release_armed":
+            print(f"[Robot sim] Virtual pull ignored — state is '{self._board_state}'")
+            return
+        self._set_board_freedrive(False)
+        self._arm_board_force(None)
+        self._set_board_state("inactive")
+        print("[Robot sim] Virtual board pull → release complete")
 
     def cancel_board_interaction(self) -> None:
         """Stop board monitoring without automatically dropping a held board."""
