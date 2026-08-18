@@ -256,7 +256,6 @@ class SceneVis:
         self._gearbox_first_update_logged = False
         self._gearbox_initial_states = None
         self._gearbox_root_initial_T = None
-        self._gearbox_pose_frames = {}
         self._gearbox_done = {row: set() for row in range(1, 5)}
         self._gearbox_blocked_view = None
         self._load_gearbox_mirror_meshes()
@@ -571,16 +570,9 @@ class SceneVis:
             mesh.transform(hidden)
             self.vis.add_geometry(mesh)
 
-            frame_size = 0.08 if unity_name == "BaseBoard" else 0.025
-            pose_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=frame_size)
-            pose_frame.transform(hidden)
-            self.vis.add_geometry(pose_frame)
-
             self._gearbox_parts[unity_name] = {
                 "mesh": mesh,
                 "T": hidden.copy(),
-                "pose_frame": pose_frame,
-                "pose_frame_T": hidden.copy(),
             }
         print(f"[SceneVis] gearbox mirror loaded {len(self._gearbox_parts)} OBJ group instances from {obj_path.name}")
 
@@ -831,13 +823,6 @@ class SceneVis:
             entry["T"] = np.array(T_new, dtype=np.float64, copy=True)
             self.vis.update_geometry(entry["mesh"])
 
-            frame_T = hidden
-            if state is not None and state.get("active", True) and "T" in state:
-                frame_T = self._gearbox_corrected_T(self._T_from_pose_scale(state["T"], state.get("scale")))
-            frame_delta = frame_T @ np.linalg.inv(entry["pose_frame_T"])
-            entry["pose_frame"].transform(frame_delta)
-            entry["pose_frame_T"] = np.array(frame_T, dtype=np.float64, copy=True)
-            self.vis.update_geometry(entry["pose_frame"])
         if not self._gearbox_first_update_logged:
             missing = sorted(set(self._gearbox_parts) - set(states))[:8]
             root_note = "BaseBoard" if "BaseBoard" in states else "identity fallback"
