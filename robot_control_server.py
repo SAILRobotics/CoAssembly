@@ -224,6 +224,7 @@ class RobotControlServer:
         self._board_force_baseline: "np.ndarray | None" = None
         self._board_force_hits = 0
         self._board_force_last_t = 0.0
+        self._board_freedrive_active = False
         # General tool/part handover: hold the gripper closed until the human
         # applies a sustained pull, then open and acknowledge the request.
         self._handover_pull_active = False
@@ -338,6 +339,7 @@ class RobotControlServer:
             "board_state":        self._board_state,
             "board_interaction_active": self._board_force_mode is not None
                                         or self._board_state != "inactive",
+            "board_freedrive_active": self._board_freedrive_active,
             "object_handover_waiting": self._handover_pull_active,
         })
 
@@ -407,6 +409,12 @@ class RobotControlServer:
 
         elif cmd == "cancel_board_interaction":
             self.cancel_board_interaction()
+
+        elif cmd == "arm_board_release":
+            self.arm_board_release()
+
+        elif cmd == "simulate_board_pull":
+            self.simulate_board_pull()
 
         else:
             print(f"[RobotServer] Unknown command: {cmd!r}")
@@ -605,6 +613,7 @@ class RobotControlServer:
             # real-robot force mode into its virtual held-board state.
             self._arm_board_force(None)
             self._set_board_state("holding_board")
+            self._set_board_freedrive(True)
             return
         try:
             self.servoStop()
@@ -614,13 +623,68 @@ class RobotControlServer:
             self._set_board_state("inactive")
             self._arm_board_force(None)
             return
-        # Motion is idle here.  Force monitoring is armed independently; the
-        # public board state stays inactive until the gripper confirms an object.
-        self._set_board_state("inactive")
+        self._set_board_state("waiting_for_board")
         self._arm_board_force("grasp")
+
+    def _set_board_freedrive(self, enabled: bool) -> bool:
+        """Enter/leave freedrive without changing the board latch state."""
+        enabled = bool(enabled)
+        if enabled == self._board_freedrive_active:
+            return True
+        if self.simulation:
+            self._board_freedrive_active = enabled
+            print(f"[Robot sim] Board freedrive {'enabled' if enabled else 'disabled'}")
+            return True
+        try:
+            ctrl = self._rtde_ctrl_conn()
+            if enabled:
+                self.servoStop()
+                ctrl.freedriveMode()
+            else:
+                ctrl.endFreedriveMode()
+            self._board_freedrive_active = enabled
+            print(f"[Robot] Board freedrive {'enabled' if enabled else 'disabled'}")
+            return True
+        except Exception as e:
+            print(f"[Robot] Board freedrive transition failed: {e}")
+            return False
+
+    def arm_board_release(self) -> None:
+        """Toggle a held board between locked and pull-to-release modes."""
+        if self._board_state == "release_armed":
+            # A second click means the first was accidental: cancel release,
+            # restore the latch indication, and return to freedrive.
+            self._arm_board_force(None)
+            self._set_board_state("holding_board")
+            self._set_board_freedrive(True)
+            print("[Robot] Board release cancelled → locked again")
+            return
+        if self._board_state != "holding_board":
+            print(f"[Robot] Board release ignored — state is '{self._board_state}'")
+            return
+        if not self._set_board_freedrive(False):
+            return
+        self._set_board_state("release_armed")
+        self._arm_board_force(None if self.simulation else "release")
+        if self.simulation:
+            print("[Robot sim] Board release armed; press P to simulate pull")
+
+    def simulate_board_pull(self) -> None:
+        """Testing hook: complete a board pull only in simulation mode."""
+        if not self.simulation:
+            print("[Robot] simulate_board_pull ignored on real hardware")
+            return
+        if self._board_state != "release_armed":
+            print(f"[Robot sim] Virtual pull ignored — state is '{self._board_state}'")
+            return
+        self._set_board_freedrive(False)
+        self._arm_board_force(None)
+        self._set_board_state("inactive")
+        print("[Robot sim] Virtual board pull → release complete")
 
     def cancel_board_interaction(self) -> None:
         """Stop board monitoring without automatically dropping a held board."""
+        self._set_board_freedrive(False)
         self._arm_board_force(None)
         if self.simulation:
             # Simulation has no physical gripper/object to protect.  Its
@@ -628,7 +692,7 @@ class RobotControlServer:
             # handle, so cancellation can always return it to inactive.
             self._set_board_state("inactive")
             return
-        if self._board_state not in ("holding_board", "moving_board"):
+        if self._board_state not in ("holding_board", "moving_board", "release_armed"):
             self._set_board_state("inactive")
 
     def _prepare_board_state_for_motion(self, board_move: bool = False) -> None:
@@ -636,13 +700,15 @@ class RobotControlServer:
         if (self.simulation and not board_move
                 and self._board_state == "holding_board"):
             print("[Robot sim] New motion requested → dismissing virtual board hold")
+            self._set_board_freedrive(False)
             self._arm_board_force(None)
             self._set_board_state("inactive")
             return
-        if (self._board_state == "inactive"
+        if (self._board_state in ("inactive", "waiting_for_board")
                 and self._board_force_mode == "grasp"):
             print("[Robot] New motion requested → cancelling board-contact wait")
             self._arm_board_force(None)
+            self._set_board_state("inactive")
 
     def _poll_tcp_force(self) -> "np.ndarray | None":
         if self.simulation:
@@ -695,7 +761,8 @@ class RobotControlServer:
                 return
             if has_object:
                 self._set_board_state("holding_board")
-                self._arm_board_force("release")
+                self._arm_board_force(None)
+                self._set_board_freedrive(True)
             else:
                 print("[Robot] Board not detected by gripper → reopening")
                 try:
@@ -706,7 +773,7 @@ class RobotControlServer:
                     return
                 self._set_board_state("inactive")
                 self._arm_board_force("grasp")
-        elif mode == "release" and self._board_state == "holding_board":
+        elif mode == "release" and self._board_state == "release_armed":
             print(f"[Robot] Board pull detected ({delta:.1f} N) → opening")
             try:
                 self.open_gripper()
@@ -815,6 +882,11 @@ class RobotControlServer:
                 if on_complete:
                     on_complete(False)
                 return
+        if board_move and not self._set_board_freedrive(False):
+            print("[Robot] Board move blocked — could not disable freedrive")
+            if on_complete:
+                on_complete(False)
+            return
         if not self.simulation:
             self.servoStop()
         T_tcp = self.pb_scene.update_tcp_bodies()
@@ -870,10 +942,11 @@ class RobotControlServer:
         if not self.simulation:
             self.servoStop()
         if self._board_state == "moving_board":
-            # The board remains clamped on success or cancellation.  Capture a
-            # fresh stationary baseline before release monitoring resumes.
+            # The board remains latched. Return to freedrive without enabling
+            # pull-to-release; that requires another explicit TCPMarker click.
             self._set_board_state("holding_board")
-            self._arm_board_force(None if self.simulation else "release")
+            self._arm_board_force(None)
+            self._set_board_freedrive(True)
         cb = self._move_on_complete
         self._move_on_complete = None
         if cb is not None:
