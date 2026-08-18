@@ -56,6 +56,7 @@ class Step:
     output: str                # e.g. "BEARING_STAND_ROW2_LEFT_ASSEMBLY"
     description: str           # e.g. "Insert BEARING_ROW2_LEFT into STAND_ROW2_LEFT."
     context: tuple[str, ...] = ()  # e.g. ("BASE_BOARD",) — parts present but not consumed
+    requires: tuple[str, ...] = () # completed step IDs; unlike context, their outputs may be consumed
 
 
 PROVIDED_PARTS = {
@@ -118,8 +119,7 @@ def build_steps() -> list[Step]:
                 output=f"BEARING_STAND_ROW{row}_{side.upper()}_ASSEMBLY",
                 description=(f"Insert BEARING_ROW{row}_{side.upper()} into "
                              f"STAND_ROW{row}_{side.upper()}."),
-                context=((f"BEARING_STAND_ROW{row}_RIGHT_ASSEMBLY",)
-                         if side == "Left" else ()),
+                requires=((f"r{row}_bearing_right",) if side == "Left" else ()),
             ))
 
         steps.append(Step(
@@ -141,7 +141,7 @@ def build_steps() -> list[Step]:
             inputs=(f"BEARING_STAND_ROW{row}_{first.upper()}_ASSEMBLY",
                     f"SCREW_ROW{row}_{first.upper()}"),
             output=f"FASTENED_STAND_ROW{row}_{first.upper()}_ASSEMBLY",
-            context=("BASE_BOARD", f"BEARING_STAND_ROW{row}_{second.upper()}_ASSEMBLY"),
+            context=("BASE_BOARD",),
             description=(f"Fasten the {first.lower()} bearing-stand assembly to BASE_BOARD "
                          f"with SCREW_ROW{row}_{first.upper()} before inserting the gear rod."),
         ))
@@ -227,9 +227,14 @@ class TaskGraph:
         self.transform_history.clear()
 
     def missing(self, step: Step) -> list[str]:
-        #combines the two collections into one tuple. inputs are consumed by the step. context must be present but is not consumed.
-        return [part for part in (*step.inputs, *step.context) 
-                if part not in self.active_parts]
+        # Inputs are consumed and context parts must remain active. `requires`
+        # records workflow precedence independently of whether the producer's
+        # output has subsequently been consumed by another assembly step.
+        missing_parts = [part for part in (*step.inputs, *step.context)
+                         if part not in self.active_parts]
+        missing_steps = [required for required in step.requires
+                         if required not in self.completed]
+        return missing_parts + missing_steps
 
     def is_ready(self, step: Step) -> bool:
         # A step is ready when: It has not already been completed. Its missing-parts list is empty.
@@ -245,7 +250,7 @@ class TaskGraph:
             return False, f"{step.id} is already complete; its result is {step.output}."
         missing = self.missing(step)
         if missing:
-            return False, (f"WARNING: {step.id} cannot happen yet. Missing active input(s): "
+            return False, (f"WARNING: {step.id} cannot happen yet. Missing prerequisite(s): "
                            f"{', '.join(missing)}.")
         for part in step.inputs:
             self.active_parts.remove(part)
@@ -272,7 +277,8 @@ class TaskGraph:
         # the producer's output.
         return [candidate for candidate in self.steps
                 if candidate.id in self.completed
-                and step.output in (*candidate.inputs, *candidate.context)]
+                and (step.output in (*candidate.inputs, *candidate.context)
+                     or step.id in candidate.requires)]
 
     def frontier_steps(self) -> list[Step]:
         return [self.by_id[step_id] for step_id in self.completed
@@ -475,6 +481,9 @@ class TaskGraph:
         # misspelled or the step that should produce it has not been defined.
         produced = set(outputs)
         for step in graph.steps:
+            for required in step.requires:
+                if required not in graph.by_id:
+                    errors.append(f"Unknown required step {required} in {step.id}")
             for part in step.inputs:
                 if part not in graph.initial_parts and part not in produced:
                     errors.append(f"Unknown input {part} in {step.id}")
@@ -1618,8 +1627,10 @@ def run_self_test() -> None:
     graph.complete(graph.by_id["r1_bearing_right"])
     graph.complete(graph.by_id["r1_bearing_left"])
     graph.complete(graph.by_id["r1_fasten_first_stand"])
-    ok, warning = graph.undo(graph.by_id["r1_bearing_left"])
-    assert not ok and "not on the completed frontier" in warning
+    # Fastening the right stand does not consume or depend on the independently
+    # assembled left stand, so the left step remains undoable here.
+    ok, _ = graph.undo(graph.by_id["r1_bearing_left"])
+    assert ok
     ok, _ = graph.undo(graph.by_id["r1_fasten_first_stand"])
     assert ok
     ok, warning = graph.complete(graph.by_id["r1_insert_rod_and_fit_second"])

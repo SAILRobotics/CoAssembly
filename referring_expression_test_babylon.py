@@ -220,11 +220,12 @@ INDEX_HTML = r'''<!doctype html>
     'Handle.stl':['Part_1.022'],
     'Row1_GearRod.stl':['Part_1.027'], 'Row1_GearStand_Left.stl':['Part_1.004'], 'Row1_GearStand_Right.stl':['Part_1.002'],
     'Row1_Gear_Left.stl':['Spur_gear_(42_teeth).001'], 'Row1_Screws.stl':['90751A122_18-8_Stainless_Steel_Socket_Head_Screws','90751A122_18-8_Stainless_Steel_Socket_Head_Screws.001'],
-    'Row2.stl':['Part_1.029'], 'Row2_GearStand_Left.stl':['Part_1.026'], 'Row2_GearStand_Right.stl':['Part_1.014'],
+    'Row2_GearRod.stl':['Part_1.029'], 'Row2_GearStand_Left.stl':['Part_1.026'], 'Row2_GearStand_Right.stl':['Part_1.014'],
     'Row2_Gear_Left.stl':['Spur_gear_(20_teeth).001'], 'Row2_Gear_Right.stl':['Spur_gear_(32_teeth)'], 'Row2_Screws.stl':['90358A118_Ultra-Low-Profile_Socket_Head_Screw','90358A118_Ultra-Low-Profile_Socket_Head_Screw.001'],
     'Row3_GearRod.stl':['Part_1.028'], 'Row3_GearStand_Left.stl':['Part_1.015'], 'Row3_GearStand_Right.stl':['Part_1.003'],
     'Row3_Gear_Left.stl':['Spur_gear_(20_teeth)'], 'Row3_Gear_Right.stl':['Spur_gear_(24_teeth)'], 'Row3_Screws.stl':['90942A121_High-Strength_A286_Stainless_Steel_Button_Head_Torx_Screw','90942A121_High-Strength_A286_Stainless_Steel_Button_Head_Torx_Screw.001'],
-    'Row4_Gear.stl':['Spur_gear_(42_teeth)'], 'Row4_GearRod.stl':['Part_1.021'], 'Row4_GearStand.stl':['Part_1.007','Part_1.009'],
+    'Row4_Gear_Left.stl':['Spur_gear_(42_teeth)'], 'Row4_GearRod.stl':['Part_1.021'],
+    'Row4_GearStand_Right.stl':['Part_1.007'], 'Row4_GearStand_Left.stl':['Part_1.009'],
     'Row4_Screws.stl':['92000A107_Passivated_18-8_Stainless_Steel_Pan_Head_Phillips_Screws','92000A107_Passivated_18-8_Stainless_Steel_Pan_Head_Phillips_Screws.001'],
     'WoodenPin.stl':['Part_1.001','Part_1.006','Part_1.010','Part_1.011','Part_1.012','Part_1.017','Part_1.020']
   };

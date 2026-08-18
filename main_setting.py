@@ -60,6 +60,23 @@ ROBOT_CONTROL_HZ_REAL = 120   # real hardware control rate (matches RTDE max ~12
 # 1.0 = full speed. Simulation is unaffected.
 REAL_ROBOT_SPEED_SCALE = 1.0
 
+# Robot joint configurations selected by gearbox task stage (degrees).  Gears
+# travel with their rod, so stage 2 uses the gear-rod configuration.  Stages
+# 4-6 all happen at the baseboard.
+GEARBOX_GEAR_ROD_JOINT_DEG = [-124.78, -113.21, -124.12, -124.70, -33.12, 179.69]
+GEARBOX_PARTS_JOINT_DEG    = [-133.53, -117.13,  -86.43, -154.49,  42.64, 174.99]
+GEARBOX_BASEBOARD_JOINT_DEG = [-98.55, -83.19, -138.50, -148.45, 218.03, 174.87]
+
+GEARBOX_STAGE_JOINT_DEG = {
+    1: GEARBOX_PARTS_JOINT_DEG,
+    2: GEARBOX_GEAR_ROD_JOINT_DEG,
+    3: GEARBOX_PARTS_JOINT_DEG,
+    4: GEARBOX_BASEBOARD_JOINT_DEG,
+    5: GEARBOX_BASEBOARD_JOINT_DEG,
+    6: GEARBOX_BASEBOARD_JOINT_DEG,
+    7: GEARBOX_PARTS_JOINT_DEG,
+}
+
 # Board handoff force detection.  These are used only by the AR board workflow;
 # normal pegboard tool/part grasps continue to use their programmed sequence.
 BOARD_GRASP_FORCE_THRESHOLD_N   = 4.0

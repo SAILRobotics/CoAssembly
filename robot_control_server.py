@@ -245,6 +245,13 @@ class RobotControlServer:
         self._move_best_angle:  float               = float('inf')
         self._move_progress_t:  float               = 0.0
 
+        # Direct joint move used by gearbox step selection.
+        self._joint_move_target: "np.ndarray | None" = None
+        self._joint_move_runner = None
+        self._joint_move_sent = False
+        self._joint_move_started = 0.0
+        self._joint_move_on_complete: "Callable | None" = None
+
         # Automatic startup positioning, shared by simulation and hardware.
         self._startup_active = True
         self._startup_move_sent = False
@@ -335,7 +342,8 @@ class RobotControlServer:
             "q":                  q.tolist(),
             "tool_grasp_running": bool(self.tool_grasp_running),
             "move_running":       bool(self._startup_active
-                                        or self._move_phase is not None),
+                                        or self._move_phase is not None
+                                        or self._joint_move_target is not None),
             "board_state":        self._board_state,
             "board_interaction_active": self._board_force_mode is not None
                                         or self._board_state != "inactive",
@@ -388,6 +396,12 @@ class RobotControlServer:
                 board_move      = bool(msg.get("board_move", False)),
                 force_pybullet_ik = bool(msg.get("force_pybullet_ik", False)),
                 on_complete = lambda ok, rid=rid: self._publish_event(
+                    "move_done", rid, ok=bool(ok)))
+
+        elif cmd == "move_to_joints":
+            self.move_to_joints(
+                msg["joints"],
+                on_complete=lambda ok, rid=rid: self._publish_event(
                     "move_done", rid, ok=bool(ok)))
 
         elif cmd == "update_move_target":
@@ -467,6 +481,9 @@ class RobotControlServer:
         if self._startup_active:
             self._tick_startup_pose(dt)
             return
+        if self._joint_move_target is not None:
+            self._tick_joint_move(dt)
+            return
         if self._move_phase is not None:
             self._tick_move_to_pose(dt)
             return
@@ -522,6 +539,82 @@ class RobotControlServer:
         else:
             # ret_above_approach or retract → done
             self._finish_grasp(True)
+
+    def move_to_joints(self, joints, on_complete=None) -> None:
+        """Start a guarded direct joint-space move; input is radians."""
+        busy = (self._startup_active or self._move_phase is not None
+                or self._grasp_phase is not None or self._handover_pull_active
+                or self._board_force_mode is not None or self._board_state != "inactive"
+                or self._joint_move_target is not None)
+        if busy:
+            print("[Robot] Gearbox joint move blocked — robot is busy")
+            if on_complete:
+                on_complete(False)
+            return
+        q = np.asarray(joints, dtype=float)
+        if q.shape != (6,) or not np.all(np.isfinite(q)):
+            print("[Robot] Gearbox joint move rejected — expected six finite joints")
+            if on_complete:
+                on_complete(False)
+            return
+        q_min = np.deg2rad(np.asarray(cfg.JOINT_MIN_DEG, dtype=float))
+        q_max = np.deg2rad(np.asarray(cfg.JOINT_MAX_DEG, dtype=float))
+        if np.any(q < q_min) or np.any(q > q_max):
+            print(f"[Robot] Gearbox joint move rejected by limits: "
+                  f"{np.round(np.rad2deg(q), 2).tolist()}")
+            if on_complete:
+                on_complete(False)
+            return
+        self._joint_move_target = _wrap_nearest(q, self.pb_scene.current_q.copy())
+        self._joint_move_on_complete = on_complete
+        self._joint_move_sent = False
+        self._joint_move_started = time.monotonic()
+        if self.simulation:
+            self._joint_move_runner = _PbJointRunner(
+                self.pb_scene.current_q.copy(), self._joint_move_target)
+        print(f"[Robot] Gearbox moveJ → "
+              f"{np.round(np.rad2deg(self._joint_move_target), 2).tolist()}")
+
+    def _finish_joint_move(self, ok: bool) -> None:
+        cb = self._joint_move_on_complete
+        self._joint_move_target = None
+        self._joint_move_runner = None
+        self._joint_move_sent = False
+        self._joint_move_on_complete = None
+        if cb:
+            cb(bool(ok))
+
+    def _tick_joint_move(self, dt: float) -> None:
+        target = self._joint_move_target
+        if target is None:
+            return
+        if self.simulation:
+            if not self._joint_move_runner.done:
+                self._joint_move_runner.update(
+                    self.pb_scene.robot_id, self.pb_scene.arm_indices, dt)
+                return
+            self.pb_scene.update_robot(target)
+            print("[Robot sim] Gearbox joint pose reached")
+            self._finish_joint_move(True)
+            return
+        try:
+            ctrl = self._rtde_ctrl_conn()
+            err = np.max(np.abs(_wrap_nearest(target, self.pb_scene.current_q)
+                                - self.pb_scene.current_q))
+            if not self._joint_move_sent:
+                speed = 0.5 * self._speed_scale
+                ctrl.moveJ(list(target), speed, speed, asynchronous=True)
+                self._joint_move_sent = True
+            elif err < np.deg2rad(1.0):
+                print("[Robot] Gearbox joint pose reached")
+                self._finish_joint_move(True)
+            elif time.monotonic() - self._joint_move_started > 30.0:
+                ctrl.stopJ(2.0)
+                print("[Robot] Gearbox joint move timed out")
+                self._finish_joint_move(False)
+        except Exception as e:
+            print(f"[Robot] Gearbox joint move failed: {e}")
+            self._finish_joint_move(False)
 
     def _tick_startup_pose(self, dt: float) -> None:
         """Move both simulated and real robots to the shared default pose."""
@@ -860,6 +953,11 @@ class RobotControlServer:
             if on_complete:
                 on_complete(False)
             return
+        if self._joint_move_target is not None:
+            print("[Robot] move_to_pose blocked — gearbox joint move is active")
+            if on_complete:
+                on_complete(False)
+            return
         if self._grasp_phase is not None:
             print("[Robot] move_to_pose blocked — grasp in progress")
             if on_complete:
@@ -1133,6 +1231,11 @@ class RobotControlServer:
             if on_complete:
                 on_complete(False)
             return
+        if self._joint_move_target is not None:
+            print("[Robot] Grasp blocked — gearbox joint move is active")
+            if on_complete:
+                on_complete(False)
+            return
         if self._handover_pull_active:
             print("[Robot] Grasp blocked — waiting for object handover pull")
             if on_complete:
@@ -1299,6 +1402,11 @@ class RobotControlServer:
             print("[Robot] Object handover pull wait cancelled; gripper remains closed")
             self._finish_object_handover_pull(False)
         startup_was_active = self._startup_active
+        joint_was_active = self._joint_move_target is not None
+        joint_cb = self._joint_move_on_complete
+        self._joint_move_target = None
+        self._joint_move_runner = None
+        self._joint_move_on_complete = None
         self._startup_active = False
         self._startup_runner = None
         phase              = self._grasp_phase
@@ -1313,7 +1421,13 @@ class RobotControlServer:
         self._grasp_q_above_approach  = None
         self._grasp_cancel_pending    = False
         if not self.simulation:
-            if startup_was_active and self._startup_move_sent:
+            if joint_was_active and self._joint_move_sent:
+                try:
+                    self._rtde_ctrl_conn().stopJ(2.0)
+                except Exception as e:
+                    print(f"[Robot] cancel gearbox moveJ failed: {e}")
+                self._joint_move_sent = False
+            elif startup_was_active and self._startup_move_sent:
                 try:
                     self._rtde_ctrl_conn().stopJ(2.0)
                 except Exception as e:
@@ -1329,6 +1443,11 @@ class RobotControlServer:
         if cb is not None:
             try:
                 cb(False)
+            except Exception:
+                pass
+        if joint_cb is not None:
+            try:
+                joint_cb(False)
             except Exception:
                 pass
 
