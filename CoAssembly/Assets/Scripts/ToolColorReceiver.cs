@@ -41,6 +41,24 @@ public class ToolColorReceiver : MonoBehaviour
     private static readonly int BaseColorFactorID = Shader.PropertyToID("_BaseColorFactor");
     private Color originalColor; 
     private bool hasExplicitTarget;
+    private Renderer[] targetRenderers;
+    private Renderer secondaryRenderer;
+    private float secondaryAlpha = 0.06f;
+
+    public void ConfigureVisual(int id, Renderer renderer, Renderer secondary = null, float secondaryAlpha = 0.06f)
+    {
+        ConfigureVisual(id, renderer != null ? new[] { renderer } : null, secondary, secondaryAlpha);
+    }
+
+    public void ConfigureVisual(int id, Renderer[] renderers, Renderer secondary = null, float secondaryAlpha = 0.06f)
+    {
+        toolId = id;
+        targetRenderers = renderers;
+        targetRenderer = renderers != null && renderers.Length > 0 ? renderers[0] : null;
+        secondaryRenderer = secondary;
+        this.secondaryAlpha = secondaryAlpha;
+        hasExplicitTarget = targetRenderer != null;
+    }
 
     private void Start()
     {
@@ -55,6 +73,9 @@ public class ToolColorReceiver : MonoBehaviour
             enabled = false;
             return;
         }
+
+        if (targetRenderers == null || targetRenderers.Length == 0)
+            targetRenderers = new[] { targetRenderer };
 
         Material mat = targetRenderer.sharedMaterial;
         propertyBlock = new MaterialPropertyBlock();
@@ -150,17 +171,31 @@ public class ToolColorReceiver : MonoBehaviour
     {
         while (pendingColor.TryDequeue(out Color c))
         {
-            Debug.Log($"[ToolColorReceiver:{toolId}] 🎨 Applying ({c.r:F2},{c.g:F2},{c.b:F2},{c.a:F2}) " +
-            $"to renderer '{targetRenderer.name}' on '{gameObject.name}'");
-            targetRenderer.GetPropertyBlock(propertyBlock);
-            // Cover Built-in, URP and common glTF shader conventions. A
-            // renderer-wide property block applies the color to every material
-            // slot on the imported GripperWithAdapters mesh.
-            propertyBlock.SetColor(BaseColorID, c);
-            propertyBlock.SetColor(ColorID, c);
-            propertyBlock.SetColor(BaseColorFactorID, c);
-            targetRenderer.SetPropertyBlock(propertyBlock);
+            string rendererName = targetRenderer != null ? targetRenderer.name : "<none>";
+            Debug.Log($"[ToolColorReceiver:{toolId}] Applying ({c.r:F2},{c.g:F2},{c.b:F2},{c.a:F2}) " +
+            $"to renderer '{rendererName}' on '{gameObject.name}'");
+            if (targetRenderers != null)
+            {
+                foreach (var renderer in targetRenderers)
+                    ApplyColor(renderer, c);
+            }
+            if (secondaryRenderer != null)
+            {
+                Color secondaryColor = c;
+                secondaryColor.a = Mathf.Min(c.a, secondaryAlpha);
+                ApplyColor(secondaryRenderer, secondaryColor);
+            }
         }
+    }
+
+    private void ApplyColor(Renderer renderer, Color color)
+    {
+        if (renderer == null) return;
+        renderer.GetPropertyBlock(propertyBlock);
+        propertyBlock.SetColor(BaseColorID, color);
+        propertyBlock.SetColor(ColorID, color);
+        propertyBlock.SetColor(BaseColorFactorID, color);
+        renderer.SetPropertyBlock(propertyBlock);
     }
 
     private void OnDestroy()
