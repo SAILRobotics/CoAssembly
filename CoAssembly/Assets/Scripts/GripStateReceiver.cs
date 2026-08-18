@@ -140,14 +140,14 @@ public class GripStateReceiver : MonoBehaviour
         if (moveComplete && arBox != null)
             arBox.SetActive(false);
 
-        // Position handle on near face of box on first arrival only
+        // Keep the handle on the box's near face whenever the box follows the
+        // live TCP (including physical freedrive). While the user is grabbing
+        // it, or while a released BoardAR target is frozen for robot motion,
+        // ARManipulationHandle owns the pose instead.
         if (arHandle != null)
         {
             arHandle.SetActive(handleActive);
-            bool firstArrival = latest.gripState == "grabbed"
-                                && _prevGripState != "grabbed"
-                                && _prevGripState != "moving";
-            if (firstArrival && !grabbed && arBox != null)
+            if (handleActive && !grabbed && !_boxFrozen && arBox != null)
             {
                 arHandle.transform.SetParent(worldRoot, false);
                 Vector3 boxForward = arBox.transform.rotation * Vector3.forward;

@@ -905,15 +905,15 @@ class _ToolLayoutManager:
 
 class _ToolSelectionManager:
     TCP_TOOL_ID     = 200
-    TCP_COLOR       = [0.0, 0.0, 0.0, 1.0]       # black resting/inactive color; port 5010
-    TCP_READY_COLOR = [0.0, 1.0, 0.0, 1.0]       # board may be inserted/removed
-    TCP_LOCKED_COLOR = [1.0, 0.0, 0.0, 1.0]      # board latched; pull cannot release
-    SELECTED_COLOR = [0.0, 1.0, 0.0, 0.25]     #when cursor clicks
-    HOVER_COLOR    = [1.0, 0.5, 0.0, 0.25]     #when cursor hovers
+    TCP_COLOR       = [0.0, 0.0, 0.0, 0.25]       # black resting/inactive color; port 5010
+    TCP_READY_COLOR = [0.0, 1.0, 0.0, 0.25]       # board may be inserted/removed
+    TCP_LOCKED_COLOR = [1.0, 0.0, 0.0, 0.25]      # board latched; pull cannot release
+    SELECTED_COLOR = [0.0, 1.0, 0.0, 0.15]     #when cursor clicks
+    HOVER_COLOR    = [1.0, 0.5, 0.0, 0.15]     #when cursor hovers
     RESET_COLOR    = [-1.0, -1.0, -1.0, -1.0]   # sentinel → restores to resting color
-    TOOL_COLOR     = [0.80, 0.88, 1.0,  0.25]    # light blue for "tool" category
-    PART_COLOR     = [1.0,  0.78, 0.78, 0.25]    # light red  for "part" category
-    HIGHLIGHT_COLOR = [0.0, 1.0, 1.0, 0.25]       # cyan — pegboard tool needed for the current step
+    TOOL_COLOR     = [0.80, 0.88, 1.0,  0.15]    # light blue for "tool" category
+    PART_COLOR     = [1.0,  0.78, 0.78, 0.15]    # light red  for "part" category
+    HIGHLIGHT_COLOR = [0.0, 1.0, 1.0, 0.15]       # cyan — pegboard tool needed for the current step
 
     def __init__(self, quest_ip: str, click_port: int = cfg.TOOL_CLICK_PORT,
                  color_port: int = cfg.TOOL_COLOR_PORT,
@@ -2463,8 +2463,15 @@ class MainScene:
                         self.robot.arm_board_release()
                     elif (self.robot is not None
                           and self.robot.board_state == "waiting_for_board"):
-                        print(f"[TCP] Board interaction already active: "
-                              f"{self.robot.board_state}")
+                        # The gripper is open and no board is clamped yet. Let
+                        # another click retarget the summon to the newly chosen
+                        # hand instead of trapping the TCP at its first target.
+                        opposing = "left" if clicking_hand == "right" else "right"
+                        _summon_pts = left_pts if opposing == "left" else right_pts
+                        print(f"[TCP] Waiting-for-board clicked → retarget summon "
+                              f"to {opposing} hand")
+                        self.robot.cancel_board_interaction()
+                        self._summon_to_hand(opposing, _summon_pts)
                     elif (self.robot is not None
                           and not self.robot.tool_grasp_running
                           and self._board_allows_unrelated_motion()
