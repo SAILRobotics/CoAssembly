@@ -9,6 +9,7 @@ Used by main_with_robot.py:
     from scene_viewer_o3d import SceneVis
 """
 
+import copy
 import numpy as np
 import open3d as o3d
 from scipy.spatial.transform import Rotation as ScipyR
@@ -262,18 +263,36 @@ class SceneVis:
 
 
         self._tcp_gripper_mesh = None
+        self._left_hand_gripper_mesh = None
         self._tcp_T = self._hidden_T()
-        _gripper_path = cfg.SCENE_LAYOUT_DIR / "gripperWtihAdapters.obj"
+        self._left_hand_gripper_T = self._hidden_T()
+        # Full gripper/adapter model whose OBJ origin is authored at the robot
+        # TCP. It follows the same live/commanded TCP transform used by the
+        # handover visualization in update_tcp().
+        _gripper_path = (_asset_dir / "RobotiqGripperWithAdapters.obj")
         if _gripper_path.exists():
             _mesh = o3d.io.read_triangle_mesh(str(_gripper_path))
             _mesh.compute_vertex_normals()
             _mesh.paint_uniform_color([0.75, 0.75, 0.75])
+            # Align the OBJ to the TCP frame, then turn it 180 degrees about
+            # the gripper's own (local) Z axis.
             _T_fix_gripper = np.eye(4, dtype=np.float64)
-            _T_fix_gripper[:3, :3] = ScipyR.from_euler('x', 90, degrees=True).as_matrix()
+            _R_fix_x = ScipyR.from_euler('x', 90, degrees=True).as_matrix()
+            _R_flip_local_z = ScipyR.from_euler('z', 180, degrees=True).as_matrix()
+            _T_fix_gripper[:3, :3] = _R_fix_x @ _R_flip_local_z
             _mesh.transform(_T_fix_gripper)
+            _left_mesh = copy.deepcopy(_mesh)
+            _left_mesh.paint_uniform_color([0.20, 0.90, 0.40])
+            _left_mesh.transform(self._hidden_T())
+            self.vis.add_geometry(_left_mesh)
+            self._left_hand_gripper_mesh = _left_mesh
             _mesh.transform(self._hidden_T())
             self.vis.add_geometry(_mesh)
             self._tcp_gripper_mesh = _mesh
+            print(f"[SceneVis] TCP gripper loaded from {_gripper_path.name} "
+                  f"({len(_mesh.vertices)} verts)")
+        else:
+            print(f"[SceneVis] TCP gripper not found at {_gripper_path}")
 
         _UR10E_VIS = [
             ("base.obj",     [0,       0,      0      ], [0,         0,       np.pi       ]),
@@ -833,6 +852,16 @@ class SceneVis:
             self._tcp_gripper_mesh.transform(delta)
             self.vis.update_geometry(self._tcp_gripper_mesh)
         self._tcp_T = T_new
+
+    def update_left_hand_gripper(self, T: "np.ndarray | None") -> None:
+        """Keep the green handover-preview gripper at the left-hand target."""
+        if self._left_hand_gripper_mesh is None:
+            return
+        T_new = T if T is not None else self._hidden_T()
+        delta = T_new @ np.linalg.inv(self._left_hand_gripper_T)
+        self._left_hand_gripper_mesh.transform(delta)
+        self.vis.update_geometry(self._left_hand_gripper_mesh)
+        self._left_hand_gripper_T = T_new
 
     def update_tcp_target(self, T: "np.ndarray | None"):
         """Draw the move_to_pose target as a magenta sphere + RGB axes frame."""

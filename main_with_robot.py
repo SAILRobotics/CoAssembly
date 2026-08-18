@@ -2130,6 +2130,36 @@ class MainScene:
         )
         return True
 
+    def _left_hand_gripper_preview_T(self, hand_pts) -> "np.ndarray | None":
+        """Pose the persistent ghost at the same left-hand handover offset."""
+        if hand_pts is None:
+            return None
+        if self.flat_tcp_ori:
+            palm = np.asarray(hand_pts[1], float)
+            tcp = (self._T_world_tcp[:3, 3]
+                   if self._T_world_tcp is not None else palm - [1.0, 0.0, 0.0])
+            hz = palm - tcp
+            hz[2] = 0.0
+            hz_n = float(np.linalg.norm(hz))
+            hz = hz / hz_n if hz_n > 1e-3 else np.array([1.0, 0.0, 0.0])
+            hy = np.array([0.0, 0.0, 1.0])
+            R = np.column_stack([np.cross(hy, hz), hy, hz])
+            pos = palm - 0.185 * hz
+        else:
+            quat = _palm_quat(hand_pts, is_left=True)
+            if ScipyR.from_quat(quat).apply([0., 1., 0.])[2] > 0:
+                quat = (ScipyR.from_quat(quat)
+                        * ScipyR.from_euler('z', 180, degrees=True)).as_quat()
+            R = ScipyR.from_quat(quat).as_matrix()
+            centroid = (np.asarray(hand_pts[3], float)
+                        + np.asarray(hand_pts[1], float)
+                        + np.asarray(hand_pts[6], float)) / 3.0
+            pos = centroid - R[:, 2] * self._PALM_TCP_STANDOFF_M
+        T = np.eye(4)
+        T[:3, :3] = R
+        T[:3, 3] = pos
+        return T
+
     def _board_allows_unrelated_motion(self) -> bool:
         """A simulated hold is only an AR affordance, not a physical lock."""
         if self.robot is None:
@@ -2698,6 +2728,8 @@ class MainScene:
                 self.vis.update_head(T_world_center)
                 self.vis.update_hands(left_pts, right_pts)
                 self.vis.update_palm_triangles(left_pts, right_pts)
+                self.vis.update_left_hand_gripper(
+                    self._left_hand_gripper_preview_T(left_pts))
                 # Palm quat debug — always visible; prefer right hand, fall back to left
                 if (self._robot_state == 'moving_to_pose'
                         and self._motion_source == 'hand'):

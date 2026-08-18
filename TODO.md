@@ -1,7 +1,10 @@
 1. Change the parts to row1_kit, row2_kit, row3_kit, ...
 2. Default pose for a specific step
-3. Removal of parts / tools from pegboard based on not only handed over part but also task progression 
-4. Right Side GearStand first 
+3. Removal of parts / tools from pegboard based on not only handed over part but also task progression
+4. Right Side GearStand first
+
 5. Referring expression output template and answer and then highlight as well
 
-6. bounding boxes around tools/parts (more transparent) & TCP mismatch
+5. Pegboard parts/tools bounding boxes adjustment --> Dante
+6. bounding boxes around tools/parts (more transparent) --> Dante
+7. TCP mismatch / Robot Mismatch (Unsolved)
