@@ -84,6 +84,7 @@ class RobotClient:
         self._tool_grasp_running = False
         self._move_running       = False
         self._board_state        = "inactive"
+        self._board_freedrive_active = False
         self._board_interaction_active = False
 
         ctx = zmq.Context.instance()
@@ -116,6 +117,8 @@ class RobotClient:
             self._tool_grasp_running = bool(msg.get("tool_grasp_running", False))
             self._move_running       = bool(msg.get("move_running", False))
             self._board_state        = str(msg.get("board_state", "inactive"))
+            self._board_freedrive_active = bool(
+                msg.get("board_freedrive_active", False))
             self._board_interaction_active = bool(
                 msg.get("board_interaction_active", False))
             return
@@ -171,6 +174,10 @@ class RobotClient:
     @property
     def board_interaction_active(self) -> bool:
         return self._board_interaction_active
+
+    @property
+    def board_freedrive_active(self) -> bool:
+        return self._board_freedrive_active
 
     @property
     def q(self) -> "np.ndarray | None":
@@ -249,6 +256,10 @@ class RobotClient:
     def cancel_board_interaction(self) -> None:
         """Disable board force monitoring without opening a held gripper."""
         self._send({"cmd": "cancel_board_interaction"})
+
+    def arm_board_release(self) -> None:
+        """Exit freedrive and allow a subsequent deliberate pull to open."""
+        self._send({"cmd": "arm_board_release"})
 
     def update_move_target(self, pos, quat=None) -> None:
         """Update the target of an in-progress move_to_pose without restarting it."""

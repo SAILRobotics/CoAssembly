@@ -906,6 +906,8 @@ class _ToolLayoutManager:
 class _ToolSelectionManager:
     TCP_TOOL_ID     = 200
     TCP_COLOR       = [1.0, 0.8, 0.2, 1.0]       # gold resting color; sent on port 5010
+    TCP_READY_COLOR = [0.0, 1.0, 0.0, 1.0]       # board may be inserted/removed
+    TCP_LOCKED_COLOR = [1.0, 0.0, 0.0, 1.0]      # board latched; pull cannot release
     SELECTED_COLOR = [0.0, 1.0, 0.0, 0.25]     #when cursor clicks
     HOVER_COLOR    = [1.0, 0.5, 0.0, 0.25]     #when cursor hovers
     RESET_COLOR    = [-1.0, -1.0, -1.0, -1.0]   # sentinel → restores to resting color
@@ -932,6 +934,7 @@ class _ToolSelectionManager:
         self._hovered_tool_id:  int | None              = None
         self._active_hand:      str | None              = None
         self._category_colors:  dict[int, list[float]]  = {}
+        self._forced_colors:    dict[int, list[float]]  = {}
         self._highlighted:      set[int]                = set()
         self._assembly_events:  list[dict]              = []
         self._on_cancel = None
@@ -1039,11 +1042,27 @@ class _ToolSelectionManager:
         self._restore(tool_id)
 
     def send_color(self, tool_id: int, color: list[float]):
+        color = self._forced_colors.get(int(tool_id), color)
+        self._publish_color(tool_id, color)
+
+    def _publish_color(self, tool_id: int, color: list[float]) -> None:
         msg = {"tool_id": int(tool_id), "color": [float(c) for c in color]}
         try:
             self._pub.send_string(json.dumps(msg))
         except Exception as e:
             print(f"[ToolSelection] Publish error: {e}")
+
+    def set_forced_color(self, tool_id: int,
+                         color: "list[float] | None") -> None:
+        """Pin a status color so hover/click styling cannot obscure it."""
+        tool_id = int(tool_id)
+        if color is None:
+            self._forced_colors.pop(tool_id, None)
+            self.send_color(tool_id,
+                            self._category_colors.get(tool_id, self.RESET_COLOR))
+        else:
+            self._forced_colors[tool_id] = color
+            self._publish_color(tool_id, color)
 
     def refresh_colors(self, interval_s: float = 1.0) -> None:
         """Republish effective colors so late port-5010 subscribers catch up."""
@@ -1052,7 +1071,9 @@ class _ToolSelectionManager:
             return
         self._last_color_refresh = now
         for tool_id, resting_color in self._category_colors.items():
-            if tool_id == self._active_tool_id:
+            if tool_id in self._forced_colors:
+                color = self._forced_colors[tool_id]
+            elif tool_id == self._active_tool_id:
                 color = self.SELECTED_COLOR
             elif tool_id == self._hovered_tool_id:
                 color = self.HOVER_COLOR
@@ -1799,6 +1820,7 @@ class MainScene:
         self._motion_source: "str | None"                = None   # None | 'hand' | 'jog' | 'object'
         self._tracking_hand_side: "str | None"           = None   # 'left' | 'right' while tracking
         self._last_ar_board_T: "np.ndarray | None"    = None   # last AR box pose from _GripPoseBridge; persists between polls
+        self._last_tcp_color_state: "str | None"      = None
         self._pending_grasp_tool_id: "int | None"           = None   # tool ID being grasped (set on click, not yet read back)
         self._grasped_objects: list                          = []     # [(id, name)] of successfully grasped objects (cancelled grasps excluded)
         self._handed_over_objects: list                      = []     # [(id, name)] released successfully to the human
@@ -2012,6 +2034,28 @@ class MainScene:
         else:
             print("[Robot] Hand-target move cancelled")
 
+    def _sync_tcp_board_color(self) -> None:
+        """Make TCPMarker ID 200 reflect the server-owned board latch state."""
+        state = self.robot.board_state if self.robot is not None else "inactive"
+        if state == self._last_tcp_color_state:
+            return
+        self._last_tcp_color_state = state
+        if state in ("waiting_for_board", "release_armed"):
+            color = _ToolSelectionManager.TCP_READY_COLOR
+            forced = True
+        elif state in ("holding_board", "moving_board"):
+            color = _ToolSelectionManager.TCP_LOCKED_COLOR
+            forced = True
+        else:
+            color = _ToolSelectionManager.TCP_COLOR
+            forced = False
+        # set_category_color also updates the resting color used by the periodic
+        # refresh, so hover/selection exits return to this state-derived color.
+        self.tools._category_colors[self._TCP_TOOL_ID] = color
+        self.tools.set_forced_color(
+            self._TCP_TOOL_ID, color if forced else None)
+        print(f"[TCP Color] board={state} → {color}")
+
     def _on_board_move_complete(self, ok: bool) -> None:
         _tcp = self._T_world_tcp
         _tgt = self._tcp_target_T
@@ -2126,6 +2170,7 @@ class MainScene:
                 _link_poses = None
                 if self.robot is not None:
                     self.robot.poll()   # drain robot_control_server.py state/events
+                    self._sync_tcp_board_color()
                     self._T_world_tcp = self.robot.tcp_pose
                     _link_poses       = self.robot.arm_link_poses()
                     if self._T_world_tcp is not None and self._tcp_synth is not None:
@@ -2408,6 +2453,15 @@ class MainScene:
                         self._robot_state        = None
                         self._motion_source      = None
                         self._tracking_hand_side = None
+                    elif (self.robot is not None
+                          and self.robot.board_state == "holding_board"):
+                        print("[TCP] Locked board clicked → disable freedrive and arm pull-to-release")
+                        self.robot.arm_board_release()
+                    elif (self.robot is not None
+                          and self.robot.board_state in
+                              ("waiting_for_board", "release_armed")):
+                        print(f"[TCP] Board interaction already active: "
+                              f"{self.robot.board_state}")
                     elif (self.robot is not None
                           and not self.robot.tool_grasp_running
                           and self._board_allows_unrelated_motion()
