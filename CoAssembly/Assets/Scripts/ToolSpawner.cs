@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.Rendering;
 using NetMQ;
 using NetMQ.Sockets;
 using Newtonsoft.Json;
@@ -43,6 +44,19 @@ public class ToolSpawner : MonoBehaviour
     [SerializeField] private string host = "127.0.0.1";
     [SerializeField] private int    port = 5011;
 
+    [Header("Pegboard visualization")]
+    [Tooltip("Draw spawned pegboard tools/parts as subtle transparent boxes with crisp outlines.")]
+    [SerializeField] private bool useBlendedBoxVisualization = true;
+
+    [Tooltip("Face alpha for the blended cube volume.")]
+    [Range(0f, 1f)] [SerializeField] private float faceAlpha = 0.055f;
+
+    [Tooltip("Edge alpha for the cube outline.")]
+    [Range(0f, 1f)] [SerializeField] private float edgeAlpha = 0.9f;
+
+    [Tooltip("Default visualization color until ToolColorReceiver receives the Python color on port 5010.")]
+    [SerializeField] private Color wireframeDefaultColor = Color.white;
+
     // ── Internal ─────────────────────────────────────────────────────────────
     [Serializable] private class ToolData
     {
@@ -62,6 +76,14 @@ public class ToolSpawner : MonoBehaviour
     private readonly ConcurrentQueue<List<ToolData>> dataQueue = new();
 
     private readonly Dictionary<int, GameObject> spawnedTools = new();
+
+    private const float EdgeWidth = 0.003f;
+
+    private struct SpawnedToolVisual
+    {
+        public Renderer[] edgeRenderers;
+        public Renderer faceRenderer;
+    }
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
     void Start()
@@ -141,7 +163,8 @@ public class ToolSpawner : MonoBehaviour
                     continue;
                 }
                 go = Instantiate(prefab, worldRoot);
-                InjectReferences(go, t.id);
+                SpawnedToolVisual visual = useBlendedBoxVisualization ? SetupBlendedBoxVisual(go) : default;
+                InjectReferences(go, t.id, visual);
                 spawnedTools[t.id] = go;
             }
 
@@ -165,7 +188,7 @@ public class ToolSpawner : MonoBehaviour
         return null;
     }
 
-    private void InjectReferences(GameObject go, int toolId)
+    private void InjectReferences(GameObject go, int toolId, SpawnedToolVisual visual)
     {
         // Inject rig refs into HandAwareInteractable
         var hai = go.GetComponent<HandAwareInteractable>();
@@ -180,10 +203,187 @@ public class ToolSpawner : MonoBehaviour
         if (tcp != null) tcp.toolId = toolId;
 
         var tcr = go.GetComponent<ToolColorReceiver>();
-        if (tcr != null) tcr.toolId = toolId;
+        if (tcr != null)
+        {
+            if (visual.edgeRenderers != null && visual.edgeRenderers.Length > 0)
+                tcr.ConfigureVisual(toolId, visual.edgeRenderers, visual.faceRenderer, faceAlpha);
+            else if (visual.faceRenderer != null)
+                tcr.ConfigureVisual(toolId, visual.faceRenderer, null, faceAlpha);
+            else
+                tcr.toolId = toolId;
+        }
+    }
+
+    private SpawnedToolVisual SetupBlendedBoxVisual(GameObject go)
+    {
+        var sourceRenderers = go.GetComponentsInChildren<Renderer>(true);
+        foreach (var renderer in sourceRenderers)
+        {
+            if (renderer != null)
+                renderer.enabled = false;
+        }
+
+        Transform old = go.transform.Find("ToolVisualization");
+        if (old != null)
+            Destroy(old.gameObject);
+
+        var root = new GameObject("ToolVisualization");
+        root.transform.SetParent(go.transform, false);
+
+        Color faceColor = wireframeDefaultColor;
+        faceColor.a = faceAlpha;
+        var face = new GameObject("Faces");
+        face.transform.SetParent(root.transform, false);
+        var faceFilter = face.AddComponent<MeshFilter>();
+        var faceRenderer = face.AddComponent<MeshRenderer>();
+        faceRenderer.shadowCastingMode = ShadowCastingMode.Off;
+        faceRenderer.receiveShadows = false;
+        faceRenderer.material = CreateTransparentFaceMaterial("ToolFaceMaterial", faceColor);
+        faceFilter.mesh = BuildUnitCubeFaceMesh();
+
+        Renderer[] edgeRenderers = null;
+        if (edgeAlpha > 0f)
+        {
+            Color edgeColor = wireframeDefaultColor;
+            edgeColor.a = edgeAlpha;
+            var edges = new GameObject("Edges");
+            edges.transform.SetParent(root.transform, false);
+            edgeRenderers = AddCubeEdgeLines(edges.transform, edgeColor);
+        }
+
+        return new SpawnedToolVisual
+        {
+            edgeRenderers = edgeRenderers,
+            faceRenderer = faceRenderer,
+        };
+    }
+
+    private Renderer[] AddCubeEdgeLines(Transform parent, Color color)
+    {
+        var vertices = UnitCubeVertices();
+        var pairs = new int[]
+        {
+            0,1, 1,2, 2,3, 3,0,
+            4,5, 5,6, 6,7, 7,4,
+            0,4, 1,5, 2,6, 3,7,
+        };
+        var mat = CreateEdgeMaterial("ToolEdgeMaterial", color);
+        var renderers = new Renderer[pairs.Length / 2];
+        for (int i = 0; i < pairs.Length; i += 2)
+        {
+            var go = new GameObject("Edge");
+            go.transform.SetParent(parent, false);
+            var line = go.AddComponent<LineRenderer>();
+            line.useWorldSpace = false;
+            line.positionCount = 2;
+            line.SetPosition(0, vertices[pairs[i]]);
+            line.SetPosition(1, vertices[pairs[i + 1]]);
+            line.widthMultiplier = EdgeWidth;
+            line.numCapVertices = 0;
+            line.numCornerVertices = 0;
+            line.shadowCastingMode = ShadowCastingMode.Off;
+            line.receiveShadows = false;
+            line.material = mat;
+            renderers[i / 2] = line;
+        }
+        return renderers;
+    }
+
+    private static Vector3[] UnitCubeVertices()
+    {
+        return new Vector3[]
+        {
+            new(-0.5f, -0.5f, -0.5f),
+            new( 0.5f, -0.5f, -0.5f),
+            new( 0.5f,  0.5f, -0.5f),
+            new(-0.5f,  0.5f, -0.5f),
+            new(-0.5f, -0.5f,  0.5f),
+            new( 0.5f, -0.5f,  0.5f),
+            new( 0.5f,  0.5f,  0.5f),
+            new(-0.5f,  0.5f,  0.5f),
+        };
+    }
+    private static Material CreateTransparentFaceMaterial(string name, Color color)
+    {
+        var shader = Shader.Find("Universal Render Pipeline/Lit")
+                  ?? Shader.Find("Universal Render Pipeline/Unlit")
+                  ?? Shader.Find("Standard");
+        var mat = new Material(shader) { name = name };
+        mat.renderQueue = (int)RenderQueue.Transparent;
+        mat.SetOverrideTag("RenderType", "Transparent");
+
+        if (mat.HasProperty("_Surface")) mat.SetFloat("_Surface", 1f);
+        if (mat.HasProperty("_Blend")) mat.SetFloat("_Blend", 0f);
+        if (mat.HasProperty("_AlphaClip")) mat.SetFloat("_AlphaClip", 0f);
+        if (mat.HasProperty("_SrcBlend")) mat.SetFloat("_SrcBlend", (float)BlendMode.SrcAlpha);
+        if (mat.HasProperty("_DstBlend")) mat.SetFloat("_DstBlend", (float)BlendMode.OneMinusSrcAlpha);
+        if (mat.HasProperty("_SrcBlendAlpha")) mat.SetFloat("_SrcBlendAlpha", (float)BlendMode.One);
+        if (mat.HasProperty("_DstBlendAlpha")) mat.SetFloat("_DstBlendAlpha", (float)BlendMode.OneMinusSrcAlpha);
+        if (mat.HasProperty("_ZWrite")) mat.SetFloat("_ZWrite", 0f);
+        if (mat.HasProperty("_Cull")) mat.SetFloat("_Cull", (float)CullMode.Off);
+        if (mat.HasProperty("_ReceiveShadows")) mat.SetFloat("_ReceiveShadows", 0f);
+
+        mat.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+        mat.DisableKeyword("_ALPHATEST_ON");
+        mat.DisableKeyword("_ALPHAPREMULTIPLY_ON");
+        mat.DisableKeyword("_ALPHAMODULATE_ON");
+        SetMaterialColor(mat, color);
+        return mat;
+    }
+
+    private static Material CreateEdgeMaterial(string name, Color color)
+    {
+        var shader = Shader.Find("Universal Render Pipeline/Unlit")
+                  ?? Shader.Find("Unlit/Color")
+                  ?? Shader.Find("Standard");
+        var mat = new Material(shader) { name = name };
+        mat.renderQueue = (int)RenderQueue.Transparent;
+        mat.SetOverrideTag("RenderType", "Transparent");
+        if (mat.HasProperty("_Surface")) mat.SetFloat("_Surface", 1f);
+        if (mat.HasProperty("_SrcBlend")) mat.SetFloat("_SrcBlend", (float)BlendMode.SrcAlpha);
+        if (mat.HasProperty("_DstBlend")) mat.SetFloat("_DstBlend", (float)BlendMode.OneMinusSrcAlpha);
+        if (mat.HasProperty("_ZWrite")) mat.SetFloat("_ZWrite", 0f);
+        mat.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+        SetMaterialColor(mat, color);
+        return mat;
+    }
+
+    private static void SetMaterialColor(Material mat, Color color)
+    {
+        if (mat.HasProperty("_Color")) mat.SetColor("_Color", color);
+        if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", color);
     }
 
     // ── Shutdown ──────────────────────────────────────────────────────────────
+    private static Mesh BuildUnitCubeFaceMesh()
+    {
+        var vertices = new Vector3[]
+        {
+            new(-0.5f, -0.5f, -0.5f),
+            new( 0.5f, -0.5f, -0.5f),
+            new( 0.5f,  0.5f, -0.5f),
+            new(-0.5f,  0.5f, -0.5f),
+            new(-0.5f, -0.5f,  0.5f),
+            new( 0.5f, -0.5f,  0.5f),
+            new( 0.5f,  0.5f,  0.5f),
+            new(-0.5f,  0.5f,  0.5f),
+        };
+        var triangles = new int[]
+        {
+            0,2,1, 0,3,2,
+            4,5,6, 4,6,7,
+            0,1,5, 0,5,4,
+            2,3,7, 2,7,6,
+            1,2,6, 1,6,5,
+            0,4,7, 0,7,3,
+        };
+        var mesh = new Mesh { name = "ToolBlendedCubeFaces" };
+        mesh.vertices = vertices;
+        mesh.triangles = triangles;
+        mesh.RecalculateNormals();
+        mesh.RecalculateBounds();
+        return mesh;
+    }
     private void Shutdown()
     {
         if (hasShutdown) return;
