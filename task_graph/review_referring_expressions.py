@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fast keyboard reviewer for referring_expression_responses.csv.
+"""Fast keyboard reviewer for single-target and ambiguous expressions.
 
 Keys:
     O       mark the current expression verified and advance
@@ -20,7 +20,11 @@ from tkinter import messagebox
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CSV_PATH = Path(__file__).resolve().parent / "referring_expression_responses.csv"
+TASK_GRAPH_DIR = Path(__file__).resolve().parent
+DATASETS = {
+    "responses": TASK_GRAPH_DIR / "referring_expression_responses.csv",
+    "ambiguous": TASK_GRAPH_DIR / "referring_expression_ambiguous.csv",
+}
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -29,32 +33,53 @@ import referring_expression_test_babylon as study_app  # noqa: E402
 
 class Reviewer:
     def __init__(self) -> None:
-        with CSV_PATH.open(newline="", encoding="utf-8") as handle:
-            self.rows = list(csv.DictReader(handle))
-        if not self.rows:
-            raise RuntimeError(f"No responses found in {CSV_PATH}")
-        self.position = next(
-            (index for index, row in enumerate(self.rows)
-             if not row.get("Verified", "").strip()),
-            0,
-        )
-
         self.root = tk.Tk()
         self.root.title("Referring-expression verifier")
-        self.root.geometry("980x600")
-        self.root.minsize(720, 460)
+        self.root.geometry("1040x760")
+        self.root.minsize(760, 560)
         self.root.configure(bg="#111820")
         self.only_unreviewed = tk.BooleanVar(value=True)
+        self.dataset_mode = tk.StringVar(value="responses")
+        self.dataset_key = "responses"
+        self.csv_path = DATASETS[self.dataset_key]
+        self.fields: list[str] = []
+        self.rows: list[dict[str, str]] = []
+        self.position = 0
+        self.load_dataset(self.dataset_key)
+
+        modes = tk.Frame(self.root, bg="#111820")
+        modes.pack(pady=(20, 3))
+        tk.Label(modes, text="Dataset:", bg="#111820", fg="#a9bacb",
+                 font=("Sans", 12, "bold")).pack(side="left", padx=(0, 8))
+        tk.Radiobutton(
+            modes, text="Single-target responses", value="responses",
+            variable=self.dataset_mode, command=self.switch_dataset,
+            bg="#111820", fg="#dbe7f2", activebackground="#111820",
+            activeforeground="white", selectcolor="#263746",
+            font=("Sans", 12),
+        ).pack(side="left", padx=5)
+        tk.Radiobutton(
+            modes, text="Ambiguous / plural references", value="ambiguous",
+            variable=self.dataset_mode, command=self.switch_dataset,
+            bg="#111820", fg="#dbe7f2", activebackground="#111820",
+            activeforeground="white", selectcolor="#263746",
+            font=("Sans", 12),
+        ).pack(side="left", padx=5)
 
         self.progress = tk.Label(
             self.root, bg="#111820", fg="#a9bacb", font=("Sans", 13))
-        self.progress.pack(pady=(28, 4))
+        self.progress.pack(pady=(8, 4))
         self.target = tk.Label(
             self.root, bg="#111820", fg="#e4edf5", font=("Sans", 19, "bold"))
         self.target.pack(pady=5)
         self.metadata = tk.Label(
-            self.root, bg="#111820", fg="#91a5b8", font=("Sans", 12))
+            self.root, bg="#111820", fg="#91a5b8", font=("Sans", 12),
+            wraplength=940, justify="center")
         self.metadata.pack(pady=3)
+        self.context = tk.Label(
+            self.root, bg="#111820", fg="#b7c7d6", font=("Sans", 11),
+            wraplength=940, justify="left")
+        self.context.pack(padx=40, pady=3)
         self.description = tk.Label(
             self.root, bg="#1a2530", fg="white", font=("Sans", 22),
             wraplength=840, justify="center", padx=35, pady=45)
@@ -91,28 +116,74 @@ class Reviewer:
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.show()
 
+    def load_dataset(self, key: str) -> None:
+        path = DATASETS[key]
+        with path.open(newline="", encoding="utf-8") as handle:
+            reader = csv.DictReader(handle)
+            fields = reader.fieldnames or []
+            rows = list(reader)
+        if not rows:
+            raise RuntimeError(f"No responses found in {path}")
+        if "Verified" not in fields:
+            raise RuntimeError(f"The dataset has no Verified column: {path}")
+        self.dataset_key = key
+        self.csv_path = path
+        self.fields = fields
+        self.rows = rows
+        self.position = next(
+            (index for index, row in enumerate(rows)
+             if not row.get("Verified", "").strip()),
+            0,
+        )
+        self.root.title(f"Referring-expression verifier — {path.name}")
+
+    def switch_dataset(self) -> None:
+        requested = self.dataset_mode.get()
+        if requested == self.dataset_key:
+            return
+        try:
+            self.save()
+            self.load_dataset(requested)
+            self.show()
+        except (OSError, RuntimeError) as exc:
+            self.dataset_mode.set(self.dataset_key)
+            messagebox.showerror("Could not switch dataset", str(exc))
+
     def save(self) -> None:
-        temporary = CSV_PATH.with_suffix(".csv.tmp")
+        temporary = self.csv_path.with_suffix(".csv.tmp")
         with temporary.open("w", newline="", encoding="utf-8") as handle:
-            writer = csv.DictWriter(handle, fieldnames=study_app.FIELDS,
+            writer = csv.DictWriter(handle, fieldnames=self.fields,
                                     lineterminator="\n")
             writer.writeheader()
             writer.writerows(self.rows)
-        temporary.replace(CSV_PATH)
-        study_app.rebuild_xlsx()
+        temporary.replace(self.csv_path)
+        if self.dataset_key == "responses":
+            study_app.rebuild_xlsx()
 
     def show(self) -> None:
         row = self.rows[self.position]
         counts = Counter(item.get("Verified", "").lower() for item in self.rows)
         self.progress.configure(
-            text=(f"{self.position + 1} / {len(self.rows)}     "
+            text=(f"{self.csv_path.name}     {self.position + 1} / {len(self.rows)}     "
                   f"verified: {counts['o']}     rejected: {counts['x']}     "
                   f"unreviewed: {counts['']}"))
-        self.target.configure(text=row["target_name"])
-        self.metadata.configure(
-            text=(f"CSV index {row['index']}  •  presentation "
-                  f"{row['presentation_number']}/{row['target_presentations']}  •  "
-                  f"{row['referring_type']}  •  {row['traits_used']}"))
+        if self.dataset_key == "responses":
+            self.target.configure(text=row["target_name"])
+            self.metadata.configure(
+                text=(f"CSV index {row['index']}  •  presentation "
+                      f"{row['presentation_number']}/{row['target_presentations']}  •  "
+                      f"{row['referring_type']}  •  {row['traits_used']}"))
+            self.context.configure(text=f"Target ID: {row['target_id']}")
+        else:
+            self.target.configure(text=f"Ambiguous {row['object_category']}")
+            self.metadata.configure(
+                text=(f"CSV index {row['index']}  •  {row['reference_intent']}  •  "
+                      f"expected behavior: {row['expected_behavior']}  •  "
+                      f"known: {row['known_traits']}  •  missing: {row['missing_traits']}"))
+            self.context.configure(
+                text=(f"Candidates ({row['candidate_count']}): "
+                      f"{row['candidate_ids'].replace('|', ', ')}\n"
+                      f"Expected response: {row['expected_response']}"))
         self.description.configure(text=row["description"])
         status = row.get("Verified", "").strip().lower()
         if status == "o":
