@@ -223,8 +223,11 @@ WORKHOLDING_TEST_HALF_EXTENT_M = [0.12, 0.10, 0.05]  # conservative box half-ext
 def workholding_test_poses():
     """Ten (position_xyz_m, euler_xyz_deg) AR-box poses.
 
-    Target 1 is centred above the WorldRoot origin at [0, 0, 0.3] metres with
-    zero rotation. The remaining targets use eight conservative AABB corners
+    The first entry is a fallback reference pose; ``workholding_study.py``
+    replaces it at runtime with the board pose derived from the configured
+    default robot TCP. It is retained here for callers that only consume this
+    settings helper.
+    The remaining targets use eight conservative AABB corners
     plus one upper-centre point. Rotations
     are intentionally limited to 20° or less per axis. Positions are in the
     world (robot) frame, metres; the harness reads the count from ``len(...)``.
@@ -241,7 +244,7 @@ def workholding_test_poses():
     interior = [c[0], c[1], hi[2]]  # centred in XY, high in Z
     positions = [c] + corners + [interior]  # 10 total
     eulers = [
-        [0, 0, 0], [0, 0, 15], [0, 15, 0], [15, 0, 0],
+        [90, 90, 0], [0, 0, 15], [0, 15, 0], [15, 0, 0],
         [0, -15, 0], [-15, 0, 15], [0, 0, -15], [10, 20, 0],
         [0, 0, 0], [15, 0, 15],
     ]

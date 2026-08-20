@@ -65,17 +65,6 @@ public class WorkholdingBoxReceiver : MonoBehaviour
     private Renderer[]       _targetGripperRenderers;
     private bool             _loggedShow;
 
-    // Open3D renders the raw OBJ meshes with these mesh-local corrections:
-    // board Ry(+90), gripper Rz(180) * Rx(90). After the Open3D (x,y,z) ->
-    // Unity (x,z,y) basis conversion, their Unity-frame equivalents are
-    // Rz(-90) and quaternion (x=0,y=sqrt(1/2),z=sqrt(1/2),w=0).
-    // These affect only mesh presentation; all offsets continue to use the
-    // uncorrected logical board/TCP rotation received from Python.
-    private static readonly Quaternion BoardMeshCorrection =
-        Quaternion.AngleAxis(-90f, Vector3.forward);
-    private static readonly Quaternion GripperMeshCorrection =
-        new Quaternion(0f, 0.70710678f, 0.70710678f, 0f);
-
     private void Start()
     {
         // WorkholdingTesting also assigns its robot-attached board to GripStateReceiver.
@@ -159,7 +148,10 @@ public class WorkholdingBoxReceiver : MonoBehaviour
         if (worldRoot != null && arBox.transform.parent != worldRoot)
             arBox.transform.SetParent(worldRoot, false);
         arBox.transform.localPosition = latest.pos;
-        arBox.transform.localRotation = latest.rot * BoardMeshCorrection;
+        // Unity's imported OBJ hierarchy already contains its source-axis
+        // conversion. Apply only the logical board pose received from Python;
+        // Open3D's raw-mesh corrections must not be duplicated here.
+        arBox.transform.localRotation = latest.rot;
         if (applyIncomingBoxSize)
             arBox.transform.localScale = latest.size;
         SetRenderersVisible(_renderers, true);
@@ -174,7 +166,7 @@ public class WorkholdingBoxReceiver : MonoBehaviour
             // therefore that local offset axis is Unity-local +Y, not +Z.
             Vector3 gripperOffsetAxis = latest.rot * Vector3.up;
             targetGripper.transform.localPosition = latest.pos - targetGripperForwardOffset * gripperOffsetAxis;
-            targetGripper.transform.localRotation = latest.rot * GripperMeshCorrection;
+            targetGripper.transform.localRotation = latest.rot;
             SetRenderersVisible(_targetGripperRenderers, true);
         }
 

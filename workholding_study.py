@@ -381,12 +381,30 @@ class WorkholdingStudy:
         self._poses_raw = (self._load_target_poses(target_poses_path)
                            if target_poses_path is not None
                            else cfg.workholding_test_poses())
+        if target_poses_path is None and self._poses_raw:
+            # Built-in targets describe BOARD poses. Derive Target 1 from the
+            # configured default TCP using the same board mounting transform
+            # used by motion, status checking, Unity, and Open3D.
+            default_tcp_pos, default_tcp_quat = self._compute_default_tcp()
+            T_default_tcp = np.eye(4, dtype=np.float64)
+            T_default_tcp[:3, :3] = ScipyR.from_quat(
+                default_tcp_quat).as_matrix()
+            T_default_tcp[:3, 3] = default_tcp_pos
+            T_default_board = self._board_pose_from_tcp(T_default_tcp)
+            default_board_pos = T_default_board[:3, 3].tolist()
+            default_board_euler = ScipyR.from_matrix(
+                T_default_board[:3, :3]).as_euler(
+                    "xyz", degrees=True).tolist()
+            self._poses_raw[0] = (default_board_pos, default_board_euler)
+            print("[Study] Target 1 set from default robot TCP: "
+                  f"board={np.round(default_board_pos, 4).tolist()}  "
+                  f"euler={np.round(default_board_euler, 2).tolist()}")
         self._poses_T   = [self._pose_to_T(pos, euler) for pos, euler in self._poses_raw]
         rng = random.Random(seed)
         self._pose_order = list(range(len(self._poses_raw)))
-        # Target 1 is the centred reference pose above WorldRoot. Keep it first
-        # so it is also the initial Unity/Open3D preview; randomise the study
-        # poses that follow it.
+        # Target 1 is derived from the configured default robot pose. Keep it
+        # first so it is also the initial Unity/Open3D preview; randomise the
+        # study poses that follow it.
         if len(self._pose_order) > 1:
             shuffled_tail = self._pose_order[1:]
             rng.shuffle(shuffled_tail)
