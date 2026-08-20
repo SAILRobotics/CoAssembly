@@ -24,8 +24,11 @@ public class ARManipulationHandle : MonoBehaviour
     public GameObject          arHandle;
     public TargetPosePublisher targetPublisher;
     public Transform           worldRoot;
+    [Tooltip("Physical HalfBoard thickness in metres.")]
+    public float               boardThickness = 0.015f;
     public bool IsGrabbed => _isGrabbed;
     public float HandleHalfDepth { get; private set; }
+    public float BoardHalfThickness => boardThickness * 0.5f;
 
     private HandGrabInteractable _grabInteractable;
     private HandGrabInteractor   _currentInteractor;
@@ -121,13 +124,15 @@ public class ARManipulationHandle : MonoBehaviour
         arBox.transform.position = currentHand.position + deltaRot * (_grabBoxPos - _grabHandPos);
         arBox.transform.rotation = deltaRot * _grabBoxRot;
 
-        // Pin handle to the near face of the box every frame — same formula as GripStateReceiver
+        // Pin the handle to the corrected HalfBoard mesh's near face. The
+        // visual correction places board thickness on logical local X.
         if (arHandle != null)
         {
-            Vector3 boxForward = arBox.transform.rotation * Vector3.forward;
-            float   halfDepth  = arBox.transform.lossyScale.z * 0.5f;
-            arHandle.transform.position = arBox.transform.position - boxForward * (halfDepth + HandleHalfDepth);
-            arHandle.transform.rotation = arBox.transform.rotation * Quaternion.Euler(0f, 180f, 0f);
+            Vector3 boardNormal = arBox.transform.rotation * Vector3.right;
+            arHandle.transform.position = arBox.transform.position
+                - boardNormal * (BoardHalfThickness + HandleHalfDepth);
+            arHandle.transform.rotation = arBox.transform.rotation
+                * Quaternion.AngleAxis(-90f, Vector3.up);
         }
     }
 }

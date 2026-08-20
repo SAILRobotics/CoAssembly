@@ -297,8 +297,8 @@ class WorkholdingStudy:
 
     # Trial completion / interaction-counting tuning (independent of the CBF
     # servo tolerances in robot_control_server.py — human placement is noisier).
-    _STUDY_POS_TOL_M          = 0.03    # metres
-    _STUDY_ANGLE_TOL_DEG      = 10.0    # degrees
+    _STUDY_POS_TOL_M          = 0.05    # metres
+    _STUDY_ANGLE_TOL_DEG      = 15.0    # degrees
     _STUDY_DWELL_S            = 1.0     # seconds within tolerance before auto-complete
     _STUDY_MOVE_THRESHOLD_MPS = 0.01    # m/s — freedrive movement-segment detector
     _STUDY_TRAJ_SAMPLE_HZ     = 10.0

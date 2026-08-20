@@ -55,6 +55,32 @@ public class GripStateReceiver : MonoBehaviour
     private bool   _prevIsGrabbed;
     private bool   _boxFrozen;
 
+    private static readonly Quaternion BoardMeshCorrection =
+        Quaternion.AngleAxis(90f, Vector3.forward)
+        * Quaternion.AngleAxis(90f, Vector3.right);
+
+    private void Awake()
+    {
+        if (arBox == null || arBox.transform.Find("HalfBoardVisualCorrection") != null)
+            return;
+
+        // Keep arBox itself as the logical board frame used by the receiver,
+        // manipulation code, and pose publisher. Rotate only the imported OBJ
+        // hierarchy so its dimensions/orientation match the Open3D rendering.
+        Transform boardRoot = arBox.transform;
+        int childCount = boardRoot.childCount;
+        Transform[] importedChildren = new Transform[childCount];
+        for (int i = 0; i < childCount; ++i)
+            importedChildren[i] = boardRoot.GetChild(i);
+
+        GameObject correctionObject = new GameObject("HalfBoardVisualCorrection");
+        Transform correction = correctionObject.transform;
+        correction.SetParent(boardRoot, false);
+        correction.localRotation = BoardMeshCorrection;
+        foreach (Transform child in importedChildren)
+            child.SetParent(correction, false);
+    }
+
     private void Start()
     {
         if (arBox    != null) arBox.SetActive(false);
@@ -152,11 +178,14 @@ public class GripStateReceiver : MonoBehaviour
             if (handleActive && !grabbed && !_boxFrozen && arBox != null)
             {
                 arHandle.transform.SetParent(worldRoot, false);
-                Vector3 boxForward = arBox.transform.rotation * Vector3.forward;
-                float   halfDepth  = arBox.transform.lossyScale.z * 0.5f;
+                Vector3 boardNormal = arBox.transform.rotation * Vector3.right;
+                float halfDepth = manipulationHandle != null
+                    ? manipulationHandle.BoardHalfThickness : 0.0075f;
                 float handleHalfDepth = manipulationHandle != null ? manipulationHandle.HandleHalfDepth : 0f;
-                arHandle.transform.position = arBox.transform.position - boxForward * (halfDepth + handleHalfDepth);
-                arHandle.transform.rotation = arBox.transform.rotation * Quaternion.Euler(0f, 180f, 0f);
+                arHandle.transform.position = arBox.transform.position
+                    - boardNormal * (halfDepth + handleHalfDepth);
+                arHandle.transform.rotation = arBox.transform.rotation
+                    * Quaternion.AngleAxis(-90f, Vector3.up);
             }
         }
 
