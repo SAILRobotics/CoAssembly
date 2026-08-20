@@ -8,4 +8,6 @@
 5. Pegboard parts/tools bounding boxes adjustment --> Dante
 6. bounding boxes around tools/parts (more transparent) --> Dante
 7. TCP mismatch / Robot Mismatch (Unsolved)
-8. Take many pictures from different angles for each step --> VLM feeding
+8. Take many pictures from different angles for each step --> VLM feeding --> Not needed
+
+9. check the referring expressions.csv (s) --> Dante

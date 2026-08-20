@@ -1,0 +1,1 @@
+session_name,mode,trial_idx,pose_idx,target_pos_x_m,target_pos_y_m,target_pos_z_m,target_euler_x_deg,target_euler_y_deg,target_euler_z_deg,start_time,end_time,duration_s,final_pos_error_m,final_angle_error_deg,num_interactions,completion_reason

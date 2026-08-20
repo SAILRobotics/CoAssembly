@@ -225,6 +225,11 @@ class RobotControlServer:
         self._board_force_hits = 0
         self._board_force_last_t = 0.0
         self._board_freedrive_active = False
+        # Whether holding a board should auto-engage freedrive, and what a
+        # completed board_move should hand back to.  Defaults on (today's
+        # behaviour); the workholding study harness flips this per condition
+        # so an AR-only trial never silently regains physical assist.
+        self._board_freedrive_policy = True
         # General tool/part handover: hold the gripper closed until the human
         # applies a sustained pull, then open and acknowledge the request.
         self._handover_pull_active = False
@@ -419,10 +424,13 @@ class RobotControlServer:
             self.start_object_handover_pull(rid)
 
         elif cmd == "start_board_interaction":
-            self.start_board_interaction()
+            self.start_board_interaction(freedrive=bool(msg.get("freedrive", True)))
 
         elif cmd == "cancel_board_interaction":
             self.cancel_board_interaction()
+
+        elif cmd == "set_board_freedrive":
+            self.set_board_freedrive_policy(bool(msg.get("enabled", True)))
 
         elif cmd == "arm_board_release":
             self.arm_board_release()
@@ -693,20 +701,25 @@ class RobotControlServer:
             print(f"[Robot] Board force monitor armed: {mode}, "
                   f"threshold={threshold:.1f} N")
 
-    def start_board_interaction(self) -> None:
-        """Open for a board and arm force-triggered grasp detection."""
+    def start_board_interaction(self, freedrive: bool = True) -> None:
+        """Open for a board and arm force-triggered grasp detection.
+
+        `freedrive` sets the policy freedrive returns to whenever the board is
+        held (here, and after each completed board_move) — off for an
+        AR-only study condition, on otherwise."""
         if self._startup_active:
             print("[Robot] Board interaction blocked — startup move is active")
             return
         if self._grasp_phase is not None or self._move_phase is not None:
             print("[Robot] Board interaction blocked — robot motion is active")
             return
+        self._board_freedrive_policy = bool(freedrive)
         if self.simulation:
             # Simulation has no force sensor or gripper.  Never carry a stale
             # real-robot force mode into its virtual held-board state.
             self._arm_board_force(None)
             self._set_board_state("holding_board")
-            self._set_board_freedrive(True)
+            self._set_board_freedrive(self._board_freedrive_policy)
             return
         try:
             self.servoStop()
@@ -749,7 +762,7 @@ class RobotControlServer:
             # restore the latch indication, and return to freedrive.
             self._arm_board_force(None)
             self._set_board_state("holding_board")
-            self._set_board_freedrive(True)
+            self._set_board_freedrive(self._board_freedrive_policy)
             print("[Robot] Board release cancelled → locked again")
             return
         if self._board_state != "holding_board":
@@ -774,6 +787,14 @@ class RobotControlServer:
         self._arm_board_force(None)
         self._set_board_state("inactive")
         print("[Robot sim] Virtual board pull → release complete")
+
+    def set_board_freedrive_policy(self, enabled: bool) -> None:
+        """Flip whether a held board keeps freedrive on, without releasing or
+        re-grasping it. Used to switch interaction-study conditions (e.g.
+        AR-only ↔ freedrive-involved) mid-session."""
+        self._board_freedrive_policy = bool(enabled)
+        if self._board_state == "holding_board":
+            self._set_board_freedrive(self._board_freedrive_policy)
 
     def cancel_board_interaction(self) -> None:
         """Stop board monitoring without automatically dropping a held board."""
@@ -855,7 +876,7 @@ class RobotControlServer:
             if has_object:
                 self._set_board_state("holding_board")
                 self._arm_board_force(None)
-                self._set_board_freedrive(True)
+                self._set_board_freedrive(self._board_freedrive_policy)
             else:
                 print("[Robot] Board not detected by gripper → reopening")
                 try:
@@ -1044,7 +1065,7 @@ class RobotControlServer:
             # pull-to-release; that requires another explicit TCPMarker click.
             self._set_board_state("holding_board")
             self._arm_board_force(None)
-            self._set_board_freedrive(True)
+            self._set_board_freedrive(self._board_freedrive_policy)
         cb = self._move_on_complete
         self._move_on_complete = None
         if cb is not None:

@@ -262,13 +262,22 @@ class RobotClient:
             self._callbacks[rid] = lambda msg: on_complete(bool(msg.get("ok", False)))
         self._send({"cmd": "move_to_joints", "joints": q.tolist(), "request_id": rid})
 
-    def start_board_interaction(self) -> None:
-        """Open for force-triggered board grasp (simulation enters held state)."""
-        self._send({"cmd": "start_board_interaction"})
+    def start_board_interaction(self, freedrive: bool = True) -> None:
+        """Open for force-triggered board grasp (simulation enters held state).
+
+        `freedrive` sets the policy freedrive returns to whenever the board is
+        held — pass False to keep the physical arm locked out (e.g. an
+        AR-only study condition)."""
+        self._send({"cmd": "start_board_interaction", "freedrive": bool(freedrive)})
 
     def cancel_board_interaction(self) -> None:
         """Disable board force monitoring without opening a held gripper."""
         self._send({"cmd": "cancel_board_interaction"})
+
+    def set_board_freedrive(self, enabled: bool) -> None:
+        """Flip whether a held board keeps freedrive on, without releasing or
+        re-grasping it."""
+        self._send({"cmd": "set_board_freedrive", "enabled": bool(enabled)})
 
     def arm_board_release(self) -> None:
         """Toggle a held board between locked and pull-to-release modes."""
