@@ -210,32 +210,38 @@ def to_unity(port: int) -> str:
     return f"tcp://{UNITY_IP}:{port}"
 
 
-# ── Workholding AR-box test harness (workholding_testing.py) ───────────────────
-# Separate from ROBOT_TARGET_WORKSPACE_MARGIN_M (robot CBF/target clamping) so tuning the
-# test poses' clearance from the workspace border never touches real robot safety margins.
-WORKHOLDING_TEST_MARGIN_M = 0.15   # metres inset from WORKSPACE_LO/HI for the 10 test poses
+# ── Workholding AR-box test harness (workholding_testing.py / workholding_study.py) ──
+# A small AABB straddling the world origin rather than spanning the full workspace —
+# straight-line distance from the origin lands roughly 30-60 cm for every pose, so
+# real-robot trials involve short travel and stay well clear of both the anchor
+# marker and the workspace edges. Z is shifted up from 0 since the origin itself
+# sits at/below the workspace floor (the anchor marker is at table height).
+WORKHOLDING_TEST_CENTER_M      = [0.0, 0.0, 0.30]    # box centre, world frame, metres
+WORKHOLDING_TEST_HALF_EXTENT_M = [0.25, 0.20, 0.10]  # box half-extents (x, y, z), metres
 
 
 def workholding_test_poses():
-    """Ten (position_xyz_m, euler_xyz_deg) AR-box poses spanning the inset workspace AABB.
+    """Ten (position_xyz_m, euler_xyz_deg) AR-box poses clustered near the world
+    origin (~30-60 cm away), rather than spanning the full workspace.
 
-    Eight AABB corners (inset by WORKHOLDING_TEST_MARGIN_M) + the centre + one interior
-    point, each with an assorted rotation so both position and orientation are exercised.
-    Positions are in the world (robot) frame, metres; the harness reads the count from
-    ``len(...)`` so there is no separate magic number.
+    Eight AABB corners (WORKHOLDING_TEST_CENTER_M ± WORKHOLDING_TEST_HALF_EXTENT_M)
+    + the centre + one interior point, each with an assorted rotation so both
+    position and orientation are exercised. Positions are in the world (robot)
+    frame, metres; the harness reads the count from ``len(...)`` so there is no
+    separate magic number.
     """
-    m   = float(WORKHOLDING_TEST_MARGIN_M)
-    lo  = [float(WORKSPACE_LO[i]) + m for i in range(3)]
-    hi  = [float(WORKSPACE_HI[i]) - m for i in range(3)]
-    ctr = [(lo[i] + hi[i]) * 0.5 for i in range(3)]
+    c  = [float(v) for v in WORKHOLDING_TEST_CENTER_M]
+    he = [float(v) for v in WORKHOLDING_TEST_HALF_EXTENT_M]
+    lo = [c[i] - he[i] for i in range(3)]
+    hi = [c[i] + he[i] for i in range(3)]
 
-    # 8 corners of the inset box (bit c: x=hi if bit0, y=hi if bit1, z=hi if bit2)
-    corners = [[hi[0] if c & 1 else lo[0],
-                hi[1] if c & 2 else lo[1],
-                hi[2] if c & 4 else lo[2]] for c in range(8)]
-    interior = [ctr[0], ctr[1], hi[2]]          # centred in XY, high in Z
+    # 8 corners of the box (bit c: x=hi if bit0, y=hi if bit1, z=hi if bit2)
+    corners = [[hi[0] if bit & 1 else lo[0],
+                hi[1] if bit & 2 else lo[1],
+                hi[2] if bit & 4 else lo[2]] for bit in range(8)]
+    interior = [c[0], c[1], hi[2]]          # centred in XY, high in Z
 
-    positions = corners + [ctr, interior]        # 10 total
+    positions = corners + [c, interior]        # 10 total
     eulers = [
         [0, 0, 0], [0, 0, 90], [0, 90, 0], [90, 0, 0],
         [0, 45, 0], [45, 0, 45], [0, 0, -90], [30, 60, 0],

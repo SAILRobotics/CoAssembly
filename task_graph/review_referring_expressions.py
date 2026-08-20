@@ -179,6 +179,7 @@ class Reviewer:
             self.metadata.configure(
                 text=(f"CSV index {row['index']}  •  {row['reference_intent']}  •  "
                       f"expected behavior: {row['expected_behavior']}  •  "
+                      f"granularity: {row.get('candidate_granularity', 'physical_instance')}  •  "
                       f"known: {row['known_traits']}  •  missing: {row['missing_traits']}"))
             self.context.configure(
                 text=(f"Candidates ({row['candidate_count']}): "

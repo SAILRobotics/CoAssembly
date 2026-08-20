@@ -1,0 +1,1 @@
+session_name,mode,trial_idx,t_rel_s,tcp_pos_x_m,tcp_pos_y_m,tcp_pos_z_m,tcp_quat_x,tcp_quat_y,tcp_quat_z,tcp_quat_w,joint1_deg,joint2_deg,joint3_deg,joint4_deg,joint5_deg,joint6_deg
