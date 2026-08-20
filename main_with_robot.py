@@ -1128,7 +1128,11 @@ class _ToolSelectionManager:
             elif event == "highlight":
                 self._apply_highlight(msg.get("ids", []))
             elif event == "assembly_state":
-                self._assembly_events.append(msg)
+                state = msg.get("state")
+                if isinstance(state, dict):
+                    self._assembly_events.append(state)
+                else:
+                    print("[ToolHighlight] Ignored malformed assembly_state envelope")
             processed = True
         return processed
 
@@ -2075,6 +2079,25 @@ class MainScene:
         self._motion_source = None
         self._tcp_target_T = None
 
+    def _move_robot_for_gearbox_step(self, event: dict) -> None:
+        """Move to the configured joint pose when an unlocked task is selected."""
+        if self.robot is None or event.get("blocked", False):
+            return
+        row = int(event.get("row", 0))
+        stage = int(event.get("stage", 0))
+        joints_deg = cfg.GEARBOX_STAGE_JOINT_DEG.get(stage)
+        if row not in (1, 2, 3, 4) or joints_deg is None:
+            return
+        print(f"[Gearbox Robot] selected row {row}, stage {stage} → "
+              f"moveJ {joints_deg}")
+        self.robot.move_to_joints(
+            joints_deg,
+            degrees=True,
+            on_complete=lambda ok, r=row, s=stage: print(
+                f"[Gearbox Robot] row {r}, stage {s} pose "
+                f"{'reached' if ok else 'not reached'}"),
+        )
+
     def _summon_to_hand(self, target_side: str, hand_pts,
                         on_complete=None) -> bool:
         """Move the robot TCP toward a hand palm.
@@ -2204,6 +2227,8 @@ class MainScene:
                     self._sync_vis_highlight()   # mirror the cyan highlight onto the Open3D boxes
                     for event in self.tools.pop_assembly_events():
                         self.vis.apply_gearbox_assembly_event(event)
+                        if event.get("event") == "show":
+                            self._move_robot_for_gearbox_step(event)
                 self.hands.poll()
                 gearbox_states = self.gearbox_pose_rx.poll()
                 for event in self.taskgraph_o3d_rx.poll():
@@ -2212,6 +2237,7 @@ class MainScene:
                         self._sync_vis_highlight()
                         self.vis.apply_gearbox_assembly_event(
                             {**event, "event": "show"})
+                        self._move_robot_for_gearbox_step(event)
                     else:
                         if event.get("event") == "reset":
                             self.tools._apply_highlight_clear()

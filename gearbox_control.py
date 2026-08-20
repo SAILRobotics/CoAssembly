@@ -108,9 +108,9 @@ def part_stages(ptype: str, side: str, row: int):
         seat   = the stage it is fastened down / turns green (>= place)
     These coincide for every part EXCEPT the left bearing-stand, which drops into place with the
     rod at stage 5 (place=5) but isn't fastened until the left screw drives at stage 6 (seat=6).
-    Stand/bearing clicks always select their named side's appear stage. Later
-    fastening stages are selected with that side's screw; rod-family parts may
-    advance from their build stage to their insertion stage."""
+    A stand/bearing click stays on its named side's build step until that step
+    is complete. Clicking the resulting assembly then advances to its next
+    placement/fastening step when that step's prerequisites are satisfied."""
     first = side == "Right"
     if ptype in ("Bearing", "Stand"):
         return (1, 4, 4) if first else (3, 5, 6)
@@ -288,8 +288,10 @@ class GearboxStateMachine:
     # ── dependency logic ──────────────────────────────────────────────────────
     def unlocked(self, row: int, stage: int) -> bool:
         d = self.done[row]
-        if stage in (1, 2, 3):
+        if stage in (1, 2):
             return True
+        if stage == 3:
+            return d[1]               # left stand assembly follows the right stand assembly
         if stage == 4:
             return d[1]
         if stage == 5:
@@ -304,7 +306,7 @@ class GearboxStateMachine:
         """True if a *completed* stage depends on (row, stage) — blocks un-checking (frontier)."""
         d = self.done[row]
         if stage == 1:
-            return d[4]
+            return d[3] or d[4]       # stage 3 has stage 1 as a non-consuming prerequisite
         if stage in (2, 3, 4):
             return d[5]
         if stage == 5:
@@ -331,13 +333,13 @@ class GearboxStateMachine:
         if appear is None:
             print(f"  (ignored '{name}': type '{ptype}' not stage-mapped)")
             return
-        # A named stand/bearing is an unambiguous side selector: repeated clicks
-        # must replay that side's bearing-into-stand step, never walk through
-        # later stages or appear to alternate sides. Screws select fastening
-        # directly. Only the rod-family subassembly advances from its build
-        # stage (2) to its insertion stage (5) once stage 5 is unlocked.
+        # Keep replaying a part's build animation until the build step is marked
+        # complete. Once complete, the same assembled object can select its next
+        # placement/fastening operation (e.g. right stand: stage 1 -> stage 4).
+        # An unavailable appear stage is still sent to Unity so it can land red;
+        # the checkbox path below refuses to complete locked stages.
         stage = appear
-        if ptype in ("GearRod", "Gear", "Pin"):
+        if self.done[row][appear]:
             for cand in (seat, place):
                 if cand > appear and self.unlocked(row, cand):
                     stage = cand
@@ -631,7 +633,14 @@ class GearboxController:
             # channel. Mirror semantic progress there as well so it can compute
             # gearbox colours directly, independently of Unity materials.
             if self._hl_pub is not None:
-                self._hl_pub.send_string(json.dumps({"event": "assembly_state", **msg}))
+                # Keep the transport event separate from the semantic event.
+                # Using {"event": "assembly_state", **msg} was wrong because
+                # msg.event (show/complete/...) overwrote "assembly_state", so
+                # main_with_robot discarded every Unity-originated state update.
+                self._hl_pub.send_string(json.dumps({
+                    "event": "assembly_state",
+                    "state": msg,
+                }))
 
     def send_highlight(self, msg: dict):
         """Thread-safe send of a pegboard tool-highlight event (ids only, no colour)."""

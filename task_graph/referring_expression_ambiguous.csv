@@ -1,0 +1,151 @@
+index,description,object_category,reference_intent,expected_behavior,candidate_ids,candidate_count,known_traits,missing_traits,expected_response,Verified
+1,Row 1 gear stand,gear_stand,ambiguous_singular,clarify,STAND_ROW1_LEFT|STAND_ROW1_RIGHT,2,row,side,Do you mean the left or right gear stand?,o
+2,white gear stand,gear_stand,ambiguous_singular,clarify,STAND_ROW1_LEFT|STAND_ROW1_RIGHT,2,color,side,Do you mean the left or right white gear stand?,o
+3,circle-row bracket,gear_stand,ambiguous_singular,clarify,STAND_ROW1_LEFT|STAND_ROW1_RIGHT,2,row_marker,side,Do you mean the left or right bracket?,o
+4,Row 2 gear stand,gear_stand,ambiguous_singular,clarify,STAND_ROW2_LEFT|STAND_ROW2_RIGHT,2,row,side,Do you mean the left or right gear stand?,o
+5,red gear stand,gear_stand,ambiguous_singular,clarify,STAND_ROW2_LEFT|STAND_ROW2_RIGHT,2,color,side,Do you mean the left or right red gear stand?,o
+6,triangle-row bracket,gear_stand,ambiguous_singular,clarify,STAND_ROW2_LEFT|STAND_ROW2_RIGHT,2,row_marker,side,Do you mean the left or right bracket?,o
+7,Row 3 gear stand,gear_stand,ambiguous_singular,clarify,STAND_ROW3_LEFT|STAND_ROW3_RIGHT,2,row,side,Do you mean the left or right gear stand?,o
+8,green gear stand,gear_stand,ambiguous_singular,clarify,STAND_ROW3_LEFT|STAND_ROW3_RIGHT,2,color,side,Do you mean the left or right green gear stand?,o
+9,hexagon-row bracket,gear_stand,ambiguous_singular,clarify,STAND_ROW3_LEFT|STAND_ROW3_RIGHT,2,row_marker,side,Do you mean the left or right bracket?,o
+10,Row 4 gear stand,gear_stand,ambiguous_singular,clarify,STAND_ROW4_LEFT|STAND_ROW4_RIGHT,2,row,side,Do you mean the left or right gear stand?,o
+11,blue gear stand,gear_stand,ambiguous_singular,clarify,STAND_ROW4_LEFT|STAND_ROW4_RIGHT,2,color,side,Do you mean the left or right blue gear stand?,o
+12,square-row bracket,gear_stand,ambiguous_singular,clarify,STAND_ROW4_LEFT|STAND_ROW4_RIGHT,2,row_marker,side,Do you mean the left or right bracket?,o
+13,gear of Row 2,gear,ambiguous_singular,clarify,GEAR_ROW2_LEFT|GEAR_ROW2_RIGHT,2,row,side_or_size,Do you mean the smaller left gear or the larger right gear?,o
+14,red gear,gear,ambiguous_singular,clarify,GEAR_ROW2_LEFT|GEAR_ROW2_RIGHT,2,color,side_or_size,Do you mean the smaller or larger red gear?,o
+15,gear in the triangle row,gear,ambiguous_singular,clarify,GEAR_ROW2_LEFT|GEAR_ROW2_RIGHT,2,row_marker,side_or_size,Do you mean the smaller left gear or the larger right gear?,o
+16,gear of Row 3,gear,ambiguous_singular,clarify,GEAR_ROW3_LEFT|GEAR_ROW3_RIGHT,2,row,side_or_size,Do you mean the smaller left gear or the larger right gear?,o
+17,green gear,gear,ambiguous_singular,clarify,GEAR_ROW3_LEFT|GEAR_ROW3_RIGHT,2,color,side_or_size,Do you mean the smaller or larger green gear?,o
+18,gear in the hexagon row,gear,ambiguous_singular,clarify,GEAR_ROW3_LEFT|GEAR_ROW3_RIGHT,2,row_marker,side_or_size,Do you mean the smaller left gear or the larger right gear?,o
+19,Row 1 screw,screw,ambiguous_singular,clarify,SCREW_ROW1_LEFT|SCREW_ROW1_RIGHT,2,row,side,Do you mean the left or right mounting screw?,x
+20,white-row screw,screw,ambiguous_singular,clarify,SCREW_ROW1_LEFT|SCREW_ROW1_RIGHT,2,associated_row,side,Do you mean the screw for the left or right stand?,x
+21,Row 1 bearing,bearing,ambiguous_singular,clarify,BEARING_ROW1_LEFT|BEARING_ROW1_RIGHT,2,row,side,Do you mean the left or right bearing?,x
+22,bearing in the circle row,bearing,ambiguous_singular,clarify,BEARING_ROW1_LEFT|BEARING_ROW1_RIGHT,2,row_marker,side,Do you mean the left or right bearing?,x
+23,Row 2 screw,screw,ambiguous_singular,clarify,SCREW_ROW2_LEFT|SCREW_ROW2_RIGHT,2,row,side,Do you mean the left or right mounting screw?,x
+24,red-row screw,screw,ambiguous_singular,clarify,SCREW_ROW2_LEFT|SCREW_ROW2_RIGHT,2,associated_row,side,Do you mean the screw for the left or right stand?,x
+25,Row 2 bearing,bearing,ambiguous_singular,clarify,BEARING_ROW2_LEFT|BEARING_ROW2_RIGHT,2,row,side,Do you mean the left or right bearing?,x
+26,bearing in the triangle row,bearing,ambiguous_singular,clarify,BEARING_ROW2_LEFT|BEARING_ROW2_RIGHT,2,row_marker,side,Do you mean the left or right bearing?,x
+27,Row 3 screw,screw,ambiguous_singular,clarify,SCREW_ROW3_LEFT|SCREW_ROW3_RIGHT,2,row,side,Do you mean the left or right mounting screw?,x
+28,green-row screw,screw,ambiguous_singular,clarify,SCREW_ROW3_LEFT|SCREW_ROW3_RIGHT,2,associated_row,side,Do you mean the screw for the left or right stand?,x
+29,Row 3 bearing,bearing,ambiguous_singular,clarify,BEARING_ROW3_LEFT|BEARING_ROW3_RIGHT,2,row,side,Do you mean the left or right bearing?,x
+30,bearing in the hexagon row,bearing,ambiguous_singular,clarify,BEARING_ROW3_LEFT|BEARING_ROW3_RIGHT,2,row_marker,side,Do you mean the left or right bearing?,x
+31,Row 4 screw,screw,ambiguous_singular,clarify,SCREW_ROW4_LEFT|SCREW_ROW4_RIGHT,2,row,side,Do you mean the left or right mounting screw?,x
+32,blue-row screw,screw,ambiguous_singular,clarify,SCREW_ROW4_LEFT|SCREW_ROW4_RIGHT,2,associated_row,side,Do you mean the screw for the left or right stand?,x
+33,Row 4 bearing,bearing,ambiguous_singular,clarify,BEARING_ROW4_LEFT|BEARING_ROW4_RIGHT,2,row,side,Do you mean the left or right bearing?,x
+34,bearing in the square row,bearing,ambiguous_singular,clarify,BEARING_ROW4_LEFT|BEARING_ROW4_RIGHT,2,row_marker,side,Do you mean the left or right bearing?,x
+35,gear stand,gear_stand,ambiguous_singular,clarify,STAND_ROW1_LEFT|STAND_ROW1_RIGHT|STAND_ROW2_LEFT|STAND_ROW2_RIGHT|STAND_ROW3_LEFT|STAND_ROW3_RIGHT|STAND_ROW4_LEFT|STAND_ROW4_RIGHT,8,category,row_and_side,"Which row or color, and do you mean the left or right stand?",o
+36,support bracket,gear_stand,ambiguous_singular,clarify,STAND_ROW1_LEFT|STAND_ROW1_RIGHT|STAND_ROW2_LEFT|STAND_ROW2_RIGHT|STAND_ROW3_LEFT|STAND_ROW3_RIGHT|STAND_ROW4_LEFT|STAND_ROW4_RIGHT,8,category,row_and_side,"Which row or color, and do you mean the left or right bracket?",o
+37,left gear stand,gear_stand,ambiguous_singular,clarify,STAND_ROW1_LEFT|STAND_ROW2_LEFT|STAND_ROW3_LEFT|STAND_ROW4_LEFT,4,side,row_or_color,Which row or color do you mean?,o
+38,right gear stand,gear_stand,ambiguous_singular,clarify,STAND_ROW1_RIGHT|STAND_ROW2_RIGHT|STAND_ROW3_RIGHT|STAND_ROW4_RIGHT,4,side,row_or_color,Which row or color do you mean?,o
+39,gear,gear,ambiguous_singular,clarify,GEAR_ROW1_LEFT|GEAR_ROW2_LEFT|GEAR_ROW2_RIGHT|GEAR_ROW3_LEFT|GEAR_ROW3_RIGHT|GEAR_ROW4_LEFT,6,category,row_and_side_or_size,"Which row or color, and which gear in that row?",o
+40,large gear,gear,ambiguous_singular,clarify,GEAR_ROW1_LEFT|GEAR_ROW4_LEFT,2,size,row_or_color,Do you mean the large white Row 1 gear or the large blue Row 4 gear?,x
+41,smaller gear,gear,ambiguous_singular,clarify,GEAR_ROW2_LEFT|GEAR_ROW3_LEFT,2,relative_size,row_or_color,Do you mean the smaller red Row 2 gear or the smaller green Row 3 gear?,x
+42,larger gear,gear,ambiguous_singular,clarify,GEAR_ROW2_RIGHT|GEAR_ROW3_RIGHT,2,relative_size,row_or_color,Do you mean the larger red Row 2 gear or the larger green Row 3 gear?,x
+43,screw,screw,ambiguous_singular,clarify,SCREW_ROW1_LEFT|SCREW_ROW1_RIGHT|SCREW_ROW2_LEFT|SCREW_ROW2_RIGHT|SCREW_ROW3_LEFT|SCREW_ROW3_RIGHT|SCREW_ROW4_LEFT|SCREW_ROW4_RIGHT,8,category,row_and_side,"Which row or drive type, and is it for the left or right stand?",o
+44,silver screw,screw,ambiguous_singular,clarify,SCREW_ROW1_LEFT|SCREW_ROW1_RIGHT|SCREW_ROW4_LEFT|SCREW_ROW4_RIGHT,4,color,row_or_drive_and_side,"Do you mean the Row 1 H5 screw or Row 4 Phillips screw, and on which side?",o
+45,black screw,screw,ambiguous_singular,clarify,SCREW_ROW2_LEFT|SCREW_ROW2_RIGHT|SCREW_ROW3_LEFT|SCREW_ROW3_RIGHT,4,color,row_or_drive_and_side,"Do you mean the Row 2 T25 screw or Row 3 H3 screw, and on which side?",o
+46,bearing,bearing,ambiguous_singular,clarify,BEARING_ROW1_LEFT|BEARING_ROW1_RIGHT|BEARING_ROW2_LEFT|BEARING_ROW2_RIGHT|BEARING_ROW3_LEFT|BEARING_ROW3_RIGHT|BEARING_ROW4_LEFT|BEARING_ROW4_RIGHT,8,category,row_and_side,"Which row or color, and do you mean the left or right bearing?",o
+47,black bearing,bearing,ambiguous_singular,clarify,BEARING_ROW1_LEFT|BEARING_ROW1_RIGHT|BEARING_ROW2_LEFT|BEARING_ROW2_RIGHT|BEARING_ROW3_LEFT|BEARING_ROW3_RIGHT|BEARING_ROW4_LEFT|BEARING_ROW4_RIGHT,8,color_and_category,row_and_side,"Which row or color, and do you mean the left or right bearing?",o
+48,left bearing,bearing,ambiguous_singular,clarify,BEARING_ROW1_LEFT|BEARING_ROW2_LEFT|BEARING_ROW3_LEFT|BEARING_ROW4_LEFT,4,side,row_or_color,Which row or color do you mean?,
+49,right bearing,bearing,ambiguous_singular,clarify,BEARING_ROW1_RIGHT|BEARING_ROW2_RIGHT|BEARING_ROW3_RIGHT|BEARING_ROW4_RIGHT,4,side,row_or_color,Which row or color do you mean?,
+50,gear rod,gear_rod,ambiguous_singular,clarify,GEAR_ROD_ROW1|GEAR_ROD_ROW2|GEAR_ROD_ROW3|GEAR_ROD_ROW4,4,category,row_or_color,Which row or color gear rod do you mean?,
+51,gear shaft,gear_rod,ambiguous_singular,clarify,GEAR_ROD_ROW1|GEAR_ROD_ROW2|GEAR_ROD_ROW3|GEAR_ROD_ROW4,4,category,row_or_color,Which row or color shaft do you mean?,
+52,wooden pin,pin,ambiguous_singular,clarify,PIN_ROW1_LEFT|PIN_ROW1_RIGHT|PIN_ROW2_LEFT|PIN_ROW2_RIGHT|PIN_ROW3_LEFT|PIN_ROW3_RIGHT|PIN_ROW4_LEFT,7,material_and_category,row_and_role,"Which row, and which gear or crank is the pin for?",
+53,Row 1 pin,pin,ambiguous_singular,clarify,PIN_ROW1_LEFT|PIN_ROW1_RIGHT,2,row,role_or_side,Which pin in that row do you mean?,
+54,Row 2 pin,pin,ambiguous_singular,clarify,PIN_ROW2_LEFT|PIN_ROW2_RIGHT,2,row,role_or_side,Which pin in that row do you mean?,
+55,Row 3 pin,pin,ambiguous_singular,clarify,PIN_ROW3_LEFT|PIN_ROW3_RIGHT,2,row,role_or_side,Which pin in that row do you mean?,
+56,stand in the row with the crank handle,gear_stand,ambiguous_singular,clarify,STAND_ROW1_LEFT|STAND_ROW1_RIGHT,2,row_context,side,Do you mean the left or right stand in the crank-handle row?,
+57,stand in a row with one gear,gear_stand,ambiguous_singular,clarify,STAND_ROW1_LEFT|STAND_ROW1_RIGHT|STAND_ROW4_LEFT|STAND_ROW4_RIGHT,4,gear_count,row_and_side,"Do you mean Row 1 or Row 4, and the left or right stand?",
+58,stand in a row with two gears,gear_stand,ambiguous_singular,clarify,STAND_ROW2_LEFT|STAND_ROW2_RIGHT|STAND_ROW3_LEFT|STAND_ROW3_RIGHT,4,gear_count,row_and_side,"Do you mean Row 2 or Row 3, and the left or right stand?",
+59,stand in a row that uses silver screws,gear_stand,ambiguous_singular,clarify,STAND_ROW1_LEFT|STAND_ROW1_RIGHT|STAND_ROW4_LEFT|STAND_ROW4_RIGHT,4,screw_color,row_and_side,"Do you mean Row 1 or Row 4, and the left or right stand?",
+60,stand in a row that uses black screws,gear_stand,ambiguous_singular,clarify,STAND_ROW2_LEFT|STAND_ROW2_RIGHT|STAND_ROW3_LEFT|STAND_ROW3_RIGHT,4,screw_color,row_and_side,"Do you mean Row 2 or Row 3, and the left or right stand?",
+61,bearing in the row with the crank handle,bearing,ambiguous_singular,clarify,BEARING_ROW1_LEFT|BEARING_ROW1_RIGHT,2,row_context,side,Do you mean the left or right bearing in the crank-handle row?,
+62,bearing in a row with one gear,bearing,ambiguous_singular,clarify,BEARING_ROW1_LEFT|BEARING_ROW1_RIGHT|BEARING_ROW4_LEFT|BEARING_ROW4_RIGHT,4,gear_count,row_and_side,"Do you mean Row 1 or Row 4, and the left or right bearing?",
+63,bearing in a row with two gears,bearing,ambiguous_singular,clarify,BEARING_ROW2_LEFT|BEARING_ROW2_RIGHT|BEARING_ROW3_LEFT|BEARING_ROW3_RIGHT,4,gear_count,row_and_side,"Do you mean Row 2 or Row 3, and the left or right bearing?",
+64,bearing in a row that uses silver screws,bearing,ambiguous_singular,clarify,BEARING_ROW1_LEFT|BEARING_ROW1_RIGHT|BEARING_ROW4_LEFT|BEARING_ROW4_RIGHT,4,screw_color,row_and_side,"Do you mean Row 1 or Row 4, and the left or right bearing?",
+65,bearing in a row that uses black screws,bearing,ambiguous_singular,clarify,BEARING_ROW2_LEFT|BEARING_ROW2_RIGHT|BEARING_ROW3_LEFT|BEARING_ROW3_RIGHT,4,screw_color,row_and_side,"Do you mean Row 2 or Row 3, and the left or right bearing?",
+66,screw in the row with the crank handle,screw,ambiguous_singular,clarify,SCREW_ROW1_LEFT|SCREW_ROW1_RIGHT,2,row_context,side,Do you mean the left or right screw in the crank-handle row?,
+67,screw in a row with one gear,screw,ambiguous_singular,clarify,SCREW_ROW1_LEFT|SCREW_ROW1_RIGHT|SCREW_ROW4_LEFT|SCREW_ROW4_RIGHT,4,gear_count,row_and_side,"Do you mean Row 1 or Row 4, and the left or right screw?",
+68,screw in a row with two gears,screw,ambiguous_singular,clarify,SCREW_ROW2_LEFT|SCREW_ROW2_RIGHT|SCREW_ROW3_LEFT|SCREW_ROW3_RIGHT,4,gear_count,row_and_side,"Do you mean Row 2 or Row 3, and the left or right screw?",
+69,screw in a row that uses silver screws,screw,ambiguous_singular,clarify,SCREW_ROW1_LEFT|SCREW_ROW1_RIGHT|SCREW_ROW4_LEFT|SCREW_ROW4_RIGHT,4,screw_color,row_and_side,"Do you mean Row 1 or Row 4, and the left or right screw?",
+70,screw in a row that uses black screws,screw,ambiguous_singular,clarify,SCREW_ROW2_LEFT|SCREW_ROW2_RIGHT|SCREW_ROW3_LEFT|SCREW_ROW3_RIGHT,4,screw_color,row_and_side,"Do you mean Row 2 or Row 3, and the left or right screw?",
+71,first-row bracket,gear_stand,ambiguous_singular,clarify,STAND_ROW1_LEFT|STAND_ROW1_RIGHT,2,row_number,side,Do you mean the left or right bracket in Row 1?,
+72,one of the Row 1 supports,gear_stand,ambiguous_singular,clarify,STAND_ROW1_LEFT|STAND_ROW1_RIGHT,2,row_number,side,Do you mean the left or right support in Row 1?,
+73,second-row bracket,gear_stand,ambiguous_singular,clarify,STAND_ROW2_LEFT|STAND_ROW2_RIGHT,2,row_number,side,Do you mean the left or right bracket in Row 2?,
+74,one of the Row 2 supports,gear_stand,ambiguous_singular,clarify,STAND_ROW2_LEFT|STAND_ROW2_RIGHT,2,row_number,side,Do you mean the left or right support in Row 2?,
+75,third-row bracket,gear_stand,ambiguous_singular,clarify,STAND_ROW3_LEFT|STAND_ROW3_RIGHT,2,row_number,side,Do you mean the left or right bracket in Row 3?,
+76,one of the Row 3 supports,gear_stand,ambiguous_singular,clarify,STAND_ROW3_LEFT|STAND_ROW3_RIGHT,2,row_number,side,Do you mean the left or right support in Row 3?,
+77,fourth-row bracket,gear_stand,ambiguous_singular,clarify,STAND_ROW4_LEFT|STAND_ROW4_RIGHT,2,row_number,side,Do you mean the left or right bracket in Row 4?,
+78,one of the Row 4 supports,gear_stand,ambiguous_singular,clarify,STAND_ROW4_LEFT|STAND_ROW4_RIGHT,2,row_number,side,Do you mean the left or right support in Row 4?,
+79,gear in a row with one gear,gear,ambiguous_singular,clarify,GEAR_ROW1_LEFT|GEAR_ROW4_LEFT,2,gear_count,row_or_color,Do you mean the white Row 1 gear or the blue Row 4 gear?,
+80,gear from a single-gear row,gear,ambiguous_singular,clarify,GEAR_ROW1_LEFT|GEAR_ROW4_LEFT,2,gear_count,row_or_color,Do you mean the white Row 1 gear or the blue Row 4 gear?,
+81,gear in a row with two gears,gear,ambiguous_singular,clarify,GEAR_ROW2_LEFT|GEAR_ROW2_RIGHT|GEAR_ROW3_LEFT|GEAR_ROW3_RIGHT,4,gear_count,row_and_side_or_size,Which two-gear row—red Row 2 or green Row 3—and which gear?,
+82,one of the gears from a two-gear row,gear,ambiguous_singular,clarify,GEAR_ROW2_LEFT|GEAR_ROW2_RIGHT|GEAR_ROW3_LEFT|GEAR_ROW3_RIGHT,4,gear_count,row_and_side_or_size,"Which row or color, and do you mean the smaller left or larger right gear?",
+83,smaller gear in a two-gear row,gear,ambiguous_singular,clarify,GEAR_ROW2_LEFT|GEAR_ROW3_LEFT,2,gear_count_and_size,row_or_color,Do you mean the smaller red Row 2 gear or the smaller green Row 3 gear?,
+84,larger gear in a two-gear row,gear,ambiguous_singular,clarify,GEAR_ROW2_RIGHT|GEAR_ROW3_RIGHT,2,gear_count_and_size,row_or_color,Do you mean the larger red Row 2 gear or the larger green Row 3 gear?,
+85,gear in a silver-screw row,gear,ambiguous_singular,clarify,GEAR_ROW1_LEFT|GEAR_ROW4_LEFT,2,screw_color,row_or_color,Do you mean the white Row 1 gear or the blue Row 4 gear?,
+86,gear in a black-screw row,gear,ambiguous_singular,clarify,GEAR_ROW2_LEFT|GEAR_ROW2_RIGHT|GEAR_ROW3_LEFT|GEAR_ROW3_RIGHT,4,screw_color,row_and_side_or_size,Which black-screw row—red Row 2 or green Row 3—and which gear?,
+87,gear rod from a one-gear row,gear_rod,ambiguous_singular,clarify,GEAR_ROD_ROW1|GEAR_ROD_ROW4,2,gear_count,row_or_color,Do you mean the white Row 1 rod or the blue Row 4 rod?,
+88,shaft from a single-gear row,gear_rod,ambiguous_singular,clarify,GEAR_ROD_ROW1|GEAR_ROD_ROW4,2,gear_count,row_or_color,Do you mean the white Row 1 shaft or the blue Row 4 shaft?,
+89,gear rod from a two-gear row,gear_rod,ambiguous_singular,clarify,GEAR_ROD_ROW2|GEAR_ROD_ROW3,2,gear_count,row_or_color,Do you mean the red Row 2 rod or the green Row 3 rod?,
+90,shaft carrying two gears,gear_rod,ambiguous_singular,clarify,GEAR_ROD_ROW2|GEAR_ROD_ROW3,2,gear_count,row_or_color,Do you mean the red Row 2 shaft or the green Row 3 shaft?,
+91,rod in a silver-screw row,gear_rod,ambiguous_singular,clarify,GEAR_ROD_ROW1|GEAR_ROD_ROW4,2,screw_color,row_or_color,Do you mean the white Row 1 rod or the blue Row 4 rod?,
+92,rod in a black-screw row,gear_rod,ambiguous_singular,clarify,GEAR_ROD_ROW2|GEAR_ROD_ROW3,2,screw_color,row_or_color,Do you mean the red Row 2 rod or the green Row 3 rod?,
+93,pin in the crank-handle row,pin,ambiguous_singular,clarify,PIN_ROW1_LEFT|PIN_ROW1_RIGHT,2,row_context,role,Do you mean the gear-retaining pin or the crank-handle pin?,
+94,pin from the row with the crank,pin,ambiguous_singular,clarify,PIN_ROW1_LEFT|PIN_ROW1_RIGHT,2,row_context,role,Do you mean the pin for the gear or the pin for the crank handle?,
+95,pin in a two-gear row,pin,ambiguous_singular,clarify,PIN_ROW2_LEFT|PIN_ROW2_RIGHT|PIN_ROW3_LEFT|PIN_ROW3_RIGHT,4,gear_count,row_and_gear,"Do you mean Row 2 or Row 3, and the smaller-gear or larger-gear pin?",
+96,gear pin from a two-gear row,pin,ambiguous_singular,clarify,PIN_ROW2_LEFT|PIN_ROW2_RIGHT|PIN_ROW3_LEFT|PIN_ROW3_RIGHT,4,gear_count_and_role,row_and_gear,Which two-gear row and which gear do you mean?,
+97,pin in a one-gear row,pin,ambiguous_singular,clarify,PIN_ROW1_LEFT|PIN_ROW1_RIGHT|PIN_ROW4_LEFT,3,gear_count,row_and_role,"Do you mean Row 1 or Row 4, and is it for a gear or the crank?",
+98,pin from a silver-screw row,pin,ambiguous_singular,clarify,PIN_ROW1_LEFT|PIN_ROW1_RIGHT|PIN_ROW4_LEFT,3,screw_color,row_and_role,"Do you mean Row 1 or Row 4, and which retained part?",
+99,pin in the triangle row,pin,ambiguous_singular,clarify,PIN_ROW2_LEFT|PIN_ROW2_RIGHT,2,row_marker,gear_or_side,Do you mean the pin for the smaller left gear or the larger right gear?,
+100,pin in the hexagon row,pin,ambiguous_singular,clarify,PIN_ROW3_LEFT|PIN_ROW3_RIGHT,2,row_marker,gear_or_side,Do you mean the pin for the smaller left gear or the larger right gear?,
+101,shaft support,gear_stand,ambiguous_singular,clarify,STAND_ROW1_LEFT|STAND_ROW1_RIGHT|STAND_ROW2_LEFT|STAND_ROW2_RIGHT|STAND_ROW3_LEFT|STAND_ROW3_RIGHT|STAND_ROW4_LEFT|STAND_ROW4_RIGHT,8,synonym,row_and_side,"Which row or color, and which side?",
+102,upright holder,gear_stand,ambiguous_singular,clarify,STAND_ROW1_LEFT|STAND_ROW1_RIGHT|STAND_ROW2_LEFT|STAND_ROW2_RIGHT|STAND_ROW3_LEFT|STAND_ROW3_RIGHT|STAND_ROW4_LEFT|STAND_ROW4_RIGHT,8,synonym,row_and_side,"Which row or color, and which side?",
+103,mounting fastener,screw,ambiguous_singular,clarify,SCREW_ROW1_LEFT|SCREW_ROW1_RIGHT|SCREW_ROW2_LEFT|SCREW_ROW2_RIGHT|SCREW_ROW3_LEFT|SCREW_ROW3_RIGHT|SCREW_ROW4_LEFT|SCREW_ROW4_RIGHT,8,function,row_and_side,"Which row or drive type, and which side?",
+104,black ring,bearing,ambiguous_singular,clarify,BEARING_ROW1_LEFT|BEARING_ROW1_RIGHT|BEARING_ROW2_LEFT|BEARING_ROW2_RIGHT|BEARING_ROW3_LEFT|BEARING_ROW3_RIGHT|BEARING_ROW4_LEFT|BEARING_ROW4_RIGHT,8,color_and_shape,row_and_side,"Which row or color, and which side?",
+105,wooden dowel,pin,ambiguous_singular,clarify,PIN_ROW1_LEFT|PIN_ROW1_RIGHT|PIN_ROW2_LEFT|PIN_ROW2_RIGHT|PIN_ROW3_LEFT|PIN_ROW3_RIGHT|PIN_ROW4_LEFT,7,material_and_synonym,row_and_role,Which row and retained part do you mean?,
+106,the part that holds the bearing,gear_stand,ambiguous_singular,clarify,STAND_ROW1_LEFT|STAND_ROW1_RIGHT|STAND_ROW2_LEFT|STAND_ROW2_RIGHT|STAND_ROW3_LEFT|STAND_ROW3_RIGHT|STAND_ROW4_LEFT|STAND_ROW4_RIGHT,8,function,row_and_side,"Which row or color, and the left or right stand?",
+107,the fastener that secures a stand,screw,ambiguous_singular,clarify,SCREW_ROW1_LEFT|SCREW_ROW1_RIGHT|SCREW_ROW2_LEFT|SCREW_ROW2_RIGHT|SCREW_ROW3_LEFT|SCREW_ROW3_RIGHT|SCREW_ROW4_LEFT|SCREW_ROW4_RIGHT,8,function,row_and_side,Which row and which stand do you mean?,
+108,the ring supporting the shaft,bearing,ambiguous_singular,clarify,BEARING_ROW1_LEFT|BEARING_ROW1_RIGHT|BEARING_ROW2_LEFT|BEARING_ROW2_RIGHT|BEARING_ROW3_LEFT|BEARING_ROW3_RIGHT|BEARING_ROW4_LEFT|BEARING_ROW4_RIGHT,8,function,row_and_side,"Which row or color, and which side?",
+109,the pin retaining a gear,pin,ambiguous_singular,clarify,PIN_ROW1_LEFT|PIN_ROW2_LEFT|PIN_ROW2_RIGHT|PIN_ROW3_LEFT|PIN_ROW3_RIGHT|PIN_ROW4_LEFT,6,function,row_and_gear,Which row and which gear is the pin retaining?,
+110,left stand in a two-gear row,gear_stand,ambiguous_singular,clarify,STAND_ROW2_LEFT|STAND_ROW3_LEFT,2,side_and_gear_count,row_or_color,Do you mean the red Row 2 or green Row 3 left stand?,
+111,right bracket in a silver-screw row,gear_stand,ambiguous_singular,clarify,STAND_ROW1_RIGHT|STAND_ROW4_RIGHT,2,side_and_screw_color,row_or_color,Do you mean the white Row 1 or blue Row 4 right bracket?,
+112,smaller gear in a black-screw row,gear,ambiguous_singular,clarify,GEAR_ROW2_LEFT|GEAR_ROW3_LEFT,2,size_and_screw_color,row_or_color,Do you mean the smaller red Row 2 or green Row 3 gear?,
+113,bearing from the crank row,bearing,ambiguous_singular,clarify,BEARING_ROW1_LEFT|BEARING_ROW1_RIGHT,2,row_context,side,Do you mean the left or right Row 1 bearing?,
+114,Allen screw,screw,ambiguous_singular,clarify,SCREW_ROW1_LEFT|SCREW_ROW1_RIGHT|SCREW_ROW3_LEFT|SCREW_ROW3_RIGHT,4,drive_family,row_and_side,"Do you mean the Row 1 H5 or Row 3 H3 screw, and which side?",
+115,hex-socket screw,screw,ambiguous_singular,clarify,SCREW_ROW1_LEFT|SCREW_ROW1_RIGHT|SCREW_ROW3_LEFT|SCREW_ROW3_RIGHT,4,drive_family,row_and_side,"Do you mean the Row 1 H5 or Row 3 H3 screw, and which side?",
+116,screw requiring a hex key,screw,ambiguous_singular,clarify,SCREW_ROW1_LEFT|SCREW_ROW1_RIGHT|SCREW_ROW3_LEFT|SCREW_ROW3_RIGHT,4,tool_family,row_and_side,"Do you mean the Row 1 H5 or Row 3 H3 screw, and which side?",
+117,one of the Phillips screws,screw,ambiguous_singular,clarify,SCREW_ROW4_LEFT|SCREW_ROW4_RIGHT,2,drive,side,Do you mean the left or right Row 4 screw?,
+118,one of those red brackets,gear_stand,ambiguous_singular,clarify,STAND_ROW2_LEFT|STAND_ROW2_RIGHT,2,color_and_synonym,side,Do you mean the left or right red bracket?,
+119,that black ring in Row 2,bearing,ambiguous_singular,clarify,BEARING_ROW2_LEFT|BEARING_ROW2_RIGHT,2,row_color_shape,side,Do you mean the left or right Row 2 bearing?,
+120,the gear beside a green stand,gear,ambiguous_singular,clarify,GEAR_ROW3_LEFT|GEAR_ROW3_RIGHT,2,color_and_relationship,side_or_size,Do you mean the smaller left or larger right green gear?,
+121,the stand beside a larger gear,gear_stand,ambiguous_singular,clarify,STAND_ROW2_RIGHT|STAND_ROW3_RIGHT,2,relationship_and_size,row_or_color,Do you mean the red Row 2 or green Row 3 right stand?,
+122,row2 support,gear_stand,ambiguous_singular,clarify,STAND_ROW2_LEFT|STAND_ROW2_RIGHT,2,abbreviated_row,side,Do you mean the left or right Row 2 support?,
+123,red gear thing,gear,ambiguous_singular,clarify,GEAR_ROW2_LEFT|GEAR_ROW2_RIGHT,2,informal_color_category,side_or_size,Do you mean the smaller left or larger right red gear?,
+124,black bearing row 3,bearing,ambiguous_singular,clarify,BEARING_ROW3_LEFT|BEARING_ROW3_RIGHT,2,telegraphic_row_color,side,Do you mean the left or right Row 3 bearing?,
+125,screw for blue stand,screw,ambiguous_singular,clarify,SCREW_ROW4_LEFT|SCREW_ROW4_RIGHT,2,informal_color_relationship,side,Do you mean the screw for the left or right blue stand?,
+126,the white gear stands,gear_stand,explicit_plural,return_all,STAND_ROW1_LEFT|STAND_ROW1_RIGHT,2,plural_category,none,Return all listed matching objects without asking for a singular choice.,
+127,the red gear stands,gear_stand,explicit_plural,return_all,STAND_ROW2_LEFT|STAND_ROW2_RIGHT,2,plural_category,none,Return all listed matching objects without asking for a singular choice.,
+128,the green gear stands,gear_stand,explicit_plural,return_all,STAND_ROW3_LEFT|STAND_ROW3_RIGHT,2,plural_category,none,Return all listed matching objects without asking for a singular choice.,
+129,the blue gear stands,gear_stand,explicit_plural,return_all,STAND_ROW4_LEFT|STAND_ROW4_RIGHT,2,plural_category,none,Return all listed matching objects without asking for a singular choice.,
+130,the left gear stands,gear_stand,explicit_plural,return_all,STAND_ROW1_LEFT|STAND_ROW2_LEFT|STAND_ROW3_LEFT|STAND_ROW4_LEFT,4,plural_category,none,Return all listed matching objects without asking for a singular choice.,
+131,the right gear stands,gear_stand,explicit_plural,return_all,STAND_ROW1_RIGHT|STAND_ROW2_RIGHT|STAND_ROW3_RIGHT|STAND_ROW4_RIGHT,4,plural_category,none,Return all listed matching objects without asking for a singular choice.,
+132,the Row 1 screws,screw,explicit_plural,return_all,SCREW_ROW1_LEFT|SCREW_ROW1_RIGHT,2,plural_category,none,Return all listed matching objects without asking for a singular choice.,
+133,the Row 2 screws,screw,explicit_plural,return_all,SCREW_ROW2_LEFT|SCREW_ROW2_RIGHT,2,plural_category,none,Return all listed matching objects without asking for a singular choice.,
+134,the Row 3 screws,screw,explicit_plural,return_all,SCREW_ROW3_LEFT|SCREW_ROW3_RIGHT,2,plural_category,none,Return all listed matching objects without asking for a singular choice.,
+135,the Row 4 screws,screw,explicit_plural,return_all,SCREW_ROW4_LEFT|SCREW_ROW4_RIGHT,2,plural_category,none,Return all listed matching objects without asking for a singular choice.,
+136,the silver screws,screw,explicit_plural,return_all,SCREW_ROW1_LEFT|SCREW_ROW1_RIGHT|SCREW_ROW4_LEFT|SCREW_ROW4_RIGHT,4,plural_category,none,Return all listed matching objects without asking for a singular choice.,
+137,the black screws,screw,explicit_plural,return_all,SCREW_ROW2_LEFT|SCREW_ROW2_RIGHT|SCREW_ROW3_LEFT|SCREW_ROW3_RIGHT,4,plural_category,none,Return all listed matching objects without asking for a singular choice.,
+138,the Row 2 gears,gear,explicit_plural,return_all,GEAR_ROW2_LEFT|GEAR_ROW2_RIGHT,2,plural_category,none,Return all listed matching objects without asking for a singular choice.,
+139,the Row 3 gears,gear,explicit_plural,return_all,GEAR_ROW3_LEFT|GEAR_ROW3_RIGHT,2,plural_category,none,Return all listed matching objects without asking for a singular choice.,
+140,the large gears,gear,explicit_plural,return_all,GEAR_ROW1_LEFT|GEAR_ROW4_LEFT,2,plural_category,none,Return all listed matching objects without asking for a singular choice.,
+141,the smaller gears,gear,explicit_plural,return_all,GEAR_ROW2_LEFT|GEAR_ROW3_LEFT,2,plural_category,none,Return all listed matching objects without asking for a singular choice.,
+142,the larger gears,gear,explicit_plural,return_all,GEAR_ROW2_RIGHT|GEAR_ROW3_RIGHT,2,plural_category,none,Return all listed matching objects without asking for a singular choice.,
+143,the gear rods,gear_rod,explicit_plural,return_all,GEAR_ROD_ROW1|GEAR_ROD_ROW2|GEAR_ROD_ROW3|GEAR_ROD_ROW4,4,plural_category,none,Return all listed matching objects without asking for a singular choice.,
+144,the black bearings,bearing,explicit_plural,return_all,BEARING_ROW1_LEFT|BEARING_ROW1_RIGHT|BEARING_ROW2_LEFT|BEARING_ROW2_RIGHT|BEARING_ROW3_LEFT|BEARING_ROW3_RIGHT|BEARING_ROW4_LEFT|BEARING_ROW4_RIGHT,8,plural_category,none,Return all listed matching objects without asking for a singular choice.,
+145,the wooden pins,pin,explicit_plural,return_all,PIN_ROW1_LEFT|PIN_ROW1_RIGHT|PIN_ROW2_LEFT|PIN_ROW2_RIGHT|PIN_ROW3_LEFT|PIN_ROW3_RIGHT|PIN_ROW4_LEFT,7,plural_category,none,Return all listed matching objects without asking for a singular choice.,
+146,the Row 2 gear pair,gear,collective_group,return_group,GEAR_ROW2_LEFT|GEAR_ROW2_RIGHT,2,explicit_group,none,Return the complete named group without clarification.,
+147,the Row 3 gear pair,gear,collective_group,return_group,GEAR_ROW3_LEFT|GEAR_ROW3_RIGHT,2,explicit_group,none,Return the complete named group without clarification.,
+148,both bearings in Row 1,bearing,collective_group,return_group,BEARING_ROW1_LEFT|BEARING_ROW1_RIGHT,2,explicit_group,none,Return the complete named group without clarification.,
+149,both stands in the crank row,gear_stand,collective_group,return_group,STAND_ROW1_LEFT|STAND_ROW1_RIGHT,2,explicit_group,none,Return the complete named group without clarification.,
+150,the stands in the silver-screw rows,gear_stand,collective_group,return_group,STAND_ROW1_LEFT|STAND_ROW1_RIGHT|STAND_ROW4_LEFT|STAND_ROW4_RIGHT,4,explicit_group,none,Return the complete named group without clarification.,

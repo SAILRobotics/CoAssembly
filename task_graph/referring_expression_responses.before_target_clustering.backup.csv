@@ -1,0 +1,289 @@
+index,timestamp,participant,target_type,target_id,target_name,render_index,description,referring_type,traits_used,presentation_number,target_presentations,Verified
+1,,SYNTHETIC_GENERATED,individual_part,BaseBoard.stl,BaseBoard,1,the gearbox mounting plate,technical_name,technical_name,1,10,o
+2,,SYNTHETIC_GENERATED,individual_part,BaseBoard.stl,BaseBoard,1,the large flat black rectangular plate,shape,size|color|shape,2,10,o
+3,,SYNTHETIC_GENERATED,individual_part,BaseBoard.stl,BaseBoard,1,the base plate underneath all four colored rows,spatial,spatial,3,10,o
+4,,SYNTHETIC_GENERATED,individual_part,BaseBoard.stl,BaseBoard,1,the plate to which all eight bearing support brackets are screwed,relationship,relationship|function,4,10,o
+5,,SYNTHETIC_GENERATED,individual_part,BaseBoard.stl,BaseBoard,1,the large black rectangular mounting plate below every gear shaft and stand,mixed,size|color|shape|spatial|relationship,5,10,o
+6,,SYNTHETIC_GENERATED,individual_part,BaseBoard.stl,BaseBoard,1,the rigid plate that supports and locates every gearbox row,function,function|relationship,6,10,o
+7,,SYNTHETIC_GENERATED,individual_part,BaseBoard.stl,BaseBoard,1,"the broad black rectangular base beneath the white, red, green, and blue mechanisms",mixed,size|color|shape|spatial,7,10,o
+8,,SYNTHETIC_GENERATED,individual_part,Bearing.stl,Bearing,2,the radial shaft-support bearing,technical_name,technical_name,1,10,o
+9,,SYNTHETIC_GENERATED,individual_part,Bearing.stl,Bearing,2,the small black circular ring with a center hole,shape,size|color|shape,2,10,o
+10,,SYNTHETIC_GENERATED,individual_part,Bearing.stl,Bearing,2,the round black part centered inside a bearing support bracket,spatial,color|shape|spatial,3,10,o
+11,,SYNTHETIC_GENERATED,individual_part,Bearing.stl,Bearing,2,the bearing through which a gear shaft passes,relationship,relationship|function,4,10,o
+12,,SYNTHETIC_GENERATED,individual_part,Bearing.stl,Bearing,2,the small black ring-shaped bearing that fits into each colored stand,mixed,size|color|shape|relationship,5,10,o
+13,,SYNTHETIC_GENERATED,individual_part,Bearing.stl,Bearing,2,the black bearing that supports a rotating gear shaft inside a stand,function,color|function|relationship,6,10,o
+14,,SYNTHETIC_GENERATED,individual_part,Bearing.stl,Bearing,2,the small black ring seated in the round opening of a colored support bracket,mixed,size|color|shape|spatial|relationship,7,10,o
+15,,SYNTHETIC_GENERATED,individual_part,Handle.stl,Handle,3,the Row 1 hand crank,technical_name,technical_name,1,10,o
+16,,SYNTHETIC_GENERATED,individual_part,Handle.stl,Handle,3,the white bent lever with a rounded grip,shape,color|shape,2,10,o
+17,,SYNTHETIC_GENERATED,individual_part,Handle.stl,Handle,3,the handle immediately to the right of the right white gear stand,spatial,color|spatial|relationship,3,10,o
+18,,SYNTHETIC_GENERATED,individual_part,Handle.stl,Handle,3,the crank attached at the right end of the white gear rod,relationship,color|spatial|relationship,4,10,o
+19,,SYNTHETIC_GENERATED,individual_part,Handle.stl,Handle,3,the white handle beside the right stand in circle-marked Row 1,mixed,color|spatial|relationship,5,10,o
+20,,SYNTHETIC_GENERATED,individual_part,Handle.stl,Handle,3,the hand-operated lever used to rotate the assembled gear train,function,function|relationship,6,10,o
+21,,SYNTHETIC_GENERATED,individual_part,Handle.stl,Handle,3,the bent white crank connected to the end of the Row 1 shaft,mixed,color|shape|spatial|relationship,7,10,o
+22,,SYNTHETIC_GENERATED,individual_part,Row1_GearRod.stl,Row1_GearRod,4,the Row 1 gear shaft,technical_name,technical_name,1,12,o
+23,,SYNTHETIC_GENERATED,individual_part,Row1_GearRod.stl,Row1_GearRod,4,the long white cylindrical shaft with two pin holes,shape,size|color|shape,2,12,o
+24,,SYNTHETIC_GENERATED,individual_part,Row1_GearRod.stl,Row1_GearRod,4,the shaft crossing Row 1 between the two white brackets,spatial,color|spatial|relationship,3,12,o
+25,,SYNTHETIC_GENERATED,individual_part,Row1_GearRod.stl,Row1_GearRod,4,the shaft that passes through both Row 1 bearings and carries one large gear,relationship,relationship|function,4,12,o
+26,,SYNTHETIC_GENERATED,individual_part,Row1_GearRod.stl,Row1_GearRod,4,the long white circle-row gear shaft seated in both bearing brackets,mixed,size|color|shape|relationship,5,12,o
+27,,SYNTHETIC_GENERATED,individual_part,Row1_GearRod.stl,Row1_GearRod,4,the Row 1 shaft that carries one large gear and transfers rotation between the two stands,function,function|relationship,6,12,o
+28,,SYNTHETIC_GENERATED,individual_part,Row1_GearRod.stl,Row1_GearRod,4,the long white cylindrical rod with two retaining-pin holes spanning Row 1,mixed,size|color|shape|spatial,7,12,o
+29,,SYNTHETIC_GENERATED,individual_part,Row1_GearStand_Left.stl,Row1_GearStand_Left,5,the Row 1 left gear stand,technical_name,technical_name,1,12,o
+30,,SYNTHETIC_GENERATED,individual_part,Row1_GearStand_Left.stl,Row1_GearStand_Left,5,the upright white left stand with a circular bearing opening,shape,color|shape|spatial,2,12,o
+31,,SYNTHETIC_GENERATED,individual_part,Row1_GearStand_Left.stl,Row1_GearStand_Left,5,the left bearing support bracket in Row 1,spatial,spatial,3,12,o
+32,,SYNTHETIC_GENERATED,individual_part,Row1_GearStand_Left.stl,Row1_GearStand_Left,5,"the Row 1 support bracket where the left bearing fits, next to the large left gear",relationship,spatial|relationship,4,12,o
+33,,SYNTHETIC_GENERATED,individual_part,Row1_GearStand_Left.stl,Row1_GearStand_Left,5,the white circle-row left gear stand supporting the gear shaft,mixed,color|shape|spatial|relationship|function,5,12,o
+34,,SYNTHETIC_GENERATED,individual_part,Row1_GearStand_Left.stl,Row1_GearStand_Left,5,the left Row 1 support that holds a bearing and supports the gear shaft,function,spatial|function|relationship,6,12,o
+35,,SYNTHETIC_GENERATED,individual_part,Row1_GearStand_Left.stl,Row1_GearStand_Left,5,"the upright white bearing bracket on the left, beside the large left gear in the circle-marked row",mixed,color|shape|spatial|relationship,7,12,o
+36,,SYNTHETIC_GENERATED,individual_part,Row1_GearStand_Right.stl,Row1_GearStand_Right,6,the Row 1 right gear stand,technical_name,technical_name|spatial,1,12,o
+37,,SYNTHETIC_GENERATED,individual_part,Row1_GearStand_Right.stl,Row1_GearStand_Right,6,the upright white stand with an overlapping bearing slot and through-hole,shape,color|shape,2,12,o
+38,,SYNTHETIC_GENERATED,individual_part,Row1_GearStand_Right.stl,Row1_GearStand_Right,6,the right-hand support in circle-marked Row 1,spatial,spatial,3,12,o
+39,,SYNTHETIC_GENERATED,individual_part,Row1_GearStand_Right.stl,Row1_GearStand_Right,6,the stand immediately to the left of the crank handle,relationship,spatial|relationship,4,12,o
+40,,SYNTHETIC_GENERATED,individual_part,Row1_GearStand_Right.stl,Row1_GearStand_Right,6,the white right bearing bracket whose bearing recess overlaps a hole through the stand,mixed,color|shape|spatial|relationship,5,12,o
+41,,SYNTHETIC_GENERATED,individual_part,Row1_GearStand_Right.stl,Row1_GearStand_Right,6,the right Row 1 support that holds the bearing and guides the gear shaft,function,spatial|function|relationship,6,12,o
+42,,SYNTHETIC_GENERATED,individual_part,Row1_GearStand_Right.stl,Row1_GearStand_Right,6,the white crank-side gear stand with both a bearing slot and a penetrating hole,mixed,color|shape|spatial|relationship,7,12,o
+43,,SYNTHETIC_GENERATED,individual_part,Row1_Gear_Left.stl,Row1_Gear_Left,7,the Row 1 left spur gear,technical_name,technical_name,1,12,o
+44,,SYNTHETIC_GENERATED,individual_part,Row1_Gear_Left.stl,Row1_Gear_Left,7,the large white spur wheel,size,size|color|shape,2,12,o
+45,,SYNTHETIC_GENERATED,individual_part,Row1_Gear_Left.stl,Row1_Gear_Left,7,the left-side gear on the shaft in Row 1,spatial,spatial|relationship,3,12,o
+46,,SYNTHETIC_GENERATED,individual_part,Row1_Gear_Left.stl,Row1_Gear_Left,7,"the Row 1 gear next to the left white bracket, the only gear in Row 1",relationship,color|spatial|size|relationship,4,12,o
+47,,SYNTHETIC_GENERATED,individual_part,Row1_Gear_Left.stl,Row1_Gear_Left,7,the large white spur gear on the left side of the circle-marked shaft,mixed,size|color|shape|spatial,5,12,o
+48,,SYNTHETIC_GENERATED,individual_part,Row1_Gear_Left.stl,Row1_Gear_Left,7,the Row 1 spur gear that transmits rotation along the gear train,function,technical_name|function|relationship,6,12,o
+49,,SYNTHETIC_GENERATED,individual_part,Row1_Gear_Left.stl,Row1_Gear_Left,7,"the large white toothed wheel on the left side, beside the gear shaft",mixed,size|color|shape|spatial|relationship,7,12,o
+50,,SYNTHETIC_GENERATED,individual_part,Row1_Screws.stl,Row1_Screws,8,a Row 1 H5 hex-socket mounting screw,technical_name,technical_name,1,9,o
+51,,SYNTHETIC_GENERATED,individual_part,Row1_Screws.stl,Row1_Screws,8,a small silver screw with a recessed H5 hex-socket head,color,size|color|shape|technical_name,2,9,o
+52,,SYNTHETIC_GENERATED,individual_part,Row1_Screws.stl,Row1_Screws,8,a screw at the base of a Row 1 gear stand,spatial,spatial|relationship,3,9,o
+53,,SYNTHETIC_GENERATED,individual_part,Row1_Screws.stl,Row1_Screws,8,a fastener used to secure a Row 1 bearing stand to the baseboard,relationship,relationship|function,4,9,o
+54,,SYNTHETIC_GENERATED,individual_part,Row1_Screws.stl,Row1_Screws,8,the silver H5 hex-socket screw for the white Row 1 stand,mixed,color|spatial|technical_name|relationship,5,9,o
+55,,SYNTHETIC_GENERATED,individual_part,Row1_Screws.stl,Row1_Screws,8,the Row 1 fastener tightened with a 5 mm hex key,function,technical_name|function,6,9,o
+56,,SYNTHETIC_GENERATED,individual_part,Row1_Screws.stl,Row1_Screws,8,the small silver screw located at the foot of a white support bracket,mixed,size|color|shape|spatial|relationship,7,9,o
+57,,SYNTHETIC_GENERATED,individual_part,Row2_GearRod.stl,Row2_GearRod,9,the Row 2 gear shaft,technical_name,technical_name,1,12,o
+58,,SYNTHETIC_GENERATED,individual_part,Row2_GearRod.stl,Row2_GearRod,9,the long red cylindrical shaft with two pin holes,shape,size|color|shape,2,12,o
+59,,SYNTHETIC_GENERATED,individual_part,Row2_GearRod.stl,Row2_GearRod,9,the shaft crossing Row 2 between the two red brackets,spatial,color|spatial|relationship,3,12,o
+60,,SYNTHETIC_GENERATED,individual_part,Row2_GearRod.stl,Row2_GearRod,9,the shaft that passes through both Row 2 bearings and carries the small and medium gears,relationship,relationship|function,4,12,o
+61,,SYNTHETIC_GENERATED,individual_part,Row2_GearRod.stl,Row2_GearRod,9,the long red triangle-row gear shaft seated in both bearing brackets,mixed,size|color|shape|relationship,5,12,o
+62,,SYNTHETIC_GENERATED,individual_part,Row2_GearRod.stl,Row2_GearRod,9,the Row 2 shaft that carries the small and medium gears and transfers rotation between the two stands,function,function|relationship,6,12,o
+63,,SYNTHETIC_GENERATED,individual_part,Row2_GearRod.stl,Row2_GearRod,9,the long red cylindrical rod with two retaining-pin holes spanning the second row from Row 1,mixed,size|color|shape|spatial,7,12,o
+64,,SYNTHETIC_GENERATED,individual_part,Row2_GearStand_Left.stl,Row2_GearStand_Left,10,the Row 2 left gear stand,technical_name,technical_name,1,12,o
+65,,SYNTHETIC_GENERATED,individual_part,Row2_GearStand_Left.stl,Row2_GearStand_Left,10,the upright red left stand with a circular bearing opening,shape,color|shape|spatial,2,12,o
+66,,SYNTHETIC_GENERATED,individual_part,Row2_GearStand_Left.stl,Row2_GearStand_Left,10,the left bearing support bracket in the second row from Row 1,spatial,spatial,3,12,o
+67,,SYNTHETIC_GENERATED,individual_part,Row2_GearStand_Left.stl,Row2_GearStand_Left,10,"the Row 2 support bracket where the left bearing fits, next to the small left gear",relationship,spatial|relationship,4,12,o
+68,,SYNTHETIC_GENERATED,individual_part,Row2_GearStand_Left.stl,Row2_GearStand_Left,10,the red triangle-row left gear stand supporting the gear shaft,mixed,color|shape|spatial|relationship|function,5,12,o
+69,,SYNTHETIC_GENERATED,individual_part,Row2_GearStand_Left.stl,Row2_GearStand_Left,10,the left Row 2 support that holds a bearing and supports the gear shaft,function,spatial|function|relationship,6,12,o
+70,,SYNTHETIC_GENERATED,individual_part,Row2_GearStand_Left.stl,Row2_GearStand_Left,10,"the upright red bearing bracket on the left, beside the small left gear in the triangle-marked row",mixed,color|shape|spatial|relationship,7,12,o
+71,,SYNTHETIC_GENERATED,individual_part,Row2_GearStand_Right.stl,Row2_GearStand_Right,11,the Row 2 right gear stand,technical_name,technical_name,1,12,o
+72,,SYNTHETIC_GENERATED,individual_part,Row2_GearStand_Right.stl,Row2_GearStand_Right,11,the upright red right stand with a circular bearing opening,shape,color|shape|spatial,2,12,o
+73,,SYNTHETIC_GENERATED,individual_part,Row2_GearStand_Right.stl,Row2_GearStand_Right,11,the right bearing support bracket in the second row from Row 1,spatial,spatial,3,12,o
+74,,SYNTHETIC_GENERATED,individual_part,Row2_GearStand_Right.stl,Row2_GearStand_Right,11,"the Row 2 support bracket where the right bearing fits, next to the medium right gear",relationship,spatial|relationship,4,12,o
+75,,SYNTHETIC_GENERATED,individual_part,Row2_GearStand_Right.stl,Row2_GearStand_Right,11,the red triangle-row right gear stand supporting the gear shaft,mixed,color|shape|spatial|relationship|function,5,12,o
+76,,SYNTHETIC_GENERATED,individual_part,Row2_GearStand_Right.stl,Row2_GearStand_Right,11,the right Row 2 support that holds a bearing and supports the gear shaft,function,spatial|function|relationship,6,12,o
+77,,SYNTHETIC_GENERATED,individual_part,Row2_GearStand_Right.stl,Row2_GearStand_Right,11,"the upright red bearing bracket on the right, beside the medium right gear in the triangle-marked row",mixed,color|shape|spatial|relationship,7,12,o
+78,,SYNTHETIC_GENERATED,individual_part,Row2_Gear_Left.stl,Row2_Gear_Left,12,the Row 2 left spur gear,technical_name,technical_name,1,11,o
+79,,SYNTHETIC_GENERATED,individual_part,Row2_Gear_Left.stl,Row2_Gear_Left,12,the small red spur wheel,size,size|color|shape,2,11,o
+80,,SYNTHETIC_GENERATED,individual_part,Row2_Gear_Left.stl,Row2_Gear_Left,12,the left-side gear on the shaft in the second row from Row 1,spatial,spatial|relationship,3,11,o
+81,,SYNTHETIC_GENERATED,individual_part,Row2_Gear_Left.stl,Row2_Gear_Left,12,"the Row 2 gear next to the left red bracket, smaller than the right gear",relationship,color|spatial|size|relationship,4,11,o
+82,,SYNTHETIC_GENERATED,individual_part,Row2_Gear_Left.stl,Row2_Gear_Left,12,the small red spur gear on the left side of the triangle-marked shaft,mixed,size|color|shape|spatial,5,11,o
+83,,SYNTHETIC_GENERATED,individual_part,Row2_Gear_Left.stl,Row2_Gear_Left,12,the small red gear to the left of the larger red gear,mixed,size|color|shape|spatial|relationship,7,11,o
+84,,SYNTHETIC_GENERATED,individual_part,Row2_Gear_Right.stl,Row2_Gear_Right,13,the Row 2 right spur gear,technical_name,technical_name,1,11,o
+85,,SYNTHETIC_GENERATED,individual_part,Row2_Gear_Right.stl,Row2_Gear_Right,13,the medium red spur wheel,size,size|color|shape,2,11,o
+86,,SYNTHETIC_GENERATED,individual_part,Row2_Gear_Right.stl,Row2_Gear_Right,13,the right-side gear on the shaft in the second row from Row 1,spatial,spatial|relationship,3,11,o
+87,,SYNTHETIC_GENERATED,individual_part,Row2_Gear_Right.stl,Row2_Gear_Right,13,"the Row 2 gear next to the right red bracket, larger than the left gear",relationship,color|spatial|size|relationship,4,11,o
+88,,SYNTHETIC_GENERATED,individual_part,Row2_Gear_Right.stl,Row2_Gear_Right,13,the medium red spur gear on the right side of the triangle-marked shaft,mixed,size|color|shape|spatial,5,11,o
+89,,SYNTHETIC_GENERATED,individual_part,Row2_Gear_Right.stl,Row2_Gear_Right,13,the larger red gear to the right of the small red gear,mixed,size|color|shape|spatial|relationship,7,11,o
+90,,SYNTHETIC_GENERATED,individual_part,Row2_Screws.stl,Row2_Screws,14,a Row 2 T25 Torx mounting screw,technical_name,technical_name,1,9,o
+91,,SYNTHETIC_GENERATED,individual_part,Row2_Screws.stl,Row2_Screws,14,a small black screw with a recessed T25 Torx head,color,size|color|shape|technical_name,2,9,o
+92,,SYNTHETIC_GENERATED,individual_part,Row2_Screws.stl,Row2_Screws,14,a screw at the base of a Row 2 gear stand,spatial,spatial|relationship,3,9,o
+93,,SYNTHETIC_GENERATED,individual_part,Row2_Screws.stl,Row2_Screws,14,a fastener used to secure a Row 2 bearing stand to the baseboard,relationship,relationship|function,4,9,o
+94,,SYNTHETIC_GENERATED,individual_part,Row2_Screws.stl,Row2_Screws,14,the black T25 Torx screw for the red Row 2 stand,mixed,color|spatial|technical_name|relationship,5,9,o
+95,,SYNTHETIC_GENERATED,individual_part,Row2_Screws.stl,Row2_Screws,14,the Row 2 fastener tightened with a T25 driver,function,technical_name|function,6,9,o
+96,,SYNTHETIC_GENERATED,individual_part,Row2_Screws.stl,Row2_Screws,14,the small black screw located at the foot of a red support bracket,mixed,size|color|shape|spatial|relationship,7,9,o
+97,,SYNTHETIC_GENERATED,individual_part,Row3_GearRod.stl,Row3_GearRod,15,the Row 3 gear shaft,technical_name,technical_name,1,12,o
+98,,SYNTHETIC_GENERATED,individual_part,Row3_GearRod.stl,Row3_GearRod,15,the long green cylindrical shaft with two pin holes,shape,size|color|shape,2,12,o
+99,,SYNTHETIC_GENERATED,individual_part,Row3_GearRod.stl,Row3_GearRod,15,the shaft crossing Row 3 between the two green brackets,spatial,color|spatial|relationship,3,12,o
+100,,SYNTHETIC_GENERATED,individual_part,Row3_GearRod.stl,Row3_GearRod,15,the shaft that passes through both Row 3 bearings and carries the small and medium gears,relationship,relationship|function,4,12,o
+101,,SYNTHETIC_GENERATED,individual_part,Row3_GearRod.stl,Row3_GearRod,15,the long green hexagon-row gear shaft seated in both bearing brackets,mixed,size|color|shape|relationship,5,12,o
+102,,SYNTHETIC_GENERATED,individual_part,Row3_GearRod.stl,Row3_GearRod,15,the Row 3 shaft that carries the small and medium gears and transfers rotation between the two stands,function,function|relationship,6,12,o
+103,,SYNTHETIC_GENERATED,individual_part,Row3_GearRod.stl,Row3_GearRod,15,the long green cylindrical rod with two retaining-pin holes spanning Row 3,mixed,size|color|shape|spatial,7,12,o
+104,,SYNTHETIC_GENERATED,individual_part,Row3_GearStand_Left.stl,Row3_GearStand_Left,16,the Row 3 left gear stand,technical_name,technical_name,1,12,o
+105,,SYNTHETIC_GENERATED,individual_part,Row3_GearStand_Left.stl,Row3_GearStand_Left,16,the upright green left stand with a circular bearing opening,shape,color|shape|spatial,2,12,o
+106,,SYNTHETIC_GENERATED,individual_part,Row3_GearStand_Left.stl,Row3_GearStand_Left,16,the left bearing support bracket in Row 3,spatial,spatial,3,12,o
+107,,SYNTHETIC_GENERATED,individual_part,Row3_GearStand_Left.stl,Row3_GearStand_Left,16,"the Row 3 support bracket where the left bearing fits, next to the small left gear",relationship,spatial|relationship,4,12,o
+108,,SYNTHETIC_GENERATED,individual_part,Row3_GearStand_Left.stl,Row3_GearStand_Left,16,the green hexagon-row left gear stand supporting the gear shaft,mixed,color|shape|spatial|relationship|function,5,12,o
+109,,SYNTHETIC_GENERATED,individual_part,Row3_GearStand_Left.stl,Row3_GearStand_Left,16,the left Row 3 support that holds a bearing and supports the gear shaft,function,spatial|function|relationship,6,12,o
+110,,SYNTHETIC_GENERATED,individual_part,Row3_GearStand_Left.stl,Row3_GearStand_Left,16,"the upright green bearing bracket on the left, beside the small left gear in the hexagon-marked row",mixed,color|shape|spatial|relationship,7,12,o
+111,,SYNTHETIC_GENERATED,individual_part,Row3_GearStand_Right.stl,Row3_GearStand_Right,17,the Row 3 right gear stand,technical_name,technical_name,1,12,o
+112,,SYNTHETIC_GENERATED,individual_part,Row3_GearStand_Right.stl,Row3_GearStand_Right,17,the upright green right stand with a circular bearing opening,shape,color|shape|spatial,2,12,o
+113,,SYNTHETIC_GENERATED,individual_part,Row3_GearStand_Right.stl,Row3_GearStand_Right,17,the right bearing support bracket in Row 3,spatial,spatial,3,12,o
+114,,SYNTHETIC_GENERATED,individual_part,Row3_GearStand_Right.stl,Row3_GearStand_Right,17,"the Row 3 support bracket where the right bearing fits, next to the medium right gear",relationship,spatial|relationship,4,12,o
+115,,SYNTHETIC_GENERATED,individual_part,Row3_GearStand_Right.stl,Row3_GearStand_Right,17,the green hexagon-row right gear stand supporting the gear shaft,mixed,color|shape|spatial|relationship|function,5,12,o
+116,,SYNTHETIC_GENERATED,individual_part,Row3_GearStand_Right.stl,Row3_GearStand_Right,17,the right Row 3 support that holds a bearing and supports the gear shaft,function,spatial|function|relationship,6,12,o
+117,,SYNTHETIC_GENERATED,individual_part,Row3_GearStand_Right.stl,Row3_GearStand_Right,17,"the upright green bearing bracket on the right, beside the medium right gear in the hexagon-marked row",mixed,color|shape|spatial|relationship,7,12,o
+118,,SYNTHETIC_GENERATED,individual_part,Row3_Gear_Left.stl,Row3_Gear_Left,18,the Row 3 left spur gear,technical_name,technical_name,1,11,o
+119,,SYNTHETIC_GENERATED,individual_part,Row3_Gear_Left.stl,Row3_Gear_Left,18,the small green spur wheel,size,size|color|shape,2,11,o
+120,,SYNTHETIC_GENERATED,individual_part,Row3_Gear_Left.stl,Row3_Gear_Left,18,the left-side gear on the shaft in Row 3,spatial,spatial|relationship,3,11,o
+121,,SYNTHETIC_GENERATED,individual_part,Row3_Gear_Left.stl,Row3_Gear_Left,18,"the Row 3 gear next to the left green bracket, smaller than the right gear",relationship,color|spatial|size|relationship,4,11,o
+122,,SYNTHETIC_GENERATED,individual_part,Row3_Gear_Left.stl,Row3_Gear_Left,18,the small green spur gear on the left side of the hexagon-marked shaft,mixed,size|color|shape|spatial,5,11,o
+123,,SYNTHETIC_GENERATED,individual_part,Row3_Gear_Left.stl,Row3_Gear_Left,18,the small green gear to the left of the larger green gear,mixed,size|color|shape|spatial|relationship,7,11,o
+124,,SYNTHETIC_GENERATED,individual_part,Row3_Gear_Right.stl,Row3_Gear_Right,19,the Row 3 right spur gear,technical_name,technical_name,1,11,o
+125,,SYNTHETIC_GENERATED,individual_part,Row3_Gear_Right.stl,Row3_Gear_Right,19,the medium green spur wheel,size,size|color|shape,2,11,o
+126,,SYNTHETIC_GENERATED,individual_part,Row3_Gear_Right.stl,Row3_Gear_Right,19,the right-side gear on the shaft in Row 3,spatial,spatial|relationship,3,11,o
+127,,SYNTHETIC_GENERATED,individual_part,Row3_Gear_Right.stl,Row3_Gear_Right,19,"the Row 3 gear next to the right green bracket, larger than the left gear",relationship,color|spatial|size|relationship,4,11,o
+128,,SYNTHETIC_GENERATED,individual_part,Row3_Gear_Right.stl,Row3_Gear_Right,19,the medium green spur gear on the right side of the hexagon-marked shaft,mixed,size|color|shape|spatial,5,11,o
+129,,SYNTHETIC_GENERATED,individual_part,Row3_Gear_Right.stl,Row3_Gear_Right,19,the larger green gear to the right of the small green gear,mixed,size|color|shape|spatial|relationship,7,11,o
+130,,SYNTHETIC_GENERATED,individual_part,Row3_Screws.stl,Row3_Screws,20,a Row 3 H3 hex-socket mounting screw,technical_name,technical_name,1,9,o
+131,,SYNTHETIC_GENERATED,individual_part,Row3_Screws.stl,Row3_Screws,20,a small black screw with a recessed H3 hex-socket head,color,size|color|shape|technical_name,2,9,o
+132,,SYNTHETIC_GENERATED,individual_part,Row3_Screws.stl,Row3_Screws,20,a screw at the base of a Row 3 gear stand,spatial,spatial|relationship,3,9,o
+133,,SYNTHETIC_GENERATED,individual_part,Row3_Screws.stl,Row3_Screws,20,a fastener used to secure a Row 3 bearing stand to the baseboard,relationship,relationship|function,4,9,o
+134,,SYNTHETIC_GENERATED,individual_part,Row3_Screws.stl,Row3_Screws,20,the black H3 hex-socket screw for the green Row 3 stand,mixed,color|spatial|technical_name|relationship,5,9,o
+135,,SYNTHETIC_GENERATED,individual_part,Row3_Screws.stl,Row3_Screws,20,the Row 3 fastener tightened with a 3 mm hex key,function,technical_name|function,6,9,o
+136,,SYNTHETIC_GENERATED,individual_part,Row3_Screws.stl,Row3_Screws,20,the small black screw located at the foot of a green support bracket,mixed,size|color|shape|spatial|relationship,7,9,o
+137,,SYNTHETIC_GENERATED,individual_part,Row4_GearRod.stl,Row4_GearRod,21,the Row 4 gear shaft,technical_name,technical_name,1,12,o
+138,,SYNTHETIC_GENERATED,individual_part,Row4_GearRod.stl,Row4_GearRod,21,the long blue cylindrical shaft with one pin hole,shape,size|color|shape,2,12,o
+139,,SYNTHETIC_GENERATED,individual_part,Row4_GearRod.stl,Row4_GearRod,21,the shaft crossing Row 4 between the two blue brackets,spatial,color|spatial|relationship,3,12,o
+140,,SYNTHETIC_GENERATED,individual_part,Row4_GearRod.stl,Row4_GearRod,21,the shaft that passes through both Row 4 bearings and carries one large gear,relationship,relationship|function,4,12,o
+141,,SYNTHETIC_GENERATED,individual_part,Row4_GearRod.stl,Row4_GearRod,21,the long blue square-row gear shaft seated in both bearing brackets,mixed,size|color|shape|relationship,5,12,o
+142,,SYNTHETIC_GENERATED,individual_part,Row4_GearRod.stl,Row4_GearRod,21,the Row 4 shaft that carries one large gear and transfers rotation between the two stands,function,function|relationship,6,12,o
+143,,SYNTHETIC_GENERATED,individual_part,Row4_GearRod.stl,Row4_GearRod,21,the long blue cylindrical rod with one retaining-pin hole spanning Row 4,mixed,size|color|shape|spatial,7,12,o
+144,,SYNTHETIC_GENERATED,individual_part,Row4_GearStand_Left.stl,Row4_GearStand_Left,22,the Row 4 left gear stand,technical_name,technical_name,1,12,o
+145,,SYNTHETIC_GENERATED,individual_part,Row4_GearStand_Left.stl,Row4_GearStand_Left,22,the upright blue left stand with a circular bearing opening,shape,color|shape|spatial,2,12,o
+146,,SYNTHETIC_GENERATED,individual_part,Row4_GearStand_Left.stl,Row4_GearStand_Left,22,the left bearing support bracket in Row 4,spatial,spatial,3,12,o
+147,,SYNTHETIC_GENERATED,individual_part,Row4_GearStand_Left.stl,Row4_GearStand_Left,22,"the Row 4 support bracket where the left bearing fits, next to the large left gear",relationship,spatial|relationship,4,12,o
+148,,SYNTHETIC_GENERATED,individual_part,Row4_GearStand_Left.stl,Row4_GearStand_Left,22,the blue square-row left gear stand supporting the gear shaft,mixed,color|shape|spatial|relationship|function,5,12,o
+149,,SYNTHETIC_GENERATED,individual_part,Row4_GearStand_Left.stl,Row4_GearStand_Left,22,the left Row 4 support that holds a bearing and supports the gear shaft,function,spatial|function|relationship,6,12,o
+150,,SYNTHETIC_GENERATED,individual_part,Row4_GearStand_Left.stl,Row4_GearStand_Left,22,"the upright blue bearing bracket on the left, beside the large left gear in the square-marked row",mixed,color|shape|spatial|relationship,7,12,o
+151,,SYNTHETIC_GENERATED,individual_part,Row4_GearStand_Right.stl,Row4_GearStand_Right,23,the Row 4 right gear stand,technical_name,technical_name,1,12,o
+152,,SYNTHETIC_GENERATED,individual_part,Row4_GearStand_Right.stl,Row4_GearStand_Right,23,the upright blue right stand with a circular bearing opening,shape,color|shape|spatial,2,12,o
+153,,SYNTHETIC_GENERATED,individual_part,Row4_GearStand_Right.stl,Row4_GearStand_Right,23,the right bearing support bracket in Row 4,spatial,spatial,3,12,o
+154,,SYNTHETIC_GENERATED,individual_part,Row4_GearStand_Right.stl,Row4_GearStand_Right,23,"the Row 4 right stand where the bearing fits, at the right end of the blue gear rod",relationship,spatial|relationship,4,12,o
+155,,SYNTHETIC_GENERATED,individual_part,Row4_GearStand_Right.stl,Row4_GearStand_Right,23,the blue square-row right gear stand supporting the gear shaft,mixed,color|shape|spatial|relationship|function,5,12,o
+156,,SYNTHETIC_GENERATED,individual_part,Row4_GearStand_Right.stl,Row4_GearStand_Right,23,the right Row 4 support that holds a bearing and supports the gear shaft,function,spatial|function|relationship,6,12,o
+157,,SYNTHETIC_GENERATED,individual_part,Row4_GearStand_Right.stl,Row4_GearStand_Right,23,"the upright blue bearing bracket on the right, beside the crank-side end of the shaft in the square-marked row",mixed,color|shape|spatial|relationship,7,12,o
+158,,SYNTHETIC_GENERATED,individual_part,Row4_Gear_Left.stl,Row4_Gear_Left,24,the Row 4 left spur gear,technical_name,technical_name,1,12,o
+159,,SYNTHETIC_GENERATED,individual_part,Row4_Gear_Left.stl,Row4_Gear_Left,24,the large blue spur wheel,size,size|color|shape,2,12,o
+160,,SYNTHETIC_GENERATED,individual_part,Row4_Gear_Left.stl,Row4_Gear_Left,24,the left-side gear on the shaft in Row 4,spatial,spatial|relationship,3,12,o
+161,,SYNTHETIC_GENERATED,individual_part,Row4_Gear_Left.stl,Row4_Gear_Left,24,"the Row 4 gear next to the left blue bracket, the only gear in Row 4",relationship,color|spatial|size|relationship,4,12,o
+162,,SYNTHETIC_GENERATED,individual_part,Row4_Gear_Left.stl,Row4_Gear_Left,24,the large blue spur gear on the left side of the square-marked shaft,mixed,size|color|shape|spatial,5,12,o
+163,,SYNTHETIC_GENERATED,individual_part,Row4_Gear_Left.stl,Row4_Gear_Left,24,the Row 4 spur gear that transmits rotation along the gear train,function,technical_name|function|relationship,6,12,o
+164,,SYNTHETIC_GENERATED,individual_part,Row4_Gear_Left.stl,Row4_Gear_Left,24,"the large blue toothed wheel on the left side, beside the gear shaft",mixed,size|color|shape|spatial|relationship,7,12,o
+165,,SYNTHETIC_GENERATED,individual_part,Row4_Screws.stl,Row4_Screws,25,a Row 4 Phillips mounting screw,technical_name,technical_name,1,9,o
+166,,SYNTHETIC_GENERATED,individual_part,Row4_Screws.stl,Row4_Screws,25,a small silver screw with a recessed Phillips head,color,size|color|shape|technical_name,2,9,o
+167,,SYNTHETIC_GENERATED,individual_part,Row4_Screws.stl,Row4_Screws,25,a screw at the base of a Row 4 gear stand,spatial,spatial|relationship,3,9,o
+168,,SYNTHETIC_GENERATED,individual_part,Row4_Screws.stl,Row4_Screws,25,a fastener used to secure a Row 4 bearing stand to the baseboard,relationship,relationship|function,4,9,o
+169,,SYNTHETIC_GENERATED,individual_part,Row4_Screws.stl,Row4_Screws,25,the silver Phillips screw for the blue Row 4 stand,mixed,color|spatial|technical_name|relationship,5,9,o
+170,,SYNTHETIC_GENERATED,individual_part,Row4_Screws.stl,Row4_Screws,25,the Row 4 fastener tightened with a Phillips screwdriver,function,technical_name|function,6,9,o
+171,,SYNTHETIC_GENERATED,individual_part,Row4_Screws.stl,Row4_Screws,25,the small silver screw located at the foot of a blue support bracket,mixed,size|color|shape|spatial|relationship,7,9,o
+172,,SYNTHETIC_GENERATED,individual_part,WoodenPin.stl,WoodenPin,26,the wooden retaining dowel,technical_name,technical_name,1,10,o
+173,,SYNTHETIC_GENERATED,individual_part,WoodenPin.stl,WoodenPin,26,the short thin brown cylindrical peg,shape,size|color|shape|material,2,10,o
+174,,SYNTHETIC_GENERATED,individual_part,WoodenPin.stl,WoodenPin,26,the small peg positioned crosswise through a gear-shaft hole,spatial,spatial|relationship,3,10,o
+175,,SYNTHETIC_GENERATED,individual_part,WoodenPin.stl,WoodenPin,26,the dowel that prevents a gear or crank from sliding along its shaft,relationship,relationship|function,4,10,o
+176,,SYNTHETIC_GENERATED,individual_part,WoodenPin.stl,WoodenPin,26,the small brown cylindrical retaining pin fitted beside a gear,mixed,size|color|shape|material|relationship,5,10,o
+177,,SYNTHETIC_GENERATED,individual_part,WoodenPin.stl,WoodenPin,26,the wooden retainer inserted through a shaft hole to stop an attached part sliding,function,material|function|relationship,6,10,o
+178,,SYNTHETIC_GENERATED,individual_part,WoodenPin.stl,WoodenPin,26,the short brown dowel crossing the gear rod beside a gear or the crank,mixed,size|color|shape|spatial|relationship,7,10,o
+179,,SYNTHETIC_GENERATED,individual_part,BaseBoard.stl,BaseBoard,1,black baseboard,mixed,color|technical_name,8,10,o
+180,,SYNTHETIC_GENERATED,individual_part,BaseBoard.stl,BaseBoard,1,gearbox base,technical_name,technical_name,9,10,o
+181,,SYNTHETIC_GENERATED,individual_part,BaseBoard.stl,BaseBoard,1,mounting plate,technical_name,technical_name,10,10,o
+182,,SYNTHETIC_GENERATED,individual_part,Bearing.stl,Bearing,2,black bearing,mixed,color|technical_name,8,10,o
+183,,SYNTHETIC_GENERATED,individual_part,Bearing.stl,Bearing,2,circular bearing,mixed,shape|technical_name,9,10,o
+184,,SYNTHETIC_GENERATED,individual_part,Bearing.stl,Bearing,2,gear-stand bearing,relationship,technical_name|relationship,10,10,o
+185,,SYNTHETIC_GENERATED,individual_part,Handle.stl,Handle,3,white handle,mixed,color|technical_name,8,10,o
+186,,SYNTHETIC_GENERATED,individual_part,Handle.stl,Handle,3,Row 1 crank,mixed,spatial|technical_name,9,10,o
+187,,SYNTHETIC_GENERATED,individual_part,Handle.stl,Handle,3,right-side crank,mixed,spatial|technical_name,10,10,o
+188,,SYNTHETIC_GENERATED,individual_part,Row1_GearRod.stl,Row1_GearRod,4,white gear rod,mixed,color|technical_name,8,12,o
+189,,SYNTHETIC_GENERATED,individual_part,Row1_GearRod.stl,Row1_GearRod,4,Row 1 shaft,mixed,spatial|technical_name,9,12,o
+190,,SYNTHETIC_GENERATED,individual_part,Row1_GearRod.stl,Row1_GearRod,4,gear rod of Row 1,mixed,spatial|technical_name,10,12,o
+191,,SYNTHETIC_GENERATED,individual_part,Row1_GearStand_Left.stl,Row1_GearStand_Left,5,white left stand,mixed,color|spatial|technical_name,8,12,o
+192,,SYNTHETIC_GENERATED,individual_part,Row1_GearStand_Left.stl,Row1_GearStand_Left,5,Row 1 left bracket,mixed,spatial|technical_name,9,12,o
+193,,SYNTHETIC_GENERATED,individual_part,Row1_GearStand_Left.stl,Row1_GearStand_Left,5,left gear stand of Row 1,mixed,spatial|technical_name,10,12,o
+194,,SYNTHETIC_GENERATED,individual_part,Row1_GearStand_Right.stl,Row1_GearStand_Right,6,white right stand,mixed,color|spatial|technical_name,8,12,o
+195,,SYNTHETIC_GENERATED,individual_part,Row1_GearStand_Right.stl,Row1_GearStand_Right,6,Row 1 right bracket,mixed,spatial|technical_name,9,12,o
+196,,SYNTHETIC_GENERATED,individual_part,Row1_GearStand_Right.stl,Row1_GearStand_Right,6,right gear stand of Row 1,mixed,spatial|technical_name,10,12,o
+197,,SYNTHETIC_GENERATED,individual_part,Row1_Gear_Left.stl,Row1_Gear_Left,7,gear of Row 1,mixed,spatial|technical_name,8,12,o
+198,,SYNTHETIC_GENERATED,individual_part,Row1_Gear_Left.stl,Row1_Gear_Left,7,white gear,mixed,color|technical_name,9,12,o
+199,,SYNTHETIC_GENERATED,individual_part,Row1_Gear_Left.stl,Row1_Gear_Left,7,Row 1 gear,mixed,spatial|technical_name,10,12,o
+200,,SYNTHETIC_GENERATED,individual_part,Row1_Screws.stl,Row1_Screws,8,Row 1 screw,mixed,spatial|technical_name,9,9,o
+201,,SYNTHETIC_GENERATED,individual_part,Row1_Screws.stl,Row1_Screws,8,H5 screw,technical_name,technical_name,10,9,o
+202,,SYNTHETIC_GENERATED,individual_part,Row2_GearRod.stl,Row2_GearRod,9,red gear rod,mixed,color|technical_name,8,12,o
+203,,SYNTHETIC_GENERATED,individual_part,Row2_GearRod.stl,Row2_GearRod,9,Row 2 shaft,mixed,spatial|technical_name,9,12,o
+204,,SYNTHETIC_GENERATED,individual_part,Row2_GearRod.stl,Row2_GearRod,9,gear rod of Row 2,mixed,spatial|technical_name,10,12,o
+205,,SYNTHETIC_GENERATED,individual_part,Row2_GearStand_Left.stl,Row2_GearStand_Left,10,red left stand,mixed,color|spatial|technical_name,8,12,o
+206,,SYNTHETIC_GENERATED,individual_part,Row2_GearStand_Left.stl,Row2_GearStand_Left,10,Row 2 left bracket,mixed,spatial|technical_name,9,12,o
+207,,SYNTHETIC_GENERATED,individual_part,Row2_GearStand_Left.stl,Row2_GearStand_Left,10,left gear stand of Row 2,mixed,spatial|technical_name,10,12,o
+208,,SYNTHETIC_GENERATED,individual_part,Row2_GearStand_Right.stl,Row2_GearStand_Right,11,red right stand,mixed,color|spatial|technical_name,8,12,o
+209,,SYNTHETIC_GENERATED,individual_part,Row2_GearStand_Right.stl,Row2_GearStand_Right,11,Row 2 right bracket,mixed,spatial|technical_name,9,12,o
+210,,SYNTHETIC_GENERATED,individual_part,Row2_GearStand_Right.stl,Row2_GearStand_Right,11,right gear stand of Row 2,mixed,spatial|technical_name,10,12,o
+211,,SYNTHETIC_GENERATED,individual_part,Row2_Gear_Left.stl,Row2_Gear_Left,12,smaller gear of Row 2,mixed,size|spatial|technical_name,8,11,o
+212,,SYNTHETIC_GENERATED,individual_part,Row2_Gear_Left.stl,Row2_Gear_Left,12,red smaller gear,mixed,color|size|technical_name,9,11,o
+213,,SYNTHETIC_GENERATED,individual_part,Row2_Gear_Left.stl,Row2_Gear_Left,12,left gear of Row 2,mixed,spatial|technical_name,10,11,o
+214,,SYNTHETIC_GENERATED,individual_part,Row2_Gear_Right.stl,Row2_Gear_Right,13,larger gear of Row 2,mixed,size|spatial|technical_name,8,11,o
+215,,SYNTHETIC_GENERATED,individual_part,Row2_Gear_Right.stl,Row2_Gear_Right,13,red larger gear,mixed,color|size|technical_name,9,11,o
+216,,SYNTHETIC_GENERATED,individual_part,Row2_Gear_Right.stl,Row2_Gear_Right,13,right gear of Row 2,mixed,spatial|technical_name,10,11,o
+217,,SYNTHETIC_GENERATED,individual_part,Row2_Screws.stl,Row2_Screws,14,Row 2 screw,mixed,spatial|technical_name,9,9,o
+218,,SYNTHETIC_GENERATED,individual_part,Row2_Screws.stl,Row2_Screws,14,T25 screw,technical_name,technical_name,10,9,o
+219,,SYNTHETIC_GENERATED,individual_part,Row3_GearRod.stl,Row3_GearRod,15,green gear rod,mixed,color|technical_name,8,12,o
+220,,SYNTHETIC_GENERATED,individual_part,Row3_GearRod.stl,Row3_GearRod,15,Row 3 shaft,mixed,spatial|technical_name,9,12,o
+221,,SYNTHETIC_GENERATED,individual_part,Row3_GearRod.stl,Row3_GearRod,15,gear rod of Row 3,mixed,spatial|technical_name,10,12,o
+222,,SYNTHETIC_GENERATED,individual_part,Row3_GearStand_Left.stl,Row3_GearStand_Left,16,green left stand,mixed,color|spatial|technical_name,8,12,o
+223,,SYNTHETIC_GENERATED,individual_part,Row3_GearStand_Left.stl,Row3_GearStand_Left,16,Row 3 left bracket,mixed,spatial|technical_name,9,12,o
+224,,SYNTHETIC_GENERATED,individual_part,Row3_GearStand_Left.stl,Row3_GearStand_Left,16,left gear stand of Row 3,mixed,spatial|technical_name,10,12,o
+225,,SYNTHETIC_GENERATED,individual_part,Row3_GearStand_Right.stl,Row3_GearStand_Right,17,green right stand,mixed,color|spatial|technical_name,8,12,o
+226,,SYNTHETIC_GENERATED,individual_part,Row3_GearStand_Right.stl,Row3_GearStand_Right,17,Row 3 right bracket,mixed,spatial|technical_name,9,12,o
+227,,SYNTHETIC_GENERATED,individual_part,Row3_GearStand_Right.stl,Row3_GearStand_Right,17,right gear stand of Row 3,mixed,spatial|technical_name,10,12,o
+228,,SYNTHETIC_GENERATED,individual_part,Row3_Gear_Left.stl,Row3_Gear_Left,18,smaller gear of Row 3,mixed,size|spatial|technical_name,8,11,o
+229,,SYNTHETIC_GENERATED,individual_part,Row3_Gear_Left.stl,Row3_Gear_Left,18,green smaller gear,mixed,color|size|technical_name,9,11,o
+230,,SYNTHETIC_GENERATED,individual_part,Row3_Gear_Left.stl,Row3_Gear_Left,18,left gear of Row 3,mixed,spatial|technical_name,10,11,o
+231,,SYNTHETIC_GENERATED,individual_part,Row3_Gear_Right.stl,Row3_Gear_Right,19,larger gear of Row 3,mixed,size|spatial|technical_name,8,11,o
+232,,SYNTHETIC_GENERATED,individual_part,Row3_Gear_Right.stl,Row3_Gear_Right,19,green larger gear,mixed,color|size|technical_name,9,11,o
+233,,SYNTHETIC_GENERATED,individual_part,Row3_Gear_Right.stl,Row3_Gear_Right,19,right gear of Row 3,mixed,spatial|technical_name,10,11,o
+234,,SYNTHETIC_GENERATED,individual_part,Row3_Screws.stl,Row3_Screws,20,Row 3 screw,mixed,spatial|technical_name,9,9,o
+235,,SYNTHETIC_GENERATED,individual_part,Row3_Screws.stl,Row3_Screws,20,H3 screw,technical_name,technical_name,10,9,o
+236,,SYNTHETIC_GENERATED,individual_part,Row4_GearRod.stl,Row4_GearRod,21,blue gear rod,mixed,color|technical_name,8,12,o
+237,,SYNTHETIC_GENERATED,individual_part,Row4_GearRod.stl,Row4_GearRod,21,Row 4 shaft,mixed,spatial|technical_name,9,12,o
+238,,SYNTHETIC_GENERATED,individual_part,Row4_GearRod.stl,Row4_GearRod,21,gear rod of Row 4,mixed,spatial|technical_name,10,12,o
+239,,SYNTHETIC_GENERATED,individual_part,Row4_GearStand_Left.stl,Row4_GearStand_Left,22,blue left stand,mixed,color|spatial|technical_name,8,12,o
+240,,SYNTHETIC_GENERATED,individual_part,Row4_GearStand_Left.stl,Row4_GearStand_Left,22,Row 4 left bracket,mixed,spatial|technical_name,9,12,o
+241,,SYNTHETIC_GENERATED,individual_part,Row4_GearStand_Left.stl,Row4_GearStand_Left,22,left gear stand of Row 4,mixed,spatial|technical_name,10,12,o
+242,,SYNTHETIC_GENERATED,individual_part,Row4_GearStand_Right.stl,Row4_GearStand_Right,23,blue right stand,mixed,color|spatial|technical_name,8,12,o
+243,,SYNTHETIC_GENERATED,individual_part,Row4_GearStand_Right.stl,Row4_GearStand_Right,23,Row 4 right bracket,mixed,spatial|technical_name,9,12,o
+244,,SYNTHETIC_GENERATED,individual_part,Row4_GearStand_Right.stl,Row4_GearStand_Right,23,right gear stand of Row 4,mixed,spatial|technical_name,10,12,o
+245,,SYNTHETIC_GENERATED,individual_part,Row4_Gear_Left.stl,Row4_Gear_Left,24,gear of Row 4,mixed,spatial|technical_name,8,12,o
+246,,SYNTHETIC_GENERATED,individual_part,Row4_Gear_Left.stl,Row4_Gear_Left,24,blue gear,mixed,color|technical_name,9,12,o
+247,,SYNTHETIC_GENERATED,individual_part,Row4_Gear_Left.stl,Row4_Gear_Left,24,Row 4 gear,mixed,spatial|technical_name,10,12,o
+248,,SYNTHETIC_GENERATED,individual_part,Row4_Screws.stl,Row4_Screws,25,Row 4 screw,mixed,spatial|technical_name,9,9,o
+249,,SYNTHETIC_GENERATED,individual_part,Row4_Screws.stl,Row4_Screws,25,Phillips screw,technical_name,technical_name,10,9,o
+250,,SYNTHETIC_GENERATED,individual_part,WoodenPin.stl,WoodenPin,26,wooden pin,mixed,material|technical_name,8,10,o
+251,,SYNTHETIC_GENERATED,individual_part,WoodenPin.stl,WoodenPin,26,brown pin,mixed,color|technical_name,9,10,o
+252,,SYNTHETIC_GENERATED,individual_part,WoodenPin.stl,WoodenPin,26,retaining pin,technical_name,technical_name,10,10,o
+253,,SYNTHETIC_GENERATED,individual_part,Row1_GearRod.stl,Row1_GearRod,4,white gear rod in the circle row,mixed,color|shape|spatial|technical_name,11,12,o
+254,,SYNTHETIC_GENERATED,individual_part,Row1_GearRod.stl,Row1_GearRod,4,circle-row white shaft,mixed,color|shape|spatial|technical_name,12,12,o
+255,,SYNTHETIC_GENERATED,individual_part,Row1_GearStand_Left.stl,Row1_GearStand_Left,5,white left gear stand in the circle row,mixed,color|shape|spatial|technical_name,11,12,o
+256,,SYNTHETIC_GENERATED,individual_part,Row1_GearStand_Left.stl,Row1_GearStand_Left,5,left bracket of the white circle row,mixed,color|shape|spatial|technical_name,12,12,o
+257,,SYNTHETIC_GENERATED,individual_part,Row1_GearStand_Right.stl,Row1_GearStand_Right,6,white right gear stand in the circle row,mixed,color|shape|spatial|technical_name,11,12,o
+258,,SYNTHETIC_GENERATED,individual_part,Row1_GearStand_Right.stl,Row1_GearStand_Right,6,right bracket of the white circle row,mixed,color|shape|spatial|technical_name,12,12,o
+259,,SYNTHETIC_GENERATED,individual_part,Row1_Gear_Left.stl,Row1_Gear_Left,7,white gear in the circle row,mixed,color|shape|spatial|technical_name,11,12,o
+260,,SYNTHETIC_GENERATED,individual_part,Row1_Gear_Left.stl,Row1_Gear_Left,7,circle-row white gear,mixed,color|shape|spatial|technical_name,12,12,o
+261,,SYNTHETIC_GENERATED,individual_part,Row2_GearRod.stl,Row2_GearRod,9,red gear rod in the triangle row,mixed,color|shape|spatial|technical_name,11,12,o
+262,,SYNTHETIC_GENERATED,individual_part,Row2_GearRod.stl,Row2_GearRod,9,triangle-row red shaft,mixed,color|shape|spatial|technical_name,12,12,o
+263,,SYNTHETIC_GENERATED,individual_part,Row2_GearStand_Left.stl,Row2_GearStand_Left,10,red left gear stand in the triangle row,mixed,color|shape|spatial|technical_name,11,12,o
+264,,SYNTHETIC_GENERATED,individual_part,Row2_GearStand_Left.stl,Row2_GearStand_Left,10,left bracket of the red triangle row,mixed,color|shape|spatial|technical_name,12,12,o
+265,,SYNTHETIC_GENERATED,individual_part,Row2_GearStand_Right.stl,Row2_GearStand_Right,11,red right gear stand in the triangle row,mixed,color|shape|spatial|technical_name,11,12,o
+266,,SYNTHETIC_GENERATED,individual_part,Row2_GearStand_Right.stl,Row2_GearStand_Right,11,right bracket of the red triangle row,mixed,color|shape|spatial|technical_name,12,12,o
+267,,SYNTHETIC_GENERATED,individual_part,Row2_Gear_Left.stl,Row2_Gear_Left,12,smaller red gear in the triangle row,mixed,size|color|shape|spatial|technical_name,11,11,o
+268,,SYNTHETIC_GENERATED,individual_part,Row2_Gear_Left.stl,Row2_Gear_Left,12,triangle-row red left gear,mixed,color|shape|spatial|technical_name,12,11,o
+269,,SYNTHETIC_GENERATED,individual_part,Row2_Gear_Right.stl,Row2_Gear_Right,13,larger red gear in the triangle row,mixed,size|color|shape|spatial|technical_name,11,11,o
+270,,SYNTHETIC_GENERATED,individual_part,Row2_Gear_Right.stl,Row2_Gear_Right,13,triangle-row red right gear,mixed,color|shape|spatial|technical_name,12,11,o
+271,,SYNTHETIC_GENERATED,individual_part,Row3_GearRod.stl,Row3_GearRod,15,green gear rod in the hexagon row,mixed,color|shape|spatial|technical_name,11,12,o
+272,,SYNTHETIC_GENERATED,individual_part,Row3_GearRod.stl,Row3_GearRod,15,hexagon-row green shaft,mixed,color|shape|spatial|technical_name,12,12,o
+273,,SYNTHETIC_GENERATED,individual_part,Row3_GearStand_Left.stl,Row3_GearStand_Left,16,green left gear stand in the hexagon row,mixed,color|shape|spatial|technical_name,11,12,o
+274,,SYNTHETIC_GENERATED,individual_part,Row3_GearStand_Left.stl,Row3_GearStand_Left,16,left bracket of the green hexagon row,mixed,color|shape|spatial|technical_name,12,12,o
+275,,SYNTHETIC_GENERATED,individual_part,Row3_GearStand_Right.stl,Row3_GearStand_Right,17,green right gear stand in the hexagon row,mixed,color|shape|spatial|technical_name,11,12,o
+276,,SYNTHETIC_GENERATED,individual_part,Row3_GearStand_Right.stl,Row3_GearStand_Right,17,right bracket of the green hexagon row,mixed,color|shape|spatial|technical_name,12,12,o
+277,,SYNTHETIC_GENERATED,individual_part,Row3_Gear_Left.stl,Row3_Gear_Left,18,smaller green gear in the hexagon row,mixed,size|color|shape|spatial|technical_name,11,11,o
+278,,SYNTHETIC_GENERATED,individual_part,Row3_Gear_Left.stl,Row3_Gear_Left,18,hexagon-row green left gear,mixed,color|shape|spatial|technical_name,12,11,o
+279,,SYNTHETIC_GENERATED,individual_part,Row3_Gear_Right.stl,Row3_Gear_Right,19,larger green gear in the hexagon row,mixed,size|color|shape|spatial|technical_name,11,11,o
+280,,SYNTHETIC_GENERATED,individual_part,Row3_Gear_Right.stl,Row3_Gear_Right,19,hexagon-row green right gear,mixed,color|shape|spatial|technical_name,12,11,o
+281,,SYNTHETIC_GENERATED,individual_part,Row4_GearRod.stl,Row4_GearRod,21,blue gear rod in the square row,mixed,color|shape|spatial|technical_name,11,12,o
+282,,SYNTHETIC_GENERATED,individual_part,Row4_GearRod.stl,Row4_GearRod,21,square-row blue shaft,mixed,color|shape|spatial|technical_name,12,12,o
+283,,SYNTHETIC_GENERATED,individual_part,Row4_GearStand_Left.stl,Row4_GearStand_Left,22,blue left gear stand in the square row,mixed,color|shape|spatial|technical_name,11,12,o
+284,,SYNTHETIC_GENERATED,individual_part,Row4_GearStand_Left.stl,Row4_GearStand_Left,22,left bracket of the blue square row,mixed,color|shape|spatial|technical_name,12,12,o
+285,,SYNTHETIC_GENERATED,individual_part,Row4_GearStand_Right.stl,Row4_GearStand_Right,23,blue right gear stand in the square row,mixed,color|shape|spatial|technical_name,11,12,o
+286,,SYNTHETIC_GENERATED,individual_part,Row4_GearStand_Right.stl,Row4_GearStand_Right,23,right bracket of the blue square row,mixed,color|shape|spatial|technical_name,12,12,o
+287,,SYNTHETIC_GENERATED,individual_part,Row4_Gear_Left.stl,Row4_Gear_Left,24,blue gear in the square row,mixed,color|shape|spatial|technical_name,11,12,o
+288,,SYNTHETIC_GENERATED,individual_part,Row4_Gear_Left.stl,Row4_Gear_Left,24,square-row blue gear,mixed,color|shape|spatial|technical_name,12,12,o

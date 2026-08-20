@@ -56,6 +56,7 @@ class Step:
     output: str                # e.g. "BEARING_STAND_ROW2_LEFT_ASSEMBLY"
     description: str           # e.g. "Insert BEARING_ROW2_LEFT into STAND_ROW2_LEFT."
     context: tuple[str, ...] = ()  # e.g. ("BASE_BOARD",) — parts present but not consumed
+    requires: tuple[str, ...] = () # completed step IDs; unlike context, their outputs may be consumed
 
 
 PROVIDED_PARTS = {
@@ -95,13 +96,13 @@ PROVIDED_PARTS = {
 def build_steps() -> list[Step]:
     steps: list[Step] = []
     gear_inputs = {
-        1: ("GEAR_ROD_ROW1", "GEAR_ROW1_LEFT", "PIN_ROW1_LEFT", "PIN_ROW1_RIGHT"),
+        1: ("GEAR_ROD_ROW1", "GEAR_ROW1_LEFT", "PIN_ROW1_LEFT"),
         2: ("GEAR_ROD_ROW2", "GEAR_ROW2_LEFT", "GEAR_ROW2_RIGHT", "PIN_ROW2_LEFT", "PIN_ROW2_RIGHT"),
         3: ("GEAR_ROD_ROW3", "GEAR_ROW3_LEFT", "GEAR_ROW3_RIGHT", "PIN_ROW3_LEFT", "PIN_ROW3_RIGHT"),
         4: ("GEAR_ROD_ROW4", "GEAR_ROW4_LEFT", "PIN_ROW4_LEFT"),
     }
     gear_text = {
-        1: "Attach the single large gear and secure it with the pins.",
+        1: "Attach the single large gear and secure it with the left wooden pin.",
         2: "Attach the small and medium gears and secure both with their pins.",
         3: "Attach the small and medium gears and secure both with their pins.",
         4: "Attach the single large gear and secure it with the pin.",
@@ -118,8 +119,7 @@ def build_steps() -> list[Step]:
                 output=f"BEARING_STAND_ROW{row}_{side.upper()}_ASSEMBLY",
                 description=(f"Insert BEARING_ROW{row}_{side.upper()} into "
                              f"STAND_ROW{row}_{side.upper()}."),
-                context=((f"BEARING_STAND_ROW{row}_RIGHT_ASSEMBLY",)
-                         if side == "Left" else ()),
+                requires=((f"r{row}_bearing_right",) if side == "Left" else ()),
             ))
 
         steps.append(Step(
@@ -141,7 +141,7 @@ def build_steps() -> list[Step]:
             inputs=(f"BEARING_STAND_ROW{row}_{first.upper()}_ASSEMBLY",
                     f"SCREW_ROW{row}_{first.upper()}"),
             output=f"FASTENED_STAND_ROW{row}_{first.upper()}_ASSEMBLY",
-            context=("BASE_BOARD", f"BEARING_STAND_ROW{row}_{second.upper()}_ASSEMBLY"),
+            context=("BASE_BOARD",),
             description=(f"Fasten the {first.lower()} bearing-stand assembly to BASE_BOARD "
                          f"with SCREW_ROW{row}_{first.upper()} before inserting the gear rod."),
         ))
@@ -177,9 +177,10 @@ def build_steps() -> list[Step]:
         title="Row 1.7: attach crank handle",
         row=1,
         stage=5,
-        inputs=("MOUNTED_ROW1_ASSEMBLY", "CRANK_HANDLE_ROW1"),
+        inputs=("MOUNTED_ROW1_ASSEMBLY", "CRANK_HANDLE_ROW1", "PIN_ROW1_RIGHT"),
         output="CRANK_MOUNTED_ROW1_ASSEMBLY",
-        description="Attach CRANK_HANDLE_ROW1 only after GEAR_ROD_ROW1 is between both stands.",
+        description=("Attach CRANK_HANDLE_ROW1 only after GEAR_ROD_ROW1 is between both stands, "
+                     "then secure the handle with PIN_ROW1_RIGHT."),
     ))
     steps.append(Step(
         id="finish_gearbox",
@@ -227,9 +228,14 @@ class TaskGraph:
         self.transform_history.clear()
 
     def missing(self, step: Step) -> list[str]:
-        #combines the two collections into one tuple. inputs are consumed by the step. context must be present but is not consumed.
-        return [part for part in (*step.inputs, *step.context) 
-                if part not in self.active_parts]
+        # Inputs are consumed and context parts must remain active. `requires`
+        # records workflow precedence independently of whether the producer's
+        # output has subsequently been consumed by another assembly step.
+        missing_parts = [part for part in (*step.inputs, *step.context)
+                         if part not in self.active_parts]
+        missing_steps = [required for required in step.requires
+                         if required not in self.completed]
+        return missing_parts + missing_steps
 
     def is_ready(self, step: Step) -> bool:
         # A step is ready when: It has not already been completed. Its missing-parts list is empty.
@@ -245,7 +251,7 @@ class TaskGraph:
             return False, f"{step.id} is already complete; its result is {step.output}."
         missing = self.missing(step)
         if missing:
-            return False, (f"WARNING: {step.id} cannot happen yet. Missing active input(s): "
+            return False, (f"WARNING: {step.id} cannot happen yet. Missing prerequisite(s): "
                            f"{', '.join(missing)}.")
         for part in step.inputs:
             self.active_parts.remove(part)
@@ -272,7 +278,8 @@ class TaskGraph:
         # the producer's output.
         return [candidate for candidate in self.steps
                 if candidate.id in self.completed
-                and step.output in (*candidate.inputs, *candidate.context)]
+                and (step.output in (*candidate.inputs, *candidate.context)
+                     or step.id in candidate.requires)]
 
     def frontier_steps(self) -> list[Step]:
         return [self.by_id[step_id] for step_id in self.completed
@@ -475,6 +482,9 @@ class TaskGraph:
         # misspelled or the step that should produce it has not been defined.
         produced = set(outputs)
         for step in graph.steps:
+            for required in step.requires:
+                if required not in graph.by_id:
+                    errors.append(f"Unknown required step {required} in {step.id}")
             for part in step.inputs:
                 if part not in graph.initial_parts and part not in produced:
                     errors.append(f"Unknown input {part} in {step.id}")
@@ -557,9 +567,9 @@ class TaskGraph:
             "\nIMPORTANT: Any task step not listed as COMPLETED or READY is BLOCKED."
             " Recommend only READY steps. Every listed READY step is valid and may"
             " be performed because all of its prerequisites are satisfied. When"
-            " choosing among multiple READY steps, follow the user's recommendation"
-            " preference from the task description: prefer Row 1, then Row 2, then"
-            " Row 3, then Row 4, and choose the lowest stage within that row."
+            " choosing among multiple READY steps, follow the same deterministic"
+            " rule as the interface: prefer Row 1, then Row 2, then Row 3, then"
+            " Row 4, and choose the lowest user-facing stage within that row."
             " Recommend the final gearbox step only when it is READY and no row"
             " assembly step remains READY. This preference selects among valid"
             " options; it is not an additional dependency or ordering constraint."
@@ -569,16 +579,23 @@ class TaskGraph:
         return "\n".join(lines)
 
     def recommend_next_step(self) -> "Step | None":
-        """Row-by-row recommendation policy: pick the READY step with the lowest row
-        number, then lowest stage within that row. The finish step (row=0) is treated
-        as the highest row so it is only recommended when everything else is done."""
+        """Pick the READY step with the lowest row and user-facing stage number.
+
+        ``Step.stage`` represents dependency depth and is not the stage number
+        displayed by the interface or used by the controller. Use
+        ``control_coords_for`` here so the rule-based recommendation follows the
+        documented Stage 1–8 sequence exactly. The global finish step is treated
+        as the highest row and therefore comes after all ready row work.
+        """
         ready = [s for s in self.steps if self.is_ready(s)]
         if not ready:
             return None
 
         def _priority(s: Step) -> tuple:
             row = s.row if s.row > 0 else 999
-            return (row, s.stage, s.id)
+            control_coords = self.control_coords_for(s.id)
+            display_stage = control_coords[1] if control_coords is not None else 999
+            return (row, display_stage, s.id)
 
         return min(ready, key=_priority)
 
@@ -1188,23 +1205,34 @@ class DearPyGuiTaskGraphApp:
             dpg.set_item_pos(node_tag, (stage_x[display_stage], y))
 
     def _create_links(self) -> None:
-        """Draw dependency links from producer steps to consumer steps."""
+        """Draw consumed-input and explicit step-prerequisite links."""
         # Use a short local reference for repeated Dear PyGui calls.
         dpg = self.dpg
         # Map each produced assembly name to the step ID that creates it.
         producer = {step.output: step.id for step in self.graph.steps}
-        # Inspect every step that may consume another step's output.
+        made: set[tuple[str, str]] = set()
+        # Inspect every step that may consume another step's output or name an
+        # explicit workflow prerequisite through Step.requires.
         for step in self.graph.steps:
-            # Check each input required by the consumer step.
+            sources: list[str] = []
+            # Check each consumed input required by the consumer step.
             for part in step.inputs:
                 # Find the producer, or None when the input is a raw part.
                 source_id = producer.get(part)
-                # Raw inputs have no producer node, so only link assembled inputs.
                 if source_id:
-                    # Connect the producer output pin to the consumer input pin.
-                    dpg.add_node_link(self.output_attributes[source_id],
-                                      self.input_attributes[step.id],
-                                      parent="task_node_editor")
+                    sources.append(source_id)
+            # A requires edge represents precedence without consuming the
+            # producer's output (for example N.1 right stand before N.3 left).
+            sources.extend(required for required in step.requires
+                           if required in self.output_attributes)
+            for source_id in sources:
+                edge = (source_id, step.id)
+                if edge in made:
+                    continue
+                made.add(edge)
+                dpg.add_node_link(self.output_attributes[source_id],
+                                  self.input_attributes[step.id],
+                                  parent="task_node_editor")
 
     def _create_side_panel(self) -> None:
         """Create selection, action, inventory, and voice controls."""
@@ -1601,6 +1629,14 @@ class DearPyGuiTaskGraphApp:
 def run_self_test() -> None:
     errors = TaskGraph.validate()
     assert not errors, errors
+    recommendation_graph = TaskGraph()
+    assert recommendation_graph.recommend_next_step().id == "r1_bearing_right"
+    recommendation_graph.complete(recommendation_graph.by_id["r1_bearing_right"])
+    # Both Stage 2 and Stage 3 are now READY; the documented controller-stage
+    # ordering must select gear-rod Stage 2 before left-bearing Stage 3.
+    assert recommendation_graph.recommend_next_step().id == "r1_gear_rod"
+    recommendation_graph.complete(recommendation_graph.by_id["r1_gear_rod"])
+    assert recommendation_graph.recommend_next_step().id == "r1_bearing_left"
     graph = TaskGraph()
     assert graph.is_ready(graph.by_id["r1_bearing_right"])
     assert not graph.is_ready(graph.by_id["r1_bearing_left"])
@@ -1618,8 +1654,10 @@ def run_self_test() -> None:
     graph.complete(graph.by_id["r1_bearing_right"])
     graph.complete(graph.by_id["r1_bearing_left"])
     graph.complete(graph.by_id["r1_fasten_first_stand"])
-    ok, warning = graph.undo(graph.by_id["r1_bearing_left"])
-    assert not ok and "not on the completed frontier" in warning
+    # Fastening the right stand does not consume or depend on the independently
+    # assembled left stand, so the left step remains undoable here.
+    ok, _ = graph.undo(graph.by_id["r1_bearing_left"])
+    assert ok
     ok, _ = graph.undo(graph.by_id["r1_fasten_first_stand"])
     assert ok
     ok, warning = graph.complete(graph.by_id["r1_insert_rod_and_fit_second"])

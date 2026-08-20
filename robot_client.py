@@ -249,6 +249,19 @@ class RobotClient:
             "request_id":       rid,
         })
 
+    def move_to_joints(self, joints, *, degrees: bool = False,
+                       on_complete: "Callable[[bool], None] | None" = None) -> None:
+        """Move directly to a six-axis joint configuration."""
+        q = np.asarray(joints, dtype=float)
+        if degrees:
+            q = np.deg2rad(q)
+        rid = None
+        if on_complete is not None:
+            rid = self._next_request_id
+            self._next_request_id += 1
+            self._callbacks[rid] = lambda msg: on_complete(bool(msg.get("ok", False)))
+        self._send({"cmd": "move_to_joints", "joints": q.tolist(), "request_id": rid})
+
     def start_board_interaction(self) -> None:
         """Open for force-triggered board grasp (simulation enters held state)."""
         self._send({"cmd": "start_board_interaction"})
