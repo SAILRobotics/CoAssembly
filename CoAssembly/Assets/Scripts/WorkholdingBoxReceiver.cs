@@ -27,6 +27,12 @@ public class WorkholdingBoxReceiver : MonoBehaviour
 {
     [Header("AR box")]
     public GameObject arBox;
+    public bool applyIncomingBoxSize = true;
+
+    [Header("Target gripper")]
+    public GameObject targetGripper;
+    public bool showTargetGripper = true;
+    public float targetGripperForwardOffset = 0.23215f;
 
     [Header("Parent")]
     public Transform worldRoot;
@@ -55,6 +61,7 @@ public class WorkholdingBoxReceiver : MonoBehaviour
     private volatile bool    _running;
     private readonly ConcurrentQueue<PoseData> _queue = new();
     private Renderer[]       _renderers;
+    private Renderer[]       _targetGripperRenderers;
     private bool             _loggedShow;
 
     private void Start()
@@ -65,7 +72,13 @@ public class WorkholdingBoxReceiver : MonoBehaviour
         if (arBox != null)
         {
             _renderers = arBox.GetComponentsInChildren<Renderer>(true);
-            SetVisible(false);
+            SetRenderersVisible(_renderers, false);
+        }
+
+        if (targetGripper != null)
+        {
+            _targetGripperRenderers = targetGripper.GetComponentsInChildren<Renderer>(true);
+            SetRenderersVisible(_targetGripperRenderers, false);
         }
 
         NetMQManager.RegisterReceiver();
@@ -124,22 +137,35 @@ public class WorkholdingBoxReceiver : MonoBehaviour
             arBox.transform.SetParent(worldRoot, false);
         arBox.transform.localPosition = latest.pos;
         arBox.transform.localRotation = latest.rot;
-        arBox.transform.localScale    = latest.size;
-        SetVisible(true);
+        if (applyIncomingBoxSize)
+            arBox.transform.localScale = latest.size;
+        SetRenderersVisible(_renderers, true);
+
+        if (showTargetGripper && targetGripper != null)
+        {
+            if (worldRoot != null && targetGripper.transform.parent != worldRoot)
+                targetGripper.transform.SetParent(worldRoot, false);
+
+            Vector3 gripperForward = latest.rot * Vector3.forward;
+            targetGripper.transform.localPosition = latest.pos - targetGripperForwardOffset * gripperForward;
+            targetGripper.transform.localRotation = latest.rot;
+            SetRenderersVisible(_targetGripperRenderers, true);
+        }
 
         if (!_loggedShow)
         {
             _loggedShow = true;
             Debug.Log($"[WorkholdingBoxReceiver] First box pose applied — localPos="
                       + $"{arBox.transform.localPosition}  scale={latest.size}  "
-                      + $"renderers={( _renderers != null ? _renderers.Length : 0)}");
+                      + $"renderers={( _renderers != null ? _renderers.Length : 0)}  "
+                      + $"targetGripper={(targetGripper != null ? targetGripper.name : "<none>")}");
         }
     }
 
-    private void SetVisible(bool visible)
+    private static void SetRenderersVisible(Renderer[] renderers, bool visible)
     {
-        if (_renderers == null) return;
-        foreach (var r in _renderers)
+        if (renderers == null) return;
+        foreach (var r in renderers)
             if (r != null) r.enabled = visible;
     }
 
