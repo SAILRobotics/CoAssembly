@@ -65,6 +65,10 @@ def _build_local_viz_scene(simulation: bool, use_calibrated_robot_base: bool,
 class RobotClient:
     """Drop-in replacement for a direct RobotController, backed by ZMQ."""
 
+    # State broadcasts arrive at 30 Hz (robot_control_server.py's _STATE_INTERVAL)
+    # once connected; this is a generous staleness window for `connected` below.
+    _CONNECTION_TIMEOUT_S = 1.0
+
     def __init__(self, simulation: bool = True,
                  use_calibrated_robot_base: bool = cfg.USE_CALIBRATED_ROBOT_BASE_POSE,
                  host: str = cfg.LOCALHOST,
@@ -86,6 +90,7 @@ class RobotClient:
         self._board_state        = "inactive"
         self._board_freedrive_active = False
         self._board_interaction_active = False
+        self._last_state_t: "float | None" = None
 
         ctx = zmq.Context.instance()
         self._cmd_pub = ctx.socket(zmq.PUB)
@@ -111,6 +116,7 @@ class RobotClient:
 
     def _handle_event(self, msg: dict) -> None:
         if msg.get("type") == "state":
+            self._last_state_t = time.time()
             q = msg.get("q")
             if q is not None:
                 self.pb_scene.update_robot(np.array(q, dtype=float))
@@ -158,6 +164,17 @@ class RobotClient:
             self._handle_event(msg)
 
     # ── State ────────────────────────────────────────────────────────────────
+
+    @property
+    def connected(self) -> bool:
+        """True once a recent state broadcast has actually been received from
+        robot_control_server.py. Unlike `q`/`move_running` — which have
+        harmless-looking local defaults even with zero real communication —
+        this reflects a live connection, so callers can wait on it before
+        issuing commands that would otherwise be silently dropped (ZMQ
+        PUB/SUB does not queue messages sent before the peer connects)."""
+        return (self._last_state_t is not None
+                and time.time() - self._last_state_t < self._CONNECTION_TIMEOUT_S)
 
     @property
     def tool_grasp_running(self) -> bool:
