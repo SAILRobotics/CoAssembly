@@ -1724,7 +1724,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 69712f22d3ff41140a14cddb98de73ba, type: 3}
       propertyPath: m_LocalPosition.z
-      value: 0
+      value: -0.093
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 69712f22d3ff41140a14cddb98de73ba, type: 3}
       propertyPath: m_LocalRotation.w
@@ -5858,6 +5858,9 @@ MonoBehaviour:
   arBox: {fileID: 219046386}
   applyIncomingBoxSize: 0
   cloneTargetBoard: 1
+  overrideBoardMaterial: 1
+  boardAlpha: 0.12
+  boardTint: {r: 0, g: 0, b: 0, a: 1}
   targetGripper: {fileID: 1393319197}
   showTargetGripper: 1
   targetGripperForwardOffset: 0.23215

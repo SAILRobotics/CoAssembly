@@ -30,6 +30,11 @@ public class WorkholdingBoxReceiver : MonoBehaviour
     [Tooltip("Clone arBox so the target board remains independent from the board attached to the robot.")]
     public bool cloneTargetBoard = true;
 
+    [Header("Board appearance")]
+    public bool overrideBoardMaterial = true;
+    [Range(0f, 1f)] public float boardAlpha = 0.12f;
+    public Color boardTint = Color.black;
+
     [Header("Target gripper")]
     public GameObject targetGripper;
     public bool showTargetGripper = true;
@@ -62,6 +67,7 @@ public class WorkholdingBoxReceiver : MonoBehaviour
     private volatile bool    _running;
     private readonly ConcurrentQueue<PoseData> _queue = new();
     private Renderer[]       _renderers;
+    private Material         _boardMaterial;
     private Renderer[]       _targetGripperRenderers;
     private bool             _loggedShow;
 
@@ -84,6 +90,7 @@ public class WorkholdingBoxReceiver : MonoBehaviour
         if (arBox != null)
         {
             _renderers = arBox.GetComponentsInChildren<Renderer>(true);
+            ApplyBoardMaterial();
             SetRenderersVisible(_renderers, false);
         }
 
@@ -179,6 +186,34 @@ public class WorkholdingBoxReceiver : MonoBehaviour
         }
     }
 
+    private void ApplyBoardMaterial()
+    {
+        if (!overrideBoardMaterial || _renderers == null) return;
+
+        Shader shader = Shader.Find("Universal Render Pipeline/Lit");
+        if (shader == null) shader = Shader.Find("Standard");
+        if (shader == null) return;
+
+        _boardMaterial = new Material(shader) { name = "WorkholdingHalfBoard_TransparentBlack" };
+        Color color = boardTint;
+        color.a = boardAlpha;
+        _boardMaterial.color = color;
+
+        if (_boardMaterial.HasProperty("_BaseColor")) _boardMaterial.SetColor("_BaseColor", color);
+        if (_boardMaterial.HasProperty("_Color")) _boardMaterial.SetColor("_Color", color);
+        if (_boardMaterial.HasProperty("_Surface")) _boardMaterial.SetFloat("_Surface", 1f);
+        if (_boardMaterial.HasProperty("_Blend")) _boardMaterial.SetFloat("_Blend", 0f);
+        if (_boardMaterial.HasProperty("_SrcBlend")) _boardMaterial.SetFloat("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.SrcAlpha);
+        if (_boardMaterial.HasProperty("_DstBlend")) _boardMaterial.SetFloat("_DstBlend", (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+        if (_boardMaterial.HasProperty("_ZWrite")) _boardMaterial.SetFloat("_ZWrite", 0f);
+
+        _boardMaterial.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+        _boardMaterial.EnableKeyword("_ALPHABLEND_ON");
+        _boardMaterial.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+
+        foreach (var r in _renderers)
+            if (r != null) r.sharedMaterial = _boardMaterial;
+    }
     private static void SetRenderersVisible(Renderer[] renderers, bool visible)
     {
         if (renderers == null) return;
@@ -191,6 +226,8 @@ public class WorkholdingBoxReceiver : MonoBehaviour
         _running = false;
         _socket?.Close();
         if (_thread?.IsAlive == true) _thread.Join(500);
+        if (_boardMaterial != null)
+            Destroy(_boardMaterial);
         NetMQManager.UnregisterReceiver();
     }
 }
