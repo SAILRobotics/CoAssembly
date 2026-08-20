@@ -384,7 +384,13 @@ class WorkholdingStudy:
         self._poses_T   = [self._pose_to_T(pos, euler) for pos, euler in self._poses_raw]
         rng = random.Random(seed)
         self._pose_order = list(range(len(self._poses_raw)))
-        rng.shuffle(self._pose_order)
+        # Target 1 is the WorldRoot-origin reference pose. Keep it first so it
+        # is also the initial Unity/Open3D preview; randomise the study poses
+        # that follow it.
+        if len(self._pose_order) > 1:
+            shuffled_tail = self._pose_order[1:]
+            rng.shuffle(shuffled_tail)
+            self._pose_order[1:] = shuffled_tail
         self._trial_cursor = 0
         self._target_preview_cursor = 0
         self._manual_target_preview = False

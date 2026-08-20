@@ -221,16 +221,12 @@ WORKHOLDING_TEST_HALF_EXTENT_M = [0.12, 0.10, 0.05]  # conservative box half-ext
 
 
 def workholding_test_poses():
-    """Ten (position_xyz_m, euler_xyz_deg) AR-box poses clustered near the world
-    origin (~30-60 cm away), rather than spanning the full workspace.
+    """Ten (position_xyz_m, euler_xyz_deg) AR-box poses.
 
-    Eight conservative AABB corners
-    (WORKHOLDING_TEST_CENTER_M ± WORKHOLDING_TEST_HALF_EXTENT_M) + the centre
-    + one upper-centre point.  Rotations are intentionally limited to 20° or
-    less per axis so the study exercises pose adjustment without forcing
-    extreme wrist configurations. Positions are in the world (robot) frame,
-    metres; the harness reads the count from ``len(...)`` so there is no
-    separate magic number.
+    Target 1 is exactly the WorldRoot origin with zero rotation.  The remaining
+    targets use eight conservative AABB corners plus the box centre. Rotations
+    are intentionally limited to 20° or less per axis. Positions are in the
+    world (robot) frame, metres; the harness reads the count from ``len(...)``.
     """
     c  = [float(v) for v in WORKHOLDING_TEST_CENTER_M]
     he = [float(v) for v in WORKHOLDING_TEST_HALF_EXTENT_M]
@@ -241,9 +237,7 @@ def workholding_test_poses():
     corners = [[hi[0] if bit & 1 else lo[0],
                 hi[1] if bit & 2 else lo[1],
                 hi[2] if bit & 4 else lo[2]] for bit in range(8)]
-    interior = [c[0], c[1], hi[2]]          # centred in XY, high in Z
-
-    positions = corners + [c, interior]        # 10 total
+    positions = [[0.0, 0.0, 0.0]] + corners + [c]  # 10 total
     eulers = [
         [0, 0, 0], [0, 0, 15], [0, 15, 0], [15, 0, 0],
         [0, -15, 0], [-15, 0, 15], [0, 0, -15], [10, 20, 0],
