@@ -65,6 +65,15 @@ public class WorkholdingBoxReceiver : MonoBehaviour
     private Renderer[]       _targetGripperRenderers;
     private bool             _loggedShow;
 
+    // HalfBoard.obj is authored as X=short side, Y=long side, Z=thickness.
+    // Open3D's established local-Y correction followed by the project's
+    // Open3D-to-Unity basis conversion requires the Unity-rendered axes to be
+    // X=thickness, Y=short side, Z=long side. This mesh-only correction maps
+    // an OBJ point (x,y,z) to rendered Unity-local components (z,x,y).
+    private static readonly Quaternion BoardMeshCorrection =
+        Quaternion.AngleAxis(90f, Vector3.forward)
+        * Quaternion.AngleAxis(90f, Vector3.right);
+
     private void Start()
     {
         // WorkholdingTesting also assigns its robot-attached board to GripStateReceiver.
@@ -148,10 +157,9 @@ public class WorkholdingBoxReceiver : MonoBehaviour
         if (worldRoot != null && arBox.transform.parent != worldRoot)
             arBox.transform.SetParent(worldRoot, false);
         arBox.transform.localPosition = latest.pos;
-        // Unity's imported OBJ hierarchy already contains its source-axis
-        // conversion. Apply only the logical board pose received from Python;
-        // Open3D's raw-mesh corrections must not be duplicated here.
-        arBox.transform.localRotation = latest.rot;
+        // Keep the logical target pose intact and apply the OBJ correction on
+        // its local/right side. The gripper continues to use latest.rot.
+        arBox.transform.localRotation = latest.rot * BoardMeshCorrection;
         if (applyIncomingBoxSize)
             arBox.transform.localScale = latest.size;
         SetRenderersVisible(_renderers, true);
