@@ -178,14 +178,10 @@ public class GripStateReceiver : MonoBehaviour
             if (handleActive && !grabbed && !_boxFrozen && arBox != null)
             {
                 arHandle.transform.SetParent(worldRoot, false);
-                Vector3 boardNormal = arBox.transform.rotation * Vector3.right;
-                float halfDepth = manipulationHandle != null
-                    ? manipulationHandle.BoardHalfThickness : 0.0075f;
-                float handleHalfDepth = manipulationHandle != null ? manipulationHandle.HandleHalfDepth : 0f;
                 arHandle.transform.position = arBox.transform.position
-                    - boardNormal * (halfDepth + handleHalfDepth);
-                arHandle.transform.rotation = arBox.transform.rotation
-                    * Quaternion.AngleAxis(-90f, Vector3.up);
+                    - arBox.transform.rotation * Vector3.right * 0.0075f
+                    - arBox.transform.rotation * Vector3.forward * 0.1400f;
+                arHandle.transform.rotation = arBox.transform.rotation;
             }
         }
 

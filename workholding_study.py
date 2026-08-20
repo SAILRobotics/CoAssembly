@@ -189,6 +189,19 @@ class _WorkholdingSceneVis(_SceneVis):
             print(f"[StudyVis] Desired gripper asset not found: "
                   f"{target_gripper_asset}")
 
+        self._ar_handle_mesh = None
+        self._ar_handle_T = self._hidden_T()
+        handle_asset = _FILE_DIR / "robot_assets" / "Handle.stl"
+        if handle_asset.exists():
+            handle_mesh = o3d.io.read_triangle_mesh(str(handle_asset))
+            if len(handle_mesh.vertices):
+                handle_mesh.compute_vertex_normals()
+                handle_mesh.paint_uniform_color([0.15, 0.75, 1.0])
+                handle_mesh.transform(self._hidden_T())
+                self.vis.add_geometry(handle_mesh)
+                self._ar_handle_mesh = handle_mesh
+                print("[StudyVis] AR handle loaded from robot_assets/Handle.stl")
+
         self._mode_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.035)
         self._mode_sphere.compute_vertex_normals()
         self._mode_sphere.paint_uniform_color(self._MODE_COLORS["freedrive"])
@@ -287,6 +300,24 @@ class _WorkholdingSceneVis(_SceneVis):
             self._target_gripper_mesh.paint_uniform_color(color)
             self._target_gripper_color_state = color_state
         self.vis.update_geometry(self._target_gripper_mesh)
+
+    def update_ar_handle(self, T_board: "np.ndarray | None") -> None:
+        """Show the handle at board-local [-7.5, -140, 0] mm, then Rx(90)."""
+        if self._ar_handle_mesh is None:
+            return
+        if T_board is None:
+            T_new = self._hidden_T()
+        else:
+            T_new = np.array(T_board, dtype=np.float64, copy=True)
+            T_new[:3, 3] -= 0.0075 * T_new[:3, 0]
+            T_new[:3, 3] -= 0.1400 * T_new[:3, 1]
+            T_new[:3, :3] = (T_new[:3, :3]
+                              @ ScipyR.from_euler(
+                                  "x", 90.0, degrees=True).as_matrix())
+        delta = T_new @ np.linalg.inv(self._ar_handle_T)
+        self._ar_handle_mesh.transform(delta)
+        self._ar_handle_T = T_new
+        self.vis.update_geometry(self._ar_handle_mesh)
 
 
 class WorkholdingStudy:
@@ -573,6 +604,8 @@ class WorkholdingStudy:
         scene = self.robot.pb_scene
         saved_q = scene.current_q.copy()
         results = {}
+        pos_tol = self._STUDY_POS_TOL_M
+        angle_tol_deg = self._STUDY_ANGLE_TOL_DEG
         lower = np.deg2rad(np.asarray(cfg.JOINT_MIN_DEG, dtype=float))
         upper = np.deg2rad(np.asarray(cfg.JOINT_MAX_DEG, dtype=float))
         try:
@@ -583,8 +616,8 @@ class WorkholdingStudy:
                 try:
                     q_ik = scene.solve_ik(
                         saved_q, T_tcp[:3, 3], quat,
-                        pos_tol=self._STUDY_POS_TOL_M,
-                        orient_tol=np.deg2rad(self._STUDY_ANGLE_TOL_DEG))
+                        pos_tol=pos_tol,
+                        orient_tol=np.deg2rad(angle_tol_deg))
                     T_fk = scene.update_tcp_bodies()
                     if T_fk is None:
                         reachable = False
@@ -597,8 +630,8 @@ class WorkholdingStudy:
                             and np.all(q_ik <= upper))
                         reachable = bool(
                             within_limits
-                            and pos_err < self._STUDY_POS_TOL_M
-                            and ang_err < self._STUDY_ANGLE_TOL_DEG)
+                            and pos_err < pos_tol
+                            and ang_err < angle_tol_deg)
                 except Exception as exc:
                     reachable = False
                     pos_err = ang_err = float("inf")
@@ -668,7 +701,13 @@ class WorkholdingStudy:
             T_target = self._poses_T[target_pose_idx]
             target_reachable = self._target_reachability.get(
                 target_pose_idx, False)
-        T_actual_board = self._board_pose_from_tcp(T_tcp) if board_held else None
+        # The cyan BoardAR preview is shown at the live TCP from startup, even
+        # before marker lock or physical grasp. Drive the Open3D handle from
+        # that same pose so the two never appear separated by state gating.
+        T_preview_board = self._board_pose_from_tcp(T_tcp)
+        T_actual_board = T_preview_board if board_held else None
+        self.vis.update_ar_handle(
+            T_preview_board if self._ar_enabled else None)
         reached = False
         if T_target is not None and T_actual_board is not None:
             pos_err, ang_err = self._pose_error(T_actual_board, T_target)

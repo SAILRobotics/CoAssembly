@@ -26,9 +26,10 @@ public class ARManipulationHandle : MonoBehaviour
     public Transform           worldRoot;
     [Tooltip("Physical HalfBoard thickness in metres.")]
     public float               boardThickness = 0.015f;
+    [Tooltip("Full Handle.gltf depth along its local X axis, in metres.")]
+    public float               handleDepth = 0.0210058f;
     public bool IsGrabbed => _isGrabbed;
-    public float HandleHalfDepth { get; private set; }
-    public float BoardHalfThickness => boardThickness * 0.5f;
+    public float HandleHalfDepth => handleDepth * 0.5f;
 
     private HandGrabInteractable _grabInteractable;
     private HandGrabInteractor   _currentInteractor;
@@ -43,13 +44,6 @@ public class ARManipulationHandle : MonoBehaviour
     {
         _grabInteractable = GetComponent<HandGrabInteractable>();
 
-        // Measure the handle's half-depth from its mesh so no manual entry is needed
-        if (arHandle != null)
-        {
-            var mf = arHandle.GetComponentInChildren<MeshFilter>();
-            if (mf != null && mf.sharedMesh != null)
-                HandleHalfDepth = mf.sharedMesh.bounds.extents.z * arHandle.transform.lossyScale.z;
-        }
     }
 
     private void OnEnable()
@@ -124,15 +118,16 @@ public class ARManipulationHandle : MonoBehaviour
         arBox.transform.position = currentHand.position + deltaRot * (_grabBoxPos - _grabHandPos);
         arBox.transform.rotation = deltaRot * _grabBoxRot;
 
-        // Pin the handle to the corrected HalfBoard mesh's near face. The
-        // visual correction places board thickness on logical local X.
+        // Python/Open3D defines the handle at board-local
+        // [-0.0075, -0.1400, 0], then Rx(+90). Open3D local -Y maps to
+        // Unity local -Z, and its Rx(+90) maps to Unity Rx(-90), cancelling
+        // the imported handle mesh's +90-degree X-axis correction.
         if (arHandle != null)
         {
-            Vector3 boardNormal = arBox.transform.rotation * Vector3.right;
             arHandle.transform.position = arBox.transform.position
-                - boardNormal * (BoardHalfThickness + HandleHalfDepth);
-            arHandle.transform.rotation = arBox.transform.rotation
-                * Quaternion.AngleAxis(-90f, Vector3.up);
+                - arBox.transform.rotation * Vector3.right * 0.0075f
+                - arBox.transform.rotation * Vector3.forward * 0.1400f;
+            arHandle.transform.rotation = arBox.transform.rotation;
         }
     }
 }

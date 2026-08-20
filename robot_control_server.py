@@ -160,6 +160,8 @@ class RobotControlServer:
     _BASE_YAW_CORRECTION_DEG = -90.0
     _MOVE_POS_TOL_M          = 0.03
     _MOVE_ANGLE_TOL_RAD      = np.deg2rad(10.0)
+    _BOARD_MOVE_POS_TOL_M    = 0.01
+    _BOARD_MOVE_ANGLE_TOL_RAD = np.deg2rad(3.0)
     _MOVE_DWELL_S            = 0.30
     _MOVE_STALL_TIMEOUT_S     = 3.0
     _MOVE_PROGRESS_POS_M      = 0.002
@@ -168,6 +170,8 @@ class RobotControlServer:
     _MOVE_BRAKE_ANGLE_RAD    = np.deg2rad(8.0)
     _MOVE_SCALE_FLOOR        = 0.05
     _SERVO_EMA_ALPHA         = 0.70
+    _BOARD_SERVO_EMA_ALPHA   = 0.85
+    _SIM_BOARD_SMOOTH_ALPHA  = 0.55
     _SERVO_LOOKAHEAD_S       = 0.08
     _SERVO_GAIN              = 400
 
@@ -249,6 +253,7 @@ class RobotControlServer:
         self._move_best_dist:   float               = float('inf')
         self._move_best_angle:  float               = float('inf')
         self._move_progress_t:  float               = 0.0
+        self._move_is_board:    bool                = False
 
         # Direct joint move used by gearbox step selection.
         self._joint_move_target: "np.ndarray | None" = None
@@ -1018,6 +1023,7 @@ class RobotControlServer:
         self._move_conv_start  = None
         self._move_diag_t      = 0.0
         self._move_force_pybullet_ik = force_pybullet_ik
+        self._move_is_board     = bool(board_move)
         self._reset_move_progress()
         self._move_phase       = 'moving_to_pose'
         if board_move:
@@ -1057,6 +1063,7 @@ class RobotControlServer:
         self._move_target_quat = None
         self._move_smooth_q    = None
         self._move_conv_start  = None
+        self._move_is_board    = False
         self._reset_move_progress()
         if not self.simulation:
             self.servoStop()
@@ -1085,6 +1092,10 @@ class RobotControlServer:
         # measured outer-loop dt can include servoJ blocking time and scheduling
         # jitter, which otherwise feeds back into the next command.
         control_dt = dt if self.simulation else 1.0 / self.control_hz
+        pos_tol = (self._BOARD_MOVE_POS_TOL_M
+                   if self._move_is_board else self._MOVE_POS_TOL_M)
+        angle_tol = (self._BOARD_MOVE_ANGLE_TOL_RAD
+                     if self._move_is_board else self._MOVE_ANGLE_TOL_RAD)
 
         q_cur = self.pb_scene.current_q.copy()
 
@@ -1125,8 +1136,8 @@ class RobotControlServer:
                 self._move_best_dist = min(self._move_best_dist, dist)
                 self._move_best_angle = min(self._move_best_angle, angle_err)
                 self._move_progress_t = _now
-            elif ((dist >= self._MOVE_POS_TOL_M
-                   or angle_err >= self._MOVE_ANGLE_TOL_RAD)
+            elif ((dist >= pos_tol
+                   or angle_err >= angle_tol)
                   and _now - self._move_progress_t
                   >= self._MOVE_STALL_TIMEOUT_S):
                 print(f"[Robot] move_to_pose unreachable/no progress for "
@@ -1139,21 +1150,20 @@ class RobotControlServer:
             # Throttled colored status print at ~2 Hz
             if _now - self._move_diag_t >= 0.5:
                 self._move_diag_t = _now
-                _dc = _GRN if dist      < self._MOVE_POS_TOL_M     else _RED
-                _ac = _GRN if angle_err < self._MOVE_ANGLE_TOL_RAD else _RED
+                _dc = _GRN if dist      < pos_tol   else _RED
+                _ac = _GRN if angle_err < angle_tol else _RED
                 print(f"[Robot] dist: {_dc}{dist*100:5.1f} cm{_RST}  "
                       f"angle: {_ac}{np.rad2deg(angle_err):5.1f}°{_RST}")
 
-            if (dist < self._MOVE_POS_TOL_M
-                    and angle_err < self._MOVE_ANGLE_TOL_RAD):
+            if (dist < pos_tol and angle_err < angle_tol):
                 if self._move_conv_start is None:
                     self._move_conv_start = time.perf_counter()
                 elif (time.perf_counter() - self._move_conv_start
                       >= self._MOVE_DWELL_S):
                     print(f"[Robot] move_to_pose converged "
-                          f"({dist*100:.1f} cm < {self._MOVE_POS_TOL_M*100:.1f} cm, "
+                          f"({dist*100:.1f} cm < {pos_tol*100:.1f} cm, "
                           f"{np.rad2deg(angle_err):.1f}° < "
-                          f"{np.rad2deg(self._MOVE_ANGLE_TOL_RAD):.1f}°, "
+                          f"{np.rad2deg(angle_tol):.1f}°, "
                           f"{self._MOVE_DWELL_S:.1f} s dwell) → idle")
                     self._finish_move(True)
                     return
@@ -1220,14 +1230,18 @@ class RobotControlServer:
             if self._move_smooth_q is None:
                 self._move_smooth_q = q_target.copy()
             else:
-                self._move_smooth_q = 0.3 * q_target + 0.7 * self._move_smooth_q
+                alpha = (self._SIM_BOARD_SMOOTH_ALPHA
+                         if self._move_is_board else 0.3)
+                self._move_smooth_q = (alpha * q_target
+                                       + (1.0 - alpha) * self._move_smooth_q)
             self.pb_scene.update_robot(self._move_smooth_q)
         else:
             # EMA smoothing to damp servoJ jitter
             if self._move_smooth_q is None:
                 self._move_smooth_q = q_target.copy()
             else:
-                alpha = self._SERVO_EMA_ALPHA
+                alpha = (self._BOARD_SERVO_EMA_ALPHA
+                         if self._move_is_board else self._SERVO_EMA_ALPHA)
                 self._move_smooth_q = (alpha * q_target
                                        + (1.0 - alpha) * self._move_smooth_q)
             self.servoJ(self._move_smooth_q, control_dt,
