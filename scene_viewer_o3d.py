@@ -10,6 +10,7 @@ Used by main_with_robot.py:
 """
 
 import copy
+import xml.etree.ElementTree as ET
 import numpy as np
 import open3d as o3d
 from scipy.spatial.transform import Rotation as ScipyR
@@ -145,8 +146,13 @@ class SceneVis:
 
     # ── Init ─────────────────────────────────────────────────────────────────
 
-    def __init__(self, title: str, width: int = 1000, height: int = 680):
-        self.vis = o3d.visualization.Visualizer()
+    def __init__(self, title: str, width: int = 1000, height: int = 680,
+                 board_ar_asset: str = "NewBaseBoard.obj",
+                 load_gearbox_mirror: bool = True,
+                 enable_key_callbacks: bool = False):
+        self.vis = (o3d.visualization.VisualizerWithKeyCallback()
+                    if enable_key_callbacks
+                    else o3d.visualization.Visualizer())
         self.vis.create_window(title, width=width, height=height)
         ro = self.vis.get_render_option()
         ro.background_color    = np.array([0.08, 0.08, 0.10])
@@ -218,6 +224,10 @@ class SceneVis:
         self._board_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.10)
         self._board_frame.transform(self._hidden_T())
         self.vis.add_geometry(self._board_frame)
+        self._board_ar_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(
+            size=0.08)
+        self._board_ar_frame.transform(self._hidden_T())
+        self.vis.add_geometry(self._board_ar_frame)
         self._world_baseboard_mesh = None
         self._board_mesh       = None
         self._board_manip_mesh = None
@@ -235,22 +245,42 @@ class SceneVis:
             print(f"[SceneVis] baseboard.obj not found at {_baseboard_path}")
 
         _tracked_board_path = _asset_dir / "NewBaseBoard.obj"
-        if _tracked_board_path.exists():
-            def _load_tracked_board(color):
-                _bm = o3d.io.read_triangle_mesh(str(_tracked_board_path))
-                _bm.compute_vertex_normals()
-                _bm.paint_uniform_color(color)
-                _bm.transform(self._hidden_T())
-                self.vis.add_geometry(_bm)
-                return _bm
+        _board_ar_path = _asset_dir / board_ar_asset
 
-            self._board_mesh = _load_tracked_board([0.9, 0.75, 0.5])
-            self._board_manip_mesh = _load_tracked_board([0.5, 0.75, 0.9])
-            print(f"[SceneVis] NewBaseBoard.obj loaded for tracked board ({len(self._board_mesh.vertices)} verts)")
+        def _load_board_mesh(path, color, local_rotation=None):
+            _bm = o3d.io.read_triangle_mesh(str(path))
+            _bm.compute_vertex_normals()
+            _bm.paint_uniform_color(color)
+            if local_rotation is not None:
+                _T_local = np.eye(4, dtype=np.float64)
+                _T_local[:3, :3] = local_rotation
+                _bm.transform(_T_local)
+            _bm.transform(self._hidden_T())
+            self.vis.add_geometry(_bm)
+            return _bm
+
+        if _tracked_board_path.exists():
+            self._board_mesh = _load_board_mesh(
+                _tracked_board_path, [0.9, 0.75, 0.5])
+            print(f"[SceneVis] NewBaseBoard.obj loaded for marker-tracked board "
+                  f"({len(self._board_mesh.vertices)} verts)")
         else:
             print(f"[SceneVis] NewBaseBoard.obj not found at {_tracked_board_path}")
+
+        if _board_ar_path.exists():
+            _board_ar_local_R = (
+                ScipyR.from_euler('y', 90.0, degrees=True).as_matrix()
+                if _board_ar_path.name == "HalfBoard.obj" else None)
+            self._board_manip_mesh = _load_board_mesh(
+                _board_ar_path, [0.5, 0.75, 0.9],
+                local_rotation=_board_ar_local_R)
+            print(f"[SceneVis] {_board_ar_path.name} loaded for BoardAR "
+                  f"({len(self._board_manip_mesh.vertices)} verts)")
+        else:
+            print(f"[SceneVis] BoardAR mesh not found at {_board_ar_path}")
         self._board_T       = self._hidden_T()
         self._board_manip_T = self._hidden_T()
+        self._board_ar_frame_T = self._hidden_T()
 
         self._gearbox_parts = {}
         self._gearbox_first_update_logged = False
@@ -258,10 +288,19 @@ class SceneVis:
         self._gearbox_root_initial_T = None
         self._gearbox_done = {row: set() for row in range(1, 5)}
         self._gearbox_blocked_view = None
-        self._load_gearbox_mirror_meshes()
+        if load_gearbox_mirror:
+            self._load_gearbox_mirror_meshes()
 
 
         self._tcp_gripper_mesh = None
+        self._tcp_adapter_mesh = None
+        self._tcp_adapter_T = self._hidden_T()
+        self._gripper_links: dict[str, dict] = {}
+        self._gripper_joints: list[dict] = []
+        self._gripper_root_link: str | None = None
+        self._gripper_root_fix = np.eye(4, dtype=np.float64)
+        self._gripper_joint_angle = 0.0
+        self._gripper_joint_target = 0.0
         self._left_hand_gripper_mesh = None
         self._tcp_T = self._hidden_T()
         self._left_hand_gripper_T = self._hidden_T()
@@ -278,6 +317,8 @@ class SceneVis:
             _R_fix_x = ScipyR.from_euler('x', 90, degrees=True).as_matrix()
             _R_flip_y = ScipyR.from_euler('y', 180, degrees=True).as_matrix()
             _R_flip_tcp_z = ScipyR.from_euler('z', 180, degrees=True).as_matrix()
+            _R_tcp_x_minus_90 = ScipyR.from_euler(
+                'x', -90, degrees=True).as_matrix()
 
             _left_mesh = copy.deepcopy(_mesh)
             _T_fix_left = np.eye(4, dtype=np.float64)
@@ -290,15 +331,40 @@ class SceneVis:
             self._left_hand_gripper_mesh = _left_mesh
 
             _T_fix_robot = np.eye(4, dtype=np.float64)
-            # Left multiplication rotates the already-aligned mesh around the
-            # TCP frame's Z axis.
-            _T_fix_robot[:3, :3] = _R_flip_tcp_z @ _R_fix_x
-            _mesh.transform(_T_fix_robot)
-            _mesh.transform(self._hidden_T())
-            self.vis.add_geometry(_mesh)
-            self._tcp_gripper_mesh = _mesh
-            print(f"[SceneVis] TCP gripper loaded from {_gripper_path.name} "
-                  f"({len(_mesh.vertices)} verts)")
+            # Adapter-only correction.  The articulated URDF gripper is
+            # authored in the TCP frame and therefore receives no additional
+            # root rotation.
+            _T_fix_robot[:3, :3] = (
+                _R_tcp_x_minus_90 @ _R_flip_tcp_z @ _R_fix_x)
+            self._gripper_root_fix = np.eye(4, dtype=np.float64)
+            # Mount the URDF gripper 16.889 mm outward from the TCP along the
+            # TCP frame's +Z axis.  Its orientation remains unchanged.
+            self._gripper_root_fix[2, 3] = 0.016889
+
+            _adapter_path = _asset_dir / "JustAdapters.stl"
+            if _adapter_path.exists():
+                _adapter = o3d.io.read_triangle_mesh(str(_adapter_path))
+                _adapter.compute_vertex_normals()
+                _adapter.paint_uniform_color([0.48, 0.50, 0.56])
+                _adapter.transform(_T_fix_robot)
+                _adapter.transform(self._hidden_T())
+                self.vis.add_geometry(_adapter)
+                self._tcp_adapter_mesh = _adapter
+                print(f"[SceneVis] TCP adapters loaded from {_adapter_path.name} "
+                      f"({len(_adapter.vertices)} verts)")
+            else:
+                print(f"[SceneVis] TCP adapters not found at {_adapter_path}")
+
+            _gripper_urdf = (_asset_dir / "robotiq85_2f" /
+                             "robotiq85_2f.urdf")
+            if not self._load_articulated_gripper(_gripper_urdf):
+                # Retain the former rigid robot gripper only as a fallback.
+                _mesh.transform(_T_fix_robot)
+                _mesh.transform(self._hidden_T())
+                self.vis.add_geometry(_mesh)
+                self._tcp_gripper_mesh = _mesh
+                print(f"[SceneVis] Falling back to rigid TCP gripper from "
+                      f"{_gripper_path.name} ({len(_mesh.vertices)} verts)")
         else:
             print(f"[SceneVis] TCP gripper not found at {_gripper_path}")
 
@@ -371,6 +437,251 @@ class SceneVis:
         T = np.eye(4, dtype=np.float64)
         T[:3, 3] = [0., -1.5, 0.]
         return T
+
+    @staticmethod
+    def _urdf_origin_T(element) -> np.ndarray:
+        T = np.eye(4, dtype=np.float64)
+        if element is None:
+            return T
+        xyz = [float(v) for v in element.get("xyz", "0 0 0").split()]
+        rpy = [float(v) for v in element.get("rpy", "0 0 0").split()]
+        T[:3, :3] = ScipyR.from_euler('xyz', rpy).as_matrix()
+        T[:3, 3] = xyz
+        return T
+
+    @staticmethod
+    def _axis_rotation_T(axis: np.ndarray, angle: float) -> np.ndarray:
+        T = np.eye(4, dtype=np.float64)
+        norm = float(np.linalg.norm(axis))
+        if norm > 1e-12 and abs(angle) > 1e-12:
+            T[:3, :3] = ScipyR.from_rotvec(axis / norm * angle).as_matrix()
+        return T
+
+    @staticmethod
+    def _read_collada_visual_mesh(path) -> "o3d.geometry.TriangleMesh | None":
+        """Read the triangle geometry used by the bundled Robotiq DAEs.
+
+        Some Open3D packages are built without COLLADA/Assimp support.  These
+        files contain ordinary indexed ``<triangles>`` geometry, so reading
+        that subset directly avoids substituting the coarse collision STL.
+        """
+        try:
+            root = ET.parse(path).getroot()
+            ns_uri = root.tag.partition("}")[0].lstrip("{")
+            ns = {"c": ns_uri} if ns_uri else {}
+            prefix = "c:" if ns_uri else ""
+            geometry = root.find(
+                f"{prefix}library_geometries/{prefix}geometry", ns)
+            mesh_xml = (geometry.find(f"{prefix}mesh", ns)
+                        if geometry is not None else None)
+            if mesh_xml is None:
+                return None
+
+            sources = {}
+            for source in mesh_xml.findall(f"{prefix}source", ns):
+                source_id = source.get("id")
+                values_xml = source.find(f"{prefix}float_array", ns)
+                accessor = source.find(
+                    f"{prefix}technique_common/{prefix}accessor", ns)
+                if not source_id or values_xml is None or not values_xml.text:
+                    continue
+                stride = int(accessor.get("stride", "1")) if accessor is not None else 1
+                values = np.fromstring(values_xml.text, sep=" ", dtype=float)
+                if stride > 0 and len(values) % stride == 0:
+                    sources[source_id] = values.reshape((-1, stride))
+
+            vertex_sources = {}
+            for vertices in mesh_xml.findall(f"{prefix}vertices", ns):
+                vertex_id = vertices.get("id")
+                position_input = vertices.find(
+                    f"{prefix}input[@semantic='POSITION']", ns)
+                if vertex_id and position_input is not None:
+                    vertex_sources[vertex_id] = position_input.get(
+                        "source", "").lstrip("#")
+
+            positions = None
+            triangles = []
+            for triangles_xml in mesh_xml.findall(f"{prefix}triangles", ns):
+                inputs = triangles_xml.findall(f"{prefix}input", ns)
+                if not inputs:
+                    continue
+                index_stride = max(int(item.get("offset", "0"))
+                                   for item in inputs) + 1
+                vertex_input = next(
+                    (item for item in inputs
+                     if item.get("semantic") == "VERTEX"), None)
+                indices_xml = triangles_xml.find(f"{prefix}p", ns)
+                if vertex_input is None or indices_xml is None or not indices_xml.text:
+                    continue
+                vertex_offset = int(vertex_input.get("offset", "0"))
+                vertices_id = vertex_input.get("source", "").lstrip("#")
+                source_id = vertex_sources.get(vertices_id)
+                candidate_positions = sources.get(source_id)
+                if candidate_positions is None or candidate_positions.shape[1] < 3:
+                    continue
+                positions = candidate_positions[:, :3]
+                raw = np.fromstring(indices_xml.text, sep=" ", dtype=np.int64)
+                if len(raw) % index_stride:
+                    continue
+                vertex_indices = raw.reshape((-1, index_stride))[:, vertex_offset]
+                if len(vertex_indices) % 3 == 0:
+                    triangles.append(vertex_indices.reshape((-1, 3)))
+
+            if positions is None or not triangles:
+                return None
+            result = o3d.geometry.TriangleMesh()
+            result.vertices = o3d.utility.Vector3dVector(positions)
+            result.triangles = o3d.utility.Vector3iVector(np.vstack(triangles))
+            return result
+        except Exception as exc:
+            print(f"[SceneVis] COLLADA visual parse failed for {path.name}: {exc}")
+            return None
+
+    def _load_articulated_gripper(self, urdf_path) -> bool:
+        """Load Robotiq visual meshes and URDF kinematics for Open3D."""
+        if not urdf_path.exists():
+            print(f"[SceneVis] Articulated gripper URDF not found: {urdf_path}")
+            return False
+        try:
+            root = ET.parse(urdf_path).getroot()
+            child_links = set()
+            links: dict[str, dict] = {}
+            visual_meshes = 0
+            collision_fallbacks = 0
+            for link_xml in root.findall("link"):
+                name = link_xml.get("name")
+                if not name:
+                    continue
+                mesh = None
+                geometry_origin = np.eye(4, dtype=np.float64)
+                # Prefer the detailed URDF visual DAE.  Keep collision STL as
+                # a robust fallback for Open3D builds without DAE/Assimp
+                # support or for an absent/empty visual mesh.
+                for geometry_kind in ("visual", "collision"):
+                    geometry_xml = link_xml.find(geometry_kind)
+                    if geometry_xml is None:
+                        continue
+                    mesh_xml = geometry_xml.find("geometry/mesh")
+                    if mesh_xml is None or not mesh_xml.get("filename"):
+                        continue
+                    mesh_path = urdf_path.parent / mesh_xml.get("filename")
+                    if not mesh_path.exists():
+                        continue
+                    if (geometry_kind == "visual"
+                            and mesh_path.suffix.lower() == ".dae"):
+                        candidate = self._read_collada_visual_mesh(mesh_path)
+                    else:
+                        candidate = o3d.io.read_triangle_mesh(str(mesh_path))
+                    if candidate is None:
+                        continue
+                    if len(candidate.vertices) == 0:
+                        continue
+                    mesh = candidate
+                    geometry_origin = self._urdf_origin_T(
+                        geometry_xml.find("origin"))
+                    if geometry_kind == "visual":
+                        visual_meshes += 1
+                    else:
+                        collision_fallbacks += 1
+                    break
+                if mesh is not None:
+                    mesh.compute_vertex_normals()
+                    mesh.paint_uniform_color([0.16, 0.17, 0.19])
+                    mesh.transform(geometry_origin)
+                    mesh.transform(self._hidden_T())
+                    self.vis.add_geometry(mesh)
+                links[name] = {"mesh": mesh, "T": self._hidden_T().copy()}
+
+            joints = []
+            for joint_xml in root.findall("joint"):
+                parent_xml = joint_xml.find("parent")
+                child_xml = joint_xml.find("child")
+                if parent_xml is None or child_xml is None:
+                    continue
+                parent = parent_xml.get("link")
+                child = child_xml.get("link")
+                child_links.add(child)
+                axis_xml = joint_xml.find("axis")
+                axis = np.asarray(
+                    [float(v) for v in axis_xml.get("xyz", "1 0 0").split()]
+                    if axis_xml is not None else [1., 0., 0.], dtype=float)
+                mimic_xml = joint_xml.find("mimic")
+                joints.append({
+                    "name": joint_xml.get("name", ""),
+                    "type": joint_xml.get("type", "fixed"),
+                    "parent": parent,
+                    "child": child,
+                    "origin": self._urdf_origin_T(joint_xml.find("origin")),
+                    "axis": axis,
+                    "mimic": mimic_xml.get("joint") if mimic_xml is not None else None,
+                    "multiplier": float(mimic_xml.get("multiplier", "1"))
+                                  if mimic_xml is not None else 1.0,
+                    "offset": float(mimic_xml.get("offset", "0"))
+                              if mimic_xml is not None else 0.0,
+                })
+            roots = [name for name in links if name not in child_links]
+            if not roots or not joints:
+                raise RuntimeError("URDF has no kinematic root or joints")
+            self._gripper_links = links
+            self._gripper_joints = joints
+            self._gripper_root_link = roots[0]
+            loaded = sum(entry["mesh"] is not None for entry in links.values())
+            if loaded == 0:
+                raise RuntimeError("no gripper link meshes loaded")
+            print(f"[SceneVis] Articulated Robotiq URDF loaded: "
+                  f"{loaded}/{len(links)} link meshes "
+                  f"(visual={visual_meshes}, "
+                  f"collision_fallback={collision_fallbacks})")
+            return True
+        except Exception as exc:
+            print(f"[SceneVis] Articulated gripper load failed: {exc}")
+            self._gripper_links = {}
+            self._gripper_joints = []
+            self._gripper_root_link = None
+            return False
+
+    def _update_articulated_gripper(self, T_tcp: np.ndarray,
+                                    drive_angle: float) -> None:
+        if not self._gripper_root_link or not self._gripper_links:
+            return
+        drive_name = "robotiq_85_left_knuckle_joint"
+        values = {drive_name: float(np.clip(drive_angle, 0.0, 0.8))}
+        poses = {self._gripper_root_link: np.eye(4, dtype=np.float64)}
+        pending = list(self._gripper_joints)
+        while pending:
+            progressed = False
+            for joint in pending[:]:
+                if joint["parent"] not in poses:
+                    continue
+                angle = 0.0
+                if joint["type"] != "fixed":
+                    if joint["name"] == drive_name:
+                        angle = values[drive_name]
+                    elif joint["mimic"] == drive_name:
+                        angle = (joint["multiplier"] * values[drive_name]
+                                 + joint["offset"])
+                T_joint = (joint["origin"] @
+                           self._axis_rotation_T(joint["axis"], angle))
+                poses[joint["child"]] = poses[joint["parent"]] @ T_joint
+                pending.remove(joint)
+                progressed = True
+            if not progressed:
+                break
+
+        T_root = T_tcp @ self._gripper_root_fix
+        for name, entry in self._gripper_links.items():
+            mesh = entry["mesh"]
+            if mesh is None or name not in poses:
+                continue
+            T_new = T_root @ poses[name]
+            delta = T_new @ np.linalg.inv(entry["T"])
+            mesh.transform(delta)
+            entry["T"] = T_new
+            self.vis.update_geometry(mesh)
+
+    def set_tcp_gripper_closed(self, closed: bool) -> None:
+        """Set the visual URDF gripper target; update_tcp animates toward it."""
+        self._gripper_joint_target = 0.8 if closed else 0.0
 
     @staticmethod
     def _gearbox_pre_rotation_T():
@@ -832,7 +1143,7 @@ class SceneVis:
             self._gearbox_first_update_logged = True
 
     def update_tcp(self, T: np.ndarray | None):
-        """Update the TCP axes lineset and gripper mesh to pose T."""
+        """Update TCP axes, rigid adapters, and articulated gripper links."""
         T_new = T if T is not None else self._hidden_T()
         new_axes = self.make_axes_lineset(T_new, size=0.08)
         if self._tcp_axes is None:
@@ -847,6 +1158,15 @@ class SceneVis:
             delta = T_new @ np.linalg.inv(self._tcp_T)
             self._tcp_gripper_mesh.transform(delta)
             self.vis.update_geometry(self._tcp_gripper_mesh)
+        if self._tcp_adapter_mesh is not None:
+            delta = T_new @ np.linalg.inv(self._tcp_adapter_T)
+            self._tcp_adapter_mesh.transform(delta)
+            self.vis.update_geometry(self._tcp_adapter_mesh)
+            self._tcp_adapter_T = T_new
+        # Smoothly animate the URDF drive joint (0=open, 0.8=closed).
+        error = self._gripper_joint_target - self._gripper_joint_angle
+        self._gripper_joint_angle += float(np.clip(error, -0.08, 0.08))
+        self._update_articulated_gripper(T_new, self._gripper_joint_angle)
         self._tcp_T = T_new
 
     def update_left_hand_gripper(self, T: "np.ndarray | None") -> None:
@@ -1118,12 +1438,6 @@ class SceneVis:
         grip_z  = T_target[:3, 2]
         tcp_pos = T_target[:3, 3] - cfg.BOX_FORWARD_OFFSET * grip_z
 
-        if self._board_manip_mesh is not None:
-            delta = T_target @ np.linalg.inv(self._board_manip_T)
-            self._board_manip_mesh.transform(delta)
-            self.vis.update_geometry(self._board_manip_mesh)
-            self._board_manip_T = T_target
-
         self._update_arrow_ls(self._qd_box_grip_z, T_target[:3, 3], grip_z, 0.10, (1., 1., 0.))
 
         T_tcp = np.eye(4); T_tcp[:3, :3] = T_target[:3, :3]; T_tcp[:3, 3] = tcp_pos
@@ -1133,6 +1447,30 @@ class SceneVis:
         self._qd_box_tcp.colors = fl.colors
         self.vis.update_geometry(self._qd_box_tcp)
 
+    def update_board_ar_from_tcp(self, T_tcp: np.ndarray | None,
+                                 forward_offset: float) -> None:
+        """Attach the BoardAR mesh to the live TCP at its authored standoff.
+
+        ``_GripPoseBridge.publish`` uses the same convention for Unity: the
+        board origin is ``forward_offset`` metres along TCP-local +Z and the
+        board orientation matches the TCP orientation.
+        """
+        if self._board_manip_mesh is None:
+            return
+        if T_tcp is None:
+            T_board = self._hidden_T()
+        else:
+            T_board = np.array(T_tcp, dtype=np.float64, copy=True)
+            T_board[:3, 3] += forward_offset * T_board[:3, 2]
+        delta = T_board @ np.linalg.inv(self._board_manip_T)
+        self._board_manip_mesh.transform(delta)
+        self.vis.update_geometry(self._board_manip_mesh)
+        self._board_manip_T = T_board
+        frame_delta = T_board @ np.linalg.inv(self._board_ar_frame_T)
+        self._board_ar_frame.transform(frame_delta)
+        self.vis.update_geometry(self._board_ar_frame)
+        self._board_ar_frame_T = T_board
+
     def clear_board_manip_debug(self):
         self._clear_ls(self._qd_box_grip_z, self._qd_box_tcp)
         if self._board_manip_mesh is not None:
@@ -1140,6 +1478,11 @@ class SceneVis:
             self._board_manip_mesh.transform(delta)
             self.vis.update_geometry(self._board_manip_mesh)
             self._board_manip_T = self._hidden_T()
+        frame_hidden = self._hidden_T()
+        frame_delta = frame_hidden @ np.linalg.inv(self._board_ar_frame_T)
+        self._board_ar_frame.transform(frame_delta)
+        self.vis.update_geometry(self._board_ar_frame)
+        self._board_ar_frame_T = frame_hidden
 
     def update_reachability_arrows(self, points: np.ndarray, flags: np.ndarray,
                                     board_normal: np.ndarray, arrow_len: float = 0.04):

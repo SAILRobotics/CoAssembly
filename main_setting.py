@@ -188,7 +188,7 @@ ROBOT_DEFAULT_JOINT_DEG = [-90.27, -71.20, -156.59, -131.43, -95.93, 179.08]
 # JOINT_MAX_DEG = [ 360,    360,  360,   360,   360,   360]
 
 # ── Gripper / box geometry ────────────────────────────────────────────────────
-BOX_FORWARD_OFFSET = 0.25          # metres from TCP to box centre along gripper Z
+BOX_FORWARD_OFFSET = 0.23215       # 150.9 mm + 81.250 mm, along TCP-local +Z
 BOX_SIZE           = [0.015, 0.225, 0.1625]   # metres (X, Y, Z in pegboard frame)
 
 # ── Runtime defaults ──────────────────────────────────────────────────────────
@@ -217,17 +217,19 @@ def to_unity(port: int) -> str:
 # marker and the workspace edges. Z is shifted up from 0 since the origin itself
 # sits at/below the workspace floor (the anchor marker is at table height).
 WORKHOLDING_TEST_CENTER_M      = [0.0, 0.0, 0.30]    # box centre, world frame, metres
-WORKHOLDING_TEST_HALF_EXTENT_M = [0.25, 0.20, 0.10]  # box half-extents (x, y, z), metres
+WORKHOLDING_TEST_HALF_EXTENT_M = [0.12, 0.10, 0.05]  # conservative box half-extents (x, y, z), metres
 
 
 def workholding_test_poses():
     """Ten (position_xyz_m, euler_xyz_deg) AR-box poses clustered near the world
     origin (~30-60 cm away), rather than spanning the full workspace.
 
-    Eight AABB corners (WORKHOLDING_TEST_CENTER_M ± WORKHOLDING_TEST_HALF_EXTENT_M)
-    + the centre + one interior point, each with an assorted rotation so both
-    position and orientation are exercised. Positions are in the world (robot)
-    frame, metres; the harness reads the count from ``len(...)`` so there is no
+    Eight conservative AABB corners
+    (WORKHOLDING_TEST_CENTER_M ± WORKHOLDING_TEST_HALF_EXTENT_M) + the centre
+    + one upper-centre point.  Rotations are intentionally limited to 20° or
+    less per axis so the study exercises pose adjustment without forcing
+    extreme wrist configurations. Positions are in the world (robot) frame,
+    metres; the harness reads the count from ``len(...)`` so there is no
     separate magic number.
     """
     c  = [float(v) for v in WORKHOLDING_TEST_CENTER_M]
@@ -243,9 +245,9 @@ def workholding_test_poses():
 
     positions = corners + [c, interior]        # 10 total
     eulers = [
-        [0, 0, 0], [0, 0, 90], [0, 90, 0], [90, 0, 0],
-        [0, 45, 0], [45, 0, 45], [0, 0, -90], [30, 60, 0],
-        [0, 0, 0], [90, 0, 90],
+        [0, 0, 0], [0, 0, 15], [0, 15, 0], [15, 0, 0],
+        [0, -15, 0], [-15, 0, 15], [0, 0, -15], [10, 20, 0],
+        [0, 0, 0], [15, 0, 15],
     ]
     return [([float(p[0]), float(p[1]), float(p[2])],
              [float(e[0]), float(e[1]), float(e[2])])

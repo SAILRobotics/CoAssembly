@@ -1795,7 +1795,8 @@ class MainScene:
 
         # ── Open3D visualizer + OpenCV window ─────────────────────────────────
         self.vis  = _SceneVis(
-            f"Hand Tracking — World Frame  (marker #{anchor_marker_id})")
+            f"Hand Tracking — World Frame  (marker #{anchor_marker_id})",
+            board_ar_asset="HalfBoard.obj")
         self._win = (f"Quest Left Passthrough  [ENTER=lock/relock  ESC=quit]"
                      f"  anchor=#{anchor_marker_id}  pegboard=#{pegboard_marker_id}")
         cv.namedWindow(self._win, cv.WINDOW_NORMAL)
@@ -1843,6 +1844,8 @@ class MainScene:
         self._jog_last_pos: "np.ndarray | None"         = None    # last pos issued to move_to_pose in jog mode
         self._jog_diag_t:   float                       = 0.0     # throttle for jog diagnostic prints
         self._last_vis_pegboard_T: "np.ndarray | None" = None
+        # G toggles a persistent visual-only URDF gripper open/closed override.
+        self._gripper_vis_override_closed: "bool | None" = None
 
         if self._load_pegboard_from_file:
             self._preview_pegboard_from_file()
@@ -1861,6 +1864,7 @@ class MainScene:
               f"correction when it lights up (proximity <{cfg.WORLD_MARKERS_PROXIMITY_MAX}m, "
               f"looking within {cfg.WORLD_MARKERS_TILT_MAX_DEG}° of face-on, "
               f"cooldown {cfg.WORLD_MARKERS_RELOCK_COOLDOWN}s)")
+        print("  G = toggle visual gripper open/closed + closed-board preview")
         print("  ESC = quit\n")
 
     # ── Helpers ───────────────────────────────────────────────────────────────
@@ -2738,6 +2742,23 @@ class MainScene:
                         self.grip_pose_bridge.publish(
                             _grip_visual_state, self._T_world_tcp)
 
+                # Drive the Open3D URDF gripper from the same logical grasp
+                # state as the application.  Board release_armed is still a
+                # closed physical grasp: it only means that a pull release is
+                # permitted.  The fingers open after the release completes.
+                _board_vis_closed = (
+                    self.robot is not None
+                    and self.robot.board_state in (
+                        "holding_board", "moving_board", "release_armed"))
+                _tool_vis_closed = (
+                    self._pending_handover
+                    or self._robot_state in (
+                        "grasping", "grasped", "retracting",
+                        "waiting_for_handover_pull"))
+                self.vis.set_tcp_gripper_closed(
+                    (_board_vis_closed or _tool_vis_closed)
+                    if self._gripper_vis_override_closed is None
+                    else self._gripper_vis_override_closed)
                 if self._T_world_tcp is not None:
                     self.vis.update_tcp(self._T_world_tcp)
                 self.vis.update_tcp_target(self._tcp_target_T)
@@ -2746,6 +2767,16 @@ class MainScene:
                     self.vis.update_robot(_link_poses)
                 if self._last_ar_board_T is not None:
                     self.vis.update_board_manip_debug(self._last_ar_board_T)
+                # Keep the visible BoardAR workpiece attached to the actual
+                # robot TCP; the released AR target remains debug-only.
+                _show_board_ar = (
+                    self._gripper_vis_override_closed is True
+                    or (self.robot is not None
+                        and self.robot.board_state in (
+                            "holding_board", "moving_board", "release_armed")))
+                self.vis.update_board_ar_from_tcp(
+                    self._T_world_tcp if _show_board_ar else None,
+                    cfg.BOX_FORWARD_OFFSET)
 
                 # ── Update Open3D visualizer ───────────────────────────────────
                 if self.cam.fx is not None:
@@ -2863,6 +2894,13 @@ class MainScene:
                 elif key == ord('m') or key == ord('M'):
                     # Toggle jog mode — the GUI sync block handles robot commands
                     self.jog_gui.set_active(not self.jog_gui.active)
+                elif key == ord('g') or key == ord('G'):
+                    self._gripper_vis_override_closed = not bool(
+                        self._gripper_vis_override_closed)
+                    _gripper_word = ("CLOSED" if self._gripper_vis_override_closed
+                                     else "OPEN")
+                    print(f"[SceneVis] Gripper visual override: {_gripper_word}; "
+                          f"BoardAR offset={cfg.BOX_FORWARD_OFFSET:.3f} m")
                 elif key == ord('r') or key == ord('R'):
                     if (self.robot is not None
                             and self.anchor.T_pegboard_in_world is not None):
