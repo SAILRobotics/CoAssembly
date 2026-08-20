@@ -5857,6 +5857,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::WorkholdingBoxReceiver
   arBox: {fileID: 219046386}
   applyIncomingBoxSize: 0
+  cloneTargetBoard: 1
   targetGripper: {fileID: 1393319197}
   showTargetGripper: 1
   targetGripperForwardOffset: 0.23215

@@ -969,6 +969,28 @@ class WorkholdingStudy:
 
                 _now = time.time()
 
+                # Keep the Quest target board visible before marker 100 is
+                # locked, matching the always-available Open3D preview.  Once
+                # a trial starts, its assigned target takes precedence over
+                # the preview cursor.
+                T_quest_target = self._trial_target_T
+                if (T_quest_target is None and self._pose_order
+                        and not self._teach_mode):
+                    visual_cursor = (self._target_preview_cursor
+                                     if self._manual_target_preview
+                                     else self._trial_cursor)
+                    visual_cursor = min(visual_cursor,
+                                        len(self._pose_order) - 1)
+                    T_quest_target = self._poses_T[
+                        self._pose_order[visual_cursor]]
+                if T_quest_target is not None:
+                    T_fake_tcp = np.eye(4)
+                    T_fake_tcp[:3, :3] = T_quest_target[:3, :3]
+                    T_fake_tcp[:3, 3] = (
+                        T_quest_target[:3, 3]
+                        - cfg.BOX_FORWARD_OFFSET * T_quest_target[:3, 2])
+                    self.ghost_bridge.publish("grabbed", T_fake_tcp)
+
                 if self.anchor.locked and not self._study_started:
                     self._study_started = True
                     self._phase = "await_robot_ready"
@@ -978,12 +1000,6 @@ class WorkholdingStudy:
                     self.relock_cubes.publish()
                     self.workspace_bound_pub.publish(
                         self._ws_lo, self._ws_hi, self._BOUNDS_VIS_DIST)
-                    if self._trial_target_T is not None:
-                        T = self._trial_target_T
-                        T_fake_tcp = np.eye(4)
-                        T_fake_tcp[:3, :3] = T[:3, :3]
-                        T_fake_tcp[:3, 3]  = T[:3, 3] - cfg.BOX_FORWARD_OFFSET * T[:3, 2]
-                        self.ghost_bridge.publish("grabbed", T_fake_tcp)
                     self._tick_study(_now)
                     if self._phase == "trial_running":
                         self._print_live_status(_now)

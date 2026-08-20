@@ -16,8 +16,7 @@ using System.Collections.Concurrent;
 /// the harness park the box at each of its 10 test poses with no grabbing involved.
 ///
 /// Inspector setup:
-///   arBox     — the AR box GameObject (a 1x1x1 m unit cube so box_size is literal metres),
-///               placed as a child of worldRoot
+///   arBox     — the board model used as the target-board template
 ///   worldRoot — WorldRoot transform (same object WorldRoot.cs / ToolSpawner drive)
 ///
 /// Mirrors the socket / background-thread / ConcurrentQueue / Update lifecycle and the
@@ -28,6 +27,8 @@ public class WorkholdingBoxReceiver : MonoBehaviour
     [Header("AR box")]
     public GameObject arBox;
     public bool applyIncomingBoxSize = true;
+    [Tooltip("Clone arBox so the target board remains independent from the board attached to the robot.")]
+    public bool cloneTargetBoard = true;
 
     [Header("Target gripper")]
     public GameObject targetGripper;
@@ -66,6 +67,17 @@ public class WorkholdingBoxReceiver : MonoBehaviour
 
     private void Start()
     {
+        // WorkholdingTesting also assigns its robot-attached board to GripStateReceiver.
+        // That receiver deliberately deactivates the attached board in idle states.  A
+        // separate target instance prevents it from hiding or moving this desired pose.
+        if (arBox != null && cloneTargetBoard)
+        {
+            Transform parent = worldRoot != null ? worldRoot : arBox.transform.parent;
+            arBox = Instantiate(arBox, parent, false);
+            arBox.name = "TargetHalfBoard";
+            arBox.SetActive(true);
+        }
+
         // Hide until the first pose arrives by toggling the RENDERER(s), not the GameObject:
         // this component may live on arBox itself, and SetActive(false) on our own GameObject
         // would stop Update() from ever running (so the box could never be shown again).
