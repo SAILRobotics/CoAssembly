@@ -19,6 +19,7 @@ public class GripStateReceiver : MonoBehaviour
 {
     [Header("AR objects")]
     public GameObject          arBox;
+    public bool                applyIncomingBoxSize = true;
     public GameObject          arHandle;
     public ARManipulationHandle manipulationHandle;
 
@@ -133,7 +134,8 @@ public class GripStateReceiver : MonoBehaviour
             arBox.transform.SetParent(worldRoot, false);
             arBox.transform.localPosition = latest.boxPos;
             arBox.transform.localRotation = latest.boxRot;
-            arBox.transform.localScale    = latest.boxSize;
+            if (applyIncomingBoxSize)
+                arBox.transform.localScale = latest.boxSize;
         }
 
         // Hide box when robot finishes moving; ARManipulationHandle shows it on each grab
@@ -151,7 +153,7 @@ public class GripStateReceiver : MonoBehaviour
             {
                 arHandle.transform.SetParent(worldRoot, false);
                 Vector3 boxForward = arBox.transform.rotation * Vector3.forward;
-                float   halfDepth  = latest.boxSize.z * 0.5f;
+                float   halfDepth  = arBox.transform.lossyScale.z * 0.5f;
                 float handleHalfDepth = manipulationHandle != null ? manipulationHandle.HandleHalfDepth : 0f;
                 arHandle.transform.position = arBox.transform.position - boxForward * (halfDepth + handleHalfDepth);
                 arHandle.transform.rotation = arBox.transform.rotation * Quaternion.Euler(0f, 180f, 0f);
