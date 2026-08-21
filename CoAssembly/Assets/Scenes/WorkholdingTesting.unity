@@ -6113,6 +6113,10 @@ MonoBehaviour:
   overrideBoardMaterial: 1
   boardAlpha: 0.5
   boardTint: {r: 0, g: 0, b: 0, a: 1}
+  farColor: {r: 1, g: 0, b: 0, a: 1}
+  nearColor: {r: 1, g: 0.42, b: 0.02, a: 1}
+  reachedColor: {r: 0, g: 1, b: 0, a: 1}
+  blackColor: {r: 0, g: 0, b: 0, a: 1}
   targetGripper: {fileID: 1393319197}
   showTargetGripper: 1
   targetGripperForwardOffset: 0.23215
@@ -12925,6 +12929,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::GripStateReceiver
   arBox: {fileID: 219046386}
   applyIncomingBoxSize: 0
+  colorizeBoardState: 0
   arHandle: {fileID: 1061834676}
   manipulationHandle: {fileID: 1061834678}
   worldRoot: {fileID: 1683168509}

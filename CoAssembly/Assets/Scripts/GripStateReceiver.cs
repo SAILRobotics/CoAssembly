@@ -27,6 +27,8 @@ public class GripStateReceiver : MonoBehaviour
     public Transform worldRoot;
 
     [Header("Target reached")]
+    [Tooltip("Disable when this receiver represents the carried board and a separate target receiver owns status colors.")]
+    public bool colorizeBoardState = true;
     [Min(0f)] public float targetPositionTolerance = 0.05f;
     [Range(0f, 180f)] public float targetAngleToleranceDeg = 15f;
     [Min(0f)] public float resultColorDuration = 0.75f;
@@ -271,6 +273,7 @@ public class GripStateReceiver : MonoBehaviour
 
     private void SetBoardColor(Color color)
     {
+        if (!colorizeBoardState) return;
         if (_boardRenderers == null || _boardColorBlock == null) return;
         foreach (Renderer renderer in _boardRenderers)
         {

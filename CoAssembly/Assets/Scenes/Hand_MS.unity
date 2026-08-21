@@ -19279,6 +19279,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::GripStateReceiver
   arBox: {fileID: 219046386}
   applyIncomingBoxSize: 0
+  colorizeBoardState: 1
   arHandle: {fileID: 1061834676}
   manipulationHandle: {fileID: 1061834678}
   worldRoot: {fileID: 1683168509}

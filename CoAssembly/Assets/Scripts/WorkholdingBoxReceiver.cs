@@ -331,6 +331,7 @@ public class WorkholdingBoxReceiver : MonoBehaviour
             _boardMaterial.SetColor("_Color", color);
         ApplyTargetGripperColor(color);
         _lastProximityState = state;
+        Debug.Log($"[WorkholdingBoxReceiver] Target color state -> {state}");
     }
 
     private static void SetRenderersVisible(Renderer[] renderers, bool visible)
