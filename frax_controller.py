@@ -395,7 +395,8 @@ if _FRAX_AVAILABLE:
                        target_pos_world: np.ndarray,
                        target_rot_world: np.ndarray,
                        q_current:        np.ndarray,
-                       dt:               float) -> np.ndarray:
+                       dt:               float,
+                       speed_scale:      float = 1.0) -> np.ndarray:
             """Compute q_target for one servoJ step via OSC+CBF."""
             q       = jnp.array(q_current)
             des_pos = jnp.array(self._base_R.T @ (target_pos_world - self._base_pos))
@@ -405,8 +406,10 @@ if _FRAX_AVAILABLE:
             qdot      = self._osc(ee_t[:3, 3], ee_t[:3, :3],
                                   des_pos, des_rot,
                                   jnp.zeros(3), jnp.zeros(3), J, M_inv)
+            qdot      = qdot * float(speed_scale)
             qdot_safe = np.asarray(self._cbf.safety_filter(q, qdot))
-            qdot_np   = np.clip(qdot_safe, -self._qdot_max, self._qdot_max)
+            qdot_limit = self._qdot_max * float(speed_scale)
+            qdot_np   = np.clip(qdot_safe, -qdot_limit, qdot_limit)
             return q_current + qdot_np * dt
 
         def ee_world_pos(self, q_current: np.ndarray) -> np.ndarray:

@@ -149,6 +149,10 @@ class _WorkholdingSceneVis(_SceneVis):
         self._study_target_frame.transform(self._hidden_T())
         self.vis.add_geometry(self._study_target_frame)
         self._study_target_frame_T = self._hidden_T()
+        self._target_ghosts: list = []
+        self._reached_target_indices: set[int] = set()
+        self._selected_target_index: "int | None" = None
+        self._target_board_asset = asset if asset.exists() else None
         if asset.exists():
             mesh = o3d.io.read_triangle_mesh(str(asset))
             if len(mesh.vertices):
@@ -209,6 +213,57 @@ class _WorkholdingSceneVis(_SceneVis):
         self.vis.add_geometry(self._mode_sphere)
         self._mode_sphere_T = self._hidden_T()
         self._mode_sphere_state = None
+
+    def configure_target_ghosts(self, target_poses: list[np.ndarray]) -> None:
+        """Draw every saved board target as a dim solid pseudo-alpha ghost."""
+        if self._target_board_asset is None:
+            return
+        base = o3d.io.read_triangle_mesh(str(self._target_board_asset))
+        if not len(base.vertices):
+            return
+        base.compute_vertex_normals()
+        T_local = np.eye(4, dtype=np.float64)
+        T_local[:3, :3] = ScipyR.from_euler(
+            "y", 90.0, degrees=True).as_matrix()
+        base.transform(T_local)
+        for T_target in target_poses:
+            mesh = o3d.geometry.TriangleMesh(base)
+            mesh.transform(np.asarray(T_target, dtype=float))
+            # Legacy Visualizer ignores alpha. Blend toward its dark
+            # background to produce the appearance of a low-alpha solid.
+            mesh.paint_uniform_color([0.055, 0.095, 0.12])
+            self.vis.add_geometry(mesh)
+            self._target_ghosts.append(mesh)
+
+    def select_target(self, target_index: int, reachable: bool) -> None:
+        """Make the selected target visually solid; fade the prior selection."""
+        previous = self._selected_target_index
+        if previous is not None and previous < len(self._target_ghosts):
+            previous_color = (
+                self._TARGET_REACHED_COLOR
+                if previous in self._reached_target_indices
+                else [0.055, 0.095, 0.12])
+            self._target_ghosts[previous].paint_uniform_color(previous_color)
+            self.vis.update_geometry(self._target_ghosts[previous])
+        self._selected_target_index = int(target_index)
+        if target_index < len(self._target_ghosts):
+            color = (self._TARGET_REACHED_COLOR
+                     if target_index in self._reached_target_indices
+                     else self._TARGET_UNREACHED_COLOR if reachable
+                     else self._TARGET_UNREACHABLE_COLOR)
+            self._target_ghosts[target_index].paint_uniform_color(color)
+            self.vis.update_geometry(self._target_ghosts[target_index])
+
+    def mark_target_reached(self, target_index: int,
+                            T_target: np.ndarray) -> None:
+        """Keep a reached target visible as a persistent solid green board."""
+        if (target_index in self._reached_target_indices
+                or target_index >= len(self._target_ghosts)):
+            return
+        self._reached_target_indices.add(int(target_index))
+        mesh = self._target_ghosts[target_index]
+        mesh.paint_uniform_color(self._TARGET_REACHED_COLOR)
+        self.vis.update_geometry(mesh)
 
     def set_target_step_callback(self, callback) -> None:
         self._target_step_callback = callback
@@ -330,6 +385,10 @@ class WorkholdingStudy:
     # servo tolerances in robot_control_server.py — human placement is noisier).
     _STUDY_POS_TOL_M          = 0.05    # metres
     _STUDY_ANGLE_TOL_DEG      = 15.0    # degrees
+    # Strictly for IK candidate validation/preview. These do not change the
+    # shared human/AR study completion criterion above.
+    _IK_POS_TOL_M             = 0.01
+    _IK_ANGLE_TOL_DEG         = 3.0
     _STUDY_DWELL_S            = 1.0     # seconds within tolerance before auto-complete
     _STUDY_MOVE_THRESHOLD_MPS = 0.01    # m/s — freedrive movement-segment detector
     _STUDY_TRAJ_SAMPLE_HZ     = 10.0
@@ -346,13 +405,15 @@ class WorkholdingStudy:
                  hand_port: int, use_calibrated_robot_base: bool,
                  session_name: str, mode: str, seed: int, out_dir: Path,
                  teach_targets_path: "Path | None" = None,
-                 target_poses_path: "Path | None" = None):
+                 target_poses_path: "Path | None" = None,
+                 target_navigation: str = "preview"):
         self.quest_ip           = quest_ip
         self.anchor_marker_id   = anchor_marker_id
         self.pegboard_marker_id = pegboard_marker_id
         self.hand_port          = hand_port
         self.session_name       = session_name
         self.mode                = mode
+        self._target_navigation = target_navigation
         self._teach_targets_path = teach_targets_path
         self._teach_mode = teach_targets_path is not None
         self._taught_poses: list[dict] = []
@@ -443,6 +504,8 @@ class WorkholdingStudy:
         self._trial_cursor = 0
         self._target_preview_cursor = 0
         self._manual_target_preview = False
+        self._preview_robot_link_poses: "list[np.ndarray] | None" = None
+        self._preview_robot_tcp_T: "np.ndarray | None" = None
         self._target_reachability = ({}
                                      if self._teach_mode
                                      else self._precheck_target_reachability())
@@ -493,6 +556,7 @@ class WorkholdingStudy:
         print(f"[Study] Mode: {mode}  (freedrive={'ON' if self._freedrive_enabled else 'off'}, "
               f"AR={'ON' if self._ar_enabled else 'off'})  "
               f"— {len(self._pose_order)} trials, seed={seed}")
+        print(f"[Study] P/N target navigation: {self._target_navigation}")
 
         self._win = ("Workholding Study  "
                      "[ENTER=lock/relock  F=force-complete  ESC=quit]")
@@ -500,6 +564,8 @@ class WorkholdingStudy:
         cv.resizeWindow(self._win, 960, 540)
         self.vis = _WorkholdingSceneVis(
             f"Workholding Study — {session_name} — {mode}")
+        if not self._teach_mode:
+            self.vis.configure_target_ghosts(self._poses_T)
         self.vis.set_target_step_callback(self._step_target_preview)
         self.vis.set_teach_callbacks(
             self._mark_taught_target, self._undo_taught_target)
@@ -604,8 +670,8 @@ class WorkholdingStudy:
         scene = self.robot.pb_scene
         saved_q = scene.current_q.copy()
         results = {}
-        pos_tol = self._STUDY_POS_TOL_M
-        angle_tol_deg = self._STUDY_ANGLE_TOL_DEG
+        pos_tol = self._IK_POS_TOL_M
+        angle_tol_deg = self._IK_ANGLE_TOL_DEG
         lower = np.deg2rad(np.asarray(cfg.JOINT_MIN_DEG, dtype=float))
         upper = np.deg2rad(np.asarray(cfg.JOINT_MAX_DEG, dtype=float))
         try:
@@ -649,6 +715,12 @@ class WorkholdingStudy:
     def _step_target_preview(self, delta: int) -> None:
         if not self._pose_order:
             return
+        if (self._target_navigation == "move"
+                and (self._auto_move_pending
+                     or self.robot.board_state == "moving_board")):
+            print("[StudyVis] P/N ignored — wait for the current robot move "
+                  "to stop before selecting another target")
+            return
         self._manual_target_preview = True
         self._target_preview_cursor = (
             self._target_preview_cursor + delta) % len(self._pose_order)
@@ -659,21 +731,81 @@ class WorkholdingStudy:
               f"(pose#{pose_idx})  pos={np.round(pos, 3).tolist()} "
               f"euler={euler}")
 
+        T_board = self._poses_T[pose_idx]
+        T_tcp = np.array(T_board, dtype=np.float64, copy=True)
+        T_tcp[:3, 3] -= cfg.BOX_FORWARD_OFFSET * T_tcp[:3, 2]
+        tcp_pos = T_tcp[:3, 3]
+        tcp_quat = ScipyR.from_matrix(T_tcp[:3, :3]).as_quat()
+
+        if self._target_navigation == "preview":
+            # Compute a hypothetical configuration in the client's local
+            # PyBullet scene, capture its link poses, then restore the live
+            # robot state. This changes only the Open3D rendering.
+            scene = self.robot.pb_scene
+            saved_q = scene.current_q.copy()
+            try:
+                q_ik = scene.solve_ik(
+                    saved_q, tcp_pos, tcp_quat,
+                    pos_tol=self._IK_POS_TOL_M,
+                    orient_tol=np.deg2rad(self._IK_ANGLE_TOL_DEG))
+                scene.update_robot(q_ik)
+                self._preview_robot_link_poses = [
+                    np.asarray(T, dtype=float).copy()
+                    for T in scene.get_arm_link_world_poses()]
+                preview_tcp = scene.update_tcp_bodies()
+                self._preview_robot_tcp_T = (
+                    np.asarray(preview_tcp, dtype=float).copy()
+                    if preview_tcp is not None else None)
+                print("[StudyVis] Showing robot IK preview (hardware unchanged)")
+            except Exception as exc:
+                self._preview_robot_link_poses = None
+                self._preview_robot_tcp_T = None
+                print(f"[StudyVis] Robot IK preview failed: {exc}")
+            finally:
+                scene.update_robot(saved_q)
+            return
+
+        # In explicit move mode, P/N is also a motion command:
+        # convert the selected board pose to its corresponding TCP pose and
+        # either retarget the current servo motion or start a new one.
+        if (self._target_navigation != "move"
+                or self._teach_mode or not self._ar_enabled):
+            return
+        self._preview_robot_link_poses = None
+        self._preview_robot_tcp_T = None
+        board_held = self.robot.board_state in (
+            "holding_board", "moving_board", "release_armed")
+        self._start_auto_move(tcp_pos, tcp_quat, board_move=board_held)
+        payload = "held board" if board_held else "bare gripper"
+        print(f"[StudyVis] Moving {payload} to selected target")
+
     def _update_visualizer(self) -> None:
         """Mirror the live study state into the embedded Open3D window."""
         T_tcp = self.robot.tcp_pose
         link_poses = self.robot.arm_link_poses()
+        if (self._target_navigation == "preview"
+                and self._manual_target_preview
+                and self._preview_robot_link_poses is not None):
+            link_poses = self._preview_robot_link_poses
+        display_tcp = (self._preview_robot_tcp_T
+                       if (self._target_navigation == "preview"
+                           and self._manual_target_preview
+                           and self._preview_robot_tcp_T is not None)
+                       else T_tcp)
         board_held = self.robot.board_state in (
             "holding_board", "moving_board", "release_armed")
 
         self.vis.set_tcp_gripper_closed(board_held)
-        self.vis.update_tcp(T_tcp)
+        self.vis.update_tcp(display_tcp)
         if link_poses is not None:
             self.vis.update_robot(link_poses)
         # Keep the current/actual board visible at the live TCP throughout the
         # study, including the initial insertion phase.  Its gripper remains
         # open until the server reports that the board has been grasped.
         self.vis.update_board_ar_from_tcp(T_tcp, cfg.BOX_FORWARD_OFFSET)
+        # The controller workspace is defined in the calibrated world frame,
+        # so its Open3D wireframe can remain visible before marker locking.
+        self.vis.update_workspace_bound(self._ws_lo, self._ws_hi)
 
         if self.anchor.locked:
             T_wt = self.anchor.T_world_tracking
@@ -683,7 +815,6 @@ class WorkholdingStudy:
             left_pts, right_pts = self.hands.world_joints(T_wt)
             self.vis.update_head(T_world_head)
             self.vis.update_hands(left_pts, right_pts)
-            self.vis.update_workspace_bound(self._ws_lo, self._ws_hi)
         else:
             self.vis.update_head(None)
             self.vis.update_hands(None, None)
@@ -705,7 +836,9 @@ class WorkholdingStudy:
         # before marker lock or physical grasp. Drive the Open3D handle from
         # that same pose so the two never appear separated by state gating.
         T_preview_board = self._board_pose_from_tcp(T_tcp)
-        T_actual_board = T_preview_board if board_held else None
+        # The TCP-derived board pose is meaningful for both a held board and
+        # the bare-gripper target-navigation check.
+        T_actual_board = T_preview_board
         self.vis.update_ar_handle(
             T_preview_board if self._ar_enabled else None)
         reached = False
@@ -713,8 +846,10 @@ class WorkholdingStudy:
             pos_err, ang_err = self._pose_error(T_actual_board, T_target)
             reached = (pos_err < self._STUDY_POS_TOL_M
                        and ang_err < self._STUDY_ANGLE_TOL_DEG)
-        self.vis.update_study_target(
-            T_target, reached, target_reachable)
+            if reached:
+                self.vis.mark_target_reached(target_pose_idx, T_target)
+        if T_target is not None:
+            self.vis.select_target(target_pose_idx, target_reachable)
         self.vis.update_target_gripper(
             T_target, cfg.BOX_FORWARD_OFFSET, reached, target_reachable)
 
@@ -757,10 +892,14 @@ class WorkholdingStudy:
         self._auto_move_pending = False
         self._auto_move_result  = bool(ok)
 
-    def _start_auto_move(self, pos: np.ndarray, quat: np.ndarray) -> None:
+    def _start_auto_move(self, pos: np.ndarray, quat: np.ndarray,
+                         board_move: bool = True) -> None:
         self._auto_move_pending = True
         self._auto_move_result  = None
-        self.robot.move_to_pose(pos, quat, board_move=True,
+        self.robot.move_to_pose(np.asarray(pos, dtype=float),
+                                np.asarray(quat, dtype=float),
+                                board_move=board_move,
+                                motion_profile="workholding",
                                 on_complete=self._on_auto_move_complete)
 
     def _begin_trial(self) -> None:
@@ -975,7 +1114,17 @@ class WorkholdingStudy:
                 if ok:
                     self._start_next_trial_or_finish()
                 else:
-                    print("[Study] Reset-to-default move failed — retrying")
+                    print("[Study] Reset-to-default move failed — stopped. "
+                          "Check the preceding [Robot] rejection message; "
+                          "restart the study after correcting the target or "
+                          "constraint.")
+                    self._phase = "reset_failed"
+
+        elif self._phase == "reset_failed":
+            # Do not automatically resend an identical failed motion every
+            # render tick. The robot remains holding the board in its safe
+            # post-failure state.
+            return
 
         elif self._phase == "trial_running":
             self._sample_trajectory(now)
@@ -1254,6 +1403,11 @@ def main() -> None:
     ap.add_argument(
         "--target-poses-file", type=Path, metavar="FILE",
         help="Use board target poses previously recorded by --teach-targets.")
+    ap.add_argument(
+        "--target-navigation", choices=("preview", "move"), default="preview",
+        help="P/N behavior: 'preview' only changes the displayed target; "
+             "'move' also commands the held board toward that target using "
+             "differential OSC + CBF.")
     args = ap.parse_args()
 
     if args.anchor_marker == args.pegboard_marker:
@@ -1275,6 +1429,7 @@ def main() -> None:
         out_dir                   = Path(args.out_dir),
         teach_targets_path        = args.teach_targets,
         target_poses_path         = args.target_poses_file,
+        target_navigation         = args.target_navigation,
     )
     print(f"\n[Study] Show marker #{args.anchor_marker} to lock the world "
           f"(auto within {WorkholdingStudy._AUTO_LOCK_MAX_DIST:.1f} m, or press ENTER).")

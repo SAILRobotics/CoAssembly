@@ -2370,6 +2370,10 @@ class MainScene:
                             self._pending_handover = False
 
                 # ── Workspace boundary (fades in as head/hands approach/exit) ──
+                # Keep the Open3D controller workspace visible at all times;
+                # only the Quest publisher depends on a locked tracking anchor.
+                self.vis.update_workspace_bound(
+                    self.WORKSPACE_BOUNDS_LO, self.WORKSPACE_BOUNDS_HI)
                 if self.anchor.locked:
                     _head_pos  = T_world_center[:3, 3] if T_world_center is not None else None
                     _left_pos  = left_pts[1]  if left_pts  is not None else None
@@ -2384,8 +2388,6 @@ class MainScene:
                     )
                     self.workspace_bound_pub.publish(
                         self.WORKSPACE_BOUNDS_LO, self.WORKSPACE_BOUNDS_HI, _dist_out)
-                    self.vis.update_workspace_bound(
-                        self.WORKSPACE_BOUNDS_LO, self.WORKSPACE_BOUNDS_HI)
 
                 # ── Reachability arrow expiry ─────────────────────────────────
                 _now = time.time()

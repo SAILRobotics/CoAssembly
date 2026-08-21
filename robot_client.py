@@ -250,6 +250,7 @@ class RobotClient:
 
     def move_to_pose(self, pos, quat=None, *, board_move: bool = False,
                      force_pybullet_ik: bool = False,
+                     motion_profile: str = "default",
                      on_complete: "Callable[[bool], None] | None" = None) -> None:
         """Stream IK+CBF toward a fixed Cartesian target; fires on_complete(ok) on arrival."""
         rid = None
@@ -263,6 +264,7 @@ class RobotClient:
             "quat":             np.asarray(quat, float).tolist() if quat is not None else None,
             "board_move":       bool(board_move),
             "force_pybullet_ik": bool(force_pybullet_ik),
+            "motion_profile":   str(motion_profile),
             "request_id":       rid,
         })
 

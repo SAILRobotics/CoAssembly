@@ -97,6 +97,9 @@ public class ARManipulationHandle : MonoBehaviour
         if (!_isGrabbed || arBox == null) return;
         _isGrabbed         = false;
         _currentInteractor = null;
+        // The released board is the desired target visualization. Keep it
+        // visible until GripStateReceiver confirms the live board reached it.
+        arBox.SetActive(true);
 
         if (targetPublisher != null && worldRoot != null)
         {
@@ -118,16 +121,15 @@ public class ARManipulationHandle : MonoBehaviour
         arBox.transform.position = currentHand.position + deltaRot * (_grabBoxPos - _grabHandPos);
         arBox.transform.rotation = deltaRot * _grabBoxRot;
 
-        // Python/Open3D defines the handle at board-local
-        // [-0.0075, -0.1400, 0], then Rx(+90). Open3D local -Y maps to
-        // Unity local -Z, and its Rx(+90) maps to Unity Rx(-90), cancelling
-        // the imported handle mesh's +90-degree X-axis correction.
+        // Keep the Unity handle at the board-local offset and rotate it
+        // 180 degrees about its own local X axis.
         if (arHandle != null)
         {
             arHandle.transform.position = arBox.transform.position
                 - arBox.transform.rotation * Vector3.right * 0.0075f
                 - arBox.transform.rotation * Vector3.forward * 0.1400f;
-            arHandle.transform.rotation = arBox.transform.rotation;
+            arHandle.transform.rotation = arBox.transform.rotation
+                * Quaternion.AngleAxis(180f, Vector3.right);
         }
     }
 }
