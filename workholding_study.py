@@ -115,7 +115,9 @@ _TRAJ_CSV_HEADER = [
 class _WorkholdingSceneVis(_SceneVis):
     """Open3D study view built on the main robot/hand scene visualizer."""
 
-    _TARGET_UNREACHED_COLOR = [0.95, 0.75, 0.08]
+    _TARGET_DEFAULT_COLOR = [0.92, 0.92, 0.92]
+    _TARGET_UNREACHED_COLOR = [0.95, 0.08, 0.08]
+    _TARGET_NEAR_COLOR = [1.00, 0.42, 0.02]
     _TARGET_REACHED_COLOR = [0.12, 0.90, 0.20]
     _TARGET_UNREACHABLE_COLOR = [0.95, 0.08, 0.08]
     _MODE_COLORS = {
@@ -139,6 +141,8 @@ class _WorkholdingSceneVis(_SceneVis):
         self._teach_undo_callback = None
         self.vis.register_key_action_callback(ord("M"), self._on_mark_target)
         self.vis.register_key_action_callback(ord("U"), self._on_undo_target)
+        self._timer_toggle_callback = None
+        self.vis.register_key_action_callback(ord("S"), self._on_toggle_timer)
         asset_dir = _FILE_DIR / "robot_assets"
         asset = asset_dir / "HalfBoard.obj"
         self._study_target_mesh = None
@@ -215,7 +219,7 @@ class _WorkholdingSceneVis(_SceneVis):
         self._mode_sphere_state = None
 
     def configure_target_ghosts(self, target_poses: list[np.ndarray]) -> None:
-        """Draw every saved board target as a dim solid pseudo-alpha ghost."""
+        """Draw every saved board target in white against the black background."""
         if self._target_board_asset is None:
             return
         base = o3d.io.read_triangle_mesh(str(self._target_board_asset))
@@ -229,28 +233,25 @@ class _WorkholdingSceneVis(_SceneVis):
         for T_target in target_poses:
             mesh = o3d.geometry.TriangleMesh(base)
             mesh.transform(np.asarray(T_target, dtype=float))
-            # Legacy Visualizer ignores alpha. Blend toward its dark
-            # background to produce the appearance of a low-alpha solid.
-            mesh.paint_uniform_color([0.055, 0.095, 0.12])
+            mesh.paint_uniform_color(self._TARGET_DEFAULT_COLOR)
             self.vis.add_geometry(mesh)
             self._target_ghosts.append(mesh)
 
-    def select_target(self, target_index: int, reachable: bool) -> None:
-        """Make the selected target visually solid; fade the prior selection."""
+    def select_target(self, target_index: int, proximity_state: str) -> None:
+        """Color the active target by live board-to-target proximity."""
         previous = self._selected_target_index
-        if previous is not None and previous < len(self._target_ghosts):
-            previous_color = (
-                self._TARGET_REACHED_COLOR
-                if previous in self._reached_target_indices
-                else [0.055, 0.095, 0.12])
-            self._target_ghosts[previous].paint_uniform_color(previous_color)
+        if (previous is not None and previous != target_index
+                and previous < len(self._target_ghosts)):
+            self._target_ghosts[previous].paint_uniform_color(
+                self._TARGET_DEFAULT_COLOR)
             self.vis.update_geometry(self._target_ghosts[previous])
         self._selected_target_index = int(target_index)
         if target_index < len(self._target_ghosts):
-            color = (self._TARGET_REACHED_COLOR
-                     if target_index in self._reached_target_indices
-                     else self._TARGET_UNREACHED_COLOR if reachable
-                     else self._TARGET_UNREACHABLE_COLOR)
+            color = {
+                "reached": self._TARGET_REACHED_COLOR,
+                "near": self._TARGET_NEAR_COLOR,
+                "far": self._TARGET_UNREACHED_COLOR,
+            }.get(proximity_state, self._TARGET_DEFAULT_COLOR)
             self._target_ghosts[target_index].paint_uniform_color(color)
             self.vis.update_geometry(self._target_ghosts[target_index])
 
@@ -272,6 +273,9 @@ class _WorkholdingSceneVis(_SceneVis):
         self._teach_mark_callback = mark_callback
         self._teach_undo_callback = undo_callback
 
+    def set_timer_toggle_callback(self, callback) -> None:
+        self._timer_toggle_callback = callback
+
     def _on_previous_target(self, _vis, action, _mods) -> bool:
         if action == 1 and self._target_step_callback is not None:
             self._target_step_callback(-1)
@@ -290,6 +294,11 @@ class _WorkholdingSceneVis(_SceneVis):
     def _on_undo_target(self, _vis, action, _mods) -> bool:
         if action == 1 and self._teach_undo_callback is not None:
             self._teach_undo_callback()
+        return False
+
+    def _on_toggle_timer(self, _vis, action, _mods) -> bool:
+        if action == 1 and self._timer_toggle_callback is not None:
+            self._timer_toggle_callback()
         return False
 
     def update_study_target(self, T_target: "np.ndarray | None",
@@ -385,6 +394,8 @@ class WorkholdingStudy:
     # servo tolerances in robot_control_server.py — human placement is noisier).
     _STUDY_POS_TOL_M          = 0.05    # metres
     _STUDY_ANGLE_TOL_DEG      = 15.0    # degrees
+    _TARGET_NEAR_POS_M         = 0.15    # visual orange proximity band
+    _TARGET_NEAR_ANGLE_DEG     = 30.0
     # Strictly for IK candidate validation/preview. These do not change the
     # shared human/AR study completion criterion above.
     _IK_POS_TOL_M             = 0.01
@@ -506,6 +517,7 @@ class WorkholdingStudy:
         self._trial_cursor = 0
         self._target_preview_cursor = 0
         self._manual_target_preview = False
+        self._target_proximity_state = "far"
         self._preview_robot_link_poses: "list[np.ndarray] | None" = None
         self._preview_robot_tcp_T: "np.ndarray | None" = None
         self._target_reachability = ({}
@@ -533,6 +545,9 @@ class WorkholdingStudy:
 
         self._trial_target_T: "np.ndarray | None" = None
         self._trial_start_t   = 0.0
+        self._trial_timer_running = False
+        self._trial_active_elapsed_s = 0.0
+        self._trial_timer_last_t: "float | None" = None
         self._trial_dwell_start: "float | None" = None
         self._trial_interactions = 0
         self._trial_last_traj_t  = 0.0
@@ -544,15 +559,95 @@ class WorkholdingStudy:
 
         # ── Logging ────────────────────────────────────────────────────────
         out_dir.mkdir(parents=True, exist_ok=True)
-        stamp = time.strftime("%Y%m%d_%H%M%S")
-        self._trials_path = out_dir / f"{session_name}-{mode}_{stamp}_trials.csv"
-        self._traj_path   = out_dir / f"{session_name}-{mode}_{stamp}_trajectory.csv"
-        self._trials_f = open(self._trials_path, "w", newline="")
+        self._trials_path = out_dir / f"{session_name}-{mode}_trials.csv"
+        self._traj_path   = out_dir / f"{session_name}-{mode}_trajectory.csv"
+
+        # A stable session name is resumable. Completed trials remain in the
+        # same files and the deterministic pose order resumes at the next one.
+        completed_trial_indices: list[int] = []
+        completed_pose_by_trial: dict[int, int] = {}
+        if self._trials_path.exists() and self._trials_path.stat().st_size > 0:
+            with open(self._trials_path, newline="") as existing_f:
+                for row in csv.DictReader(existing_f):
+                    if (row.get("session_name") == session_name
+                            and row.get("mode") == mode):
+                        try:
+                            trial_idx = int(row["trial_idx"])
+                            pose_idx = int(row["pose_idx"])
+                            completed_trial_indices.append(trial_idx)
+                            completed_pose_by_trial[trial_idx] = pose_idx
+                        except (KeyError, TypeError, ValueError):
+                            pass
+        if completed_trial_indices:
+            self._trial_cursor = max(completed_trial_indices) + 1
+            for trial_idx, pose_idx in completed_pose_by_trial.items():
+                if (0 <= trial_idx < len(self._pose_order)
+                        and self._pose_order[trial_idx] != pose_idx):
+                    raise RuntimeError(
+                        f"Session {session_name}/{mode} was created with a "
+                        "different target order (trial "
+                        f"{trial_idx + 1}: logged pose#{pose_idx}, current "
+                        f"pose#{self._pose_order[trial_idx]}). Use the original "
+                        "--seed and target-pose file, or choose a new session name.")
+            print(f"[Study] Resuming {session_name}/{mode} at trial "
+                  f"{self._trial_cursor + 1}/{len(self._pose_order)}")
+
+        # Trial rows are flushed only on completion, but trajectory samples are
+        # streamed during a trial. Remove samples from the first unfinished
+        # trial so an interrupted run restarts that trial cleanly from t=0.
+        if self._traj_path.exists() and self._traj_path.stat().st_size > 0:
+            with open(self._traj_path, newline="") as existing_f:
+                reader = csv.reader(existing_f)
+                rows = list(reader)
+            if rows:
+                header, data_rows = rows[0], rows[1:]
+                try:
+                    session_col = header.index("session_name")
+                    mode_col = header.index("mode")
+                    trial_col = header.index("trial_idx")
+                except ValueError:
+                    session_col = mode_col = trial_col = -1
+                if trial_col >= 0:
+                    kept_rows = []
+                    removed_rows = 0
+                    for row in data_rows:
+                        remove = False
+                        try:
+                            remove = (row[session_col] == session_name
+                                      and row[mode_col] == mode
+                                      and int(row[trial_col]) >= self._trial_cursor)
+                        except (IndexError, TypeError, ValueError):
+                            pass
+                        if remove:
+                            removed_rows += 1
+                        else:
+                            kept_rows.append(row)
+                    if removed_rows:
+                        tmp_path = self._traj_path.with_name(
+                            self._traj_path.name + ".resume_tmp")
+                        with open(tmp_path, "w", newline="") as clean_f:
+                            writer = csv.writer(clean_f)
+                            writer.writerow(header)
+                            writer.writerows(kept_rows)
+                        tmp_path.replace(self._traj_path)
+                        print(f"[Study] Removed {removed_rows} partial trajectory "
+                              f"sample(s) from unfinished trial "
+                              f"{self._trial_cursor + 1}; restarting it from zero.")
+
+        trials_need_header = (not self._trials_path.exists()
+                              or self._trials_path.stat().st_size == 0)
+        traj_need_header = (not self._traj_path.exists()
+                            or self._traj_path.stat().st_size == 0)
+        self._trials_f = open(self._trials_path, "a", newline="")
         self._trials_writer = csv.writer(self._trials_f)
-        self._trials_writer.writerow(_TRIAL_CSV_HEADER)
-        self._traj_f = open(self._traj_path, "w", newline="")
+        if trials_need_header:
+            self._trials_writer.writerow(_TRIAL_CSV_HEADER)
+            self._trials_f.flush()
+        self._traj_f = open(self._traj_path, "a", newline="")
         self._traj_writer = csv.writer(self._traj_f)
-        self._traj_writer.writerow(_TRAJ_CSV_HEADER)
+        if traj_need_header:
+            self._traj_writer.writerow(_TRAJ_CSV_HEADER)
+            self._traj_f.flush()
         print(f"[Study] Logging trials  → {self._trials_path}")
         print(f"[Study] Logging traj.   → {self._traj_path}")
         print(f"[Study] Mode: {mode}  (freedrive={'ON' if self._freedrive_enabled else 'off'}, "
@@ -561,7 +656,7 @@ class WorkholdingStudy:
         print(f"[Study] P/N target navigation: {self._target_navigation}")
 
         self._win = ("Workholding Study  "
-                     "[ENTER=lock/relock  F=force-complete  ESC=quit]")
+                     "[S=start/pause  ENTER=lock/relock  F=force-complete  ESC=quit]")
         cv.namedWindow(self._win, cv.WINDOW_NORMAL)
         cv.resizeWindow(self._win, 960, 540)
         self.vis = _WorkholdingSceneVis(
@@ -571,6 +666,7 @@ class WorkholdingStudy:
         self.vis.set_target_step_callback(self._step_target_preview)
         self.vis.set_teach_callbacks(
             self._mark_taught_target, self._undo_taught_target)
+        self.vis.set_timer_toggle_callback(self._toggle_trial_timer)
 
     # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -746,6 +842,7 @@ class WorkholdingStudy:
                   "to stop before selecting another target")
             return
         self._manual_target_preview = True
+        self._target_proximity_state = "far"
         self._target_preview_cursor = (
             self._target_preview_cursor + delta) % len(self._pose_order)
         pose_idx = self._pose_order[self._target_preview_cursor]
@@ -866,14 +963,21 @@ class WorkholdingStudy:
         self.vis.update_ar_handle(
             T_preview_board if self._ar_enabled else None)
         reached = False
+        proximity_state = "far"
         if T_target is not None and T_actual_board is not None:
             pos_err, ang_err = self._pose_error(T_actual_board, T_target)
-            reached = (pos_err < self._STUDY_POS_TOL_M
-                       and ang_err < self._STUDY_ANGLE_TOL_DEG)
-            if reached:
-                self.vis.mark_target_reached(target_pose_idx, T_target)
+            within_reached = (pos_err < self._STUDY_POS_TOL_M
+                              and ang_err < self._STUDY_ANGLE_TOL_DEG)
+            if within_reached:
+                reached = True
+                proximity_state = "reached"
+            else:
+                nearby = (pos_err < self._TARGET_NEAR_POS_M
+                          and ang_err < self._TARGET_NEAR_ANGLE_DEG)
+                proximity_state = "near" if nearby else "far"
         if T_target is not None:
-            self.vis.select_target(target_pose_idx, target_reachable)
+            self.vis.select_target(target_pose_idx, proximity_state)
+        self._target_proximity_state = proximity_state
         self.vis.update_target_gripper(
             T_target, cfg.BOX_FORWARD_OFFSET, reached, target_reachable)
 
@@ -930,8 +1034,12 @@ class WorkholdingStudy:
         pose_idx = self._pose_order[self._trial_cursor]
         self._target_preview_cursor = self._trial_cursor
         self._manual_target_preview = False
+        self._target_proximity_state = "far"
         self._trial_target_T          = self._poses_T[pose_idx]
-        self._trial_start_t           = time.time()
+        self._trial_start_t           = 0.0
+        self._trial_timer_running     = False
+        self._trial_active_elapsed_s  = 0.0
+        self._trial_timer_last_t      = None
         self._trial_dwell_start       = None
         self._trial_interactions      = 0
         self._trial_last_traj_t       = 0.0
@@ -943,7 +1051,47 @@ class WorkholdingStudy:
         n = len(self._pose_order)
         print(f"[Trial] {self.mode} {self._trial_cursor + 1}/{n}  "
               f"pose#{pose_idx}  pos={np.round(pos, 3).tolist()}  euler={euler}")
+        print("[Trial] Ready — press S to start timing and interaction counting.")
         self._phase = "trial_running"
+
+    def _trial_elapsed(self, now: "float | None" = None) -> float:
+        if now is None:
+            now = time.time()
+        elapsed = self._trial_active_elapsed_s
+        if self._trial_timer_running and self._trial_timer_last_t is not None:
+            elapsed += now - self._trial_timer_last_t
+        return elapsed
+
+    def _toggle_trial_timer(self) -> None:
+        if self._phase != "trial_running":
+            print("[Trial] S is available while a trial is ready or running.")
+            return
+        now = time.time()
+        if self._trial_timer_running:
+            self._trial_active_elapsed_s = self._trial_elapsed(now)
+            self._trial_timer_last_t = None
+            self._trial_timer_running = False
+            self._trial_dwell_start = None
+            self._prev_tcp_pos_for_speed = None
+            self._prev_tcp_t_for_speed = None
+            self._was_moving_freedrive = False
+            self._close_status_line()
+            print(f"[Trial] PAUSED at {self._trial_active_elapsed_s:.1f}s — "
+                  "press S to resume.")
+        else:
+            if self._trial_start_t <= 0.0:
+                self._trial_start_t = now
+            # Ignore AR releases made while the timer was paused. poll() drains
+            # the socket and returns only the newest queued target.
+            if self._ar_enabled:
+                self.ar_bridge.poll()
+            self._trial_timer_last_t = now
+            self._trial_timer_running = True
+            self._trial_dwell_start = None
+            self._prev_tcp_pos_for_speed = None
+            self._prev_tcp_t_for_speed = None
+            self._was_moving_freedrive = False
+            print("[Trial] RUNNING — timing and interaction counting enabled.")
 
     def _start_next_trial_or_finish(self) -> None:
         if self._trial_cursor >= len(self._pose_order):
@@ -975,7 +1123,9 @@ class WorkholdingStudy:
             pos_err, ang_err = self._pose_error(
                 T_board, self._trial_target_T)
             bits.append(f"offset={pos_err * 100:5.1f}cm/{ang_err:5.1f}deg")
-        bits.append(f"elapsed={now - self._trial_start_t:5.1f}s")
+        timer_state = "RUN" if self._trial_timer_running else "PAUSED"
+        bits.append(f"timer={timer_state}")
+        bits.append(f"elapsed={self._trial_elapsed(now):5.1f}s")
         bits.append(f"interactions={self._trial_interactions}")
         print(f"\r[Trial] {'  '.join(bits):<90}", end="", flush=True)
 
@@ -983,7 +1133,11 @@ class WorkholdingStudy:
         now      = time.time()
         pose_idx = self._pose_order[self._trial_cursor]
         pos, euler = self._poses_raw[pose_idx]
-        duration = now - self._trial_start_t
+        duration = self._trial_elapsed(now)
+        if self._trial_timer_running:
+            self._trial_active_elapsed_s = duration
+            self._trial_timer_running = False
+            self._trial_timer_last_t = None
         self._trials_writer.writerow([
             self.session_name, self.mode, self._trial_cursor, pose_idx,
             pos[0], pos[1], pos[2], euler[0], euler[1], euler[2],
@@ -1009,7 +1163,7 @@ class WorkholdingStudy:
         quat = ScipyR.from_matrix(T_tcp[:3, :3]).as_quat()
         self._traj_writer.writerow([
             self.session_name, self.mode, self._trial_cursor,
-            now - self._trial_start_t,
+            self._trial_elapsed(now),
             *T_tcp[:3, 3].tolist(), *quat.tolist(), *np.degrees(q).tolist(),
         ])
 
@@ -1151,6 +1305,8 @@ class WorkholdingStudy:
             return
 
         elif self._phase == "trial_running":
+            if not self._trial_timer_running:
+                return
             self._sample_trajectory(now)
             if self._freedrive_enabled:
                 self._tick_freedrive_channel(now)
@@ -1229,7 +1385,8 @@ class WorkholdingStudy:
                         self._board_pose_from_tcp(self.robot.tcp_pose),
                         T_quest_target)
                     self.ghost_bridge.publish(
-                        "grabbed", T_fake_tcp, box_color=target_color)
+                        self._target_proximity_state, T_fake_tcp,
+                        box_color=target_color)
 
                 if self.anchor.locked and not self._study_started:
                     self._study_started = True
@@ -1324,14 +1481,15 @@ class WorkholdingStudy:
                                f"  target pos={np.round(pos,3).tolist()}",
                                (12, 116), cv.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 255), 2)
                     cv.putText(disp,
-                               f"elapsed={time.time()-self._trial_start_t:.1f}s"
+                               f"timer={'RUNNING' if self._trial_timer_running else 'PAUSED'}"
+                               f"  elapsed={self._trial_elapsed():.1f}s"
                                f"  interactions={self._trial_interactions}{err_str}",
                                (12, 142), cv.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 255), 2)
                 _key_help = (
                     "M mark target   U undo   ENTER lock/relock   ESC quit"
                     if self._teach_mode else
-                    "P/N or arrows preview targets   ENTER lock/relock   "
-                    "F force-complete   ESC quit")
+                    "S start/pause   P/N or arrows preview targets   "
+                    "ENTER lock/relock   F force-complete   ESC quit")
                 cv.putText(disp, _key_help,
                            (12, disp.shape[0] - 14), cv.FONT_HERSHEY_SIMPLEX, 0.55,
                            (200, 200, 200), 1)
@@ -1346,6 +1504,8 @@ class WorkholdingStudy:
                     elif low in (ord('f'), ord('F')):
                         if self._phase == "trial_running":
                             self._force_complete_requested = True
+                    elif low in (ord('s'), ord('S')):
+                        self._toggle_trial_timer()
                     elif low in (ord('m'), ord('M')):
                         self._mark_taught_target()
                     elif low in (ord('u'), ord('U')):
@@ -1409,7 +1569,8 @@ def main() -> None:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     ap.add_argument("--session-name", required=True,
                     help="Identifies this run; logs are named "
-                         "'{session-name}-{mode}_{timestamp}_*.csv'.")
+                         "'{session-name}-{mode}_*.csv'. Reusing the same "
+                         "name and mode appends and resumes the session.")
     ap.add_argument("--mode", required=True, choices=_MODES,
                     help="Which interaction condition this session tests. Run the "
                          "script once per mode to cover all three.")
