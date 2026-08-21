@@ -34,6 +34,9 @@ public class WorkholdingBoxReceiver : MonoBehaviour
     public bool overrideBoardMaterial = true;
     [Range(0f, 1f)] public float boardAlpha = 0.45f;
     public Color boardTint = Color.black;
+    public Color farColor = Color.red;
+    public Color nearColor = new Color(1f, 0.42f, 0.02f, 1f);
+    public Color reachedColor = Color.green;
 
     [Header("Target gripper")]
     public GameObject targetGripper;
@@ -49,7 +52,7 @@ public class WorkholdingBoxReceiver : MonoBehaviour
     [Serializable]
     private class BoxMessage
     {
-        public string  grip_state;      // ignored — the box is always shown
+        public string  grip_state;      // far / near / reached proximity color
         public float[] box_pos;
         public float[] box_rot_xyzw;
         public float[] box_size;
@@ -57,6 +60,7 @@ public class WorkholdingBoxReceiver : MonoBehaviour
 
     private class PoseData
     {
+        public string     proximityState;
         public Vector3    pos;
         public Quaternion rot;
         public Vector3    size;
@@ -70,6 +74,7 @@ public class WorkholdingBoxReceiver : MonoBehaviour
     private Material         _boardMaterial;
     private Renderer[]       _targetGripperRenderers;
     private bool             _loggedShow;
+    private string           _lastProximityState = "";
 
     private void Start()
     {
@@ -128,6 +133,7 @@ public class WorkholdingBoxReceiver : MonoBehaviour
                                 || d.box_size == null) continue;
                             _queue.Enqueue(new PoseData
                             {
+                                proximityState = d.grip_state,
                                 pos  = new Vector3(d.box_pos[0], d.box_pos[1], d.box_pos[2]),
                                 rot  = new Quaternion(d.box_rot_xyzw[0], d.box_rot_xyzw[1],
                                                       d.box_rot_xyzw[2], d.box_rot_xyzw[3]),
@@ -160,6 +166,7 @@ public class WorkholdingBoxReceiver : MonoBehaviour
         arBox.transform.localRotation = latest.rot;
         if (applyIncomingBoxSize)
             arBox.transform.localScale = latest.size;
+        ApplyProximityColor(latest.proximityState);
         SetRenderersVisible(_renderers, true);
 
         if (showTargetGripper && targetGripper != null)
@@ -214,6 +221,23 @@ public class WorkholdingBoxReceiver : MonoBehaviour
         foreach (var r in _renderers)
             if (r != null) r.sharedMaterial = _boardMaterial;
     }
+
+    private void ApplyProximityColor(string state)
+    {
+        if (_boardMaterial == null || state == _lastProximityState) return;
+        Color color = state == "reached" ? reachedColor
+                    : state == "near" ? nearColor
+                    : state == "far" ? farColor
+                    : boardTint;
+        color.a = boardAlpha;
+        _boardMaterial.color = color;
+        if (_boardMaterial.HasProperty("_BaseColor"))
+            _boardMaterial.SetColor("_BaseColor", color);
+        if (_boardMaterial.HasProperty("_Color"))
+            _boardMaterial.SetColor("_Color", color);
+        _lastProximityState = state;
+    }
+
     private static void SetRenderersVisible(Renderer[] renderers, bool visible)
     {
         if (renderers == null) return;
