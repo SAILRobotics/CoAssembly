@@ -213,6 +213,8 @@ class RobotControlServer:
     # 1 cm/3 deg values remain an IK-validation criterion, not a study result.
     _WORKHOLDING_MOVE_POS_TOL_M = 0.05
     _WORKHOLDING_MOVE_ANGLE_TOL_RAD = np.deg2rad(15.0)
+    _HANDOVER_MOVE_POS_TOL_M = 0.015
+    _HANDOVER_MOVE_ANGLE_TOL_RAD = np.deg2rad(6.0)
     _MOVE_DWELL_S            = 0.30
     _MOVE_STALL_TIMEOUT_S     = 3.0
     _MOVE_PROGRESS_POS_M      = 0.002
@@ -231,6 +233,17 @@ class RobotControlServer:
     _WORKHOLDING_OSC_SPEED_SCALE = 1.15
     _WORKHOLDING_BRAKE_DIST_M = 0.06
     _WORKHOLDING_BRAKE_ANGLE_RAD = np.deg2rad(10.0)
+    # Hand delivery stays reactive at long range, then increasingly filters and
+    # brakes the command only inside the final 8 cm around the user's hand.
+    _HANDOVER_OSC_SPEED_SCALE = 1.15
+    _HANDOVER_BRAKE_DIST_M = 0.08
+    _HANDOVER_BRAKE_ANGLE_RAD = np.deg2rad(12.0)
+    _HANDOVER_EMA_FAR = 0.85
+    _HANDOVER_EMA_NEAR = 0.62
+    _HANDOVER_LOOKAHEAD_FAR_S = 0.06
+    _HANDOVER_LOOKAHEAD_NEAR_S = 0.10
+    _HANDOVER_GAIN_FAR = 450
+    _HANDOVER_GAIN_NEAR = 380
 
     def __init__(self, quest_ip: str, robot_ip: "str | None", simulation: bool,
                  use_calibrated_robot_base: bool, gripper_collision: bool,
@@ -1093,7 +1106,9 @@ class RobotControlServer:
         self._move_force_pybullet_ik = force_pybullet_ik
         self._move_is_board     = bool(board_move)
         self._move_motion_profile = (
-            "workholding" if motion_profile == "workholding" else "default")
+            motion_profile
+            if motion_profile in ("workholding", "handover")
+            else "default")
         self._reset_move_progress()
         self._move_phase       = 'moving_to_pose'
         if board_move:
@@ -1172,6 +1187,9 @@ class RobotControlServer:
         if self._move_motion_profile == "workholding":
             pos_tol = self._WORKHOLDING_MOVE_POS_TOL_M
             angle_tol = self._WORKHOLDING_MOVE_ANGLE_TOL_RAD
+        elif self._move_motion_profile == "handover":
+            pos_tol = self._HANDOVER_MOVE_POS_TOL_M
+            angle_tol = self._HANDOVER_MOVE_ANGLE_TOL_RAD
         else:
             pos_tol = (self._BOARD_MOVE_POS_TOL_M
                        if self._move_is_board else self._MOVE_POS_TOL_M)
@@ -1260,9 +1278,11 @@ class RobotControlServer:
             try:
                 q_target = self._frax.servo_step(
                     target_pos, target_rot, q_cur, control_dt,
-                    speed_scale=(self._WORKHOLDING_OSC_SPEED_SCALE
-                                 if self._move_motion_profile == "workholding"
-                                 else 1.0))
+                    speed_scale=(
+                        self._WORKHOLDING_OSC_SPEED_SCALE
+                        if self._move_motion_profile == "workholding" else
+                        self._HANDOVER_OSC_SPEED_SCALE
+                        if self._move_motion_profile == "handover" else 1.0))
             except Exception as _e:
                 print(f"[Robot] servo_step error: {_e}")
                 q_target = q_cur
@@ -1277,6 +1297,12 @@ class RobotControlServer:
                     pos_x = min(dist / self._WORKHOLDING_BRAKE_DIST_M, 1.0)
                     rot_x = min(
                         angle_err / self._WORKHOLDING_BRAKE_ANGLE_RAD, 1.0)
+                    pos_scale = pos_x * pos_x * (3.0 - 2.0 * pos_x)
+                    rot_scale = rot_x * rot_x * (3.0 - 2.0 * rot_x)
+                elif self._move_motion_profile == "handover":
+                    pos_x = min(dist / self._HANDOVER_BRAKE_DIST_M, 1.0)
+                    rot_x = min(
+                        angle_err / self._HANDOVER_BRAKE_ANGLE_RAD, 1.0)
                     pos_scale = pos_x * pos_x * (3.0 - 2.0 * pos_x)
                     rot_scale = rot_x * rot_x * (3.0 - 2.0 * rot_x)
                 else:
@@ -1353,19 +1379,37 @@ class RobotControlServer:
         else:
             # EMA smoothing to damp servoJ jitter
             workholding_profile = self._move_motion_profile == "workholding"
+            handover_profile = self._move_motion_profile == "handover"
             if self._move_smooth_q is None:
                 self._move_smooth_q = q_target.copy()
             else:
-                alpha = (self._WORKHOLDING_EMA_ALPHA
-                         if workholding_profile else
-                         (self._BOARD_SERVO_EMA_ALPHA
-                          if self._move_is_board else self._SERVO_EMA_ALPHA))
+                if handover_profile:
+                    proximity = max(0.0, min(
+                        1.0, 1.0 - dist / self._HANDOVER_BRAKE_DIST_M))
+                    alpha = (self._HANDOVER_EMA_FAR
+                             + proximity * (self._HANDOVER_EMA_NEAR
+                                            - self._HANDOVER_EMA_FAR))
+                else:
+                    alpha = (self._WORKHOLDING_EMA_ALPHA
+                             if workholding_profile else
+                             (self._BOARD_SERVO_EMA_ALPHA
+                              if self._move_is_board else self._SERVO_EMA_ALPHA))
                 self._move_smooth_q = (alpha * q_target
                                        + (1.0 - alpha) * self._move_smooth_q)
-            lookahead = (self._WORKHOLDING_LOOKAHEAD_S
-                         if workholding_profile else self._SERVO_LOOKAHEAD_S)
-            gain = (self._WORKHOLDING_GAIN
-                    if workholding_profile else self._SERVO_GAIN)
+            if handover_profile:
+                proximity = max(0.0, min(
+                    1.0, 1.0 - dist / self._HANDOVER_BRAKE_DIST_M))
+                lookahead = (self._HANDOVER_LOOKAHEAD_FAR_S
+                             + proximity * (self._HANDOVER_LOOKAHEAD_NEAR_S
+                                            - self._HANDOVER_LOOKAHEAD_FAR_S))
+                gain = (self._HANDOVER_GAIN_FAR
+                        + proximity * (self._HANDOVER_GAIN_NEAR
+                                       - self._HANDOVER_GAIN_FAR))
+            else:
+                lookahead = (self._WORKHOLDING_LOOKAHEAD_S
+                             if workholding_profile else self._SERVO_LOOKAHEAD_S)
+                gain = (self._WORKHOLDING_GAIN
+                        if workholding_profile else self._SERVO_GAIN)
             self.servoJ(self._move_smooth_q, control_dt,
                         lookahead=lookahead, gain=gain)
 
@@ -1817,11 +1861,13 @@ class RobotControlServer:
                 'retract':           self._grasp_q_approach,
             }[phase]
             speed = {
-                'approach':          0.5 * sc,
-                'grasp':             0.2 * sc,
-                'lift':              0.2 * sc,
-                'ret_above_approach': 0.3 * sc,
-                'retract':           0.5 * sc,
+                # Travel quickly through the known-clear waypoint segments,
+                # but retain a slower final descent at the object itself.
+                'approach':          0.85 * sc,
+                'grasp':             0.30 * sc,
+                'lift':              0.40 * sc,
+                'ret_above_approach': 0.55 * sc,
+                'retract':           0.85 * sc,
             }[phase]
             if not self._grasp_move_sent:
                 c = _ctrl()

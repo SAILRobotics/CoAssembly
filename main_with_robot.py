@@ -1830,6 +1830,10 @@ class MainScene:
         self._last_ar_board_T: "np.ndarray | None"    = None   # last AR box pose from _GripPoseBridge; persists between polls
         self._last_tcp_color_state: "str | None"      = None
         self._board_regrasp_available: bool            = False
+        # Set after a tool/part is physically pulled from the gripper.  The
+        # next TCP click arms board reception at the current handover pose
+        # instead of summoning the now-empty gripper again.
+        self._board_receive_after_handover: bool        = False
         self._pending_grasp_tool_id: "int | None"           = None   # tool ID being grasped (set on click, not yet read back)
         self._grasped_objects: list                          = []     # [(id, name)] of successfully grasped objects (cancelled grasps excluded)
         self._handed_over_objects: list                      = []     # [(id, name)] released successfully to the human
@@ -1979,6 +1983,9 @@ class MainScene:
                   f"{[n for _, n in self._handed_over_objects]}")
             self._handover_tool_id = None
             self._pending_handover = False
+            self._board_receive_after_handover = True
+            print("[Handover] Empty gripper ready — click it to arm board "
+                  "reception at the current pose")
         else:
             print("[Handover] Gripper release failed — object remains visible; retrying")
             self._pending_handover = True
@@ -2193,7 +2200,7 @@ class MainScene:
         self._tcp_target_T   = _T_tgt
         self.robot.move_to_pose(
             target_pos, target_quat,
-            motion_profile="workholding",
+            motion_profile="handover",
             on_complete=on_complete or self._on_hand_target_reached,
         )
         return True
@@ -2612,6 +2619,13 @@ class MainScene:
                         self._board_regrasp_available = False
                         self.robot.start_board_interaction()
                     elif (self.robot is not None
+                          and self.robot.board_state == "inactive"
+                          and self._board_receive_after_handover):
+                        print("[TCP] Post-handover gripper clicked → open and "
+                              "arm board reception at current pose")
+                        self._board_receive_after_handover = False
+                        self.robot.start_board_interaction()
+                    elif (self.robot is not None
                           and not self.robot.tool_grasp_running
                           and self._board_allows_unrelated_motion()
                           and self.anchor.locked):
@@ -2788,7 +2802,6 @@ class MainScene:
                             self.robot.move_to_pose(
                                 _tcp_pos, _tcp_quat,
                                 board_move=True,
-                                motion_profile="workholding",
                                 on_complete=self._on_board_move_complete)
 
                     if self._T_world_tcp is not None:
