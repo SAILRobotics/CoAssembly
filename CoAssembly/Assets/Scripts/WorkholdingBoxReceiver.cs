@@ -37,6 +37,7 @@ public class WorkholdingBoxReceiver : MonoBehaviour
     public Color farColor = Color.red;
     public Color nearColor = new Color(1f, 0.42f, 0.02f, 1f);
     public Color reachedColor = Color.green;
+    public Color blackColor = Color.black;
 
     [Header("Target gripper")]
     public GameObject targetGripper;
@@ -78,7 +79,7 @@ public class WorkholdingBoxReceiver : MonoBehaviour
     private Renderer[]       _renderers;
     private Material         _boardMaterial;
     private Renderer[]       _targetGripperRenderers;
-    private Material         _targetGripperMaterial;
+    private MaterialPropertyBlock _targetGripperColorBlock;
     private bool             _loggedShow;
     private string           _lastProximityState = "";
 
@@ -108,7 +109,7 @@ public class WorkholdingBoxReceiver : MonoBehaviour
         if (targetGripper != null)
         {
             _targetGripperRenderers = targetGripper.GetComponentsInChildren<Renderer>(true);
-            ApplyTargetGripperMaterial();
+            _targetGripperColorBlock = new MaterialPropertyBlock();
             SetRenderersVisible(_targetGripperRenderers, false);
         }
 
@@ -291,6 +292,7 @@ public class WorkholdingBoxReceiver : MonoBehaviour
         Color color = state == "reached" ? reachedColor
                     : state == "near" ? nearColor
                     : state == "far" ? farColor
+                    : state == "black" ? blackColor
                     : boardTint;
         color.a = boardAlpha;
         _boardMaterial.color = color;
@@ -298,6 +300,19 @@ public class WorkholdingBoxReceiver : MonoBehaviour
             _boardMaterial.SetColor("_BaseColor", color);
         if (_boardMaterial.HasProperty("_Color"))
             _boardMaterial.SetColor("_Color", color);
+        if (_targetGripperRenderers != null && _targetGripperColorBlock != null)
+        {
+            Color solidColor = color;
+            solidColor.a = 1f;
+            foreach (Renderer renderer in _targetGripperRenderers)
+            {
+                if (renderer == null) continue;
+                renderer.GetPropertyBlock(_targetGripperColorBlock);
+                _targetGripperColorBlock.SetColor("_BaseColor", solidColor);
+                _targetGripperColorBlock.SetColor("_Color", solidColor);
+                renderer.SetPropertyBlock(_targetGripperColorBlock);
+            }
+        }
         _lastProximityState = state;
     }
 
