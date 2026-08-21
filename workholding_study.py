@@ -116,6 +116,7 @@ class _WorkholdingSceneVis(_SceneVis):
     """Open3D study view built on the main robot/hand scene visualizer."""
 
     _TARGET_DEFAULT_COLOR = [0.92, 0.92, 0.92]
+    _TARGET_BLACK_COLOR = [0.0, 0.0, 0.0]
     _TARGET_UNREACHED_COLOR = [0.95, 0.08, 0.08]
     _TARGET_NEAR_COLOR = [1.00, 0.42, 0.02]
     _TARGET_REACHED_COLOR = [0.12, 0.90, 0.20]
@@ -251,6 +252,7 @@ class _WorkholdingSceneVis(_SceneVis):
                 "reached": self._TARGET_REACHED_COLOR,
                 "near": self._TARGET_NEAR_COLOR,
                 "far": self._TARGET_UNREACHED_COLOR,
+                "black": self._TARGET_BLACK_COLOR,
             }.get(proximity_state, self._TARGET_DEFAULT_COLOR)
             self._target_ghosts[target_index].paint_uniform_color(color)
             self.vis.update_geometry(self._target_ghosts[target_index])
@@ -361,6 +363,7 @@ class _WorkholdingSceneVis(_SceneVis):
                 "reached": self._TARGET_REACHED_COLOR,
                 "near": self._TARGET_NEAR_COLOR,
                 "far": self._TARGET_UNREACHED_COLOR,
+                "black": self._TARGET_BLACK_COLOR,
             }.get(color_state, self._TARGET_DEFAULT_COLOR)
             self._target_gripper_mesh.paint_uniform_color(color)
             self._target_gripper_color_state = color_state
@@ -402,6 +405,8 @@ class WorkholdingStudy:
     _IK_POS_TOL_M             = 0.01
     _IK_ANGLE_TOL_DEG         = 3.0
     _STUDY_DWELL_S            = 1.0     # seconds within tolerance before auto-complete
+    _COMPLETION_FLASH_COUNT    = 3
+    _COMPLETION_WARNING_S      = 3.0     # stationary warning before reset motion
     _STUDY_MOVE_THRESHOLD_MPS = 0.01    # m/s — freedrive movement-segment detector
     _STUDY_TRAJ_SAMPLE_HZ     = 10.0
 
@@ -554,6 +559,8 @@ class WorkholdingStudy:
         self._prev_tcp_t_for_speed:  "float | None"       = None
         self._was_moving_freedrive = False
         self._force_complete_requested = False
+        self._completion_flash_started: "float | None" = None
+        self._completion_flash_state: "str | None" = None
         self._status_trial_cursor: "int | None" = None   # for the inline live-offset line
         self._last_status_print_t = 0.0
 
@@ -958,10 +965,13 @@ class WorkholdingStudy:
                           and ang_err < self._TARGET_NEAR_ANGLE_DEG)
                 proximity_state = "near" if nearby else "far"
         if T_target is not None:
-            self.vis.select_target(target_pose_idx, proximity_state)
-        self._target_proximity_state = proximity_state
+            display_state = self._completion_flash_state or proximity_state
+            self.vis.select_target(target_pose_idx, display_state)
+        else:
+            display_state = proximity_state
+        self._target_proximity_state = display_state
         self.vis.update_target_gripper(
-            T_target, cfg.BOX_FORWARD_OFFSET, proximity_state)
+            T_target, cfg.BOX_FORWARD_OFFSET, display_state)
 
         if self._teach_mode:
             mode_state = "freedrive"
@@ -1135,8 +1145,7 @@ class WorkholdingStudy:
         print(f"[Trial] done ({reason}) — {duration:.1f}s, "
               f"err={pos_err * 100:.1f}cm/{ang_err:.1f}deg, "
               f"interactions={self._trial_interactions}")
-        self._trial_cursor += 1
-        self._phase = "reset_to_default"
+        self._begin_completion_flash()
 
     def _advance_unrecorded_trial(self, pos_err: float, ang_err: float) -> None:
         """Advance operationally while leaving this trial absent from the CSV."""
@@ -1144,8 +1153,14 @@ class WorkholdingStudy:
         print(f"[Trial] reached while PAUSED — not recorded "
               f"({pos_err * 100:.1f}cm/{ang_err:.1f}deg); advancing")
         self._trial_dwell_start = None
-        self._trial_cursor += 1
-        self._phase = "reset_to_default"
+        self._begin_completion_flash()
+
+    def _begin_completion_flash(self) -> None:
+        self._completion_flash_started = time.time()
+        self._completion_flash_state = "reached"
+        self._phase = "completion_feedback"
+        print(f"[Study] Target complete — robot remains stationary for "
+              f"{self._COMPLETION_WARNING_S:.1f}s before resetting to default.")
 
     def _sample_trajectory(self, now: float) -> None:
         if now - self._trial_last_traj_t < 1.0 / self._STUDY_TRAJ_SAMPLE_HZ:
@@ -1336,6 +1351,24 @@ class WorkholdingStudy:
                 else:
                     pos_err, ang_err = float('nan'), float('nan')
                 self._finish_trial("forced", pos_err, ang_err)
+
+        elif self._phase == "completion_feedback":
+            if self._completion_flash_started is None:
+                self._completion_flash_started = now
+            # Three pulses are G-B-G-B-G; there is no trailing black segment
+            # before the reset motion begins.
+            total_segments = self._COMPLETION_FLASH_COUNT * 2 - 1
+            segment_duration = self._COMPLETION_WARNING_S / total_segments
+            segment = int((now - self._completion_flash_started)
+                          / segment_duration)
+            if segment >= total_segments:
+                self._completion_flash_state = None
+                self._completion_flash_started = None
+                self._trial_cursor += 1
+                self._phase = "reset_to_default"
+            else:
+                self._completion_flash_state = (
+                    "reached" if segment % 2 == 0 else "black")
 
         elif self._phase == "release_board":
             if not self._release_armed_sent:
