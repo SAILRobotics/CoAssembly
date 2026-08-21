@@ -1844,8 +1844,9 @@ class MainScene:
         self._jog_last_pos: "np.ndarray | None"         = None    # last pos issued to move_to_pose in jog mode
         self._jog_diag_t:   float                       = 0.0     # throttle for jog diagnostic prints
         self._last_vis_pegboard_T: "np.ndarray | None" = None
-        # G toggles a persistent visual-only URDF gripper open/closed override.
-        self._gripper_vis_override_closed: "bool | None" = None
+        # G toggles the BoardAR pose/handle publisher, mirroring the study UI's
+        # explicit visual control surface.
+        self._board_ar_visual_enabled = True
 
         if self._load_pegboard_from_file:
             self._preview_pegboard_from_file()
@@ -1864,7 +1865,7 @@ class MainScene:
               f"correction when it lights up (proximity <{cfg.WORLD_MARKERS_PROXIMITY_MAX}m, "
               f"looking within {cfg.WORLD_MARKERS_TILT_MAX_DEG}° of face-on, "
               f"cooldown {cfg.WORLD_MARKERS_RELOCK_COOLDOWN}s)")
-        print("  G = toggle visual gripper open/closed + closed-board preview")
+        print("  G = toggle AR board pose + handle visualization")
         print("  ESC = quit\n")
 
     # ── Helpers ───────────────────────────────────────────────────────────────
@@ -2733,11 +2734,15 @@ class MainScene:
                                 on_complete=self._on_board_move_complete)
 
                     if self._T_world_tcp is not None:
-                        if (_board_state == "moving_board"
+                        if not self._board_ar_visual_enabled:
+                            _grip_visual_state = "idle"
+                        elif (_board_state == "moving_board"
                                 or (self._robot_state == "moving_to_pose"
                                     and self._motion_source == "object")):
                             _grip_visual_state = "moving"
-                        elif _board_state == "holding_board":
+                        elif _board_state in ("waiting_for_board",
+                                              "holding_board",
+                                              "release_armed"):
                             _grip_visual_state = "grabbed"
                         else:
                             _grip_visual_state = "idle"
@@ -2758,9 +2763,7 @@ class MainScene:
                         "grasping", "grasped", "retracting",
                         "waiting_for_handover_pull"))
                 self.vis.set_tcp_gripper_closed(
-                    (_board_vis_closed or _tool_vis_closed)
-                    if self._gripper_vis_override_closed is None
-                    else self._gripper_vis_override_closed)
+                    _board_vis_closed or _tool_vis_closed)
                 if self._T_world_tcp is not None:
                     self.vis.update_tcp(self._T_world_tcp)
                 self.vis.update_tcp_target(self._tcp_target_T)
@@ -2772,10 +2775,11 @@ class MainScene:
                 # Keep the visible BoardAR workpiece attached to the actual
                 # robot TCP; the released AR target remains debug-only.
                 _show_board_ar = (
-                    self._gripper_vis_override_closed is True
-                    or (self.robot is not None
-                        and self.robot.board_state in (
-                            "holding_board", "moving_board", "release_armed")))
+                    self._board_ar_visual_enabled
+                    and self.robot is not None
+                    and self.robot.board_state in (
+                        "waiting_for_board", "holding_board",
+                        "moving_board", "release_armed"))
                 self.vis.update_board_ar_from_tcp(
                     self._T_world_tcp if _show_board_ar else None,
                     cfg.BOX_FORWARD_OFFSET)
@@ -2897,12 +2901,11 @@ class MainScene:
                     # Toggle jog mode — the GUI sync block handles robot commands
                     self.jog_gui.set_active(not self.jog_gui.active)
                 elif key == ord('g') or key == ord('G'):
-                    self._gripper_vis_override_closed = not bool(
-                        self._gripper_vis_override_closed)
-                    _gripper_word = ("CLOSED" if self._gripper_vis_override_closed
-                                     else "OPEN")
-                    print(f"[SceneVis] Gripper visual override: {_gripper_word}; "
-                          f"BoardAR offset={cfg.BOX_FORWARD_OFFSET:.3f} m")
+                    self._board_ar_visual_enabled = (
+                        not self._board_ar_visual_enabled)
+                    _word = "ON" if self._board_ar_visual_enabled else "OFF"
+                    print(f"[BoardAR] AR board pose + handle visualization: "
+                          f"{_word}; offset={cfg.BOX_FORWARD_OFFSET:.3f} m")
                 elif key == ord('r') or key == ord('R'):
                     if (self.robot is not None
                             and self.anchor.T_pegboard_in_world is not None):
