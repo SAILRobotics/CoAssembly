@@ -79,6 +79,7 @@ public class WorkholdingBoxReceiver : MonoBehaviour
     private Renderer[]       _renderers;
     private Material         _boardMaterial;
     private Renderer[]       _targetGripperRenderers;
+    private Material         _targetGripperMaterial;
     private MaterialPropertyBlock _targetGripperColorBlock;
     private bool             _loggedShow;
     private string           _lastProximityState = "";
@@ -110,6 +111,7 @@ public class WorkholdingBoxReceiver : MonoBehaviour
         {
             _targetGripperRenderers = targetGripper.GetComponentsInChildren<Renderer>(true);
             _targetGripperColorBlock = new MaterialPropertyBlock();
+            ApplyTargetGripperMaterial();
             SetRenderersVisible(_targetGripperRenderers, false);
         }
 
@@ -243,37 +245,63 @@ public class WorkholdingBoxReceiver : MonoBehaviour
 
     private void ApplyTargetGripperMaterial()
     {
-        if (!overrideTargetGripperMaterial || _targetGripperRenderers == null) return;
+        if (_targetGripperRenderers == null) return;
 
-        Shader shader = Shader.Find("Universal Render Pipeline/Lit");
-        if (shader == null) shader = Shader.Find("Standard");
-        if (shader == null) return;
+        if (overrideTargetGripperMaterial)
+        {
+            Shader shader = Shader.Find("Universal Render Pipeline/Lit");
+            if (shader == null) shader = Shader.Find("Standard");
+            if (shader == null) return;
 
-        _targetGripperMaterial = new Material(shader) { name = "WorkholdingTargetGripper_Ghost" };
-        Color color = targetGripperTint;
-        color.a = targetGripperAlpha;
-        _targetGripperMaterial.color = color;
+            _targetGripperMaterial = new Material(shader) { name = "WorkholdingTargetGripper_Ghost" };
+            if (_targetGripperMaterial.HasProperty("_Surface")) _targetGripperMaterial.SetFloat("_Surface", 1f);
+            if (_targetGripperMaterial.HasProperty("_Blend")) _targetGripperMaterial.SetFloat("_Blend", 0f);
+            if (_targetGripperMaterial.HasProperty("_SrcBlend")) _targetGripperMaterial.SetFloat("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.SrcAlpha);
+            if (_targetGripperMaterial.HasProperty("_DstBlend")) _targetGripperMaterial.SetFloat("_DstBlend", (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+            if (_targetGripperMaterial.HasProperty("_ZWrite")) _targetGripperMaterial.SetFloat("_ZWrite", 0f);
 
-        if (_targetGripperMaterial.HasProperty("_BaseColor")) _targetGripperMaterial.SetColor("_BaseColor", color);
-        if (_targetGripperMaterial.HasProperty("_Color")) _targetGripperMaterial.SetColor("_Color", color);
-        if (_targetGripperMaterial.HasProperty("_Surface")) _targetGripperMaterial.SetFloat("_Surface", 1f);
-        if (_targetGripperMaterial.HasProperty("_Blend")) _targetGripperMaterial.SetFloat("_Blend", 0f);
-        if (_targetGripperMaterial.HasProperty("_SrcBlend")) _targetGripperMaterial.SetFloat("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.SrcAlpha);
-        if (_targetGripperMaterial.HasProperty("_DstBlend")) _targetGripperMaterial.SetFloat("_DstBlend", (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-        if (_targetGripperMaterial.HasProperty("_ZWrite")) _targetGripperMaterial.SetFloat("_ZWrite", 0f);
-
-        _targetGripperMaterial.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
-        _targetGripperMaterial.EnableKeyword("_ALPHABLEND_ON");
-        _targetGripperMaterial.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+            _targetGripperMaterial.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+            _targetGripperMaterial.EnableKeyword("_ALPHABLEND_ON");
+            _targetGripperMaterial.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+        }
 
         foreach (var r in _targetGripperRenderers)
         {
             if (r == null) continue;
-            r.sharedMaterial = _targetGripperMaterial;
+            if (_targetGripperMaterial != null)
+                r.sharedMaterial = _targetGripperMaterial;
             r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             r.receiveShadows = false;
         }
+        ApplyTargetGripperColor(targetGripperTint);
     }
+
+    private void ApplyTargetGripperColor(Color color)
+    {
+        if (_targetGripperRenderers == null) return;
+        color.a = targetGripperAlpha;
+
+        if (_targetGripperMaterial != null)
+        {
+            _targetGripperMaterial.color = color;
+            if (_targetGripperMaterial.HasProperty("_BaseColor"))
+                _targetGripperMaterial.SetColor("_BaseColor", color);
+            if (_targetGripperMaterial.HasProperty("_Color"))
+                _targetGripperMaterial.SetColor("_Color", color);
+        }
+
+        if (_targetGripperColorBlock == null)
+            _targetGripperColorBlock = new MaterialPropertyBlock();
+        foreach (Renderer renderer in _targetGripperRenderers)
+        {
+            if (renderer == null) continue;
+            renderer.GetPropertyBlock(_targetGripperColorBlock);
+            _targetGripperColorBlock.SetColor("_BaseColor", color);
+            _targetGripperColorBlock.SetColor("_Color", color);
+            renderer.SetPropertyBlock(_targetGripperColorBlock);
+        }
+    }
+
     private void ApplyBoardColor(Color color)
     {
         if (_boardMaterial == null) return;
@@ -283,6 +311,7 @@ public class WorkholdingBoxReceiver : MonoBehaviour
             _boardMaterial.SetColor("_BaseColor", color);
         if (_boardMaterial.HasProperty("_Color"))
             _boardMaterial.SetColor("_Color", color);
+        ApplyTargetGripperColor(color);
         _lastProximityState = "";
     }
 
@@ -300,19 +329,7 @@ public class WorkholdingBoxReceiver : MonoBehaviour
             _boardMaterial.SetColor("_BaseColor", color);
         if (_boardMaterial.HasProperty("_Color"))
             _boardMaterial.SetColor("_Color", color);
-        if (_targetGripperRenderers != null && _targetGripperColorBlock != null)
-        {
-            Color solidColor = color;
-            solidColor.a = 1f;
-            foreach (Renderer renderer in _targetGripperRenderers)
-            {
-                if (renderer == null) continue;
-                renderer.GetPropertyBlock(_targetGripperColorBlock);
-                _targetGripperColorBlock.SetColor("_BaseColor", solidColor);
-                _targetGripperColorBlock.SetColor("_Color", solidColor);
-                renderer.SetPropertyBlock(_targetGripperColorBlock);
-            }
-        }
+        ApplyTargetGripperColor(color);
         _lastProximityState = state;
     }
 
