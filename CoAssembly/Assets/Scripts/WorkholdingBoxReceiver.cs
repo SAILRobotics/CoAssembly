@@ -42,6 +42,9 @@ public class WorkholdingBoxReceiver : MonoBehaviour
     public GameObject targetGripper;
     public bool showTargetGripper = true;
     public float targetGripperForwardOffset = 0.23215f;
+    public bool overrideTargetGripperMaterial = true;
+    [Range(0f, 1f)] public float targetGripperAlpha = 0.18f;
+    public Color targetGripperTint = new Color(0.70f, 0.84f, 1.00f, 1f);
 
     [Header("Parent")]
     public Transform worldRoot;
@@ -75,6 +78,7 @@ public class WorkholdingBoxReceiver : MonoBehaviour
     private Renderer[]       _renderers;
     private Material         _boardMaterial;
     private Renderer[]       _targetGripperRenderers;
+    private Material         _targetGripperMaterial;
     private bool             _loggedShow;
     private string           _lastProximityState = "";
 
@@ -104,6 +108,7 @@ public class WorkholdingBoxReceiver : MonoBehaviour
         if (targetGripper != null)
         {
             _targetGripperRenderers = targetGripper.GetComponentsInChildren<Renderer>(true);
+            ApplyTargetGripperMaterial();
             SetRenderersVisible(_targetGripperRenderers, false);
         }
 
@@ -235,6 +240,39 @@ public class WorkholdingBoxReceiver : MonoBehaviour
             if (r != null) r.sharedMaterial = _boardMaterial;
     }
 
+    private void ApplyTargetGripperMaterial()
+    {
+        if (!overrideTargetGripperMaterial || _targetGripperRenderers == null) return;
+
+        Shader shader = Shader.Find("Universal Render Pipeline/Lit");
+        if (shader == null) shader = Shader.Find("Standard");
+        if (shader == null) return;
+
+        _targetGripperMaterial = new Material(shader) { name = "WorkholdingTargetGripper_Ghost" };
+        Color color = targetGripperTint;
+        color.a = targetGripperAlpha;
+        _targetGripperMaterial.color = color;
+
+        if (_targetGripperMaterial.HasProperty("_BaseColor")) _targetGripperMaterial.SetColor("_BaseColor", color);
+        if (_targetGripperMaterial.HasProperty("_Color")) _targetGripperMaterial.SetColor("_Color", color);
+        if (_targetGripperMaterial.HasProperty("_Surface")) _targetGripperMaterial.SetFloat("_Surface", 1f);
+        if (_targetGripperMaterial.HasProperty("_Blend")) _targetGripperMaterial.SetFloat("_Blend", 0f);
+        if (_targetGripperMaterial.HasProperty("_SrcBlend")) _targetGripperMaterial.SetFloat("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.SrcAlpha);
+        if (_targetGripperMaterial.HasProperty("_DstBlend")) _targetGripperMaterial.SetFloat("_DstBlend", (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+        if (_targetGripperMaterial.HasProperty("_ZWrite")) _targetGripperMaterial.SetFloat("_ZWrite", 0f);
+
+        _targetGripperMaterial.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+        _targetGripperMaterial.EnableKeyword("_ALPHABLEND_ON");
+        _targetGripperMaterial.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+
+        foreach (var r in _targetGripperRenderers)
+        {
+            if (r == null) continue;
+            r.sharedMaterial = _targetGripperMaterial;
+            r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            r.receiveShadows = false;
+        }
+    }
     private void ApplyBoardColor(Color color)
     {
         if (_boardMaterial == null) return;
@@ -277,6 +315,8 @@ public class WorkholdingBoxReceiver : MonoBehaviour
         if (_thread?.IsAlive == true) _thread.Join(500);
         if (_boardMaterial != null)
             Destroy(_boardMaterial);
+        if (_targetGripperMaterial != null)
+            Destroy(_targetGripperMaterial);
         NetMQManager.UnregisterReceiver();
     }
 }
