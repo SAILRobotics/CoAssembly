@@ -29,6 +29,11 @@ public class GripStateReceiver : MonoBehaviour
     [Header("Target reached")]
     [Min(0f)] public float targetPositionTolerance = 0.05f;
     [Range(0f, 180f)] public float targetAngleToleranceDeg = 15f;
+    [Min(0f)] public float resultColorDuration = 0.75f;
+    public Color manipulatingColor = Color.cyan;
+    public Color movingColor = Color.yellow;
+    public Color reachedColor = Color.green;
+    public Color failedColor = Color.red;
 
     [Header("NetMQ")]
     [SerializeField] private int port = 5012;
@@ -58,6 +63,10 @@ public class GripStateReceiver : MonoBehaviour
     private string _prevGripState = "";
     private bool   _prevIsGrabbed;
     private bool   _boxFrozen;
+    private bool   _resultVisible;
+    private float  _hideBoxAt;
+    private Renderer[] _boardRenderers;
+    private MaterialPropertyBlock _boardColorBlock;
 
     private static readonly Quaternion BoardMeshCorrection =
         Quaternion.AngleAxis(90f, Vector3.forward)
@@ -89,6 +98,11 @@ public class GripStateReceiver : MonoBehaviour
     {
         if (arBox    != null) arBox.SetActive(false);
         if (arHandle != null) arHandle.SetActive(false);
+        if (arBox != null)
+        {
+            _boardRenderers = arBox.GetComponentsInChildren<Renderer>(true);
+            _boardColorBlock = new MaterialPropertyBlock();
+        }
 
         NetMQManager.RegisterReceiver();
         _running = true;
@@ -135,6 +149,12 @@ public class GripStateReceiver : MonoBehaviour
 
     private void Update()
     {
+        if (_resultVisible && Time.time >= _hideBoxAt)
+        {
+            _resultVisible = false;
+            if (arBox != null) arBox.SetActive(false);
+        }
+
         PoseData latest = null;
         while (_queue.TryDequeue(out var d)) latest = d;
         if (latest == null) return;
@@ -145,7 +165,18 @@ public class GripStateReceiver : MonoBehaviour
         bool cancelled    = latest.gripState == "idle";
 
         // Freeze the box the instant the user releases — before Python even transitions to 'moving'
-        if (_prevIsGrabbed && !grabbed) _boxFrozen = true;
+        if (grabbed && !_prevIsGrabbed)
+        {
+            _resultVisible = false;
+            SetBoardColor(manipulatingColor);
+        }
+        if (_prevIsGrabbed && !grabbed)
+        {
+            _boxFrozen = true;
+            _resultVisible = false;
+            if (arBox != null) arBox.SetActive(true);
+            SetBoardColor(movingColor);
+        }
         if (cancelled) _boxFrozen = false;
 
         // Grip mode cancelled — hide everything and reset
@@ -155,6 +186,7 @@ public class GripStateReceiver : MonoBehaviour
             if (arHandle != null) arHandle.SetActive(false);
             _prevGripState = "";
             _prevIsGrabbed = false;
+            _resultVisible = false;
             return;
         }
 
@@ -172,7 +204,7 @@ public class GripStateReceiver : MonoBehaviour
             if (targetReached)
             {
                 _boxFrozen = false;
-                arBox.SetActive(false);
+                ShowResultColor(reachedColor);
                 Debug.Log($"[GripStateReceiver] Target reached — "
                     + $"{positionError * 100f:F1} cm / {angleError:F1} deg");
             }
@@ -184,13 +216,13 @@ public class GripStateReceiver : MonoBehaviour
         if (moveComplete && !targetReached && arBox != null)
         {
             _boxFrozen = false;
-            arBox.SetActive(false);
+            ShowResultColor(failedColor);
             Debug.Log("[GripStateReceiver] Robot move ended before target "
                 + "was reached — hiding target");
         }
 
         // Update box transform to follow claw only while idle and not frozen at a target
-        if (arBox != null && !grabbed && !_boxFrozen)
+        if (arBox != null && !grabbed && !_boxFrozen && !_resultVisible)
         {
             arBox.transform.SetParent(worldRoot, false);
             arBox.transform.localPosition = latest.boxPos;
@@ -211,7 +243,7 @@ public class GripStateReceiver : MonoBehaviour
                 arHandle.transform.SetParent(worldRoot, false);
                 arHandle.transform.position = arBox.transform.position
                     - arBox.transform.rotation * Vector3.right * 0.0075f
-                    - arBox.transform.rotation * Vector3.forward * 0.1400f;
+                    - arBox.transform.rotation * Vector3.forward * 0.1500f;
                 arHandle.transform.rotation = arBox.transform.rotation
                     * Quaternion.AngleAxis(180f, Vector3.right);
             }
@@ -219,6 +251,28 @@ public class GripStateReceiver : MonoBehaviour
 
         _prevGripState = latest.gripState;
         _prevIsGrabbed  = grabbed;
+    }
+
+    private void ShowResultColor(Color color)
+    {
+        if (arBox == null) return;
+        arBox.SetActive(true);
+        SetBoardColor(color);
+        _resultVisible = true;
+        _hideBoxAt = Time.time + resultColorDuration;
+    }
+
+    private void SetBoardColor(Color color)
+    {
+        if (_boardRenderers == null || _boardColorBlock == null) return;
+        foreach (Renderer renderer in _boardRenderers)
+        {
+            if (renderer == null) continue;
+            renderer.GetPropertyBlock(_boardColorBlock);
+            _boardColorBlock.SetColor("_BaseColor", color);
+            _boardColorBlock.SetColor("_Color", color);
+            renderer.SetPropertyBlock(_boardColorBlock);
+        }
     }
 
     private void OnDestroy()
