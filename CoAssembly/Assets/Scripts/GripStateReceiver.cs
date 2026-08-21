@@ -26,6 +26,10 @@ public class GripStateReceiver : MonoBehaviour
     [Header("Parent")]
     public Transform worldRoot;
 
+    [Header("Target reached")]
+    [Min(0f)] public float targetPositionTolerance = 0.05f;
+    [Range(0f, 180f)] public float targetAngleToleranceDeg = 15f;
+
     [Header("NetMQ")]
     [SerializeField] private int port = 5012;
 
@@ -51,7 +55,7 @@ public class GripStateReceiver : MonoBehaviour
     private volatile bool     _running;
     private readonly ConcurrentQueue<PoseData> _queue = new();
 
-    private string _prevGripState  = "";
+    private string _prevGripState = "";
     private bool   _prevIsGrabbed;
     private bool   _boxFrozen;
 
@@ -142,7 +146,7 @@ public class GripStateReceiver : MonoBehaviour
 
         // Freeze the box the instant the user releases — before Python even transitions to 'moving'
         if (_prevIsGrabbed && !grabbed) _boxFrozen = true;
-        if (moveComplete || cancelled)  _boxFrozen = false;
+        if (cancelled) _boxFrozen = false;
 
         // Grip mode cancelled — hide everything and reset
         if (cancelled)
@@ -154,6 +158,37 @@ public class GripStateReceiver : MonoBehaviour
             return;
         }
 
+        // Keep the released board frozen as the desired target while the
+        // robot moves. It is hidden below when reached or when motion ends.
+        bool targetReached = false;
+        if (_boxFrozen && arBox != null)
+        {
+            float positionError = Vector3.Distance(
+                arBox.transform.localPosition, latest.boxPos);
+            float angleError = Quaternion.Angle(
+                arBox.transform.localRotation, latest.boxRot);
+            targetReached = positionError < targetPositionTolerance
+                && angleError < targetAngleToleranceDeg;
+            if (targetReached)
+            {
+                _boxFrozen = false;
+                arBox.SetActive(false);
+                Debug.Log($"[GripStateReceiver] Target reached — "
+                    + $"{positionError * 100f:F1} cm / {angleError:F1} deg");
+            }
+        }
+
+        // moving → grabbed means the server ended the motion. If the pose did
+        // not satisfy the target criterion, treat it as a failed move and
+        // remove the stale target visualization as well.
+        if (moveComplete && !targetReached && arBox != null)
+        {
+            _boxFrozen = false;
+            arBox.SetActive(false);
+            Debug.Log("[GripStateReceiver] Robot move ended before target "
+                + "was reached — hiding target");
+        }
+
         // Update box transform to follow claw only while idle and not frozen at a target
         if (arBox != null && !grabbed && !_boxFrozen)
         {
@@ -163,10 +198,6 @@ public class GripStateReceiver : MonoBehaviour
             if (applyIncomingBoxSize)
                 arBox.transform.localScale = latest.boxSize;
         }
-
-        // Hide box when robot finishes moving; ARManipulationHandle shows it on each grab
-        if (moveComplete && arBox != null)
-            arBox.SetActive(false);
 
         // Keep the handle on the box's near face whenever the box follows the
         // live TCP (including physical freedrive). While the user is grabbing
@@ -181,11 +212,12 @@ public class GripStateReceiver : MonoBehaviour
                 arHandle.transform.position = arBox.transform.position
                     - arBox.transform.rotation * Vector3.right * 0.0075f
                     - arBox.transform.rotation * Vector3.forward * 0.1400f;
-                arHandle.transform.rotation = arBox.transform.rotation;
+                arHandle.transform.rotation = arBox.transform.rotation
+                    * Quaternion.AngleAxis(180f, Vector3.right);
             }
         }
 
-        _prevGripState  = latest.gripState;
+        _prevGripState = latest.gripState;
         _prevIsGrabbed  = grabbed;
     }
 

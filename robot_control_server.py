@@ -162,6 +162,10 @@ class RobotControlServer:
     _MOVE_ANGLE_TOL_RAD      = np.deg2rad(10.0)
     _BOARD_MOVE_POS_TOL_M    = 0.01
     _BOARD_MOVE_ANGLE_TOL_RAD = np.deg2rad(3.0)
+    # Study completion is intentionally identical for AR and freedrive. Tight
+    # 1 cm/3 deg values remain an IK-validation criterion, not a study result.
+    _WORKHOLDING_MOVE_POS_TOL_M = 0.05
+    _WORKHOLDING_MOVE_ANGLE_TOL_RAD = np.deg2rad(15.0)
     _MOVE_DWELL_S            = 0.30
     _MOVE_STALL_TIMEOUT_S     = 3.0
     _MOVE_PROGRESS_POS_M      = 0.002
@@ -174,6 +178,12 @@ class RobotControlServer:
     _SIM_BOARD_SMOOTH_ALPHA  = 0.55
     _SERVO_LOOKAHEAD_S       = 0.08
     _SERVO_GAIN              = 400
+    _WORKHOLDING_EMA_ALPHA   = 1.00
+    _WORKHOLDING_LOOKAHEAD_S = 0.03
+    _WORKHOLDING_GAIN        = 500
+    _WORKHOLDING_OSC_SPEED_SCALE = 1.15
+    _WORKHOLDING_BRAKE_DIST_M = 0.06
+    _WORKHOLDING_BRAKE_ANGLE_RAD = np.deg2rad(10.0)
 
     def __init__(self, quest_ip: str, robot_ip: "str | None", simulation: bool,
                  use_calibrated_robot_base: bool, gripper_collision: bool,
@@ -250,10 +260,12 @@ class RobotControlServer:
         self._move_smooth_q:    "np.ndarray | None" = None
         self._move_conv_start:  "float | None"      = None  # perf_counter when TCP first meets pose tolerances
         self._move_diag_t:      float               = 0.0   # last convergence-status print time
+        self._move_pybullet_q_target: "np.ndarray | None" = None
         self._move_best_dist:   float               = float('inf')
         self._move_best_angle:  float               = float('inf')
         self._move_progress_t:  float               = 0.0
         self._move_is_board:    bool                = False
+        self._move_motion_profile: str              = "default"
 
         # Direct joint move used by gearbox step selection.
         self._joint_move_target: "np.ndarray | None" = None
@@ -298,6 +310,11 @@ class RobotControlServer:
               f"EMA={self._SERVO_EMA_ALPHA:.2f}, "
               f"lookahead={self._SERVO_LOOKAHEAD_S:.2f} s, "
               f"gain={self._SERVO_GAIN}")
+        print(f"[RobotServer] Workholding profile: EMA="
+              f"{self._WORKHOLDING_EMA_ALPHA:.2f}, "
+              f"lookahead={self._WORKHOLDING_LOOKAHEAD_S:.2f} s, "
+              f"gain={self._WORKHOLDING_GAIN}, "
+              f"OSC speed={self._WORKHOLDING_OSC_SPEED_SCALE:.2f}x")
         print(f"[RobotServer] Stop/clamp: "
               f"{self._MOVE_POS_TOL_M*100:.0f} cm/"
               f"{np.rad2deg(self._MOVE_ANGLE_TOL_RAD):.0f} deg for "
@@ -405,6 +422,7 @@ class RobotControlServer:
                 quat = msg.get("quat"),
                 board_move      = bool(msg.get("board_move", False)),
                 force_pybullet_ik = bool(msg.get("force_pybullet_ik", False)),
+                motion_profile  = str(msg.get("motion_profile", "default")),
                 on_complete = lambda ok, rid=rid: self._publish_event(
                     "move_done", rid, ok=bool(ok)))
 
@@ -972,6 +990,7 @@ class RobotControlServer:
 
     def move_to_pose(self, pos, quat=None, board_move: bool = False,
                      force_pybullet_ik: bool = False,
+                     motion_profile: str = "default",
                      on_complete: "Callable[[bool], None] | None" = None) -> None:
         """Stream IK+CBF servoJ toward a fixed Cartesian target until convergence."""
         if self._startup_active:
@@ -1020,17 +1039,22 @@ class RobotControlServer:
         self._move_target_quat = np.asarray(quat, float) if quat is not None else None
         self._move_on_complete = on_complete
         self._move_smooth_q    = None
+        self._move_pybullet_q_target = None
         self._move_conv_start  = None
         self._move_diag_t      = 0.0
         self._move_force_pybullet_ik = force_pybullet_ik
         self._move_is_board     = bool(board_move)
+        self._move_motion_profile = (
+            "workholding" if motion_profile == "workholding" else "default")
         self._reset_move_progress()
         self._move_phase       = 'moving_to_pose'
         if board_move:
             # Acceleration during motion must not look like a release pull.
             self._arm_board_force(None)
             self._set_board_state("moving_board")
-        print(f"[Robot] move_to_pose start → {np.round(self._move_target_pos, 3).tolist()}")
+        print(f"[Robot] move_to_pose start "
+              f"(profile={self._move_motion_profile}) → "
+              f"{np.round(self._move_target_pos, 3).tolist()}")
 
     def update_move_target(self, pos, quat=None) -> None:
         """Update the Cartesian target of an in-progress move without restarting the controller."""
@@ -1042,6 +1066,9 @@ class RobotControlServer:
             cfg.project_robot_target_position(pos, origin), float)
         if quat is not None:
             self._move_target_quat = np.asarray(quat, float)
+        # The PyBullet controller uses one stable joint-space solution per
+        # Cartesian target. A P/N target change requires a fresh solution.
+        self._move_pybullet_q_target = None
         # A replacement target gets its own progress window.  This prevents an
         # old unreachable AR pose from timing out a newly released pose.
         self._reset_move_progress()
@@ -1062,8 +1089,10 @@ class RobotControlServer:
         self._move_target_pos  = None
         self._move_target_quat = None
         self._move_smooth_q    = None
+        self._move_pybullet_q_target = None
         self._move_conv_start  = None
         self._move_is_board    = False
+        self._move_motion_profile = "default"
         self._reset_move_progress()
         if not self.simulation:
             self.servoStop()
@@ -1092,10 +1121,14 @@ class RobotControlServer:
         # measured outer-loop dt can include servoJ blocking time and scheduling
         # jitter, which otherwise feeds back into the next command.
         control_dt = dt if self.simulation else 1.0 / self.control_hz
-        pos_tol = (self._BOARD_MOVE_POS_TOL_M
-                   if self._move_is_board else self._MOVE_POS_TOL_M)
-        angle_tol = (self._BOARD_MOVE_ANGLE_TOL_RAD
-                     if self._move_is_board else self._MOVE_ANGLE_TOL_RAD)
+        if self._move_motion_profile == "workholding":
+            pos_tol = self._WORKHOLDING_MOVE_POS_TOL_M
+            angle_tol = self._WORKHOLDING_MOVE_ANGLE_TOL_RAD
+        else:
+            pos_tol = (self._BOARD_MOVE_POS_TOL_M
+                       if self._move_is_board else self._MOVE_POS_TOL_M)
+            angle_tol = (self._BOARD_MOVE_ANGLE_TOL_RAD
+                         if self._move_is_board else self._MOVE_ANGLE_TOL_RAD)
 
         q_cur = self.pb_scene.current_q.copy()
 
@@ -1178,7 +1211,10 @@ class RobotControlServer:
             target_rot = ScipyR.from_quat(target_quat).as_matrix()
             try:
                 q_target = self._frax.servo_step(
-                    target_pos, target_rot, q_cur, control_dt)
+                    target_pos, target_rot, q_cur, control_dt,
+                    speed_scale=(self._WORKHOLDING_OSC_SPEED_SCALE
+                                 if self._move_motion_profile == "workholding"
+                                 else 1.0))
             except Exception as _e:
                 print(f"[Robot] servo_step error: {_e}")
                 q_target = q_cur
@@ -1186,8 +1222,18 @@ class RobotControlServer:
             # larger scale preserves wrist motion when translation has already
             # converged but a significant orientation error remains.
             if T_tcp is not None:
-                pos_scale = min(dist / self._MOVE_BRAKE_DIST_M, 1.0)
-                rot_scale = min(angle_err / self._MOVE_BRAKE_ANGLE_RAD, 1.0)
+                if self._move_motion_profile == "workholding":
+                    # Smoothstep gives zero slope where braking begins and a
+                    # gentler final approach than the previous linear scale.
+                    # Full OSC speed is retained outside this short zone.
+                    pos_x = min(dist / self._WORKHOLDING_BRAKE_DIST_M, 1.0)
+                    rot_x = min(
+                        angle_err / self._WORKHOLDING_BRAKE_ANGLE_RAD, 1.0)
+                    pos_scale = pos_x * pos_x * (3.0 - 2.0 * pos_x)
+                    rot_scale = rot_x * rot_x * (3.0 - 2.0 * rot_x)
+                else:
+                    pos_scale = min(dist / self._MOVE_BRAKE_DIST_M, 1.0)
+                    rot_scale = min(angle_err / self._MOVE_BRAKE_ANGLE_RAD, 1.0)
                 motion_scale = max(self._MOVE_SCALE_FLOOR,
                                    pos_scale, rot_scale)
             else:
@@ -1195,8 +1241,28 @@ class RobotControlServer:
             q_target = q_cur + (q_target - q_cur) * motion_scale
         else:
             # PyBullet IK + rate-limit (fallback or --no-diff-ik)
-            q_ik = self.pb_scene.solve_ik(q_cur, target_pos, target_quat)
-            q_ik = _wrap_nearest(q_ik, q_cur)
+            # Solve once for a fixed pose. Re-solving from the changing current
+            # configuration can jump between redundant UR joint branches and
+            # makes the CBF chase a moving joint-space target.
+            if self._move_pybullet_q_target is None:
+                ik_pos_tol = (self._BOARD_MOVE_POS_TOL_M
+                              if self._move_motion_profile == "workholding"
+                              else pos_tol)
+                ik_angle_tol = (self._BOARD_MOVE_ANGLE_TOL_RAD
+                                if self._move_motion_profile == "workholding"
+                                else angle_tol)
+                q_ik = self.pb_scene.solve_ik(
+                    q_cur, target_pos, target_quat,
+                    pos_tol=ik_pos_tol, orient_tol=ik_angle_tol)
+                q_ik = _wrap_nearest(q_ik, q_cur)
+
+                # solve_ik places the headless PyBullet robot at the candidate
+                # while checking FK; restore the actual configuration before
+                # beginning the rate-limited motion.
+                self.pb_scene.update_robot(q_cur)
+                self._move_pybullet_q_target = q_ik
+                print("[Robot] PyBullet IK target fixed for this move")
+            q_ik = self._move_pybullet_q_target
             sc        = self._speed_scale
             if T_tcp is not None:
                 pos_scale = min(dist / self._MOVE_BRAKE_DIST_M, 1.0)
@@ -1213,9 +1279,10 @@ class RobotControlServer:
                 # Still apply CBF safety filter even in IK mode
                 qdot = (q_target - q_cur) / max(control_dt, 1e-6)
                 try:
-                    q_target = q_cur + np.asarray(
+                    qdot_safe = np.asarray(
                         self._frax._cbf.safety_filter(
-                            _jnp.array(q_cur), _jnp.array(qdot))) * control_dt
+                            _jnp.array(q_cur), _jnp.array(qdot)))
+                    q_target = q_cur + qdot_safe * control_dt
                 except Exception:
                     pass
             if np.linalg.norm(q_target - q_cur) < 1e-4:
@@ -1237,16 +1304,22 @@ class RobotControlServer:
             self.pb_scene.update_robot(self._move_smooth_q)
         else:
             # EMA smoothing to damp servoJ jitter
+            workholding_profile = self._move_motion_profile == "workholding"
             if self._move_smooth_q is None:
                 self._move_smooth_q = q_target.copy()
             else:
-                alpha = (self._BOARD_SERVO_EMA_ALPHA
-                         if self._move_is_board else self._SERVO_EMA_ALPHA)
+                alpha = (self._WORKHOLDING_EMA_ALPHA
+                         if workholding_profile else
+                         (self._BOARD_SERVO_EMA_ALPHA
+                          if self._move_is_board else self._SERVO_EMA_ALPHA))
                 self._move_smooth_q = (alpha * q_target
                                        + (1.0 - alpha) * self._move_smooth_q)
+            lookahead = (self._WORKHOLDING_LOOKAHEAD_S
+                         if workholding_profile else self._SERVO_LOOKAHEAD_S)
+            gain = (self._WORKHOLDING_GAIN
+                    if workholding_profile else self._SERVO_GAIN)
             self.servoJ(self._move_smooth_q, control_dt,
-                        lookahead=self._SERVO_LOOKAHEAD_S,
-                        gain=self._SERVO_GAIN)
+                        lookahead=lookahead, gain=gain)
 
     # ── Grasp command ─────────────────────────────────────────────────────────
 
