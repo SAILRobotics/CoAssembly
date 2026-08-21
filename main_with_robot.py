@@ -1829,6 +1829,7 @@ class MainScene:
         self._tracking_hand_side: "str | None"           = None   # 'left' | 'right' while tracking
         self._last_ar_board_T: "np.ndarray | None"    = None   # last AR box pose from _GripPoseBridge; persists between polls
         self._last_tcp_color_state: "str | None"      = None
+        self._board_regrasp_available: bool            = False
         self._pending_grasp_tool_id: "int | None"           = None   # tool ID being grasped (set on click, not yet read back)
         self._grasped_objects: list                          = []     # [(id, name)] of successfully grasped objects (cancelled grasps excluded)
         self._handed_over_objects: list                      = []     # [(id, name)] released successfully to the human
@@ -2051,8 +2052,15 @@ class MainScene:
     def _sync_tcp_board_color(self) -> None:
         """Make TCPMarker ID 200 reflect the server-owned board latch state."""
         state = self.robot.board_state if self.robot is not None else "inactive"
+        previous_state = self._last_tcp_color_state
         if state == self._last_tcp_color_state:
             return
+        if previous_state == "release_armed" and state == "inactive":
+            self._board_regrasp_available = True
+            print("[Board] Release complete — click the gripper to rearm "
+                  "board grasp at its current pose")
+        elif state == "holding_board":
+            self._board_regrasp_available = False
         self._last_tcp_color_state = state
         if state in ("waiting_for_board", "release_armed"):
             color = _ToolSelectionManager.TCP_READY_COLOR
@@ -2239,10 +2247,16 @@ class MainScene:
         return T
 
     def _board_allows_unrelated_motion(self) -> bool:
-        """A simulated hold is only an AR affordance, not a physical lock."""
+        """Allow other work when no board is latched.
+
+        ``waiting_for_board`` only means the open gripper/contact monitor is
+        armed. A concrete tool/part command may cancel that wait; the server's
+        motion preparation performs the matching state/force cleanup before
+        executing the grasp.
+        """
         if self.robot is None:
             return False
-        return (self.robot.board_state == "inactive"
+        return (self.robot.board_state in ("inactive", "waiting_for_board")
                 or (self.simulation
                     and self.robot.board_state == "holding_board"))
 
@@ -2590,6 +2604,13 @@ class MainScene:
                         self.robot.cancel_board_interaction()
                         self._summon_to_hand(opposing, _summon_pts)
                     elif (self.robot is not None
+                          and self.robot.board_state == "inactive"
+                          and self._board_regrasp_available):
+                        print("[TCP] Released board clicked → reopen gripper and "
+                              "wait for board reinsertion at current pose")
+                        self._board_regrasp_available = False
+                        self.robot.start_board_interaction()
+                    elif (self.robot is not None
                           and not self.robot.tool_grasp_running
                           and self._board_allows_unrelated_motion()
                           and self.anchor.locked):
@@ -2638,6 +2659,11 @@ class MainScene:
                         _name = self.tool_layout.get_name(_tid)
                         _seq  = 'approach→grasp→lift→above_approach' if _cat == 'part' else 'approach→grasp→retract'
                         if _gj is not None:
+                            if self.robot.board_state == "waiting_for_board":
+                                print("[Board] Tool/part selected while waiting "
+                                      "for board → cancelling board wait and "
+                                      "starting fetch")
+                                self._board_regrasp_available = False
                             print(f"[User] Clicked {_cat} '{_name}' (id={_tid}) → grasp sequence  "
                                   f"[{_hw}] joint-space moveJ  |  {_seq}")
                             self._robot_state = 'approaching'

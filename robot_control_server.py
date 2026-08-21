@@ -908,7 +908,7 @@ class RobotControlServer:
                     print(f"[Robot] Board gripper reopen failed: {e}")
                     self._arm_board_force(None)
                     return
-                self._set_board_state("inactive")
+                self._set_board_state("waiting_for_board")
                 self._arm_board_force("grasp")
         elif mode == "release" and self._board_state == "release_armed":
             print(f"[Robot] Board pull detected ({delta:.1f} N) → opening")
