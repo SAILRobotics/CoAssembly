@@ -64,6 +64,7 @@ public class GripStateReceiver : MonoBehaviour
     private bool   _prevIsGrabbed;
     private bool   _boxFrozen;
     private bool   _resultVisible;
+    private bool   _targetReachedForCurrentMove;
     private float  _hideBoxAt;
     private Renderer[] _boardRenderers;
     private MaterialPropertyBlock _boardColorBlock;
@@ -168,12 +169,14 @@ public class GripStateReceiver : MonoBehaviour
         if (grabbed && !_prevIsGrabbed)
         {
             _resultVisible = false;
+            _targetReachedForCurrentMove = false;
             SetBoardColor(manipulatingColor);
         }
         if (_prevIsGrabbed && !grabbed)
         {
             _boxFrozen = true;
             _resultVisible = false;
+            _targetReachedForCurrentMove = false;
             if (arBox != null) arBox.SetActive(true);
             SetBoardColor(movingColor);
         }
@@ -187,6 +190,7 @@ public class GripStateReceiver : MonoBehaviour
             _prevGripState = "";
             _prevIsGrabbed = false;
             _resultVisible = false;
+            _targetReachedForCurrentMove = false;
             return;
         }
 
@@ -204,6 +208,7 @@ public class GripStateReceiver : MonoBehaviour
             if (targetReached)
             {
                 _boxFrozen = false;
+                _targetReachedForCurrentMove = true;
                 ShowResultColor(reachedColor);
                 Debug.Log($"[GripStateReceiver] Target reached — "
                     + $"{positionError * 100f:F1} cm / {angleError:F1} deg");
@@ -213,13 +218,15 @@ public class GripStateReceiver : MonoBehaviour
         // moving → grabbed means the server ended the motion. If the pose did
         // not satisfy the target criterion, treat it as a failed move and
         // remove the stale target visualization as well.
-        if (moveComplete && !targetReached && arBox != null)
+        if (moveComplete && !_targetReachedForCurrentMove && arBox != null)
         {
             _boxFrozen = false;
             ShowResultColor(failedColor);
             Debug.Log("[GripStateReceiver] Robot move ended before target "
                 + "was reached — hiding target");
         }
+        if (moveComplete)
+            _targetReachedForCurrentMove = false;
 
         // Update box transform to follow claw only while idle and not frozen at a target
         if (arBox != null && !grabbed && !_boxFrozen && !_resultVisible)
