@@ -342,9 +342,9 @@ class _WorkholdingSceneVis(_SceneVis):
         self.vis.update_geometry(self._mode_sphere)
 
     def update_target_gripper(self, T_target_board: "np.ndarray | None",
-                              board_offset: float, reached: bool,
-                              reachable: bool) -> None:
-        """Show the TCP pose that would place the board at its target pose."""
+                              board_offset: float,
+                              proximity_state: str) -> None:
+        """Show the target TCP gripper using the target board's exact color."""
         if self._target_gripper_mesh is None:
             return
         if T_target_board is None:
@@ -355,18 +355,19 @@ class _WorkholdingSceneVis(_SceneVis):
         delta = T_new @ np.linalg.inv(self._target_gripper_T)
         self._target_gripper_mesh.transform(delta)
         self._target_gripper_T = T_new
-        color_state = ("unreachable" if not reachable
-                       else "reached" if reached else "unreached")
+        color_state = proximity_state if T_target_board is not None else "hidden"
         if color_state != self._target_gripper_color_state:
-            color = (self._TARGET_UNREACHABLE_COLOR if not reachable
-                     else self._TARGET_REACHED_COLOR if reached
-                     else self._TARGET_UNREACHED_COLOR)
+            color = {
+                "reached": self._TARGET_REACHED_COLOR,
+                "near": self._TARGET_NEAR_COLOR,
+                "far": self._TARGET_UNREACHED_COLOR,
+            }.get(color_state, self._TARGET_DEFAULT_COLOR)
             self._target_gripper_mesh.paint_uniform_color(color)
             self._target_gripper_color_state = color_state
         self.vis.update_geometry(self._target_gripper_mesh)
 
     def update_ar_handle(self, T_board: "np.ndarray | None") -> None:
-        """Show the handle at board-local [-7.5, -140, 0] mm, then Rx(90)."""
+        """Show the handle at board-local [-7.5, -150, 0] mm, then Rx(90)."""
         if self._ar_handle_mesh is None:
             return
         if T_board is None:
@@ -577,8 +578,10 @@ class WorkholdingStudy:
                             completed_pose_by_trial[trial_idx] = pose_idx
                         except (KeyError, TypeError, ValueError):
                             pass
+        self._completed_trial_indices = set(completed_trial_indices)
+        while self._trial_cursor in self._completed_trial_indices:
+            self._trial_cursor += 1
         if completed_trial_indices:
-            self._trial_cursor = max(completed_trial_indices) + 1
             for trial_idx, pose_idx in completed_pose_by_trial.items():
                 if (0 <= trial_idx < len(self._pose_order)
                         and self._pose_order[trial_idx] != pose_idx):
@@ -612,9 +615,11 @@ class WorkholdingStudy:
                     for row in data_rows:
                         remove = False
                         try:
+                            row_trial_idx = int(row[trial_col])
                             remove = (row[session_col] == session_name
                                       and row[mode_col] == mode
-                                      and int(row[trial_col]) >= self._trial_cursor)
+                                      and row_trial_idx not in
+                                      self._completed_trial_indices)
                         except (IndexError, TypeError, ValueError):
                             pass
                         if remove:
@@ -956,7 +961,7 @@ class WorkholdingStudy:
             self.vis.select_target(target_pose_idx, proximity_state)
         self._target_proximity_state = proximity_state
         self.vis.update_target_gripper(
-            T_target, cfg.BOX_FORWARD_OFFSET, reached, target_reachable)
+            T_target, cfg.BOX_FORWARD_OFFSET, proximity_state)
 
         if self._teach_mode:
             mode_state = "freedrive"
@@ -1067,6 +1072,8 @@ class WorkholdingStudy:
             print("[Trial] RUNNING — timing and interaction counting enabled.")
 
     def _start_next_trial_or_finish(self) -> None:
+        while self._trial_cursor in self._completed_trial_indices:
+            self._trial_cursor += 1
         if self._trial_cursor >= len(self._pose_order):
             self._phase = "release_board"
             return
@@ -1123,10 +1130,20 @@ class WorkholdingStudy:
             pos_err, ang_err, self._trial_interactions, reason,
         ])
         self._trials_f.flush()
+        self._completed_trial_indices.add(self._trial_cursor)
         self._close_status_line()
         print(f"[Trial] done ({reason}) — {duration:.1f}s, "
               f"err={pos_err * 100:.1f}cm/{ang_err:.1f}deg, "
               f"interactions={self._trial_interactions}")
+        self._trial_cursor += 1
+        self._phase = "reset_to_default"
+
+    def _advance_unrecorded_trial(self, pos_err: float, ang_err: float) -> None:
+        """Advance operationally while leaving this trial absent from the CSV."""
+        self._close_status_line()
+        print(f"[Trial] reached while PAUSED — not recorded "
+              f"({pos_err * 100:.1f}cm/{ang_err:.1f}deg); advancing")
+        self._trial_dwell_start = None
         self._trial_cursor += 1
         self._phase = "reset_to_default"
 
@@ -1145,8 +1162,8 @@ class WorkholdingStudy:
             *T_tcp[:3, 3].tolist(), *quat.tolist(), *np.degrees(q).tolist(),
         ])
 
-    def _tick_target_completion(self, now: float) -> None:
-        """Advance a trial only while recording is enabled and the robot is idle."""
+    def _tick_target_completion(self, now: float, recording: bool) -> None:
+        """Apply the target dwell; write data only when recording is enabled."""
         if self._auto_move_pending:
             self._trial_dwell_start = None
             return
@@ -1161,7 +1178,10 @@ class WorkholdingStudy:
             if self._trial_dwell_start is None:
                 self._trial_dwell_start = now
             elif now - self._trial_dwell_start >= self._STUDY_DWELL_S:
-                self._finish_trial("converged", pos_err, ang_err)
+                if recording:
+                    self._finish_trial("converged", pos_err, ang_err)
+                else:
+                    self._advance_unrecorded_trial(pos_err, ang_err)
                 return
         else:
             self._trial_dwell_start = None
@@ -1296,9 +1316,10 @@ class WorkholdingStudy:
             recording = self._trial_timer_running
             if recording:
                 self._sample_trajectory(now)
-                self._tick_target_completion(now)
-                if self._phase != "trial_running":
-                    return
+            self._tick_target_completion(now, recording=recording)
+            if self._phase != "trial_running":
+                return
+            if recording:
                 if self._freedrive_enabled:
                     self._tick_freedrive_channel(now)
             if self._ar_enabled:
