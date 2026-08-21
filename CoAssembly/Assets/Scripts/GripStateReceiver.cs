@@ -47,6 +47,7 @@ public class GripStateReceiver : MonoBehaviour
         public float[]  box_pos;
         public float[]  box_rot_xyzw;
         public float[]  box_size;
+        public float[]  box_color;
     }
 
     private class PoseData
@@ -55,6 +56,7 @@ public class GripStateReceiver : MonoBehaviour
         public Vector3   boxPos;
         public Quaternion boxRot;
         public Vector3   boxSize;
+        public Color?    boxColor;
     }
 
     private SubscriberSocket  _socket;
@@ -131,6 +133,15 @@ public class GripStateReceiver : MonoBehaviour
                         {
                             var d = JsonConvert.DeserializeObject<GripMessage>(msg);
                             if (d == null) continue;
+                            Color? incomingColor = null;
+                            if (d.box_color != null && d.box_color.Length >= 3)
+                            {
+                                float alpha = d.box_color.Length >= 4
+                                    ? d.box_color[3] : 1f;
+                                incomingColor = new Color(
+                                    d.box_color[0], d.box_color[1],
+                                    d.box_color[2], alpha);
+                            }
                             _queue.Enqueue(new PoseData
                             {
                                 gripState = d.grip_state,
@@ -138,6 +149,7 @@ public class GripStateReceiver : MonoBehaviour
                                 boxRot    = new Quaternion(d.box_rot_xyzw[0], d.box_rot_xyzw[1],
                                                            d.box_rot_xyzw[2], d.box_rot_xyzw[3]),
                                 boxSize   = new Vector3(d.box_size[0], d.box_size[1], d.box_size[2]),
+                                boxColor  = incomingColor,
                             });
                         }
                     }
@@ -258,6 +270,11 @@ public class GripStateReceiver : MonoBehaviour
             }
         }
 
+        // An explicitly supplied Python RGBA value is authoritative and is
+        // applied last so it overrides the receiver's optional local colors.
+        if (latest.boxColor.HasValue)
+            ApplyPythonBoardColor(latest.boxColor.Value);
+
         _prevGripState = latest.gripState;
         _prevIsGrabbed  = grabbed;
     }
@@ -274,6 +291,19 @@ public class GripStateReceiver : MonoBehaviour
     private void SetBoardColor(Color color)
     {
         if (!colorizeBoardState) return;
+        if (_boardRenderers == null || _boardColorBlock == null) return;
+        foreach (Renderer renderer in _boardRenderers)
+        {
+            if (renderer == null) continue;
+            renderer.GetPropertyBlock(_boardColorBlock);
+            _boardColorBlock.SetColor("_BaseColor", color);
+            _boardColorBlock.SetColor("_Color", color);
+            renderer.SetPropertyBlock(_boardColorBlock);
+        }
+    }
+
+    private void ApplyPythonBoardColor(Color color)
+    {
         if (_boardRenderers == null || _boardColorBlock == null) return;
         foreach (Renderer renderer in _boardRenderers)
         {

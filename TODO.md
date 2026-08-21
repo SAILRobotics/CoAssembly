@@ -11,3 +11,7 @@
 8. Take many pictures from different angles for each step --> VLM feeding --> Not needed
 
 9. check the referring expressions.csv (s) --> Dante
+
+
+
+python3 workholding_study.py   --session-name target_setup   --mode hybrid   --target-navigation move   --target-poses-file task_graph/workholding_targets.json

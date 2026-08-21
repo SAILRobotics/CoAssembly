@@ -2087,6 +2087,33 @@ class MainScene:
         self._motion_source = None
         self._tcp_target_T = None
 
+    def _board_target_rgba(self) -> "list[float] | None":
+        """Python-authoritative RGBA for the released BoardAR target.
+
+        Send an override only during an object/board move. Outside that window
+        Unity retains its normal manipulation/result appearance.
+        """
+        moving = (self.robot is not None
+                  and (self.robot.board_state == "moving_board"
+                       or (self._robot_state == "moving_to_pose"
+                           and self._motion_source == "object")))
+        if (not moving or self._last_ar_board_T is None
+                or self._T_world_tcp is None):
+            return None
+        T_actual_board = np.array(self._T_world_tcp, dtype=float, copy=True)
+        T_actual_board[:3, 3] += (
+            cfg.BOX_FORWARD_OFFSET * T_actual_board[:3, 2])
+        pos_err = float(np.linalg.norm(
+            T_actual_board[:3, 3] - self._last_ar_board_T[:3, 3]))
+        R_err = T_actual_board[:3, :3].T @ self._last_ar_board_T[:3, :3]
+        ang_err_deg = float(np.degrees(
+            ScipyR.from_matrix(R_err).magnitude()))
+        if pos_err < 0.05 and ang_err_deg < 15.0:
+            return [0.0, 1.0, 0.0, 0.45]
+        if pos_err < 0.15 and ang_err_deg < 30.0:
+            return [1.0, 0.42, 0.02, 0.45]
+        return [1.0, 0.0, 0.0, 0.45]
+
     def _move_robot_for_gearbox_step(self, event: dict) -> None:
         """Move to the configured joint pose when an unlocked task is selected."""
         if self.robot is None or event.get("blocked", False):
@@ -2748,7 +2775,8 @@ class MainScene:
                         else:
                             _grip_visual_state = "idle"
                         self.grip_pose_bridge.publish(
-                            _grip_visual_state, self._T_world_tcp)
+                            _grip_visual_state, self._T_world_tcp,
+                            box_color=self._board_target_rgba())
 
                 # Drive the Open3D URDF gripper from the same logical grasp
                 # state as the application.  Board release_armed is still a
