@@ -57,6 +57,7 @@ public class WorkholdingBoxReceiver : MonoBehaviour
         public float[] box_pos;
         public float[] box_rot_xyzw;
         public float[] box_size;
+        public float[] box_color;
     }
 
     private class PoseData
@@ -65,6 +66,7 @@ public class WorkholdingBoxReceiver : MonoBehaviour
         public Vector3    pos;
         public Quaternion rot;
         public Vector3    size;
+        public Color?     color;
     }
 
     private SubscriberSocket _socket;
@@ -134,6 +136,13 @@ public class WorkholdingBoxReceiver : MonoBehaviour
                             var d = JsonConvert.DeserializeObject<BoxMessage>(msg);
                             if (d == null || d.box_pos == null || d.box_rot_xyzw == null
                                 || d.box_size == null) continue;
+                            Color? incomingColor = null;
+                            if (d.box_color != null && d.box_color.Length >= 3)
+                            {
+                                float a = d.box_color.Length >= 4 ? d.box_color[3] : boardAlpha;
+                                incomingColor = new Color(
+                                    d.box_color[0], d.box_color[1], d.box_color[2], a);
+                            }
                             _queue.Enqueue(new PoseData
                             {
                                 proximityState = d.grip_state,
@@ -141,6 +150,7 @@ public class WorkholdingBoxReceiver : MonoBehaviour
                                 rot  = new Quaternion(d.box_rot_xyzw[0], d.box_rot_xyzw[1],
                                                       d.box_rot_xyzw[2], d.box_rot_xyzw[3]),
                                 size = new Vector3(d.box_size[0], d.box_size[1], d.box_size[2]),
+                                color = incomingColor,
                             });
                         }
                     }
@@ -169,7 +179,10 @@ public class WorkholdingBoxReceiver : MonoBehaviour
         arBox.transform.localRotation = latest.rot;
         if (applyIncomingBoxSize)
             arBox.transform.localScale = latest.size;
-        ApplyProximityColor(latest.proximityState);
+        if (latest.color.HasValue)
+            ApplyBoardColor(latest.color.Value);
+        else
+            ApplyProximityColor(latest.proximityState);
         SetRenderersVisible(_renderers, true);
 
         if (showTargetGripper && targetGripper != null)
@@ -223,6 +236,18 @@ public class WorkholdingBoxReceiver : MonoBehaviour
 
         foreach (var r in _renderers)
             if (r != null) r.sharedMaterial = _boardMaterial;
+    }
+
+    private void ApplyBoardColor(Color color)
+    {
+        if (_boardMaterial == null) return;
+        color.a = boardAlpha;
+        _boardMaterial.color = color;
+        if (_boardMaterial.HasProperty("_BaseColor"))
+            _boardMaterial.SetColor("_BaseColor", color);
+        if (_boardMaterial.HasProperty("_Color"))
+            _boardMaterial.SetColor("_Color", color);
+        _lastProximityState = "";
     }
 
     private void ApplyProximityColor(string state)
