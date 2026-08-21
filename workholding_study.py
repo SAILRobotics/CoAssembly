@@ -392,6 +392,8 @@ class WorkholdingStudy:
     _STUDY_DWELL_S            = 1.0     # seconds within tolerance before auto-complete
     _STUDY_MOVE_THRESHOLD_MPS = 0.01    # m/s — freedrive movement-segment detector
     _STUDY_TRAJ_SAMPLE_HZ     = 10.0
+    _TARGET_COLOR_NEAR_M      = _STUDY_POS_TOL_M
+    _TARGET_COLOR_FAR_M       = 0.30
 
     # Robustness against robot_control_server.py not being up yet (or dropping a
     # command sent before its ZMQ socket finished connecting — PUB/SUB messages
@@ -665,6 +667,28 @@ class WorkholdingStudy:
         T_board[:3, 3] += cfg.BOX_FORWARD_OFFSET * T_board[:3, 2]
         return T_board
 
+    @classmethod
+    def _quest_target_color(cls, T_actual_board: "np.ndarray | None",
+                            T_target: np.ndarray) -> list[float]:
+        if T_actual_board is None:
+            return [0.95, 0.75, 0.08, 0.45]
+        pos_err, ang_err = cls._pose_error(T_actual_board, T_target)
+        pos_score = 1.0 - np.clip(
+            (pos_err - cls._TARGET_COLOR_NEAR_M)
+            / max(cls._TARGET_COLOR_FAR_M - cls._TARGET_COLOR_NEAR_M, 1e-6),
+            0.0, 1.0)
+        ang_score = 1.0 - np.clip(
+            (ang_err - cls._STUDY_ANGLE_TOL_DEG) / 45.0, 0.0, 1.0)
+        score = float(min(pos_score, ang_score))
+        if score < 0.5:
+            t = score / 0.5
+            color = [0.95, 0.08 + 0.67 * t, 0.08 * (1.0 - t)]
+        else:
+            t = (score - 0.5) / 0.5
+            color = [0.95 * (1.0 - t) + 0.12 * t,
+                     0.75 * (1.0 - t) + 0.90 * t,
+                     0.08 * (1.0 - t) + 0.20 * t]
+        return [float(c) for c in color] + [0.45]
     def _precheck_target_reachability(self) -> "dict[int, bool]":
         """Solve local PyBullet IK once for every desired target TCP pose."""
         scene = self.robot.pb_scene
@@ -1201,7 +1225,11 @@ class WorkholdingStudy:
                     T_fake_tcp[:3, 3] = (
                         T_quest_target[:3, 3]
                         - cfg.BOX_FORWARD_OFFSET * T_quest_target[:3, 2])
-                    self.ghost_bridge.publish("grabbed", T_fake_tcp)
+                    target_color = self._quest_target_color(
+                        self._board_pose_from_tcp(self.robot.tcp_pose),
+                        T_quest_target)
+                    self.ghost_bridge.publish(
+                        "grabbed", T_fake_tcp, box_color=target_color)
 
                 if self.anchor.locked and not self._study_started:
                     self._study_started = True
