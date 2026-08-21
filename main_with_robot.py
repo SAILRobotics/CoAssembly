@@ -2740,9 +2740,7 @@ class MainScene:
                                 or (self._robot_state == "moving_to_pose"
                                     and self._motion_source == "object")):
                             _grip_visual_state = "moving"
-                        elif _board_state in ("waiting_for_board",
-                                              "holding_board",
-                                              "release_armed"):
+                        elif _board_state == "holding_board":
                             _grip_visual_state = "grabbed"
                         else:
                             _grip_visual_state = "idle"
