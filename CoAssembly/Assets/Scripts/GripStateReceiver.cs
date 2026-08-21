@@ -252,7 +252,7 @@ public class GripStateReceiver : MonoBehaviour
                     - arBox.transform.rotation * Vector3.right * 0.0075f
                     - arBox.transform.rotation * Vector3.forward * 0.1500f;
                 arHandle.transform.rotation = arBox.transform.rotation
-                    * Quaternion.AngleAxis(180f, Vector3.right);
+                    * Quaternion.AngleAxis(-90f, Vector3.right);
             }
         }
 
