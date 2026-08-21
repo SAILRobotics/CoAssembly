@@ -32,7 +32,7 @@ public class WorkholdingBoxReceiver : MonoBehaviour
 
     [Header("Board appearance")]
     public bool overrideBoardMaterial = true;
-    [Range(0f, 1f)] public float boardAlpha = 0.12f;
+    [Range(0f, 1f)] public float boardAlpha = 0.45f;
     public Color boardTint = Color.black;
 
     [Header("Target gripper")]
