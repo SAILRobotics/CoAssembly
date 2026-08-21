@@ -153,6 +153,53 @@ def _build_pb_scene(simulation: bool, use_calibrated_robot_base: bool,
     return scene
 
 
+def _load_pegboard_cbf_obstacle() -> "list[dict]":
+    """Build one oriented cuboid around the saved physical pegboard.
+
+    The saved marker transform is the pegboard-local frame used by the scene
+    viewer.  Inflate the board by 3 cm in-plane.  Along the board normal, keep
+    3 cm behind it and extend 8 cm toward the robot so the CBF starts steering
+    link collision spheres away well before contact.
+    """
+    path = cfg.SCENE_LAYOUT_DIR / "T_world10_pegboard101.npz"
+    if not path.exists():
+        print(f"[RobotServer] Pegboard CBF obstacle not found: {path}")
+        return []
+    try:
+        data = np.load(path)
+        T = np.asarray(data["T_world10_pegboard"], dtype=float)
+        width = float(data["pegboard_width_m"])
+        height = float(data["pegboard_height_m"])
+        offset_x = float(data["marker_offset_right_m"])
+        offset_y = float(data["marker_offset_top_m"])
+        thickness = 0.03
+        margin = 0.03
+        rear_margin = 0.03
+        robot_side_margin = 0.08
+        z_min = -thickness - rear_margin
+        z_max = robot_side_margin
+        center_local = np.array([
+            offset_x - width / 2.0,
+            offset_y - height / 2.0,
+            (z_min + z_max) / 2.0,
+        ])
+        center_world = T[:3, :3] @ center_local + T[:3, 3]
+        obstacle = {
+            "center": center_world.tolist(),
+            "half": [width / 2.0 + margin,
+                     height / 2.0 + margin,
+                     (z_max - z_min) / 2.0],
+            "rotation": T[:3, :3].tolist(),
+        }
+        print("[RobotServer] Pegboard CBF obstacle: center="
+              f"{np.round(center_world, 3).tolist()} size="
+              f"{np.round(2.0 * np.asarray(obstacle['half']), 3).tolist()}")
+        return [obstacle]
+    except Exception as exc:
+        print(f"[RobotServer] Pegboard CBF obstacle load failed: {exc}")
+        return []
+
+
 # ── Main server class (merged controller + ZMQ loop) ─────────────────────────
 
 class RobotControlServer:
@@ -292,6 +339,7 @@ class RobotControlServer:
                     q_max              = np.deg2rad(cfg.JOINT_MAX_DEG).tolist(),
                     ws_lo              = list(cfg.WORKSPACE_LO),
                     ws_hi              = list(cfg.WORKSPACE_HI),
+                    obstacle_boxes     = _load_pegboard_cbf_obstacle(),
                     gripper_collision  = gripper_collision,
                 )
                 print("[RobotServer] frax CBF ready.")

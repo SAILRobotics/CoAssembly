@@ -37,6 +37,11 @@ public class GripStateReceiver : MonoBehaviour
     public Color reachedColor = Color.green;
     public Color failedColor = Color.red;
 
+    [Header("Target overlay")]
+    [Tooltip("Use a transparent, non-depth-writing material so passthrough remains visible through the released target board.")]
+    public bool transparentTargetOverlay = true;
+    [Range(0f, 1f)] public float targetOverlayAlpha = 0.28f;
+
     [Header("NetMQ")]
     [SerializeField] private int port = 5012;
 
@@ -72,6 +77,7 @@ public class GripStateReceiver : MonoBehaviour
     private float  _hideBoxAt;
     private Renderer[] _boardRenderers;
     private MaterialPropertyBlock _boardColorBlock;
+    private Material _targetOverlayMaterial;
 
     private static readonly Quaternion BoardMeshCorrection =
         Quaternion.AngleAxis(90f, Vector3.forward)
@@ -107,6 +113,7 @@ public class GripStateReceiver : MonoBehaviour
         {
             _boardRenderers = arBox.GetComponentsInChildren<Renderer>(true);
             _boardColorBlock = new MaterialPropertyBlock();
+            ConfigureTargetOverlayMaterial();
         }
 
         NetMQManager.RegisterReceiver();
@@ -302,9 +309,46 @@ public class GripStateReceiver : MonoBehaviour
         }
     }
 
+    private void ConfigureTargetOverlayMaterial()
+    {
+        if (!transparentTargetOverlay || _boardRenderers == null) return;
+        Shader shader = Shader.Find("Universal Render Pipeline/Lit");
+        if (shader == null) shader = Shader.Find("Standard");
+        if (shader == null) return;
+
+        _targetOverlayMaterial = new Material(shader)
+            { name = "BoardARTarget_TransparentOverlay" };
+        if (_targetOverlayMaterial.HasProperty("_Surface"))
+            _targetOverlayMaterial.SetFloat("_Surface", 1f);
+        if (_targetOverlayMaterial.HasProperty("_Blend"))
+            _targetOverlayMaterial.SetFloat("_Blend", 0f);
+        if (_targetOverlayMaterial.HasProperty("_SrcBlend"))
+            _targetOverlayMaterial.SetFloat("_SrcBlend",
+                (float)UnityEngine.Rendering.BlendMode.SrcAlpha);
+        if (_targetOverlayMaterial.HasProperty("_DstBlend"))
+            _targetOverlayMaterial.SetFloat("_DstBlend",
+                (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+        if (_targetOverlayMaterial.HasProperty("_ZWrite"))
+            _targetOverlayMaterial.SetFloat("_ZWrite", 0f);
+        _targetOverlayMaterial.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+        _targetOverlayMaterial.EnableKeyword("_ALPHABLEND_ON");
+        _targetOverlayMaterial.renderQueue =
+            (int)UnityEngine.Rendering.RenderQueue.Transparent;
+
+        foreach (Renderer renderer in _boardRenderers)
+        {
+            if (renderer == null) continue;
+            renderer.sharedMaterial = _targetOverlayMaterial;
+            renderer.shadowCastingMode =
+                UnityEngine.Rendering.ShadowCastingMode.Off;
+            renderer.receiveShadows = false;
+        }
+    }
+
     private void ApplyPythonBoardColor(Color color)
     {
         if (_boardRenderers == null || _boardColorBlock == null) return;
+        if (transparentTargetOverlay) color.a = targetOverlayAlpha;
         foreach (Renderer renderer in _boardRenderers)
         {
             if (renderer == null) continue;
@@ -320,6 +364,7 @@ public class GripStateReceiver : MonoBehaviour
         _running = false;
         _socket?.Close();
         if (_thread?.IsAlive == true) _thread.Join(500);
+        if (_targetOverlayMaterial != null) Destroy(_targetOverlayMaterial);
         NetMQManager.UnregisterReceiver();
     }
 }

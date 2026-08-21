@@ -2193,6 +2193,7 @@ class MainScene:
         self._tcp_target_T   = _T_tgt
         self.robot.move_to_pose(
             target_pos, target_quat,
+            motion_profile="workholding",
             on_complete=on_complete or self._on_hand_target_reached,
         )
         return True
@@ -2787,6 +2788,7 @@ class MainScene:
                             self.robot.move_to_pose(
                                 _tcp_pos, _tcp_quat,
                                 board_move=True,
+                                motion_profile="workholding",
                                 on_complete=self._on_board_move_complete)
 
                     if self._T_world_tcp is not None:

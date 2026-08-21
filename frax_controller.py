@@ -345,14 +345,25 @@ if _FRAX_AVAILABLE:
             obs_c, obs_h, obs_R = [], [], []
             for obs in (obstacle_boxes or []):
                 if isinstance(obs, dict):
-                    c, h, y = obs['center'], obs['half'], obs.get('yaw_deg', 0.0)
+                    c, h = obs['center'], obs['half']
+                    if 'rotation' in obs:
+                        # Box-local -> world rotation.  The barrier stores its
+                        # inverse because distances are evaluated in box space.
+                        R_bw = np.asarray(obs['rotation'], float).reshape(3, 3).T
+                    else:
+                        y = obs.get('yaw_deg', 0.0)
+                        R_bw = ScipyR.from_euler(
+                            'z', float(y), degrees=True).as_matrix().T
                 elif len(obs) == 3:
                     c, h, y = obs
+                    R_bw = ScipyR.from_euler(
+                        'z', float(y), degrees=True).as_matrix().T
                 else:
-                    c, h = obs; y = 0.0
+                    c, h = obs
+                    R_bw = np.eye(3)
                 obs_c.append(np.asarray(c, float))
                 obs_h.append(np.asarray(h, float))
-                obs_R.append(ScipyR.from_euler('z', float(y), degrees=True).as_matrix().T)
+                obs_R.append(R_bw)
 
             _cbf_cfg = _RcCbfConfig(
                 self.robot,

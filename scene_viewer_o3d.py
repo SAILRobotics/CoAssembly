@@ -986,13 +986,22 @@ class SceneVis:
             [[0, 1], [1, 2], [2, 3], [3, 0]])
         self._pegboard_lineset.colors = o3d.utility.Vector3dVector(
             [[0.1, 0.6, 1.0]] * 4)
-        _thickness = 0.02
+        # This second outline is also the CBF pegboard guard shown to the
+        # operator.  Match robot_control_server.py's one-cuboid obstacle.
+        _thickness = 0.03
+        _safety_margin = 0.03
+        _rear_margin = 0.03
+        _robot_side_margin = 0.08
+        _z_min = -_thickness - _rear_margin
+        _z_max = _robot_side_margin
         self._peg_box_center_local = np.array([
             offset_x - width  / 2.0,
             offset_y - height / 2.0,
-            -_thickness / 2.0,
+            (_z_min + _z_max) / 2.0,
         ])
-        self._peg_box_size = [width, height, _thickness]
+        self._peg_box_size = [width + 2.0 * _safety_margin,
+                              height + 2.0 * _safety_margin,
+                              _z_max - _z_min]
 
     def update_pegboard(self, T: np.ndarray | None):
         T_new = T if T is not None else self._hidden_T()
@@ -1012,7 +1021,7 @@ class SceneVis:
             centre_w = (T_new @ np.append(self._peg_box_center_local, 1.0))[:3]
             R_w = T_new[:3, :3]
             new_ls = self.make_box_lineset(centre_w, R_w, self._peg_box_size,
-                                           color=(0.45, 0.45, 0.45))
+                                           color=(1.0, 0.45, 0.05))
             self._pegboard_box_lineset.points = new_ls.points
             self._pegboard_box_lineset.lines  = new_ls.lines
             self._pegboard_box_lineset.colors = new_ls.colors
