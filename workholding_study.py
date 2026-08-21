@@ -365,7 +365,7 @@ class _WorkholdingSceneVis(_SceneVis):
         else:
             T_new = np.array(T_board, dtype=np.float64, copy=True)
             T_new[:3, 3] -= 0.0075 * T_new[:3, 0]
-            T_new[:3, 3] -= 0.1400 * T_new[:3, 1]
+            T_new[:3, 3] -= 0.1500 * T_new[:3, 1]
             T_new[:3, :3] = (T_new[:3, :3]
                               @ ScipyR.from_euler(
                                   "x", 90.0, degrees=True).as_matrix())

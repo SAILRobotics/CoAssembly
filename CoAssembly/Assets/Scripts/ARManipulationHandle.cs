@@ -127,7 +127,7 @@ public class ARManipulationHandle : MonoBehaviour
         {
             arHandle.transform.position = arBox.transform.position
                 - arBox.transform.rotation * Vector3.right * 0.0075f
-                - arBox.transform.rotation * Vector3.forward * 0.1400f;
+                - arBox.transform.rotation * Vector3.forward * 0.1500f;
             arHandle.transform.rotation = arBox.transform.rotation
                 * Quaternion.AngleAxis(180f, Vector3.right);
         }
