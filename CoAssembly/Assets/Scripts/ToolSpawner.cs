@@ -48,8 +48,11 @@ public class ToolSpawner : MonoBehaviour
     [Tooltip("Draw spawned pegboard tools/parts as subtle transparent boxes with crisp outlines.")]
     [SerializeField] private bool useBlendedBoxVisualization = true;
 
-    [Tooltip("Face alpha for the blended cube volume.")]
-    [Range(0f, 1f)] [SerializeField] private float faceAlpha = 0.055f;
+    [Tooltip("Face alpha for the blended cube volume. 0 = no fill at all (outline-only boxes); " +
+             "this is also a hard ceiling — ToolColorReceiver clamps incoming face alpha to this " +
+             "value, so leaving it at 0 keeps faces invisible no matter what color state (hover/" +
+             "selected/highlight) Python sends.")]
+    [Range(0f, 1f)] [SerializeField] private float faceAlpha = 0f;
 
     [Tooltip("Edge alpha for the cube outline.")]
     [Range(0f, 1f)] [SerializeField] private float edgeAlpha = 0.9f;
