@@ -95,14 +95,31 @@ public class GearboxCommandReceiver : MonoBehaviour
     [SerializeField] private Vector3 stagingOffset = new Vector3(0f, 0.15f, 0f);
 
     [Header("Stage completion colors")]
-    [Tooltip("Color a part turns once it is SEATED — its seat stage is checked complete (\"that " +
-             "portion is fully done\").")]
+    [Tooltip("Outline color a part turns once it is SEATED — its seat stage is checked complete " +
+             "(\"that portion is fully done\").")]
     [SerializeField] private Color seatedColor  = new Color(0.15f, 0.80f, 0.20f, 1f);  // green
-    [Tooltip("Color an UNSEATED sub-assembly turns after its first (appear) stage is checked " +
-             "complete — built but not yet fastened to the board.")]
+    [Tooltip("Outline color an UNSEATED sub-assembly turns after its first (appear) stage is " +
+             "checked complete — built but not yet fastened to the board.")]
     [SerializeField] private Color builtColor   = new Color(1f, 0.55f, 0.0f, 1f);      // orange
-    [Tooltip("Color the checkbox tints when the current stage is locked (prerequisites unmet).")]
+    [Tooltip("Outline color a part turns when its stage is locked (prerequisites unmet) — also " +
+             "tints the checkbox.")]
     [SerializeField] private Color blockedColor = new Color(0.85f, 0.15f, 0.15f, 1f);  // red
+
+    [Header("Status outline")]
+    // Wireframe (real mesh edges) shown instead of a full-part tint. Parts keep their real material/
+    // texture; only a colored edge-overlay communicates status. Unlike a hull-extrusion outline, this
+    // has no front/back ambiguity and reads correctly from any angle.
+    [Tooltip("Minimum angle (degrees) between two triangles' faces for their shared edge to be drawn " +
+             "— the 'exterior'/feature edges. Higher = fewer lines (only sharp corners); lower = " +
+             "closer to a full wireframe (every tessellation line). A mesh's true boundary edges " +
+             "(open/non-manifold) are always drawn regardless of this.")]
+    [SerializeField] private float creaseAngleThreshold = 30f;
+
+    // One shared Material instance for every part's wireframe; per-part color/visibility goes
+    // through each renderer's own MaterialPropertyBlock (same pattern as ToolColorReceiver / the
+    // checkbox). Built from a stock URP shader in Start() — see BuildWireframeMesh/CreatePartOutline.
+    private Material _outlineMaterial;
+    private int      _outlineColorID;   // resolved once in Start() via ResolveColorID, shader-agnostic
 
     public enum Side { Any, Left, Right }
 
@@ -145,10 +162,10 @@ public class GearboxCommandReceiver : MonoBehaviour
     private class PartEntry
     {
         public GameObject           go;
-        public Renderer             renderer;
-        public MaterialPropertyBlock block;
-        public int                  colorID;
-        public Color                originalColor;
+        // Status outline (null for parts we couldn't build one for, e.g. missing mesh — those
+        // parts simply never show a status color; everything else about them still works).
+        public Renderer             outlineRenderer;
+        public MaterialPropertyBlock outlineBlock;
         public bool                 highlighted;
         public string               type;    // parsed prefix before "Row" (e.g. "GearRod", "Bearing")
         public int                  rowNum;  // parsed row number; 0 = shared (BaseBoard)
@@ -187,9 +204,10 @@ public class GearboxCommandReceiver : MonoBehaviour
     // checkbox). `stageBlocked` is read from the "ui" message's `blocked` flag, which always follows
     // the "stage" message — so the animation, which colors each part when its slide ends, learns the
     // stage was blocked without a second Python field. Each red we apply is remembered with the color
-    // it replaced, so closing the menu / opening another stage restores exactly the prior color.
+    // it replaced (null = no outline shown), so closing the menu / opening another stage restores
+    // exactly the prior state.
     private bool stageBlocked;
-    private readonly List<(PartEntry part, Color prev)> blockedReds = new();
+    private readonly List<(PartEntry part, Color? prev)> blockedReds = new();
 
     // The board's orientation at load. Animation offsets are authored for this rest pose, so they
     // rotate only by the board's CHANGE from it (i.e. as it's grabbed/rotated) — at rest they equal
@@ -207,6 +225,27 @@ public class GearboxCommandReceiver : MonoBehaviour
         if (gearboxRoot == null) gearboxRoot = transform;
         restRotation = gearboxRoot.rotation;   // baseline the animation offsets against the load pose
         if (userHead == null && Camera.main != null) userHead = Camera.main.transform;
+
+        // Stock URP shader rather than a custom one: URP keeps its own default shaders (Lit/Unlit/
+        // etc.) from being stripped out of a build itself, which a Shader.Find-only custom shader
+        // has no such protection against — see the "Always Included Shaders" note this replaces.
+        var outlineShader = Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Unlit/Color");
+        if (outlineShader != null)
+        {
+            _outlineMaterial = new Material(outlineShader) { name = "StatusWireframe (runtime)" };
+            _outlineColorID  = ResolveColorID(_outlineMaterial);
+            if (_outlineColorID == 0)
+            {
+                Debug.LogWarning("[GearboxCommandReceiver] Outline material has no known base-color " +
+                                 $"property (shader '{outlineShader.name}'); part status outlines disabled.");
+                _outlineMaterial = null;
+            }
+        }
+        else
+        {
+            Debug.LogWarning("[GearboxCommandReceiver] No Unlit shader found — " +
+                              "part status outlines disabled (parts will show no red/orange/green).");
+        }
 
         BuildPartIndex();
 
@@ -250,13 +289,10 @@ public class GearboxCommandReceiver : MonoBehaviour
 
             Renderer r = t.GetComponent<Renderer>();
             if (r == null) continue;
-            Material mat = r.sharedMaterial;
-            if (mat == null) continue;
-
-            int colorID = ResolveColorID(mat);
-            if (colorID == 0)
-                Debug.LogWarning($"[GearboxCommandReceiver] '{t.name}' has no known base-color " +
-                                 $"property (shader '{mat.shader.name}'); color disabled for it.");
+            MeshFilter mf = t.GetComponent<MeshFilter>();
+            if (mf == null || mf.sharedMesh == null)
+                Debug.LogWarning($"[GearboxCommandReceiver] '{t.name}' has no mesh; status outline " +
+                                 $"disabled for it (it will never show red/orange/green).");
 
             string type, side;
             int    rowNum;
@@ -278,10 +314,6 @@ public class GearboxCommandReceiver : MonoBehaviour
             var entry = new PartEntry
             {
                 go            = t.gameObject,
-                renderer      = r,
-                block         = new MaterialPropertyBlock(),
-                colorID       = colorID,
-                originalColor = colorID != 0 ? mat.GetColor(colorID) : Color.white,
                 highlighted   = false,
                 type          = type,
                 rowNum        = rowNum,
@@ -291,6 +323,15 @@ public class GearboxCommandReceiver : MonoBehaviour
                 placeStage    = place,
                 seatStage     = seat,
             };
+
+            // BaseBoard never takes a status color (see PartColorFor) — skip building an outline
+            // for it entirely rather than create one that's permanently unused.
+            if (isRow && mf != null && mf.sharedMesh != null)
+            {
+                entry.outlineRenderer = CreatePartOutline(t, mf.sharedMesh);
+                if (entry.outlineRenderer != null)
+                    entry.outlineBlock = new MaterialPropertyBlock();
+            }
 
             parts.Add(entry);
             partsByName[t.name]                = entry;
@@ -317,6 +358,139 @@ public class GearboxCommandReceiver : MonoBehaviour
             if (p.type == "Stand" || p.type == "Bearing" || p.type == "Screw")
                 Debug.Log($"[GearboxPartMap] {p.go.name}: side={p.side}, " +
                           $"stages={p.appearStage}/{p.placeStage}/{p.seatStage}");
+    }
+
+    // Builds one part's status-wireframe child: the part's real mesh edges (not a duplicated/offset
+    // hull — see the shader-hull attempt this replaced), the one shared outline material, hidden
+    // until ApplyColor gives it a status color. Called once per part from the loop in
+    // BuildPartIndex — this is the "mass implementation" hook, no per-part Inspector wiring.
+    // Returns null (part just never shows a status color) if the shared material failed to build, or
+    // if the source mesh turned out not to be readable (see BuildWireframeMesh).
+    private Renderer CreatePartOutline(Transform partTransform, Mesh mesh)
+    {
+        if (_outlineMaterial == null) return null;
+
+        Mesh wireframe;
+        try
+        {
+            wireframe = BuildWireframeMesh(mesh, creaseAngleThreshold);
+        }
+        catch (Exception e)
+        {
+            // Most likely cause: the source mesh's "Read/Write Enabled" is off (glTFast-imported
+            // meshes don't reliably default to readable), so mesh.vertices/.triangles throw here.
+            Debug.LogWarning($"[GearboxCommandReceiver] Couldn't build a wireframe for " +
+                             $"'{partTransform.name}' ({e.GetType().Name}: {e.Message}) — likely its " +
+                             $"source mesh isn't Read/Write Enabled. Status outline disabled for it.");
+            return null;
+        }
+
+        var go = new GameObject("StatusOutline");
+        go.transform.SetParent(partTransform, false);   // identity local transform = exact overlay,
+                                                          // since mesh vertices are already in the
+                                                          // part's own local space
+
+        var mf = go.AddComponent<MeshFilter>();
+        mf.sharedMesh = wireframe;
+
+        var mr = go.AddComponent<MeshRenderer>();
+        mr.sharedMaterial     = _outlineMaterial;
+        mr.shadowCastingMode  = UnityEngine.Rendering.ShadowCastingMode.Off;
+        mr.receiveShadows     = false;
+        mr.enabled            = false;   // hidden until a status color is applied
+
+        return mr;
+    }
+
+    // Extracts the "feature" (exterior/crease) edges of a triangle mesh and builds a new Mesh with
+    // MeshTopology.Lines — the part's real silhouette/corners, not every tessellation diagonal across
+    // its flat faces. Shares the source's vertex buffer/local space so it overlays exactly. Visible
+    // from any angle (lines have no front/back), unlike a hull-extrusion outline, which is what made
+    // this the more robust choice for these glTF-imported parts in the first place.
+    //
+    // An edge survives if EITHER: it's a true mesh boundary (only one triangle references it — open/
+    // non-manifold geometry), OR its two adjacent triangles' face normals differ by more than
+    // `creaseAngleDeg` (a real corner, vs. ~0° for two triangles tessellating the same flat face).
+    //
+    // Adjacency is detected by vertex POSITION, not raw vertex index: these parts are Onshape CAD
+    // exports with hard/flat-shaded normals, where every face's corners are separate vertex-buffer
+    // entries even at a shared physical edge — naive index-based adjacency would see every edge as a
+    // lone "boundary" and defeat the filtering entirely, so positions are welded first.
+    //
+    // Throws if `source` isn't marked Read/Write Enabled — callers must catch (see CreatePartOutline).
+    private static Mesh BuildWireframeMesh(Mesh source, float creaseAngleDeg)
+    {
+        Vector3[] verts = source.vertices;      // throws if !source.isReadable
+        int[]     tris  = source.triangles;
+
+        int[] canonical = WeldVerticesByPosition(verts);
+
+        // Welded edge (canonical a,b) -> face normal(s) of every triangle that has it. Almost always
+        // 1 (boundary) or 2 (interior) entries; 3+ means non-manifold geometry.
+        var edgeNormals = new Dictionary<(int, int), List<Vector3>>();
+
+        void AddEdge(int a, int b, Vector3 faceNormal)
+        {
+            var key = a < b ? (a, b) : (b, a);
+            if (!edgeNormals.TryGetValue(key, out var normals))
+                edgeNormals[key] = normals = new List<Vector3>(2);
+            normals.Add(faceNormal);
+        }
+
+        for (int i = 0; i < tris.Length; i += 3)
+        {
+            int a = tris[i], b = tris[i + 1], c = tris[i + 2];
+            Vector3 faceNormal = Vector3.Cross(verts[b] - verts[a], verts[c] - verts[a]).normalized;
+            AddEdge(canonical[a], canonical[b], faceNormal);
+            AddEdge(canonical[b], canonical[c], faceNormal);
+            AddEdge(canonical[c], canonical[a], faceNormal);
+        }
+
+        float cosThreshold = Mathf.Cos(creaseAngleDeg * Mathf.Deg2Rad);
+        var lineIndices = new List<int>();
+        foreach (var kv in edgeNormals)
+        {
+            var normals = kv.Value;
+            // 1 normal = true boundary edge (always a real feature); 2 = keep only if the two faces
+            // meet at a sharp-enough angle; 3+ = non-manifold, err on the side of keeping it visible.
+            bool keep = normals.Count != 2
+                     || Vector3.Dot(normals[0], normals[1]) < cosThreshold;
+            if (!keep) continue;
+            lineIndices.Add(kv.Key.Item1);
+            lineIndices.Add(kv.Key.Item2);
+        }
+
+        var mesh = new Mesh { name = source.name + "_Wireframe" };
+        if (verts.Length > 65535) mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+        mesh.vertices = verts;
+        mesh.SetIndices(lineIndices.ToArray(), MeshTopology.Lines, 0);
+        mesh.RecalculateBounds();
+        return mesh;
+    }
+
+    // Maps every vertex to a "canonical" representative among all vertices at (nearly) the same
+    // position, so triangles that are geometrically adjacent but don't literally share a vertex index
+    // (hard-shaded meshes duplicate vertices at every seam) are still recognized as sharing an edge.
+    private static int[] WeldVerticesByPosition(Vector3[] verts, float epsilon = 1e-5f)
+    {
+        var canonical = new int[verts.Length];
+        var seen = new Dictionary<Vector3Int, int>();
+        float inv = 1f / epsilon;
+        for (int i = 0; i < verts.Length; i++)
+        {
+            var key = new Vector3Int(
+                Mathf.RoundToInt(verts[i].x * inv),
+                Mathf.RoundToInt(verts[i].y * inv),
+                Mathf.RoundToInt(verts[i].z * inv));
+            if (seen.TryGetValue(key, out int idx))
+                canonical[i] = idx;
+            else
+            {
+                seen[key] = i;
+                canonical[i] = i;
+            }
+        }
+        return canonical;
     }
 
     // First indexed part matching type (+ row, and side when non-null). Used to resolve sub-assembly
@@ -808,7 +982,7 @@ public class GearboxCommandReceiver : MonoBehaviour
 
         tr.localPosition = startLocal;
         p.go.SetActive(true);
-        ApplyColor(p, p.originalColor);   // uncolored while it moves
+        ApplyColor(p, null);   // outline hidden while it moves
 
         float t = 0f;
         while (t < duration)
@@ -822,7 +996,7 @@ public class GearboxCommandReceiver : MonoBehaviour
         tr.localPosition = endLocal;
         // A blocked stage's newly-introduced parts (appear==n — the ones you clicked to add) land
         // red to signal "locked"; remember the color they'd otherwise have so closing restores it.
-        if (stageBlocked && p.appearStage == n && p.type != "BaseBoard" && p.colorID != 0)
+        if (stageBlocked && p.appearStage == n && p.type != "BaseBoard" && p.outlineRenderer != null)
         {
             blockedReds.Add((p, PartColorFor(p, done)));
             ApplyColor(p, blockedColor);
@@ -893,32 +1067,33 @@ public class GearboxCommandReceiver : MonoBehaviour
     // of an animated part's move, and by Recolor.
     private void ApplyPartColor(PartEntry p, HashSet<int> doneStages)
     {
-        if (p.colorID == 0 || p.type == "BaseBoard") return;
+        if (p.outlineRenderer == null || p.type == "BaseBoard") return;
         ApplyColor(p, PartColorFor(p, doneStages));
     }
 
-    // The color a part should have from its row's completed stages, WITHOUT applying it: GREEN once
-    // seated, ORANGE once its build step is done but not seated, else its original color. Used both
-    // by ApplyPartColor and to remember the pre-red color of a blocked stage's parts.
-    private Color PartColorFor(PartEntry p, HashSet<int> doneStages)
+    // The outline color a part should have from its row's completed stages, WITHOUT applying it:
+    // GREEN once seated, ORANGE once its build step is done but not seated, else null (no outline —
+    // the part just shows its real material). Used both by ApplyPartColor and to remember the
+    // pre-red state of a blocked stage's parts.
+    private Color? PartColorFor(PartEntry p, HashSet<int> doneStages)
     {
-        if (p.type == "BaseBoard") return p.originalColor;
-        return doneStages.Contains(p.seatStage)   ? seatedColor
-             : doneStages.Contains(p.appearStage) ? builtColor
-             : p.originalColor;
+        if (p.type == "BaseBoard") return null;
+        if (doneStages.Contains(p.seatStage))   return seatedColor;
+        if (doneStages.Contains(p.appearStage)) return builtColor;
+        return null;
     }
 
-    // Restore every part reddened by a blocked stage to the color it had before, and forget them.
+    // Restore every part reddened by a blocked stage to the state it had before, and forget them.
     // Called whenever the view changes (new stage, show-all/close, row/subset, recolor, reset) so a
     // blocked stage's red never lingers once its menu is left.
     private void ClearBlockedReds()
     {
         foreach (var (part, prev) in blockedReds)
-            if (part.colorID != 0) ApplyColor(part, prev);
+            if (part.outlineRenderer != null) ApplyColor(part, prev);
         blockedReds.Clear();
     }
 
-    // Re-color a whole row from its completed-stage set (green/orange/original), no motion. Fired
+    // Re-color a whole row from its completed-stage set (green/orange/hidden), no motion. Fired
     // when a checkbox is checked/unchecked so the just-changed portion recolors in place — and so an
     // un-checked seat correctly falls back to orange if its build step is still complete.
     private void Recolor(int row, int[] doneStages)
@@ -927,7 +1102,7 @@ public class GearboxCommandReceiver : MonoBehaviour
         var done = new HashSet<int>(doneStages ?? Array.Empty<int>());
         foreach (var p in parts)
         {
-            if (p.rowNum != row || p.colorID == 0) continue;
+            if (p.rowNum != row || p.outlineRenderer == null) continue;
             ApplyPartColor(p, done);
         }
     }
@@ -956,29 +1131,29 @@ public class GearboxCommandReceiver : MonoBehaviour
             Debug.LogWarning($"[GearboxCommandReceiver] No part named '{name}'");
             return;
         }
-        if (entry.colorID == 0)
+        if (entry.outlineRenderer == null)
         {
-            Debug.LogWarning($"[GearboxCommandReceiver] '{name}' has no color property; cannot highlight.");
+            Debug.LogWarning($"[GearboxCommandReceiver] '{name}' has no status outline; cannot highlight.");
             return;
         }
 
         entry.highlighted = !entry.highlighted;
-        ApplyColor(entry, entry.highlighted ? highlightColor : entry.originalColor);
+        ApplyColor(entry, entry.highlighted ? highlightColor : (Color?)null);
         Debug.Log($"[GearboxCommandReceiver] 🎨 '{name}' → " +
                   (entry.highlighted ? "highlight" : "original"));
     }
 
-    // Full color reset: restore every part to its original color (clears both the yellow toggle
-    // highlights and the green "done" seating colors).
+    // Full color reset: hide every part's outline (clears both the yellow toggle highlights and the
+    // green/orange "done" seating colors) — parts just show their real material again.
     private void ResetHighlights()
     {
-        blockedReds.Clear();          // originals are about to be re-applied to everything anyway
+        blockedReds.Clear();          // outlines are about to be hidden for everything anyway
         foreach (var p in parts)
         {
             p.highlighted = false;
-            if (p.colorID != 0) ApplyColor(p, p.originalColor);
+            if (p.outlineRenderer != null) ApplyColor(p, null);
         }
-        Debug.Log("[GearboxCommandReceiver] ♻ Reset all part colors");
+        Debug.Log("[GearboxCommandReceiver] ♻ Reset all part outlines");
     }
 
     // Candidate base-color property names, in priority order:
@@ -995,11 +1170,20 @@ public class GearboxCommandReceiver : MonoBehaviour
         return 0;   // none found
     }
 
-    private static void ApplyColor(PartEntry entry, Color c)
+    // Sets (or clears, for null) a part's status-outline color. null hides the outline renderer
+    // entirely — used for "no status yet" and "uncolored while animating".
+    private void ApplyColor(PartEntry entry, Color? c)
     {
-        entry.renderer.GetPropertyBlock(entry.block);
-        entry.block.SetColor(entry.colorID, c);
-        entry.renderer.SetPropertyBlock(entry.block);
+        if (entry.outlineRenderer == null) return;
+        if (c == null)
+        {
+            entry.outlineRenderer.enabled = false;
+            return;
+        }
+        entry.outlineRenderer.enabled = true;
+        entry.outlineRenderer.GetPropertyBlock(entry.outlineBlock);
+        entry.outlineBlock.SetColor(_outlineColorID, c.Value);
+        entry.outlineRenderer.SetPropertyBlock(entry.outlineBlock);
     }
 
     private void OnDestroy()
