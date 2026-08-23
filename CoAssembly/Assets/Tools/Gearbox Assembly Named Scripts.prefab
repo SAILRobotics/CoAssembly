@@ -10197,6 +10197,10 @@ MonoBehaviour:
   defaultStepDelay: 0.35
   defaultSlideSeconds: 0.5
   stagingOffset: {x: 0, y: 0, z: 0}
+  whiteStateSphere: {fileID: 8332676399371782626}
+  redStateSphere: {fileID: 8898212903373051460}
+  greenStateSphere: {fileID: 5856416796747172831}
+  blueStateSphere: {fileID: 7281861627719512591}
   seatedColor: {r: 0.15, g: 0.8, b: 0.2, a: 1}
   builtColor: {r: 1, g: 0.55, b: 0, a: 1}
   blockedColor: {r: 0.85, g: 0.15, b: 0.15, a: 1}

@@ -94,6 +94,15 @@ public class GearboxCommandReceiver : MonoBehaviour
              "rotates with the gearbox when grabbed. Tune to your scene scale.")]
     [SerializeField] private Vector3 stagingOffset = new Vector3(0f, 0.15f, 0f);
 
+    [Header("Main-state indicator spheres")]
+    [Tooltip("Shown only in the 'main' state — the whole gearbox visible, nothing isolated/animating/" +
+             "menu-open. Hidden the instant anything is clicked (a row/subset isolated, a stage " +
+             "played, or the assembly animation run).")]
+    [SerializeField] private Transform whiteStateSphere;
+    [SerializeField] private Transform redStateSphere;
+    [SerializeField] private Transform greenStateSphere;
+    [SerializeField] private Transform blueStateSphere;
+
     [Header("Stage completion colors")]
     [Tooltip("Color a part turns once it is SEATED — its seat stage is checked complete (\"that " +
              "portion is fully done\").")]
@@ -220,6 +229,8 @@ public class GearboxCommandReceiver : MonoBehaviour
         if (resetObject)    resetObject.gameObject.SetActive(false);
         revertVisible = revertObject != null;
         if (revertObject) revertObject.gameObject.SetActive(true);
+
+        SetStateSpheresVisible(true);   // boot state = main state (whole gearbox, nothing clicked yet)
 
         AsyncIO.ForceDotNet.Force();
         socket = new SubscriberSocket();
@@ -462,6 +473,7 @@ public class GearboxCommandReceiver : MonoBehaviour
         ClearBlockedReds();
         foreach (var p in parts)
             p.go.SetActive(p.rowNum == row);
+        SetStateSpheresVisible(false);
         Debug.Log($"[GearboxCommandReceiver] 👁 Showing only Row{row}");
     }
 
@@ -471,6 +483,7 @@ public class GearboxCommandReceiver : MonoBehaviour
         ClearBlockedReds();          // a blocked stage's red reverts to its prior color on close
         foreach (var p in parts)
             p.go.SetActive(true);
+        SetStateSpheresVisible(true);   // back to the main state
         Debug.Log("[GearboxCommandReceiver] 👁 Showing all rows");
     }
 
@@ -487,7 +500,18 @@ public class GearboxCommandReceiver : MonoBehaviour
             p.go.SetActive(visible);
             if (visible) shown++;
         }
+        SetStateSpheresVisible(false);
         Debug.Log($"[GearboxCommandReceiver] 👁 Row{row} subset [{string.Join(",", set)}] → {shown} parts");
+    }
+
+    // Hides all four (or shows all assigned) main-state spheres — see the [Header("Main-state
+    // indicator spheres")] fields. Null entries (unassigned in the Inspector) are skipped.
+    private void SetStateSpheresVisible(bool visible)
+    {
+        if (whiteStateSphere) whiteStateSphere.gameObject.SetActive(visible);
+        if (redStateSphere)   redStateSphere.gameObject.SetActive(visible);
+        if (greenStateSphere) greenStateSphere.gameObject.SetActive(visible);
+        if (blueStateSphere)  blueStateSphere.gameObject.SetActive(visible);
     }
 
     // Show/hide + place the checkbox and reset-X near the active row (row 0 = whole gearbox), and
@@ -601,6 +625,7 @@ public class GearboxCommandReceiver : MonoBehaviour
         // Hide everything; the target parts will be revealed progressively by the coroutine.
         foreach (var p in parts)
             p.go.SetActive(false);
+        SetStateSpheresVisible(false);
 
         StartCoroutine(AssembleRoutine(gen, row, typeOrder, step, slide));
     }
@@ -709,6 +734,7 @@ public class GearboxCommandReceiver : MonoBehaviour
     {
         int gen = ++assembleGen;   // supersede any running animation (positions set explicitly below)
         ClearBlockedReds();        // restore any parts reddened by a previous blocked stage
+        SetStateSpheresVisible(false);   // a part was clicked — no longer the main state
         float step  = stepDelay    > 0f ? stepDelay    : defaultStepDelay;
         float slide = slideSeconds > 0f ? slideSeconds : defaultSlideSeconds;
         var done    = new HashSet<int>(doneStages ?? Array.Empty<int>());
