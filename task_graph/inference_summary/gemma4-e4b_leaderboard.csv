@@ -1,0 +1,2 @@
+model_alias,model_id,samples,correct,incorrect,invalid_outputs,accuracy,strict_correct,strict_accuracy,mean_inference_seconds,std_inference_seconds,total_inference_seconds
+gemma4-e4b,google/gemma-4-E4B-it,288,270,18,2,0.9375,267,0.9270833333333334,1.0977670138888889,0.059383500466353795,316.1569

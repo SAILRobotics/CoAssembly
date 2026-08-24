@@ -1,0 +1,2 @@
+model_alias,model_id,samples,correct,incorrect,invalid_outputs,accuracy,strict_correct,strict_accuracy,mean_inference_seconds,std_inference_seconds,total_inference_seconds
+qwen25-vl-7b,Qwen/Qwen2.5-VL-7B-Instruct,288,259,29,1,0.8993055555555556,229,0.7951388888888888,0.8050006944444444,0.2786065237064289,231.8402

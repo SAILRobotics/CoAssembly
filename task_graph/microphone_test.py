@@ -77,9 +77,19 @@ def enqueue_utterance(blocks, audio_queue):
         print("Transcription is behind; dropping one utterance.")
 
 
+BLUETOOTH_CARD   = "bluez_card.41_42_D1_99_84_1D"       # AOC ACW4212
+BLUETOOTH_SOURCE = "bluez_source.41_42_D1_99_84_1D.handsfree_head_unit"
+
+# The mic (source) is only available in the handsfree_head_unit profile;
+# a2dp_sink is playback-only. Switch profiles so the source exists.
+subprocess.run(
+    ["pactl", "set-card-profile", BLUETOOTH_CARD, "handsfree_head_unit"],
+    check=True,
+)
+
 command = [
     "parec",
-    "--device=bluez_source.50_C2_ED_43_95_C8.handsfree_head_unit",
+    f"--device={BLUETOOTH_SOURCE}",
     "--format=s16le",
     f"--rate={RATE}",
     f"--channels={CHANNELS}",
@@ -118,7 +128,7 @@ line, = axis.plot(time_axis_ms, waveform, linewidth=1)
 level_text  = axis.text(0.02, 0.95, "RMS: 0.0000",        transform=axis.transAxes, va="top", fontsize=9)
 status_text = axis.text(0.02, 0.87, "Loading Parakeet ...", transform=axis.transAxes, va="top", fontsize=9, color="yellow")
 timer_text  = axis.text(0.98, 0.95, "",                    transform=axis.transAxes, va="top", ha="right", fontsize=9, color="cyan")
-axis.set_title("Jabra Bluetooth microphone — NVIDIA Parakeet")
+axis.set_title("AOC ACW4212 Bluetooth microphone — NVIDIA Parakeet")
 axis.set_xlabel("Time (ms)")
 axis.set_ylabel("Amplitude")
 axis.set_xlim(time_axis_ms[0], time_axis_ms[-1])
@@ -160,7 +170,7 @@ def _refresh_log():
     else:
         log_text.set_text(f'Say "{WAKE_WORD}" to start...')
 
-print("Receiving Android microphone audio and loading NVIDIA Parakeet.")
+print("Receiving Bluetooth microphone audio and loading NVIDIA Parakeet.")
 print("Close the waveform window or press Ctrl+C to stop.")
 
 try:
@@ -234,6 +244,7 @@ try:
 
             if result_type == "transcript":
                 if not listening_active:
+                    print(f"Transcript (pre-wake): {message}")
                     if WAKE_WORD in message.lower():
                         listening_active = True
                         last_speech_time = time.time()

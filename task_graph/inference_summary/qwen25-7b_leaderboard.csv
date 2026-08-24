@@ -1,0 +1,2 @@
+model_alias,model_id,samples,correct,incorrect,invalid_outputs,accuracy,strict_correct,strict_accuracy,mean_inference_seconds,std_inference_seconds,total_inference_seconds
+qwen25-7b,Qwen/Qwen2.5-7B-Instruct,288,276,12,0,0.9583333333333334,257,0.8923611111111112,0.8058822916666667,0.061761902594978074,232.0941

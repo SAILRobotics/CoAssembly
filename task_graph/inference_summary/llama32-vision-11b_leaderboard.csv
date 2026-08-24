@@ -1,0 +1,2 @@
+model_alias,model_id,samples,correct,incorrect,invalid_outputs,accuracy,strict_correct,strict_accuracy,mean_inference_seconds,std_inference_seconds,total_inference_seconds
+llama32-vision-11b,meta-llama/Llama-3.2-11B-Vision-Instruct,288,240,48,3,0.8333333333333334,238,0.8263888888888888,0.87015625,0.27816488999066574,250.605

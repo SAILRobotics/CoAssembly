@@ -1,4 +1,4 @@
-"""vlm_assistant.py — Qwen2.5-VL assistant panel for DearPyGui.
+"""vlm_assistant.py — Qwen3-VL assistant panel for DearPyGui.
 
 Features:
   - Task description as system context
@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import queue
 import re
+import sys
 import threading
 from pathlib import Path
 
@@ -27,10 +28,41 @@ You are an expert assembly assistant for a gearbox assembly task.
 Use the task description below as your primary reference when answering questions.
 When images are provided, identify components and their assembly state from the visuals.
 
+If the user is asking you to identify, fetch, or hand over a specific physical
+part (e.g. "can you get me the X", "I need the Y part", "give me the Z"),
+respond with ONLY that part's label from the list below, with identical
+spelling, and nothing else -- no explanation, no punctuation, no JSON. Most
+labels are exactly the canonical task-graph identifiers used in the task
+description (e.g. `BASE_BOARD`, `STAND_ROW2_LEFT`, `GEAR_ROW2_RIGHT`). Three
+labels are exceptions: `BEARING`, `PIN`, and `SCREW_ROW1`..`SCREW_ROW4` each
+group several row/side-specific task-graph parts that are physically
+identical; use the group label rather than a specific row/side identifier for
+those, e.g. `BEARING` (not `BEARING_ROW2_LEFT`) and `SCREW_ROW2` (not
+`SCREW_ROW2_LEFT` or `SCREW_ROW2_RIGHT`). For every other kind of question
+(how-to, status, explanation, general conversation), answer normally in
+natural language.
+
+--- ALLOWED PART LABELS ---
+{part_labels}
+--- END ALLOWED PART LABELS ---
+
 --- TASK DESCRIPTION ---
 {task_description}
 --- END TASK DESCRIPTION ---
 """
+
+
+def _load_part_labels() -> str:
+    """Reuse the exact 26-label set from evaluate_referring_expression_models.py
+    so part identification stays in sync with the evaluation dataset."""
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from evaluate_referring_expression_models import DEFAULT_DATASET, load_dataset_frame
+        dataset = load_dataset_frame(DEFAULT_DATASET, include_unverified=False)
+        candidates = sorted(dataset["target_name"].unique().tolist())
+        return "\n".join(f"- {name}" for name in candidates)
+    except Exception as e:
+        return f"(part label list unavailable: {e})"
 
 _MD_PATTERNS = [
     (re.compile(r'\*\*(.+?)\*\*'), r'\1'),
@@ -152,13 +184,11 @@ class _VLMWorker:
 
     def _load_model(self):
         try:
-            from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
-            model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-                self._model_name, torch_dtype="auto", device_map="auto")
-        except (ImportError, AttributeError, OSError):
-            from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
-            model = Qwen2VLForConditionalGeneration.from_pretrained(
-                self._model_name, torch_dtype="auto", device_map="auto")
+            from transformers import AutoModelForImageTextToText as ModelClass
+        except ImportError:
+            from transformers import AutoModelForVision2Seq as ModelClass
+        model = ModelClass.from_pretrained(
+            self._model_name, torch_dtype="auto", device_map="auto")
         from transformers import AutoProcessor
         processor = AutoProcessor.from_pretrained(self._model_name)
         model.eval()
@@ -272,7 +302,7 @@ class VLMAssistant:
         self,
         dpg,
         task_description_path: str,
-        model_name: str = "Qwen/Qwen2.5-VL-3B-Instruct",
+        model_name: str = "Qwen/Qwen3-VL-8B-Instruct",
     ) -> None:
         self.dpg = dpg
         self._model_name = model_name
@@ -280,7 +310,7 @@ class VLMAssistant:
         desc_path = Path(task_description_path)
         task_description = desc_path.read_text() if desc_path.exists() else "(not found)"
         self._system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
-            task_description=task_description)
+            task_description=task_description, part_labels=_load_part_labels())
         self._desc_info = f"{desc_path.name}  ({len(task_description)} chars)"
 
         self._worker = _VLMWorker(model_name, self._system_prompt)

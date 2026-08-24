@@ -1,0 +1,289 @@
+index,description,target_name,prediction,correct,raw_model_answer,model_name,inference_seconds
+1,the gearbox mounting plate,BaseBoard,BaseBoard,True,BASE_BOARD,Qwen/Qwen2.5-VL-3B-Instruct,4.873
+2,the large flat black rectangular plate,BaseBoard,BaseBoard,True,BASE_BOARD,Qwen/Qwen2.5-VL-3B-Instruct,0.308
+3,the base plate underneath all four colored rows,BaseBoard,BaseBoard,True,BASE_BOARD,Qwen/Qwen2.5-VL-3B-Instruct,0.307
+4,the plate to which all eight bearing support brackets are screwed,BaseBoard,BaseBoard,True,BASE_BOARD,Qwen/Qwen2.5-VL-3B-Instruct,0.307
+5,the large black rectangular mounting plate below every gear shaft and stand,BaseBoard,BaseBoard,True,BASE_BOARD,Qwen/Qwen2.5-VL-3B-Instruct,0.308
+6,the rigid plate that supports and locates every gearbox row,BaseBoard,BaseBoard,True,BASE_BOARD,Qwen/Qwen2.5-VL-3B-Instruct,0.308
+7,"the broad black rectangular base beneath the white, red, green, and blue mechanisms",BaseBoard,BaseBoard,True,BASE_BOARD,Qwen/Qwen2.5-VL-3B-Instruct,0.310
+8,black baseboard,BaseBoard,BaseBoard,True,BASE_BOARD,Qwen/Qwen2.5-VL-3B-Instruct,0.311
+9,gearbox base,BaseBoard,BaseBoard,True,BASE_BOARD,Qwen/Qwen2.5-VL-3B-Instruct,0.309
+10,mounting plate,BaseBoard,BaseBoard,True,BASE_BOARD,Qwen/Qwen2.5-VL-3B-Instruct,0.308
+11,the radial shaft-support bearing,Bearing,Bearing,True,Bearing,Qwen/Qwen2.5-VL-3B-Instruct,0.308
+12,the small black circular ring with a center hole,Bearing,Bearing,True,Bearing,Qwen/Qwen2.5-VL-3B-Instruct,0.307
+13,the round black part centered inside a bearing support bracket,Bearing,Bearing,True,Bearing,Qwen/Qwen2.5-VL-3B-Instruct,0.309
+14,the bearing through which a gear shaft passes,Bearing,Bearing,True,Bearing,Qwen/Qwen2.5-VL-3B-Instruct,0.308
+15,the small black ring-shaped bearing that fits into each colored stand,Bearing,Bearing,True,BEARING_ROW1_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.359
+16,the black bearing that supports a rotating gear shaft inside a stand,Bearing,Bearing,True,Bearing,Qwen/Qwen2.5-VL-3B-Instruct,0.306
+17,the small black ring seated in the round opening of a colored support bracket,Bearing,Bearing,True,Bearing,Qwen/Qwen2.5-VL-3B-Instruct,0.310
+18,black bearing,Bearing,Bearing,True,BEARING_ROW2_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.357
+19,circular bearing,Bearing,Bearing,True,BEARING_ROW1_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.358
+20,gear-stand bearing,Bearing,Row1_GearStand_Right,False,STAND_ROW1_RIGHT_ASSEMBLY,Qwen/Qwen2.5-VL-3B-Instruct,0.410
+21,the Row 1 hand crank,Handle,Handle,True,CRANK_HANDLE_ROW1,Qwen/Qwen2.5-VL-3B-Instruct,0.358
+22,the white bent lever with a rounded grip,Handle,Handle,True,Handle,Qwen/Qwen2.5-VL-3B-Instruct,0.292
+23,the handle immediately to the right of the right white gear stand,Handle,Handle,True,CRANK_HANDLE_ROW1,Qwen/Qwen2.5-VL-3B-Instruct,0.359
+24,the crank attached at the right end of the white gear rod,Handle,Handle,True,CRANK_HANDLE_ROW1,Qwen/Qwen2.5-VL-3B-Instruct,0.358
+25,the white handle beside the right stand in circle-marked Row 1,Handle,Handle,True,CRANK_HANDLE_ROW1,Qwen/Qwen2.5-VL-3B-Instruct,0.359
+26,the hand-operated lever used to rotate the assembled gear train,Handle,Handle,True,CRANK_HANDLE_ROW1,Qwen/Qwen2.5-VL-3B-Instruct,0.359
+27,the bent white crank connected to the end of the Row 1 shaft,Handle,Handle,True,CRANK_HANDLE_ROW1,Qwen/Qwen2.5-VL-3B-Instruct,0.362
+28,white handle,Handle,Handle,True,CRANK_HANDLE_ROW1,Qwen/Qwen2.5-VL-3B-Instruct,0.359
+29,Row 1 crank,Handle,Handle,True,CRANK_HANDLE_ROW1,Qwen/Qwen2.5-VL-3B-Instruct,0.358
+30,right-side crank,Handle,Handle,True,CRANK_HANDLE_ROW1,Qwen/Qwen2.5-VL-3B-Instruct,0.359
+31,the Row 1 gear shaft,Row1_GearRod,Row1_GearRod,True,GEAR_ROD_ROW1_ASSEMBLY,Qwen/Qwen2.5-VL-3B-Instruct,0.423
+32,the long white cylindrical shaft with two pin holes,Row1_GearRod,Row1_GearRod,True,GEAR_ROD_ROW1_ASSEMBLY,Qwen/Qwen2.5-VL-3B-Instruct,0.422
+33,the shaft crossing Row 1 between the two white brackets,Row1_GearRod,Row1_GearRod,True,GEAR_ROD_ROW1_ASSEMBLY,Qwen/Qwen2.5-VL-3B-Instruct,0.424
+34,the shaft that passes through both Row 1 bearings and carries one large gear,Row1_GearRod,Row1_GearRod,True,GEAR_ROD_ROW1_ASSEMBLY,Qwen/Qwen2.5-VL-3B-Instruct,0.425
+35,the long white circle-row gear shaft seated in both bearing brackets,Row1_GearRod,Row1_GearRod,True,GEAR_ROD_ROW1_ASSEMBLY,Qwen/Qwen2.5-VL-3B-Instruct,0.422
+36,the Row 1 shaft that carries one large gear and transfers rotation between the two stands,Row1_GearRod,Row1_GearRod,True,GEAR_ROD_ROW1_ASSEMBLY,Qwen/Qwen2.5-VL-3B-Instruct,0.424
+37,the long white cylindrical rod with two retaining-pin holes spanning Row 1,Row1_GearRod,Row1_GearRod,True,GEAR_ROD_ROW1_ASSEMBLY,Qwen/Qwen2.5-VL-3B-Instruct,0.425
+38,white gear rod,Row1_GearRod,Row1_GearRod,True,GEAR_ROD_ROW1_ASSEMBLY,Qwen/Qwen2.5-VL-3B-Instruct,0.422
+39,Row 1 shaft,Row1_GearRod,Row1_GearRod,True,GEAR_ROD_ROW1_ASSEMBLY,Qwen/Qwen2.5-VL-3B-Instruct,0.424
+40,gear rod of Row 1,Row1_GearRod,Row1_GearRod,True,GEAR_ROD_ROW1_ASSEMBLY,Qwen/Qwen2.5-VL-3B-Instruct,0.424
+41,white gear rod in the circle row,Row1_GearRod,Row1_GearRod,True,GEAR_ROD_ROW1_ASSEMBLY,Qwen/Qwen2.5-VL-3B-Instruct,0.425
+42,circle-row white shaft,Row1_GearRod,Row1_Gear_Left,False,GEAR_ROW1_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.358
+43,the Row 1 left gear stand,Row1_GearStand_Left,Row1_GearStand_Left,True,STAND_ROW1_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.360
+44,the upright white left stand with a circular bearing opening,Row1_GearStand_Left,Row1_GearStand_Left,True,STAND_ROW1_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.361
+45,the left bearing support bracket in Row 1,Row1_GearStand_Left,Row1_GearStand_Left,True,STAND_ROW1_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.360
+46,"the Row 1 support bracket where the left bearing fits, next to the large left gear",Row1_GearStand_Left,Row1_GearStand_Left,True,STAND_ROW1_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.362
+47,the white circle-row left gear stand supporting the gear shaft,Row1_GearStand_Left,Row1_GearStand_Left,True,STAND_ROW1_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.360
+48,the left Row 1 support that holds a bearing and supports the gear shaft,Row1_GearStand_Left,Row1_GearStand_Left,True,STAND_ROW1_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.360
+49,"the upright white bearing bracket on the left, beside the large left gear in the circle-marked row",Row1_GearStand_Left,Bearing,False,BEARING_ROW1_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.362
+50,white left stand,Row1_GearStand_Left,Row1_GearStand_Left,True,STAND_ROW1_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.360
+51,Row 1 left bracket,Row1_GearStand_Left,Bearing,False,BEARING_ROW1_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.359
+52,left gear stand of Row 1,Row1_GearStand_Left,Row1_GearStand_Left,True,STAND_ROW1_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.358
+53,white left gear stand in the circle row,Row1_GearStand_Left,Row1_GearStand_Left,True,STAND_ROW1_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.360
+54,left bracket of the white circle row,Row1_GearStand_Left,Row1_GearRod,False,Row1_GearRod,Qwen/Qwen2.5-VL-3B-Instruct,0.359
+55,the Row 1 right gear stand,Row1_GearStand_Right,Row1_GearStand_Right,True,STAND_ROW1_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.360
+56,the upright white stand with an overlapping bearing slot and through-hole,Row1_GearStand_Right,Row1_GearStand_Right,True,STAND_ROW1_RIGHT_ASSEMBLY,Qwen/Qwen2.5-VL-3B-Instruct,0.408
+57,the right-hand support in circle-marked Row 1,Row1_GearStand_Right,Row1_GearStand_Right,True,STAND_ROW1_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.360
+58,the stand immediately to the left of the crank handle,Row1_GearStand_Right,Row1_GearStand_Left,False,STAND_ROW1_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.359
+59,the white right bearing bracket whose bearing recess overlaps a hole through the stand,Row1_GearStand_Right,Row1_GearStand_Right,True,STAND_ROW1_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.360
+60,the right Row 1 support that holds the bearing and guides the gear shaft,Row1_GearStand_Right,Row1_GearStand_Right,True,STAND_ROW1_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.362
+61,the white crank-side gear stand with both a bearing slot and a penetrating hole,Row1_GearStand_Right,Row1_GearStand_Right,True,STAND_ROW1_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.361
+62,white right stand,Row1_GearStand_Right,Row1_GearStand_Right,True,STAND_ROW1_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.359
+63,Row 1 right bracket,Row1_GearStand_Right,Row1_GearStand_Right,True,STAND_ROW1_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.361
+64,right gear stand of Row 1,Row1_GearStand_Right,Row1_GearStand_Right,True,STAND_ROW1_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.360
+65,white right gear stand in the circle row,Row1_GearStand_Right,Row1_GearStand_Right,True,STAND_ROW1_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.361
+66,right bracket of the white circle row,Row1_GearStand_Right,Row2_Gear_Right,False,Row2_GearRight,Qwen/Qwen2.5-VL-3B-Instruct,0.360
+67,the Row 1 left spur gear,Row1_Gear_Left,Row1_Gear_Left,True,GEAR_ROW1_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.360
+68,the large white spur wheel,Row1_Gear_Left,Row1_Gear_Left,True,GEAR_ROW1_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.361
+69,the left-side gear on the shaft in Row 1,Row1_Gear_Left,Row1_Gear_Left,True,GEAR_ROW1_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.360
+70,"the Row 1 gear next to the left white bracket, the only gear in Row 1",Row1_Gear_Left,Row1_Gear_Left,True,GEAR_ROW1_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.361
+71,the large white spur gear on the left side of the circle-marked shaft,Row1_Gear_Left,Row1_Gear_Left,True,GEAR_ROW1_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.360
+72,the Row 1 spur gear that transmits rotation along the gear train,Row1_Gear_Left,Row1_Gear_Left,True,GEAR_ROW1_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.362
+73,"the large white toothed wheel on the left side, beside the gear shaft",Row1_Gear_Left,Row1_Gear_Left,True,GEAR_ROW1_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.361
+74,gear of Row 1,Row1_Gear_Left,Row1_Gear_Left,True,GEAR_ROW1_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.361
+75,white gear,Row1_Gear_Left,Row1_Gear_Left,True,GEAR_ROW1_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.361
+76,Row 1 gear,Row1_Gear_Left,Row1_Gear_Left,True,GEAR_ROW1_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.360
+77,white gear in the circle row,Row1_Gear_Left,Row1_Gear_Left,True,GEAR_ROW1_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.361
+78,circle-row white gear,Row1_Gear_Left,Row1_Gear_Left,True,GEAR_ROW1_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.361
+79,a Row 1 H5 hex-socket mounting screw,Row1_Screws,Row1_Screws,True,SCREW_ROW1_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.361
+80,a small silver screw with a recessed H5 hex-socket head,Row1_Screws,Row1_Screws,True,SCREW_ROW1_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.362
+81,a screw at the base of a Row 1 gear stand,Row1_Screws,Row1_Screws,True,SCREW_ROW1_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.360
+82,a fastener used to secure a Row 1 bearing stand to the baseboard,Row1_Screws,Row1_Screws,True,SCREW_ROW1_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.362
+83,the silver H5 hex-socket screw for the white Row 1 stand,Row1_Screws,Row1_Screws,True,SCREW_ROW1_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.363
+84,the Row 1 fastener tightened with a 5 mm hex key,Row1_Screws,Row1_Screws,True,SCREW_ROW1_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.362
+85,the small silver screw located at the foot of a white support bracket,Row1_Screws,Row1_Screws,True,SCREW_ROW1_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.362
+86,Row 1 screw,Row1_Screws,Row1_Screws,True,SCREW_ROW1_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.361
+87,H5 screw,Row1_Screws,Row1_Screws,True,SCREW_ROW1_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.360
+88,the Row 2 gear shaft,Row2_GearRod,Row2_GearRod,True,GEAR_ROD_ROW2,Qwen/Qwen2.5-VL-3B-Instruct,0.378
+89,the long red cylindrical shaft with two pin holes,Row2_GearRod,Row2_GearRod,True,GEAR_ROD_ROW2,Qwen/Qwen2.5-VL-3B-Instruct,0.376
+90,the shaft crossing Row 2 between the two red brackets,Row2_GearRod,Row2_GearRod,True,GEAR_ROD_ROW2,Qwen/Qwen2.5-VL-3B-Instruct,0.378
+91,the shaft that passes through both Row 2 bearings and carries the small and medium gears,Row2_GearRod,Row2_GearRod,True,GEAR_ROD_ROW2,Qwen/Qwen2.5-VL-3B-Instruct,0.380
+92,the long red triangle-row gear shaft seated in both bearing brackets,Row2_GearRod,Row2_GearRod,True,GEAR_ROD_ROW2,Qwen/Qwen2.5-VL-3B-Instruct,0.378
+93,the Row 2 shaft that carries the small and medium gears and transfers rotation between the two stands,Row2_GearRod,Row2_GearRod,True,GEAR_ROD_ROW2,Qwen/Qwen2.5-VL-3B-Instruct,0.380
+94,the long red cylindrical rod with two retaining-pin holes spanning the second row from Row 1,Row2_GearRod,Row2_GearRod,True,GEAR_ROD_ROW2,Qwen/Qwen2.5-VL-3B-Instruct,0.379
+95,red gear rod,Row2_GearRod,Row2_GearRod,True,GEAR_ROD_ROW2,Qwen/Qwen2.5-VL-3B-Instruct,0.379
+96,Row 2 shaft,Row2_GearRod,Row2_GearRod,True,GEAR_ROD_ROW2,Qwen/Qwen2.5-VL-3B-Instruct,0.378
+97,gear rod of Row 2,Row2_GearRod,Row2_GearRod,True,GEAR_ROD_ROW2,Qwen/Qwen2.5-VL-3B-Instruct,0.377
+98,red gear rod in the triangle row,Row2_GearRod,Row2_GearRod,True,GEAR_ROD_ROW2,Qwen/Qwen2.5-VL-3B-Instruct,0.379
+99,triangle-row red shaft,Row2_GearRod,Row2_GearRod,True,GEAR_ROD_ROW2,Qwen/Qwen2.5-VL-3B-Instruct,0.377
+100,the Row 2 left gear stand,Row2_GearStand_Left,Row2_GearStand_Left,True,BEARING_STAND_ROW2_LEFT_ASSEMBLY,Qwen/Qwen2.5-VL-3B-Instruct,0.444
+101,the upright red left stand with a circular bearing opening,Row2_GearStand_Left,Bearing,False,BEARING_ROW2_LEFT_ASSEMBLY,Qwen/Qwen2.5-VL-3B-Instruct,0.412
+102,the left bearing support bracket in the second row from Row 1,Row2_GearStand_Left,Row2_GearStand_Left,True,BEARING_STAND_ROW2_LEFT_ASSEMBLY,Qwen/Qwen2.5-VL-3B-Instruct,0.445
+103,"the Row 2 support bracket where the left bearing fits, next to the small left gear",Row2_GearStand_Left,Row2_GearStand_Left,True,BEARING_STAND_ROW2_LEFT_ASSEMBLY,Qwen/Qwen2.5-VL-3B-Instruct,0.444
+104,the red triangle-row left gear stand supporting the gear shaft,Row2_GearStand_Left,Row2_GearStand_Left,True,STAND_ROW2_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.363
+105,the left Row 2 support that holds a bearing and supports the gear shaft,Row2_GearStand_Left,Row2_GearStand_Left,True,STAND_ROW2_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.363
+106,"the upright red bearing bracket on the left, beside the small left gear in the triangle-marked row",Row2_GearStand_Left,Bearing,False,BEARING_ROW2_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.364
+107,red left stand,Row2_GearStand_Left,Row2_GearStand_Left,True,STAND_ROW2_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.361
+108,Row 2 left bracket,Row2_GearStand_Left,Bearing,False,BEARING_ROW2_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.362
+109,left gear stand of Row 2,Row2_GearStand_Left,Row2_GearStand_Left,True,STAND_ROW2_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.362
+110,red left gear stand in the triangle row,Row2_GearStand_Left,Row2_GearStand_Left,True,STAND_ROW2_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.361
+111,left bracket of the red triangle row,Row2_GearStand_Left,Bearing,False,BEARING_ROW2_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.362
+112,the Row 2 right gear stand,Row2_GearStand_Right,Row2_GearStand_Right,True,STAND_ROW2_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.362
+113,the upright red right stand with a circular bearing opening,Row2_GearStand_Right,Row2_GearStand_Right,True,STAND_ROW2_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.362
+114,the right bearing support bracket in the second row from Row 1,Row2_GearStand_Right,Row2_GearStand_Right,True,BEARING_STAND_ROW2_RIGHT_ASSEMBLY,Qwen/Qwen2.5-VL-3B-Instruct,0.445
+115,"the Row 2 support bracket where the right bearing fits, next to the medium right gear",Row2_GearStand_Right,Row2_GearStand_Right,True,STAND_ROW2_RIGHT_ASSEMBLY,Qwen/Qwen2.5-VL-3B-Instruct,0.451
+116,the red triangle-row right gear stand supporting the gear shaft,Row2_GearStand_Right,Row2_GearStand_Right,True,STAND_ROW2_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.388
+117,the right Row 2 support that holds a bearing and supports the gear shaft,Row2_GearStand_Right,Row2_GearStand_Right,True,STAND_ROW2_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.397
+118,"the upright red bearing bracket on the right, beside the medium right gear in the triangle-marked row",Row2_GearStand_Right,Row2_GearStand_Right,True,STAND_ROW2_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.388
+119,red right stand,Row2_GearStand_Right,Row2_GearStand_Right,True,STAND_ROW2_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.397
+120,Row 2 right bracket,Row2_GearStand_Right,Row2_GearStand_Right,True,STAND_ROW2_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.390
+121,right gear stand of Row 2,Row2_GearStand_Right,Row2_GearStand_Right,True,STAND_ROW2_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.395
+122,red right gear stand in the triangle row,Row2_GearStand_Right,Row2_GearStand_Right,True,STAND_ROW2_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.383
+123,right bracket of the red triangle row,Row2_GearStand_Right,Row2_Gear_Right,False,GEAR_ROW2_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.365
+124,the Row 2 left spur gear,Row2_Gear_Left,Row2_Gear_Left,True,GEAR_ROW2_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.373
+125,the small red spur wheel,Row2_Gear_Left,Row2_Gear_Left,True,GEAR_ROW2_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.371
+126,the left-side gear on the shaft in the second row from Row 1,Row2_Gear_Left,Row2_Gear_Left,True,GEAR_ROW2_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.362
+127,"the Row 2 gear next to the left red bracket, smaller than the right gear",Row2_Gear_Left,Row2_Gear_Left,True,GEAR_ROW2_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.364
+128,the small red spur gear on the left side of the triangle-marked shaft,Row2_Gear_Left,Row2_Gear_Left,True,GEAR_ROW2_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+129,the small red gear to the left of the larger red gear,Row2_Gear_Left,Row2_Gear_Left,True,GEAR_ROW2_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.362
+130,smaller gear of Row 2,Row2_Gear_Left,Row2_Gear_Left,True,GEAR_ROW2_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+131,red smaller gear,Row2_Gear_Left,Row2_Gear_Left,True,GEAR_ROW2_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.363
+132,left gear of Row 2,Row2_Gear_Left,Row2_Gear_Left,True,GEAR_ROW2_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.363
+133,smaller red gear in the triangle row,Row2_Gear_Left,Row2_Gear_Right,False,GEAR_ROW2_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+134,triangle-row red left gear,Row2_Gear_Left,Row2_Gear_Left,True,GEAR_ROW2_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.362
+135,the Row 2 right spur gear,Row2_Gear_Right,Row2_Gear_Right,True,GEAR_ROW2_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+136,the medium red spur wheel,Row2_Gear_Right,Row2_Gear_Right,True,GEAR_ROW2_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.363
+137,the right-side gear on the shaft in the second row from Row 1,Row2_Gear_Right,Row2_Gear_Right,True,GEAR_ROW2_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.365
+138,"the Row 2 gear next to the right red bracket, larger than the left gear",Row2_Gear_Right,Row2_Gear_Right,True,GEAR_ROW2_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.367
+139,the medium red spur gear on the right side of the triangle-marked shaft,Row2_Gear_Right,Row2_Gear_Right,True,GEAR_ROW2_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.365
+140,the larger red gear to the right of the small red gear,Row2_Gear_Right,Row2_Gear_Right,True,GEAR_ROW2_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.365
+141,larger gear of Row 2,Row2_Gear_Right,Row2_Gear_Left,False,GEAR_ROW2_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+142,red larger gear,Row2_Gear_Right,Row2_Gear_Right,True,GEAR_ROW2_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.363
+143,right gear of Row 2,Row2_Gear_Right,Row2_Gear_Right,True,GEAR_ROW2_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.362
+144,larger red gear in the triangle row,Row2_Gear_Right,Row2_Gear_Right,True,GEAR_ROW2_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.364
+145,triangle-row red right gear,Row2_Gear_Right,Row2_Gear_Right,True,GEAR_ROW2_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.365
+146,a Row 2 T25 Torx mounting screw,Row2_Screws,Row2_Screws,True,SCREW_ROW2_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+147,a small black screw with a recessed T25 Torx head,Row2_Screws,Row2_Screws,True,SCREW_ROW2_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.364
+148,a screw at the base of a Row 2 gear stand,Row2_Screws,Row2_Screws,True,SCREW_ROW2_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.365
+149,a fastener used to secure a Row 2 bearing stand to the baseboard,Row2_Screws,Row2_Screws,True,SCREW_ROW2_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.365
+150,the black T25 Torx screw for the red Row 2 stand,Row2_Screws,Row2_Screws,True,SCREW_ROW2_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.365
+151,the Row 2 fastener tightened with a T25 driver,Row2_Screws,Row2_Screws,True,SCREW_ROW2_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.367
+152,the small black screw located at the foot of a red support bracket,Row2_Screws,Row2_Screws,True,SCREW_ROW2_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.364
+153,Row 2 screw,Row2_Screws,Row2_Screws,True,SCREW_ROW2_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+154,T25 screw,Row2_Screws,Row2_Screws,True,SCREW_ROW2_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.364
+155,the Row 3 gear shaft,Row3_GearRod,Row3_GearRod,True,GEAR_ROD_ROW3,Qwen/Qwen2.5-VL-3B-Instruct,0.379
+156,the long green cylindrical shaft with two pin holes,Row3_GearRod,Row3_GearRod,True,GEAR_ROD_ROW3,Qwen/Qwen2.5-VL-3B-Instruct,0.383
+157,the shaft crossing Row 3 between the two green brackets,Row3_GearRod,Row3_GearRod,True,GEAR_ROD_ROW3,Qwen/Qwen2.5-VL-3B-Instruct,0.381
+158,the shaft that passes through both Row 3 bearings and carries the small and medium gears,Row3_GearRod,Row3_GearRod,True,GEAR_ROD_ROW3,Qwen/Qwen2.5-VL-3B-Instruct,0.382
+159,the long green hexagon-row gear shaft seated in both bearing brackets,Row3_GearRod,Row3_GearRod,True,GEAR_ROD_ROW3,Qwen/Qwen2.5-VL-3B-Instruct,0.382
+160,the Row 3 shaft that carries the small and medium gears and transfers rotation between the two stands,Row3_GearRod,Row3_GearRod,True,GEAR_ROD_ROW3,Qwen/Qwen2.5-VL-3B-Instruct,0.381
+161,the long green cylindrical rod with two retaining-pin holes spanning Row 3,Row3_GearRod,Row3_GearRod,True,GEAR_ROD_ROW3,Qwen/Qwen2.5-VL-3B-Instruct,0.382
+162,green gear rod,Row3_GearRod,Row3_GearRod,True,GEAR_ROD_ROW3,Qwen/Qwen2.5-VL-3B-Instruct,0.381
+163,Row 3 shaft,Row3_GearRod,Row3_GearRod,True,GEAR_ROD_ROW3,Qwen/Qwen2.5-VL-3B-Instruct,0.379
+164,gear rod of Row 3,Row3_GearRod,Row3_GearRod,True,GEAR_ROD_ROW3,Qwen/Qwen2.5-VL-3B-Instruct,0.382
+165,green gear rod in the hexagon row,Row3_GearRod,Row3_GearRod,True,GEAR_ROD_ROW3,Qwen/Qwen2.5-VL-3B-Instruct,0.380
+166,hexagon-row green shaft,Row3_GearRod,Row3_GearRod,True,Row3_GearRod,Qwen/Qwen2.5-VL-3B-Instruct,0.365
+167,the Row 3 left gear stand,Row3_GearStand_Left,Row3_GearStand_Left,True,STAND_ROW3_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.365
+168,the upright green left stand with a circular bearing opening,Row3_GearStand_Left,Row3_GearStand_Left,True,STAND_ROW3_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.365
+169,the left bearing support bracket in Row 3,Row3_GearStand_Left,Row3_GearStand_Left,True,STAND_ROW3_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.365
+170,"the Row 3 support bracket where the left bearing fits, next to the small left gear",Row3_GearStand_Left,Row3_GearStand_Left,True,STAND_ROW3_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.365
+171,the green hexagon-row left gear stand supporting the gear shaft,Row3_GearStand_Left,Row3_GearStand_Left,True,STAND_ROW3_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.363
+172,the left Row 3 support that holds a bearing and supports the gear shaft,Row3_GearStand_Left,Row3_GearStand_Left,True,STAND_ROW3_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+173,"the upright green bearing bracket on the left, beside the small left gear in the hexagon-marked row",Row3_GearStand_Left,Bearing,False,BEARING_ROW3_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.365
+174,green left stand,Row3_GearStand_Left,Row3_GearStand_Left,True,STAND_ROW3_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+175,Row 3 left bracket,Row3_GearStand_Left,Bearing,False,BEARING_ROW3_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.367
+176,left gear stand of Row 3,Row3_GearStand_Left,Row3_GearStand_Left,True,STAND_ROW3_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.365
+177,green left gear stand in the hexagon row,Row3_GearStand_Left,Row3_GearStand_Left,True,STAND_ROW3_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.365
+178,left bracket of the green hexagon row,Row3_GearStand_Left,Bearing,False,BEARING_ROW3_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.365
+179,the Row 3 right gear stand,Row3_GearStand_Right,Row3_GearStand_Right,True,STAND_ROW3_RIGHT_ASSEMBLY,Qwen/Qwen2.5-VL-3B-Instruct,0.414
+180,the upright green right stand with a circular bearing opening,Row3_GearStand_Right,Row3_GearStand_Right,True,STAND_ROW3_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+181,the right bearing support bracket in Row 3,Row3_GearStand_Right,Row3_GearStand_Right,True,STAND_ROW3_RIGHT_ASSEMBLY,Qwen/Qwen2.5-VL-3B-Instruct,0.412
+182,"the Row 3 support bracket where the right bearing fits, next to the medium right gear",Row3_GearStand_Right,Row3_GearStand_Right,True,STAND_ROW3_RIGHT_ASSEMBLY,Qwen/Qwen2.5-VL-3B-Instruct,0.416
+183,the green hexagon-row right gear stand supporting the gear shaft,Row3_GearStand_Right,Row3_GearStand_Right,True,STAND_ROW3_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+184,the right Row 3 support that holds a bearing and supports the gear shaft,Row3_GearStand_Right,Row3_GearStand_Right,True,STAND_ROW3_RIGHT_ASSEMBLY,Qwen/Qwen2.5-VL-3B-Instruct,0.415
+185,"the upright green bearing bracket on the right, beside the medium right gear in the hexagon-marked row",Row3_GearStand_Right,Row3_GearStand_Right,True,STAND_ROW3_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.368
+186,green right stand,Row3_GearStand_Right,Row3_GearStand_Right,True,STAND_ROW3_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+187,Row 3 right bracket,Row3_GearStand_Right,Row3_GearStand_Right,True,STAND_ROW3_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.364
+188,right gear stand of Row 3,Row3_GearStand_Right,Row3_GearStand_Right,True,STAND_ROW3_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+189,green right gear stand in the hexagon row,Row3_GearStand_Right,Row3_GearStand_Right,True,STAND_ROW3_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.365
+190,right bracket of the green hexagon row,Row3_GearStand_Right,Row3_GearStand_Right,True,STAND_ROW3_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.365
+191,the Row 3 left spur gear,Row3_Gear_Left,Row3_Gear_Left,True,GEAR_ROW3_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.365
+192,the small green spur wheel,Row3_Gear_Left,Row3_Gear_Left,True,GEAR_ROW3_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.364
+193,the left-side gear on the shaft in Row 3,Row3_Gear_Left,Row3_Gear_Left,True,GEAR_ROW3_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+194,"the Row 3 gear next to the left green bracket, smaller than the right gear",Row3_Gear_Left,Row3_Gear_Left,True,GEAR_ROW3_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+195,the small green spur gear on the left side of the hexagon-marked shaft,Row3_Gear_Left,Row3_Gear_Left,True,GEAR_ROW3_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.367
+196,the small green gear to the left of the larger green gear,Row3_Gear_Left,Row3_Gear_Left,True,GEAR_ROW3_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+197,smaller gear of Row 3,Row3_Gear_Left,Row3_Gear_Left,True,GEAR_ROW3_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.364
+198,green smaller gear,Row3_Gear_Left,Row3_Gear_Left,True,GEAR_ROW3_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+199,left gear of Row 3,Row3_Gear_Left,Row3_Gear_Left,True,GEAR_ROW3_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.365
+200,smaller green gear in the hexagon row,Row3_Gear_Left,Row3_Gear_Left,True,GEAR_ROW3_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.363
+201,hexagon-row green left gear,Row3_Gear_Left,Row3_Gear_Left,True,GEAR_ROW3_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.365
+202,the Row 3 right spur gear,Row3_Gear_Right,Row3_Gear_Right,True,GEAR_ROW3_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.365
+203,the medium green spur wheel,Row3_Gear_Right,Row3_Gear_Right,True,GEAR_ROW3_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+204,the right-side gear on the shaft in Row 3,Row3_Gear_Right,Row3_Gear_Right,True,GEAR_ROW3_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.365
+205,"the Row 3 gear next to the right green bracket, larger than the left gear",Row3_Gear_Right,Row3_Gear_Right,True,GEAR_ROW3_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+206,the medium green spur gear on the right side of the hexagon-marked shaft,Row3_Gear_Right,Row3_Gear_Right,True,GEAR_ROW3_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.369
+207,the larger green gear to the right of the small green gear,Row3_Gear_Right,Row3_Gear_Right,True,GEAR_ROW3_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.365
+208,larger gear of Row 3,Row3_Gear_Right,Row3_Gear_Left,False,GEAR_ROW3_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+209,green larger gear,Row3_Gear_Right,Row3_Gear_Right,True,GEAR_ROW3_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+210,right gear of Row 3,Row3_Gear_Right,Row3_Gear_Right,True,GEAR_ROW3_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.364
+211,larger green gear in the hexagon row,Row3_Gear_Right,Row3_Gear_Left,False,GEAR_ROW3_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.367
+212,hexagon-row green right gear,Row3_Gear_Right,Row3_Gear_Right,True,GEAR_ROW3_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.365
+213,a Row 3 H3 hex-socket mounting screw,Row3_Screws,Row3_Screws,True,SCREW_ROW3_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+214,a small black screw with a recessed H3 hex-socket head,Row3_Screws,Row3_Screws,True,SCREW_ROW3_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+215,a screw at the base of a Row 3 gear stand,Row3_Screws,Row3_Screws,True,SCREW_ROW3_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.364
+216,a fastener used to secure a Row 3 bearing stand to the baseboard,Row3_Screws,Row3_Screws,True,SCREW_ROW3_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.368
+217,the black H3 hex-socket screw for the green Row 3 stand,Row3_Screws,Row3_Screws,True,SCREW_ROW3_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.365
+218,the Row 3 fastener tightened with a 3 mm hex key,Row3_Screws,Row3_Screws,True,SCREW_ROW3_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.368
+219,the small black screw located at the foot of a green support bracket,Row3_Screws,Row3_Screws,True,SCREW_ROW3_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.369
+220,Row 3 screw,Row3_Screws,Row3_Screws,True,SCREW_ROW3_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+221,H3 screw,Row3_Screws,Row3_Screws,True,SCREW_ROW3_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.365
+222,the Row 4 gear shaft,Row4_GearRod,Row4_GearRod,True,GEAR_ROD_ROW4,Qwen/Qwen2.5-VL-3B-Instruct,0.382
+223,the long blue cylindrical shaft with one pin hole,Row4_GearRod,Row4_GearRod,True,GEAR_ROD_ROW4,Qwen/Qwen2.5-VL-3B-Instruct,0.381
+224,the shaft crossing Row 4 between the two blue brackets,Row4_GearRod,Row4_GearRod,True,GEAR_ROD_ROW4_ASSEMBLY,Qwen/Qwen2.5-VL-3B-Instruct,0.433
+225,the shaft that passes through both Row 4 bearings and carries one large gear,Row4_GearRod,Row4_GearRod,True,GEAR_ROD_ROW4,Qwen/Qwen2.5-VL-3B-Instruct,0.382
+226,the long blue square-row gear shaft seated in both bearing brackets,Row4_GearRod,Row4_GearRod,True,GEAR_ROD_ROW4,Qwen/Qwen2.5-VL-3B-Instruct,0.383
+227,the Row 4 shaft that carries one large gear and transfers rotation between the two stands,Row4_GearRod,Row4_GearRod,True,GEAR_ROD_ROW4,Qwen/Qwen2.5-VL-3B-Instruct,0.384
+228,the long blue cylindrical rod with one retaining-pin hole spanning Row 4,Row4_GearRod,Row4_GearRod,True,GEAR_ROD_ROW4,Qwen/Qwen2.5-VL-3B-Instruct,0.382
+229,blue gear rod,Row4_GearRod,Row4_GearRod,True,GEAR_ROD_ROW4,Qwen/Qwen2.5-VL-3B-Instruct,0.383
+230,Row 4 shaft,Row4_GearRod,Row4_GearRod,True,GEAR_ROD_ROW4_ASSEMBLY,Qwen/Qwen2.5-VL-3B-Instruct,0.430
+231,gear rod of Row 4,Row4_GearRod,Row4_GearRod,True,GEAR_ROD_ROW4,Qwen/Qwen2.5-VL-3B-Instruct,0.381
+232,blue gear rod in the square row,Row4_GearRod,Row4_GearRod,True,Row4_GearRod,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+233,square-row blue shaft,Row4_GearRod,Row4_GearRod,True,Row4_GearRod,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+234,the Row 4 left gear stand,Row4_GearStand_Left,Row4_GearStand_Left,True,STAND_ROW4_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.365
+235,the upright blue left stand with a circular bearing opening,Row4_GearStand_Left,Row4_GearStand_Left,True,STAND_ROW4_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.367
+236,the left bearing support bracket in Row 4,Row4_GearStand_Left,Row4_GearStand_Left,True,STAND_ROW4_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.365
+237,"the Row 4 support bracket where the left bearing fits, next to the large left gear",Row4_GearStand_Left,Row4_GearStand_Left,True,STAND_ROW4_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.367
+238,the blue square-row left gear stand supporting the gear shaft,Row4_GearStand_Left,Row4_GearStand_Left,True,STAND_ROW4_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.367
+239,the left Row 4 support that holds a bearing and supports the gear shaft,Row4_GearStand_Left,Row4_GearStand_Left,True,STAND_ROW4_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+240,"the upright blue bearing bracket on the left, beside the large left gear in the square-marked row",Row4_GearStand_Left,Row4_GearStand_Left,True,STAND_ROW4_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.370
+241,blue left stand,Row4_GearStand_Left,Row4_GearStand_Left,True,STAND_ROW4_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.365
+242,Row 4 left bracket,Row4_GearStand_Left,Bearing,False,BEARING_ROW4_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.365
+243,left gear stand of Row 4,Row4_GearStand_Left,Row4_GearStand_Left,True,STAND_ROW4_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.368
+244,blue left gear stand in the square row,Row4_GearStand_Left,Row4_GearStand_Left,True,STAND_ROW4_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.364
+245,left bracket of the blue square row,Row4_GearStand_Left,Row4_GearRod,False,Row4_GearRod,Qwen/Qwen2.5-VL-3B-Instruct,0.367
+246,the Row 4 right gear stand,Row4_GearStand_Right,Row4_GearStand_Right,True,STAND_ROW4_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.367
+247,the upright blue right stand with a circular bearing opening,Row4_GearStand_Right,Row4_GearStand_Right,True,STAND_ROW4_RIGHT_ASSEMBLY,Qwen/Qwen2.5-VL-3B-Instruct,0.414
+248,the right bearing support bracket in Row 4,Row4_GearStand_Right,Row4_GearStand_Right,True,STAND_ROW4_RIGHT_ASSEMBLY,Qwen/Qwen2.5-VL-3B-Instruct,0.416
+249,"the Row 4 right stand where the bearing fits, at the right end of the blue gear rod",Row4_GearStand_Right,Row4_GearStand_Right,True,STAND_ROW4_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.367
+250,the blue square-row right gear stand supporting the gear shaft,Row4_GearStand_Right,Row4_GearStand_Right,True,STAND_ROW4_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.365
+251,the right Row 4 support that holds a bearing and supports the gear shaft,Row4_GearStand_Right,Row4_GearStand_Right,True,STAND_ROW4_RIGHT_ASSEMBLY,Qwen/Qwen2.5-VL-3B-Instruct,0.417
+252,"the upright blue bearing bracket on the right, beside the crank-side end of the shaft in the square-marked row",Row4_GearStand_Right,Row4_GearStand_Right,True,STAND_ROW4_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+253,blue right stand,Row4_GearStand_Right,Row4_GearStand_Right,True,STAND_ROW4_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.367
+254,Row 4 right bracket,Row4_GearStand_Right,Row4_GearStand_Right,True,STAND_ROW4_RIGHT_ASSEMBLY,Qwen/Qwen2.5-VL-3B-Instruct,0.414
+255,right gear stand of Row 4,Row4_GearStand_Right,Row4_GearStand_Right,True,STAND_ROW4_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.364
+256,blue right gear stand in the square row,Row4_GearStand_Right,Row4_GearStand_Right,True,STAND_ROW4_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+257,right bracket of the blue square row,Row4_GearStand_Right,Row4_Gear_Right,False,Row4_GearRight,Qwen/Qwen2.5-VL-3B-Instruct,0.367
+258,the Row 4 left spur gear,Row4_Gear_Left,Row4_Gear_Left,True,GEAR_ROW4_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.364
+259,the large blue spur wheel,Row4_Gear_Left,Row4_Gear_Left,True,GEAR_ROW4_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.368
+260,the left-side gear on the shaft in Row 4,Row4_Gear_Left,Row4_Gear_Left,True,GEAR_ROW4_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.365
+261,"the Row 4 gear next to the left blue bracket, the only gear in Row 4",Row4_Gear_Left,Row4_Gear_Left,True,GEAR_ROW4_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+262,the large blue spur gear on the left side of the square-marked shaft,Row4_Gear_Left,Row4_Gear_Left,True,GEAR_ROW4_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.369
+263,the Row 4 spur gear that transmits rotation along the gear train,Row4_Gear_Left,Row4_Gear_Left,True,GEAR_ROW4_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.367
+264,"the large blue toothed wheel on the left side, beside the gear shaft",Row4_Gear_Left,Row4_Gear_Left,True,GEAR_ROW4_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.369
+265,gear of Row 4,Row4_Gear_Left,Row4_Gear_Left,True,GEAR_ROW4_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+266,blue gear,Row4_Gear_Left,Row4_Gear_Left,True,GEAR_ROW4_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.365
+267,Row 4 gear,Row4_Gear_Left,Row4_Gear_Left,True,GEAR_ROW4_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+268,blue gear in the square row,Row4_Gear_Left,Row4_Gear_Left,True,Row4_Gear_Left,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+269,square-row blue gear,Row4_Gear_Left,Row4_Gear_Left,True,Row4_Gear_Left,Qwen/Qwen2.5-VL-3B-Instruct,0.368
+270,a Row 4 Phillips mounting screw,Row4_Screws,Row4_Screws,True,SCREW_ROW4_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.368
+271,a small silver screw with a recessed Phillips head,Row4_Screws,Row1_Screws,False,SCREW_ROW1_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+272,a screw at the base of a Row 4 gear stand,Row4_Screws,Row4_Screws,True,SCREW_ROW4_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.369
+273,a fastener used to secure a Row 4 bearing stand to the baseboard,Row4_Screws,Row4_Screws,True,SCREW_ROW4_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+274,the silver Phillips screw for the blue Row 4 stand,Row4_Screws,Row4_Screws,True,SCREW_ROW4_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+275,the Row 4 fastener tightened with a Phillips screwdriver,Row4_Screws,Row4_Screws,True,SCREW_ROW4_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.367
+276,the small silver screw located at the foot of a blue support bracket,Row4_Screws,Row4_Screws,True,SCREW_ROW4_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+277,Row 4 screw,Row4_Screws,Row4_Screws,True,SCREW_ROW4_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+278,Phillips screw,Row4_Screws,Row1_Screws,False,SCREW_ROW1_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.366
+279,the wooden retaining dowel,WoodenPin,WoodenPin,True,PIN_ROW1_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.349
+280,the short thin brown cylindrical peg,WoodenPin,WoodenPin,True,WoodenPin,Qwen/Qwen2.5-VL-3B-Instruct,0.335
+281,the small peg positioned crosswise through a gear-shaft hole,WoodenPin,WoodenPin,True,PIN_ROW1_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.350
+282,the dowel that prevents a gear or crank from sliding along its shaft,WoodenPin,WoodenPin,True,PIN_ROW1_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.352
+283,the small brown cylindrical retaining pin fitted beside a gear,WoodenPin,WoodenPin,True,PIN_ROW2_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.348
+284,the wooden retainer inserted through a shaft hole to stop an attached part sliding,WoodenPin,WoodenPin,True,PIN_ROW1_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.352
+285,the short brown dowel crossing the gear rod beside a gear or the crank,WoodenPin,WoodenPin,True,PIN_ROW1_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.351
+286,wooden pin,WoodenPin,WoodenPin,True,PIN_ROW1_LEFT,Qwen/Qwen2.5-VL-3B-Instruct,0.350
+287,brown pin,WoodenPin,WoodenPin,True,PIN_ROW2_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.353
+288,retaining pin,WoodenPin,WoodenPin,True,PIN_ROW1_RIGHT,Qwen/Qwen2.5-VL-3B-Instruct,0.349

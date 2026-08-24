@@ -1,0 +1,2 @@
+model_alias,model_id,samples,correct,incorrect,invalid_outputs,accuracy,strict_correct,strict_accuracy,mean_inference_seconds,std_inference_seconds,total_inference_seconds
+gemma3-4b,google/gemma-3-4b-it,288,181,107,10,0.6284722222222222,179,0.6215277777777778,0.8614201388888889,0.07999256549066641,248.089

@@ -1,0 +1,2 @@
+model_alias,model_id,samples,correct,incorrect,invalid_outputs,accuracy,strict_correct,strict_accuracy,mean_inference_seconds,std_inference_seconds,total_inference_seconds
+qwen3-8b,Qwen/Qwen3-8B,288,250,38,38,0.8680555555555556,0,0.0,15.544136458333334,4.15325028579678,4476.7113

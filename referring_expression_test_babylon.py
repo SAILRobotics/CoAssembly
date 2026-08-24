@@ -45,6 +45,44 @@ FIELDS = [
     "presentation_number", "target_presentations", "Verified",
 ]
 
+# Rendering-class STL stem -> task-graph naming convention used in
+# task_description.md, so evaluators never have to translate between two
+# naming schemes. target_id (the .stl filename actually served/rendered)
+# is unaffected; only the human/eval-facing target_name changes. Several
+# STL assets are reused across multiple task-graph parts (see
+# task_graph/part_naming_mapping.md), so BEARING/PIN/SCREW_ROW{n} are the
+# generic roots task_description.md already uses for those groups
+# (`BEARING_*`, `PIN_*`, `SCREW_ROW{n}_*`) rather than one specific
+# row/side identifier.
+TASKGRAPH_NAMES = {
+    "BaseBoard": "BASE_BOARD",
+    "Bearing": "BEARING",
+    "Handle": "CRANK_HANDLE_ROW1",
+    "Row1_GearRod": "GEAR_ROD_ROW1",
+    "Row1_GearStand_Left": "STAND_ROW1_LEFT",
+    "Row1_GearStand_Right": "STAND_ROW1_RIGHT",
+    "Row1_Gear_Left": "GEAR_ROW1_LEFT",
+    "Row1_Screws": "SCREW_ROW1",
+    "Row2_GearRod": "GEAR_ROD_ROW2",
+    "Row2_GearStand_Left": "STAND_ROW2_LEFT",
+    "Row2_GearStand_Right": "STAND_ROW2_RIGHT",
+    "Row2_Gear_Left": "GEAR_ROW2_LEFT",
+    "Row2_Gear_Right": "GEAR_ROW2_RIGHT",
+    "Row2_Screws": "SCREW_ROW2",
+    "Row3_GearRod": "GEAR_ROD_ROW3",
+    "Row3_GearStand_Left": "STAND_ROW3_LEFT",
+    "Row3_GearStand_Right": "STAND_ROW3_RIGHT",
+    "Row3_Gear_Left": "GEAR_ROW3_LEFT",
+    "Row3_Gear_Right": "GEAR_ROW3_RIGHT",
+    "Row3_Screws": "SCREW_ROW3",
+    "Row4_GearRod": "GEAR_ROD_ROW4",
+    "Row4_GearStand_Left": "STAND_ROW4_LEFT",
+    "Row4_GearStand_Right": "STAND_ROW4_RIGHT",
+    "Row4_Gear_Left": "GEAR_ROW4_LEFT",
+    "Row4_Screws": "SCREW_ROW4",
+    "WoodenPin": "PIN",
+}
+
 app = Flask(__name__)
 
 
@@ -154,7 +192,9 @@ def subassembly_targets() -> list[dict[str, object]]:
 
 
 def study_targets() -> list[dict[str, object]]:
-    individuals = [{"file": name, "name": Path(name).stem, "kind": "part"}
+    individuals = [{"file": name,
+                     "name": TASKGRAPH_NAMES.get(Path(name).stem, Path(name).stem),
+                     "kind": "part"}
                    for name in part_files()]
     targets = individuals + subassembly_targets()
     for render_index, target in enumerate(targets, start=1):
