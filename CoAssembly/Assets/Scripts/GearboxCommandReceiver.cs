@@ -27,6 +27,9 @@ using Newtonsoft.Json;
 ///                                                   → recolor row R from its completed stages, no
 ///                                                     motion (green=seated, orange=built-not-seated)
 ///                                                     — fired on checkbox check/uncheck
+///   {"command":"reference_color","parts":[..],"color":[r,g,b,a]}
+///                                                   → temporarily highlight named assembled parts
+///   {"command":"reference_clear"}                  → restore their prior graph-state colors
 ///
 /// The 8-stage model + two-position (staging→seat) motion + green-on-complete live here (Unity owns
 /// the choreography); Python (gearbox_control.py) owns the dependency/lock logic. Mirrors the
@@ -139,6 +142,8 @@ public class GearboxCommandReceiver : MonoBehaviour
         [JsonProperty("done_stages")]
         public int[]    doneStages;   // "stage"/"recolor" — this row's completed stages (→ green/orange)
         public bool     blocked;      // "ui" — current stage locked → red checkbox
+        public string[] parts;        // "reference_color" — canonical graph or Unity part names
+        public float[]  color;        // "reference_color" — RGBA
     }
 
     // ── Per-part cached state ────────────────────────────────────────────────
@@ -149,6 +154,7 @@ public class GearboxCommandReceiver : MonoBehaviour
         public MaterialPropertyBlock block;
         public int                  colorID;
         public Color                originalColor;
+        public Color                currentColor;
         public bool                 highlighted;
         public string               type;    // parsed prefix before "Row" (e.g. "GearRod", "Bearing")
         public int                  rowNum;  // parsed row number; 0 = shared (BaseBoard)
@@ -190,6 +196,7 @@ public class GearboxCommandReceiver : MonoBehaviour
     // it replaced, so closing the menu / opening another stage restores exactly the prior color.
     private bool stageBlocked;
     private readonly List<(PartEntry part, Color prev)> blockedReds = new();
+    private readonly List<(PartEntry part, Color prev, bool wasActive)> referenceColors = new();
 
     // The board's orientation at load. Animation offsets are authored for this rest pose, so they
     // rotate only by the board's CHANGE from it (i.e. as it's grabbed/rotated) — at rest they equal
@@ -282,6 +289,7 @@ public class GearboxCommandReceiver : MonoBehaviour
                 block         = new MaterialPropertyBlock(),
                 colorID       = colorID,
                 originalColor = colorID != 0 ? mat.GetColor(colorID) : Color.white,
+                currentColor  = colorID != 0 ? mat.GetColor(colorID) : Color.white,
                 highlighted   = false,
                 type          = type,
                 rowNum        = rowNum,
@@ -441,6 +449,8 @@ public class GearboxCommandReceiver : MonoBehaviour
                 case "assemble":    StartAssemble(cmd.row, cmd.order, cmd.stepDelay, cmd.slideSeconds); break;
                 case "stage":       PlayStage(cmd.row, cmd.stage, cmd.doneStages, cmd.stepDelay, cmd.slideSeconds); break;
                 case "recolor":     Recolor(cmd.row, cmd.doneStages); break;
+                case "reference_color": ApplyReferenceColor(cmd.parts, cmd.color); break;
+                case "reference_clear": ClearReferenceColors(); break;
                 default:
                     Debug.LogWarning($"[GearboxCommandReceiver] Unknown command '{cmd.command}'");
                     break;
@@ -458,6 +468,7 @@ public class GearboxCommandReceiver : MonoBehaviour
 
     private void ShowOnlyRow(int row)
     {
+        ClearReferenceColors();
         CancelAssembly();
         ClearBlockedReds();
         foreach (var p in parts)
@@ -467,6 +478,7 @@ public class GearboxCommandReceiver : MonoBehaviour
 
     private void ShowAll()
     {
+        ClearReferenceColors();
         CancelAssembly();
         ClearBlockedReds();          // a blocked stage's red reverts to its prior color on close
         foreach (var p in parts)
@@ -477,6 +489,7 @@ public class GearboxCommandReceiver : MonoBehaviour
     // Show only the given part types of a single row (a "state"); hide everything else.
     private void ShowSubset(int row, string[] types)
     {
+        ClearReferenceColors();
         CancelAssembly();
         ClearBlockedReds();
         var set = new HashSet<string>(types ?? Array.Empty<string>());
@@ -591,6 +604,7 @@ public class GearboxCommandReceiver : MonoBehaviour
     // sub-staggering multiple parts of the same type (e.g. Left then Right).
     private void StartAssemble(int row, string[] order, float stepDelay, float slideSeconds)
     {
+        ClearReferenceColors();
         CancelAssembly();                       // invalidate any running slide + snap to rest
         int gen = assembleGen;
 
@@ -707,6 +721,7 @@ public class GearboxCommandReceiver : MonoBehaviour
     // motion is played by StageRoutine. `doneStages` are the row's completed stages → green.
     private void PlayStage(int row, int n, int[] doneStages, float stepDelay, float slideSeconds)
     {
+        ClearReferenceColors();
         int gen = ++assembleGen;   // supersede any running animation (positions set explicitly below)
         ClearBlockedReds();        // restore any parts reddened by a previous blocked stage
         float step  = stepDelay    > 0f ? stepDelay    : defaultStepDelay;
@@ -923,6 +938,7 @@ public class GearboxCommandReceiver : MonoBehaviour
     // un-checked seat correctly falls back to orange if its build step is still complete.
     private void Recolor(int row, int[] doneStages)
     {
+        ClearReferenceColors();
         ClearBlockedReds();
         var done = new HashSet<int>(doneStages ?? Array.Empty<int>());
         foreach (var p in parts)
@@ -939,6 +955,49 @@ public class GearboxCommandReceiver : MonoBehaviour
         int start = i;
         while (i < name.Length && char.IsDigit(name[i])) i++;
         return i > start ? int.Parse(name.Substring(start, i - start)) : -1;
+    }
+
+    private PartEntry FindPartByReferenceName(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return null;
+        if (partsByName.TryGetValue(name, out PartEntry entry)) return entry;
+        if (partsByLower.TryGetValue(name.ToLowerInvariant(), out entry)) return entry;
+        partsByStripped.TryGetValue(name.Replace("_", "").ToLowerInvariant(), out entry);
+        return entry;
+    }
+
+    private void ApplyReferenceColor(string[] names, float[] rgba)
+    {
+        ClearReferenceColors();
+        if (names == null || names.Length == 0) return;
+        Color color = (rgba != null && rgba.Length >= 3)
+            ? new Color(rgba[0], rgba[1], rgba[2], rgba.Length >= 4 ? rgba[3] : 1f)
+            : highlightColor;
+        var seen = new HashSet<PartEntry>();
+        foreach (string name in names)
+        {
+            PartEntry entry = FindPartByReferenceName(name);
+            if (entry == null || entry.colorID == 0 || !seen.Add(entry))
+            {
+                if (entry == null)
+                    Debug.LogWarning($"[GearboxCommandReceiver] No assembled part named '{name}'");
+                continue;
+            }
+            referenceColors.Add((entry, entry.currentColor, entry.go.activeSelf));
+            entry.go.SetActive(true);
+            ApplyColor(entry, color);
+        }
+        Debug.Log($"[GearboxCommandReceiver] Reference-highlighted {referenceColors.Count} part(s)");
+    }
+
+    private void ClearReferenceColors()
+    {
+        foreach (var (part, prev, wasActive) in referenceColors)
+        {
+            if (part.colorID != 0) ApplyColor(part, prev);
+            part.go.SetActive(wasActive);
+        }
+        referenceColors.Clear();
     }
 
     private void TogglePart(string name)
@@ -972,6 +1031,7 @@ public class GearboxCommandReceiver : MonoBehaviour
     // highlights and the green "done" seating colors).
     private void ResetHighlights()
     {
+        ClearReferenceColors();
         blockedReds.Clear();          // originals are about to be re-applied to everything anyway
         foreach (var p in parts)
         {
@@ -1000,6 +1060,7 @@ public class GearboxCommandReceiver : MonoBehaviour
         entry.renderer.GetPropertyBlock(entry.block);
         entry.block.SetColor(entry.colorID, c);
         entry.renderer.SetPropertyBlock(entry.block);
+        entry.currentColor = c;
     }
 
     private void OnDestroy()

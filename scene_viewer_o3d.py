@@ -10,6 +10,7 @@ Used by main_with_robot.py:
 """
 
 import copy
+import re
 import xml.etree.ElementTree as ET
 import numpy as np
 import open3d as o3d
@@ -177,6 +178,7 @@ class SceneVis:
         self._tool_box_neutral        = (0.55, 0.55, 0.58)
         self._tool_box_highlight      = (0.0, 1.0, 1.0)
         self._tool_highlight_indices: set = set()
+        self._tool_highlight_colors: dict[int, tuple[float, float, float]] = {}
         self._tool_hidden_indices: set = set()
 
         self.show_collision_spheres = True
@@ -288,6 +290,8 @@ class SceneVis:
         self._gearbox_root_initial_T = None
         self._gearbox_done = {row: set() for row in range(1, 5)}
         self._gearbox_blocked_view = None
+        self._gearbox_reference_parts: set[str] = set()
+        self._gearbox_reference_color = [1.0, 0.92, 0.02]
         if load_gearbox_mirror:
             self._load_gearbox_mirror_meshes()
 
@@ -793,28 +797,65 @@ class SceneVis:
                         and self._gearbox_part_in_stage(
                             ptype, row, side, blocked_view[0], blocked_view[1])):
                     color = blocked
+            if name in self._gearbox_reference_parts:
+                color = self._gearbox_reference_color
             entry["mesh"].paint_uniform_color(color)
             self.vis.update_geometry(entry["mesh"])
+
+    @staticmethod
+    def _graph_part_to_unity_name(part: str) -> str | None:
+        """Convert canonical TaskGraph raw-part IDs to Unity mesh names."""
+        part = str(part).upper()
+        if part == "BASE_BOARD":
+            return "BaseBoard"
+        if part == "CRANK_HANDLE_ROW1":
+            return "CrankHandle_Row1"
+        match = re.fullmatch(
+            r"(BEARING|STAND|SCREW|PIN|GEAR)_ROW([1-4])_(LEFT|RIGHT)", part)
+        if match:
+            kind, row, side = match.groups()
+            return f"{kind.title()}_Row{row}_{side.title()}"
+        match = re.fullmatch(r"GEAR_ROD_ROW([1-4])", part)
+        if match:
+            return f"GearRod_Row{match.group(1)}"
+        return None
 
     def apply_gearbox_assembly_event(self, msg: dict) -> None:
         """Update Open3D colors directly from gearbox_control semantic events."""
         event = msg.get("event")
         row = int(msg.get("row", 0))
         stage = int(msg.get("stage", 0))
-        if event == "reset":
+        if event == "assembly_reference":
+            self._gearbox_reference_parts = {
+                name for name in (
+                    self._graph_part_to_unity_name(part)
+                    for part in msg.get("parts", []))
+                if name in self._gearbox_parts
+            }
+            color = msg.get("color", [1.0, 0.92, 0.02])
+            if isinstance(color, (list, tuple)) and len(color) >= 3:
+                self._gearbox_reference_color = [float(c) for c in color[:3]]
+        elif event == "assembly_reference_clear":
+            self._gearbox_reference_parts.clear()
+        elif event == "reset":
+            self._gearbox_reference_parts.clear()
             for done in self._gearbox_done.values():
                 done.clear()
             self._gearbox_blocked_view = None
         elif event == "complete" and row in self._gearbox_done:
+            self._gearbox_reference_parts.clear()
             self._gearbox_done[row].add(stage)
             self._gearbox_blocked_view = None
         elif event == "uncomplete" and row in self._gearbox_done:
+            self._gearbox_reference_parts.clear()
             self._gearbox_done[row].discard(stage)
             self._gearbox_blocked_view = None
         elif event == "show":
+            self._gearbox_reference_parts.clear()
             self._gearbox_blocked_view = ((row, stage)
                                           if msg.get("blocked", False) else None)
         elif event == "close":
+            self._gearbox_reference_parts.clear()
             self._gearbox_blocked_view = None
         else:
             return
@@ -1249,7 +1290,8 @@ class SceneVis:
         for i, ls in enumerate(self._tool_box_linesets):
             if i < len(boxes) and i not in self._tool_hidden_indices:
                 pos, R, size = boxes[i]
-                col = (self._tool_box_highlight if i in self._tool_highlight_indices
+                col = (self._tool_highlight_colors.get(i, self._tool_box_highlight)
+                       if i in self._tool_highlight_indices
                        else self._tool_box_neutral)
                 new_ls = self.make_box_lineset(pos, R, size, color=col)
                 ls.points = new_ls.points
@@ -1266,13 +1308,30 @@ class SceneVis:
         linesets in place and is remembered so a later update_tool_boxes() keeps the highlight.
         Mirrors gearbox_control.py --open-3d's PegboardBoxViewer.set_highlight."""
         self._tool_highlight_indices = {int(i) for i in indices}
+        self._tool_highlight_colors = {
+            i: self._tool_box_highlight for i in self._tool_highlight_indices}
         for i, ls in enumerate(self._tool_box_linesets):
             if i in self._tool_hidden_indices:
                 continue
             if len(np.asarray(ls.points)) != 8:
                 continue   # skip hidden/placeholder linesets
-            col = (self._tool_box_highlight if i in self._tool_highlight_indices
+            col = (self._tool_highlight_colors.get(i, self._tool_box_highlight)
+                   if i in self._tool_highlight_indices
                    else self._tool_box_neutral)
+            ls.colors = o3d.utility.Vector3dVector([list(col)] * 12)
+            self.vis.update_geometry(ls)
+
+    def set_tool_highlight_colors(self, colors_by_index) -> None:
+        """Apply per-box RGB colors for semantic part-reference feedback."""
+        self._tool_highlight_colors = {
+            int(index): tuple(float(channel) for channel in color[:3])
+            for index, color in dict(colors_by_index).items()
+        }
+        self._tool_highlight_indices = set(self._tool_highlight_colors)
+        for i, ls in enumerate(self._tool_box_linesets):
+            if i in self._tool_hidden_indices or len(np.asarray(ls.points)) != 8:
+                continue
+            col = self._tool_highlight_colors.get(i, self._tool_box_neutral)
             ls.colors = o3d.utility.Vector3dVector([list(col)] * 12)
             self.vis.update_geometry(ls)
 

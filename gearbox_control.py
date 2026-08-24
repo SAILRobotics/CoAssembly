@@ -33,6 +33,7 @@ ZeroMQ sockets are not thread-safe, so every outbound send is serialized through
 
 import argparse
 import json
+import re
 import sys
 import threading
 import time
@@ -138,6 +139,78 @@ _HIGHLIGHT_PARTS = [
     ("CrankHandle", ""),
 ]
 
+# Fastening-tool ontology used by both ordinary stage highlighting and the
+# speech/VLM part-reference policy. H5/T25/H3 inserts share the physical bit
+# holder (id resolved from BitHolder1); the separate driver handle is also
+# highlighted so the user sees the complete usable tool set.
+FASTENING_TOOL_SPECS = {
+    "H5_HEX_BIT": {
+        "friendly": "5 millimetre hex bit, marked H5",
+        "layout_types": ("BITHOLDER1",),
+    },
+    "T25_TORX_BIT": {
+        "friendly": "Torx bit, marked T25",
+        "layout_types": ("BITHOLDER1",),
+    },
+    "H3_HEX_BIT": {
+        "friendly": "3 millimetre hex bit, marked H3",
+        "layout_types": ("BITHOLDER1",),
+    },
+    "BIT_SCREWDRIVER": {
+        "friendly": "interchangeable-bit screwdriver",
+        "layout_types": ("BIT_SCREWDRIVER",),
+    },
+    "BIT_WRENCH": {
+        "friendly": "interchangeable-bit wrench",
+        "layout_types": ("BIT_WRENCH",),
+    },
+    "BIT_HOLDER": {
+        "friendly": "shared driver-bit holder",
+        "layout_types": ("BITHOLDER1",),
+    },
+    "PHILLIPS_SCREWDRIVER": {
+        "friendly": "Phillips screwdriver",
+        # The existing layout uses the historical one-l spelling "philips".
+        "layout_types": ("PHILIPS_SCREWDRIVER", "PHILLIPS_SCREWDRIVER"),
+    },
+}
+
+# Every right/left stand-fastening operation in a row uses the same tool set.
+# Row 1 and Row 3 internal-hex screws use the bit wrench; Row 2 uses the bit
+# screwdriver with its Torx insert; Row 4 has a dedicated Phillips driver.
+FASTENING_TOOLS_BY_ROW = {
+    1: ("BIT_WRENCH", "H5_HEX_BIT"),
+    2: ("BIT_SCREWDRIVER", "T25_TORX_BIT"),
+    3: ("BIT_WRENCH", "H3_HEX_BIT"),
+    4: ("PHILLIPS_SCREWDRIVER",),
+}
+
+
+def fastening_tool_labels(row: int) -> tuple[str, ...]:
+    return FASTENING_TOOLS_BY_ROW.get(int(row), ())
+
+
+def tool_ids_for_reference(index: dict, label: str) -> list[int]:
+    """Resolve a fastening-tool semantic label to physical pegboard IDs."""
+    spec = FASTENING_TOOL_SPECS.get(str(label).upper())
+    if spec is None:
+        return []
+    ids = []
+    for layout_type in spec["layout_types"]:
+        tool_id = index.get(layout_type)
+        if tool_id is not None and tool_id not in ids:
+            ids.append(tool_id)
+    return ids
+
+
+def fastening_tool_ids(index: dict, row: int) -> list[int]:
+    ids = []
+    for label in fastening_tool_labels(row):
+        for tool_id in tool_ids_for_reference(index, label):
+            if tool_id not in ids:
+                ids.append(tool_id)
+    return ids
+
 
 def load_tool_index(json_path) -> dict:
     """Build {TYPE_UPPER: id} from a tool_layout JSON. Returns {} (feature disables silently) if
@@ -195,7 +268,42 @@ def appearing_ids(index: dict, row: int, stage: int) -> list:
                 if tid not in ids:
                     ids.append(tid)
                 break
+    if stage in (4, 6):
+        for tool_id in fastening_tool_ids(index, row):
+            if tool_id not in ids:
+                ids.append(tool_id)
     return ids
+
+
+def tool_id_for_graph_part(index: dict, part: str) -> int | None:
+    """Resolve one task-graph raw-part identifier to its pegboard object id.
+
+    Bearings, pins, and screws live in a shared per-row kit, while stands use
+    the ``GEAR_STAND`` layout alias. This is the inverse bridge needed when a
+    language model identifies one part instead of an entire task stage.
+    """
+    name = str(part).upper()
+    match = re.fullmatch(
+        r"(BEARING|STAND|SCREW|PIN|GEAR)_ROW([1-4])_(LEFT|RIGHT)", name)
+    if match:
+        ptype, row_text, side = match.groups()
+        for candidate in _candidate_tool_names(
+                ptype.title(), side.title(), int(row_text)):
+            tool_id = index.get(candidate.upper())
+            if tool_id is not None:
+                return tool_id
+        return None
+    match = re.fullmatch(r"GEAR_ROD_ROW([1-4])", name)
+    if match:
+        return index.get(name)
+    if name == "CRANK_HANDLE_ROW1":
+        for candidate in _candidate_tool_names("CrankHandle", "", 1):
+            tool_id = index.get(candidate.upper())
+            if tool_id is not None:
+                return tool_id
+    if name == "BASE_BOARD":
+        return index.get(name)
+    return index.get(name)
 
 
 # ── typed-command parsing ─────────────────────────────────────────────────────
@@ -536,16 +644,18 @@ class PegboardBoxViewer:
         ls.colors = o3d.utility.Vector3dVector([list(color)] * 12)
         return ls
 
-    def set_highlight(self, ids):
-        """Colour the given tool ids HIGHLIGHT and everything else NEUTRAL (only touching boxes that
-        actually change, so a repeated selection is cheap)."""
+    def set_highlight(self, ids, color=None):
+        """Colour the given tool ids and restore every other box to neutral."""
         want_ids = set(int(i) for i in ids)
+        highlight = ([float(channel) for channel in color[:3]]
+                     if isinstance(color, (list, tuple)) and len(color) >= 3
+                     else self.HIGHLIGHT)
         for tid, ls in self._ls_by_id.items():
-            want = self.HIGHLIGHT if tid in want_ids else self.NEUTRAL
-            if self._color_by_id[tid] is not want:
+            want = highlight if tid in want_ids else self.NEUTRAL
+            if self._color_by_id[tid] != want:
                 ls.colors = self.o3d.utility.Vector3dVector([list(want)] * 12)
                 self.vis.update_geometry(ls)
-                self._color_by_id[tid] = want
+                self._color_by_id[tid] = list(want)
 
     def tick(self) -> bool:
         """Pump one frame. Returns False once the window has been closed."""
@@ -697,10 +807,17 @@ class GearboxController:
                         print("[open3d] cleared")
                     elif ev.get("event") == "select":
                         row, stage = int(ev["row"]), int(ev["stage"])
-                        ids = appearing_ids(self._tool_index, row, stage)
+                        ids = ev.get("ids")
+                        if ids is None:
+                            ids = appearing_ids(self._tool_index, row, stage)
                         viewer.set_highlight(ids)
                         print(f"[open3d] step '{ev.get('step','?')}' "
                               f"(row {row}, stage {stage}) -> tools {ids}")
+                    elif ev.get("event") == "reference_highlight":
+                        ids = ev.get("ids", [])
+                        viewer.set_highlight(ids, ev.get("color"))
+                        print(f"[open3d] part reference {ev.get('status', '?')}: "
+                              f"{ev.get('label', '?')} -> tools {ids}")
                 if not viewer.tick():
                     break
                 time.sleep(0.02)

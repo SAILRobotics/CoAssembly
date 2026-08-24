@@ -21,9 +21,11 @@ Piper requires a downloaded voice model (.onnx). If none is found at
 from __future__ import annotations
 
 import argparse
+import queue
 import subprocess
 import sys
 import tempfile
+import threading
 import wave
 from pathlib import Path
 
@@ -108,6 +110,110 @@ class NemoBackend:
             wav_file.setsampwidth(2)
             wav_file.setframerate(int(sample_rate))
             wav_file.writeframes(pcm16.tobytes())
+
+
+class TTSService:
+    """Non-blocking speech service for the task-graph application.
+
+    Synthesis and playback run on one worker thread. ``replace=True`` removes
+    stale queued guidance and interrupts current playback, which lets a safety
+    warning take precedence over an older informational message.
+    """
+
+    def __init__(self, engine: str = "piper",
+                 piper_model: Path = DEFAULT_PIPER_MODEL) -> None:
+        self._backends = {
+            "piper": PiperBackend(Path(piper_model)),
+            "nemo": NemoBackend(),
+        }
+        if engine not in self._backends:
+            raise ValueError(f"Unknown TTS engine: {engine}")
+        self.engine = engine
+        self._jobs: "queue.Queue[str | None]" = queue.Queue(maxsize=8)
+        self._events: "queue.Queue[tuple[str, str]]" = queue.Queue()
+        self._running = False
+        self._thread: threading.Thread | None = None
+        self._player: subprocess.Popen | None = None
+        self._player_lock = threading.Lock()
+        self.is_speaking = False
+
+    def start(self) -> None:
+        if self._running:
+            return
+        self._running = True
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def speak(self, text: str, replace: bool = False) -> bool:
+        text = " ".join(str(text).split())
+        if not text:
+            return False
+        if replace:
+            while True:
+                try:
+                    self._jobs.get_nowait()
+                except queue.Empty:
+                    break
+            with self._player_lock:
+                if self._player is not None and self._player.poll() is None:
+                    self._player.terminate()
+        try:
+            self._jobs.put_nowait(text)
+            return True
+        except queue.Full:
+            self._events.put(("error", "TTS queue is full; message skipped."))
+            return False
+
+    def poll(self) -> list[tuple[str, str]]:
+        events: list[tuple[str, str]] = []
+        while True:
+            try:
+                events.append(self._events.get_nowait())
+            except queue.Empty:
+                return events
+
+    def close(self) -> None:
+        self._running = False
+        with self._player_lock:
+            if self._player is not None and self._player.poll() is None:
+                self._player.terminate()
+        try:
+            self._jobs.put_nowait(None)
+        except queue.Full:
+            pass
+
+    def _loop(self) -> None:
+        while self._running:
+            try:
+                text = self._jobs.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            if text is None:
+                break
+            out_path: Path | None = None
+            self.is_speaking = True
+            self._events.put(("speaking", text))
+            try:
+                with tempfile.NamedTemporaryFile(
+                        suffix=".wav", delete=False) as handle:
+                    out_path = Path(handle.name)
+                self._backends[self.engine].synthesize(text, out_path)
+                with self._player_lock:
+                    self._player = subprocess.Popen(["paplay", str(out_path)])
+                    player = self._player
+                return_code = player.wait()
+                if return_code not in (0, -15):
+                    raise subprocess.CalledProcessError(
+                        return_code, ["paplay", str(out_path)])
+                self._events.put(("spoken", text))
+            except Exception as error:
+                self._events.put(("error", f"{self.engine}: {error}"))
+            finally:
+                with self._player_lock:
+                    self._player = None
+                if out_path is not None:
+                    out_path.unlink(missing_ok=True)
+                self.is_speaking = False
 
 
 def parse_args() -> argparse.Namespace:

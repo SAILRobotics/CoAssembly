@@ -936,6 +936,8 @@ class _ToolSelectionManager:
         self._category_colors:  dict[int, list[float]]  = {}
         self._forced_colors:    dict[int, list[float]]  = {}
         self._highlighted:      set[int]                = set()
+        self._highlight_colors: dict[int, list[float]]  = {}
+        self._semantic_highlighted: set[int]            = set()
         self._assembly_events:  list[dict]              = []
         self._on_cancel = None
         self._last_color_refresh = 0.0
@@ -973,11 +975,14 @@ class _ToolSelectionManager:
 
     def set_category_color(self, tool_id: int, color: list[float]) -> None:
         """Store the tool's base category color and paint it. Call from _apply_tool_category_colors.
-        A currently-highlighted tool keeps its cyan (highlights survive a category repaint, e.g. a
-        relock republish) unless it is the actively-selected tool."""
+        A currently-highlighted tool keeps its highlight through category
+        repaints. Normal stage highlighting yields to an active selection;
+        semantic part-reference feedback does not."""
         self._category_colors[tool_id] = color
-        if tool_id in self._highlighted and tool_id != self._active_tool_id:
-            self.send_color(tool_id, self.HIGHLIGHT_COLOR)
+        if (tool_id in self._semantic_highlighted
+                or (tool_id in self._highlighted
+                    and tool_id != self._active_tool_id)):
+            self.send_color(tool_id, self._highlight_color_for(tool_id))
         else:
             self.send_color(tool_id, color)
 
@@ -990,7 +995,7 @@ class _ToolSelectionManager:
         and this tool is still highlighted, that means cyan — highlights only clear on menu
         close/reset, so cyan→orange→cyan on hover, not cyan→orange→category."""
         if tool_id in self._highlighted:
-            self.send_color(tool_id, self.HIGHLIGHT_COLOR)
+            self.send_color(tool_id, self._highlight_color_for(tool_id))
         else:
             self.reset_to_category(tool_id)
 
@@ -1013,12 +1018,12 @@ class _ToolSelectionManager:
             self._restore(self._active_tool_id)
             self._active_tool_id = tool_id
             self._active_hand    = hand
-            self.send_color(tool_id, self.SELECTED_COLOR)
+            self.send_color(tool_id, self._selected_or_semantic_color(tool_id))
         else:
             # nothing was selected → select this tool
             self._active_tool_id = tool_id
             self._active_hand    = hand
-            self.send_color(tool_id, self.SELECTED_COLOR)
+            self.send_color(tool_id, self._selected_or_semantic_color(tool_id))
 
     def _handle_hover_enter(self, tool_id: int):
         # hand moved from tool A to tool B without a hover_exit(A) in between → clear A first
@@ -1073,12 +1078,14 @@ class _ToolSelectionManager:
         for tool_id, resting_color in self._category_colors.items():
             if tool_id in self._forced_colors:
                 color = self._forced_colors[tool_id]
+            elif tool_id in self._semantic_highlighted:
+                color = self._highlight_color_for(tool_id)
             elif tool_id == self._active_tool_id:
                 color = self.SELECTED_COLOR
             elif tool_id == self._hovered_tool_id:
                 color = self.HOVER_COLOR
             elif tool_id in self._highlighted:
-                color = self.HIGHLIGHT_COLOR
+                color = self._highlight_color_for(tool_id)
             else:
                 color = resting_color
             self.send_color(tool_id, color)
@@ -1093,6 +1100,18 @@ class _ToolSelectionManager:
         return self._highlighted
 
     @property
+    def highlight_colors(self) -> dict[int, list[float]]:
+        return dict(self._highlight_colors)
+
+    def _highlight_color_for(self, tool_id: int) -> list[float]:
+        return self._highlight_colors.get(int(tool_id), self.HIGHLIGHT_COLOR)
+
+    def _selected_or_semantic_color(self, tool_id: int) -> list[float]:
+        if tool_id in self._semantic_highlighted:
+            return self._highlight_color_for(tool_id)
+        return self.SELECTED_COLOR
+
+    @property
     def active_hand(self) -> str | None:
         return self._active_hand
 
@@ -1104,8 +1123,8 @@ class _ToolSelectionManager:
     # ── Pegboard highlight (gearbox_control.py → here on GEARBOX_HIGHLIGHT_PORT) ──
     # Cyan-flag the tools needed for the current assembly step. Folded in from
     # test_tool_layout.py's ToolHighlightBridge; here the restore goes back to the
-    # tool's CATEGORY colour (not the raw sentinel), and the actively-selected tool
-    # is never repainted (selection wins over highlight).
+    # tool's CATEGORY colour (not the raw sentinel). Semantic reference colors
+    # take priority so a red warning cannot be hidden by selection green.
     def drain_highlights(self, timeout_ms: int = 0) -> bool:
         poller = zmq.Poller()
         poller.register(self._hl_sub, zmq.POLLIN)
@@ -1126,7 +1145,7 @@ class _ToolSelectionManager:
             if event == "clear":
                 self._apply_highlight_clear()
             elif event == "highlight":
-                self._apply_highlight(msg.get("ids", []))
+                self._apply_highlight(msg.get("ids", []), msg.get("color"))
             elif event == "assembly_state":
                 state = msg.get("state")
                 if isinstance(state, dict):
@@ -1140,21 +1159,37 @@ class _ToolSelectionManager:
         events, self._assembly_events = self._assembly_events, []
         return events
 
-    def _apply_highlight(self, ids) -> None:
+    def _apply_highlight(self, ids, color=None) -> None:
         new = {int(i) for i in ids}
+        semantic_color = isinstance(color, (list, tuple)) and len(color) >= 3
+        if not semantic_color:
+            color = self.HIGHLIGHT_COLOR
+        rgba = [float(channel) for channel in color[:4]]
+        if len(rgba) == 3:
+            rgba.append(self.HIGHLIGHT_COLOR[3])
         for tid in self._highlighted - new:          # dropped out of the set → restore
-            if tid != self._active_tool_id:
+            if tid == self._active_tool_id:
+                self.send_color(tid, self.SELECTED_COLOR)
+            else:
                 self.reset_to_category(tid)
-        for tid in new - self._highlighted:          # newly appearing → highlight colour
-            if tid != self._active_tool_id:          # selection wins over highlight
-                self.send_color(tid, self.HIGHLIGHT_COLOR)
+        self._highlight_colors = {tid: list(rgba) for tid in new}
+        self._semantic_highlighted = set(new) if semantic_color else set()
+        for tid in new:                              # new or recolored highlight
+            # A semantic VLM result (especially red/not-relevant) must remain
+            # visible even if this was the last pegboard item the user clicked.
+            if tid != self._active_tool_id or semantic_color:
+                self.send_color(tid, self._highlight_color_for(tid))
         self._highlighted = new
 
     def _apply_highlight_clear(self) -> None:
         for tid in self._highlighted:
-            if tid != self._active_tool_id and tid != self._hovered_tool_id:
+            if tid == self._active_tool_id:
+                self.send_color(tid, self.SELECTED_COLOR)
+            elif tid != self._hovered_tool_id:
                 self.reset_to_category(tid)
         self._highlighted = set()
+        self._highlight_colors = {}
+        self._semantic_highlighted = set()
 
     def close(self):
         try: self._sub.close(0)
@@ -1413,6 +1448,34 @@ class _TaskGraphOpen3DReceiver:
     def close(self) -> None:
         try:
             self._sub.close(0)
+        except Exception:
+            pass
+
+
+class _GearboxUnityCommandPublisher:
+    """Forward semantic gearbox-reference colors from the task graph to Unity."""
+
+    def __init__(self, quest_ip: str, port: int = cfg.GEARBOX_CMD_PORT):
+        ctx = zmq.Context.instance()
+        self._pub = ctx.socket(zmq.PUB)
+        self._pub.connect(f"tcp://{quest_ip}:{port}")
+
+    def reference(self, parts, color) -> None:
+        parts = list(dict.fromkeys(str(part) for part in parts))
+        msg = ({"command": "reference_color", "parts": parts,
+                "color": [float(channel) for channel in color]}
+               if parts else {"command": "reference_clear"})
+        try:
+            self._pub.send_string(json.dumps(msg))
+        except Exception:
+            pass
+
+    def clear_reference(self) -> None:
+        self.reference([], [])
+
+    def close(self) -> None:
+        try:
+            self._pub.close(0)
         except Exception:
             pass
 
@@ -1780,6 +1843,7 @@ class MainScene:
         self.grip_pose_bridge = _GripPoseBridge(quest_ip)
         self.gearbox_pose_rx = _GearboxPoseReceiver(quest_ip)
         self.taskgraph_o3d_rx = _TaskGraphOpen3DReceiver()
+        self.gearbox_unity_cmd = _GearboxUnityCommandPublisher(quest_ip)
         self.workspace_bound_pub = _WorkspaceBoundPublisher(quest_ip)
 
         # Cubes around the anchor marker (world origin) — ids 0, 1, 2
@@ -1941,10 +2005,13 @@ class MainScene:
         Unity tools) onto the local Open3D tool boxes — cyan, exactly like gearbox_control --open-3d.
         Always on; no argument gates it."""
         handed_over = {tid for tid, _ in self._handed_over_objects}
-        idxs = [self._tool_id_to_box_index[tid]
-                for tid in self.tools.highlighted
-                if tid in self._tool_id_to_box_index and tid not in handed_over]
-        self.vis.set_tool_highlight_indices(idxs)
+        colors = {
+            self._tool_id_to_box_index[tid]: self.tools.highlight_colors.get(
+                tid, _ToolSelectionManager.HIGHLIGHT_COLOR)[:3]
+            for tid in self.tools.highlighted
+            if tid in self._tool_id_to_box_index and tid not in handed_over
+        }
+        self.vis.set_tool_highlight_colors(colors)
 
     def _record_grasped_object(self, tool_id: int) -> None:
         """Record a successful grasp; do not hide it until handover release."""
@@ -2289,16 +2356,34 @@ class MainScene:
                 self.hands.poll()
                 gearbox_states = self.gearbox_pose_rx.poll()
                 for event in self.taskgraph_o3d_rx.poll():
-                    if event.get("event") == "select":
+                    event_name = event.get("event")
+                    if event_name == "reference_highlight":
+                        self.tools._apply_highlight(
+                            event.get("ids", []), event.get("color"))
+                        self._sync_vis_highlight()
+                        assembly_parts = event.get("assembly_parts", [])
+                        self.vis.apply_gearbox_assembly_event({
+                            "event": "assembly_reference",
+                            "parts": assembly_parts,
+                            "color": event.get("color", [1.0, 0.92, 0.02, 1.0]),
+                        })
+                        self.gearbox_unity_cmd.reference(
+                            assembly_parts,
+                            event.get("color", [1.0, 0.92, 0.02, 1.0]))
+                        print(f"[PartReference] {event.get('status', '?')}: "
+                              f"{event.get('label', '?')} -> {event.get('ids', [])}")
+                    elif event_name == "select":
                         self.tools._apply_highlight(event.get("ids", []))
                         self._sync_vis_highlight()
+                        self.gearbox_unity_cmd.clear_reference()
                         self.vis.apply_gearbox_assembly_event(
                             {**event, "event": "show"})
                         self._move_robot_for_gearbox_step(event)
                     else:
-                        if event.get("event") == "reset":
+                        if event_name == "reset":
                             self.tools._apply_highlight_clear()
                             self._sync_vis_highlight()
+                            self.gearbox_unity_cmd.clear_reference()
                         self.vis.apply_gearbox_assembly_event(event)
                 _link_poses = None
                 if self.robot is not None:
@@ -3159,6 +3244,7 @@ class MainScene:
         self.grip_pose_bridge.close()
         self.gearbox_pose_rx.close()
         self.taskgraph_o3d_rx.close()
+        self.gearbox_unity_cmd.close()
         self.workspace_bound_pub.close()
         self.hands.close()
         self.cam.close()

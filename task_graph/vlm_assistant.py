@@ -16,12 +16,23 @@ import queue
 import re
 import sys
 import threading
+import csv
 from pathlib import Path
 
 _THUMB_W, _THUMB_H = 96, 72
 _ANSWER_H          = 520
 _IMAGE_LIST_H      = 180
 _WRAP_WIDTH        = 900
+
+FASTENING_TOOL_LABELS = (
+    "H5_HEX_BIT",
+    "T25_TORX_BIT",
+    "H3_HEX_BIT",
+    "BIT_SCREWDRIVER",
+    "BIT_WRENCH",
+    "BIT_HOLDER",
+    "PHILLIPS_SCREWDRIVER",
+)
 
 SYSTEM_PROMPT_TEMPLATE = """\
 You are an expert assembly assistant for a gearbox assembly task.
@@ -30,15 +41,17 @@ When images are provided, identify components and their assembly state from the 
 
 If the user is asking you to identify, fetch, or hand over a specific physical
 part (e.g. "can you get me the X", "I need the Y part", "give me the Z"),
-respond with ONLY that part's label from the list below, with identical
-spelling, and nothing else -- no explanation, no punctuation, no JSON. Most
-labels are exactly the canonical task-graph identifiers used in the task
-description (e.g. `BASE_BOARD`, `STAND_ROW2_LEFT`, `GEAR_ROW2_RIGHT`). Three
-labels are exceptions: `BEARING`, `PIN`, and `SCREW_ROW1`..`SCREW_ROW4` each
-group several row/side-specific task-graph parts that are physically
-identical; use the group label rather than a specific row/side identifier for
-those, e.g. `BEARING` (not `BEARING_ROW2_LEFT`) and `SCREW_ROW2` (not
-`SCREW_ROW2_LEFT` or `SCREW_ROW2_RIGHT`). For every other kind of question
+respond with ONLY that part's or tool's label from the list below, with identical
+spelling, and nothing else -- no explanation, no punctuation, no JSON. If the
+expression could refer to multiple non-interchangeable objects and the current
+selected step does not resolve it, return exactly `AMBIGUOUS`. For example,
+"the gear" is ambiguous without a row, color, position, or other identifying
+detail. Never guess one label when multiple labels fit. Most
+labels use the referring-expression dataset names. Most are canonical graph
+identifiers, such as `BASE_BOARD`, `STAND_ROW2_LEFT`, and `GEAR_ROW2_RIGHT`.
+`BEARING`, `PIN`, and `SCREW_ROW1`..`SCREW_ROW4` group physically co-located
+or interchangeable items. `H5_HEX_BIT`, `T25_TORX_BIT`, and `H3_HEX_BIT`
+refer to inserts kept in the shared bit holder. For every other kind of question
 (how-to, status, explanation, general conversation), answer normally in
 natural language.
 
@@ -52,17 +65,25 @@ natural language.
 """
 
 
-def _load_part_labels() -> str:
-    """Reuse the exact 26-label set from evaluate_referring_expression_models.py
-    so part identification stays in sync with the evaluation dataset."""
+def _load_part_label_names() -> list[str]:
+    """Load dataset parts plus the task's fastening-tool ontology."""
     try:
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
-        from evaluate_referring_expression_models import DEFAULT_DATASET, load_dataset_frame
-        dataset = load_dataset_frame(DEFAULT_DATASET, include_unverified=False)
-        candidates = sorted(dataset["target_name"].unique().tolist())
-        return "\n".join(f"- {name}" for name in candidates)
-    except Exception as e:
-        return f"(part label list unavailable: {e})"
+        path = Path(__file__).resolve().parent / "referring_expression_responses.csv"
+        with path.open(newline="", encoding="utf-8-sig") as handle:
+            rows = csv.DictReader(handle)
+            labels = {row.get("target_name", "").strip() for row in rows
+                      if row.get("target_name", "").strip()
+                      and row.get("Verified", "o").strip().casefold() == "o"}
+            labels.update(FASTENING_TOOL_LABELS)
+            return sorted(labels)
+    except Exception:
+        return []
+
+
+def _load_part_labels() -> str:
+    labels = _load_part_label_names()
+    return ("\n".join(f"- {name}" for name in labels)
+            if labels else "(part label list unavailable)")
 
 _MD_PATTERNS = [
     (re.compile(r'\*\*(.+?)\*\*'), r'\1'),
@@ -322,6 +343,9 @@ class VLMAssistant:
         self._pending_question: str = ""
         self._current_status = "loading"
         self._history_count = 0   # tracks number of Q/A pairs stored in worker
+        self._part_labels = _load_part_label_names()
+        self._part_events: "queue.Queue[dict[str, str]]" = queue.Queue()
+        self._pending_part_text = ""
 
     # ── Public: called by the task graph on every state change ────────────────
 
@@ -346,6 +370,61 @@ class VLMAssistant:
         if queued:
             _print_console_block("VLM QUESTION", text)
         return queued
+
+    def submit_part_reference(self, text: str) -> bool:
+        """Resolve free-form text to one dataset part label without conversation."""
+        if self._current_status != "ready":
+            return False
+        self._pending_part_text = text
+        prompt = (
+            "The user is referring to one physical gearbox part. Resolve the "
+            "following expression and return exactly one label from the allowed "
+            "part-and-tool label list. If more than one non-interchangeable "
+            "object fits, return AMBIGUOUS. Return only the label or AMBIGUOUS.\n\n"
+            f"Expression: {text}"
+        )
+        queued = self._worker.submit(prompt, self._image_paths,
+                                     result_kind="part_reference")
+        if queued:
+            _print_console_block("VLM PART REFERENCE", text)
+        else:
+            self._pending_part_text = ""
+        return queued
+
+    def poll_part_references(self) -> list[dict[str, str]]:
+        events: list[dict[str, str]] = []
+        while True:
+            try:
+                events.append(self._part_events.get_nowait())
+            except queue.Empty:
+                return events
+
+    def _normalize_part_label(self, raw: str) -> str:
+        cleaned = _strip_md(raw).strip().strip("`\"' .,:;\n\t")
+        if cleaned.casefold() == "ambiguous":
+            return "AMBIGUOUS"
+        exact = {name.casefold(): name for name in self._part_labels}
+        if cleaned.casefold() in exact:
+            return exact[cleaned.casefold()]
+        try:
+            from evaluate_referring_expressions_qwen import parse_prediction
+            return parse_prediction(raw, self._part_labels)
+        except Exception:
+            return "INVALID_OUTPUT"
+
+    @staticmethod
+    def _generic_reference_is_ambiguous(text: str) -> bool:
+        """Catch the most dangerous bare nouns even if a model guesses a label."""
+        cleaned = re.sub(r"[^a-z0-9 ]+", " ", str(text).lower())
+        cleaned = " ".join(cleaned.split())
+        for prefix in ("the ", "that ", "this ", "a ", "an "):
+            if cleaned.startswith(prefix):
+                cleaned = cleaned[len(prefix):]
+                break
+        return cleaned in {
+            "gear", "gear stand", "stand", "support bracket", "bracket",
+            "screw", "screwdriver", "driver", "bit", "tool",
+        }
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -425,6 +504,30 @@ class VLMAssistant:
                 self._render_history()
                 self._update_history_label()
                 self.dpg.configure_item("vlm_ask_button", enabled=True)
+                # Identification requests are instructed to return one exact
+                # label. Feed that machine-readable result to the deterministic
+                # task-state policy while retaining ordinary prose as chat only.
+                label = self._normalize_part_label(answer)
+                if self._generic_reference_is_ambiguous(self._exchanges[-1][0]):
+                    label = "AMBIGUOUS"
+                if label != "INVALID_OUTPUT":
+                    self._part_events.put({
+                        "text": self._exchanges[-1][0],
+                        "label": label,
+                        "raw": payload,
+                    })
+
+            elif kind == "part_reference":
+                label = self._normalize_part_label(payload)
+                if self._generic_reference_is_ambiguous(self._pending_part_text):
+                    label = "AMBIGUOUS"
+                self._part_events.put({
+                    "text": self._pending_part_text,
+                    "label": label,
+                    "raw": payload,
+                })
+                _print_console_block("VLM PART RESULT", f"{label}\nraw: {payload}")
+                self._pending_part_text = ""
 
             elif kind == "error":
                 error_text = _strip_md(payload)

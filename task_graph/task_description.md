@@ -155,6 +155,20 @@ Use the spelling `Phillips`, with two l's. Head profile terms such as socket
 head, button head, low-profile head, or pan head describe the outer head shape;
 they are separate from the internal drive type and driver size listed above.
 
+The speech/VLM interface uses these fastening-tool labels:
+
+| Row | Fastening stages | Semantic tool labels | Pegboard objects highlighted |
+| --- | --- | --- | --- |
+| 1 | 1.4 and 1.6 | `BIT_WRENCH`, `H5_HEX_BIT` | interchangeable-bit wrench and shared bit holder |
+| 2 | 2.4 and 2.6 | `BIT_SCREWDRIVER`, `T25_TORX_BIT` | interchangeable-bit screwdriver and shared bit holder |
+| 3 | 3.4 and 3.6 | `BIT_WRENCH`, `H3_HEX_BIT` | interchangeable-bit wrench and shared bit holder |
+| 4 | 4.4 and 4.6 | `PHILLIPS_SCREWDRIVER` | Phillips screwdriver |
+
+`BIT_HOLDER` refers to the shared holder containing the H5, T25, and H3
+inserts. An insert label therefore highlights the holder as its physical
+storage location. Tools are reusable resources: completing a step does not
+consume them into an assembly.
+
 ## Component Inventory
 
 > **Note on part naming:** All bearings are physically identical to each other;
