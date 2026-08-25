@@ -20,6 +20,11 @@ import csv
 import json
 from pathlib import Path
 
+try:
+    from .inference_lock import GPU_INFERENCE_LOCK
+except ImportError:  # Script execution: task_graph is placed directly on sys.path.
+    from inference_lock import GPU_INFERENCE_LOCK
+
 _THUMB_W, _THUMB_H = 96, 72
 _ANSWER_H          = 520
 _IMAGE_LIST_H      = 180
@@ -35,6 +40,20 @@ FASTENING_TOOL_LABELS = (
     "BIT_HOLDER2",
     "PHILLIPS_SCREWDRIVER",
 )
+ROW_KIT_LABELS = tuple(f"ROW{row}_KIT" for row in range(1, 5))
+ASSEMBLY_LABELS = tuple(
+    label
+    for row in range(1, 5)
+    for label in (
+        f"BEARING_STAND_ROW{row}_RIGHT_ASSEMBLY",
+        f"GEAR_ROD_ROW{row}_ASSEMBLY",
+        f"BEARING_STAND_ROW{row}_LEFT_ASSEMBLY",
+        f"FASTENED_STAND_ROW{row}_RIGHT_ASSEMBLY",
+        f"UNFASTENED_SECOND_STAND_ROW{row}_ASSEMBLY",
+        f"MOUNTED_ROW{row}_ASSEMBLY",
+        *(("CRANK_MOUNTED_ROW1_ASSEMBLY",) if row == 1 else ()),
+    )
+) + ("COMPLETED_GEARBOX_ASSEMBLY",)
 
 SYSTEM_PROMPT_TEMPLATE = """\
 You are an expert assembly assistant for a gearbox assembly task.
@@ -53,8 +72,14 @@ reference as ambiguous and list every plausible allowed label as candidates.
 Never guess one label when multiple labels fit. Most labels are canonical graph
 identifiers, such as `BASE_BOARD`, `STAND_ROW2_LEFT`, and `GEAR_ROW2_RIGHT`.
 `BEARING`, `PIN`, and `SCREW_ROW1`..`SCREW_ROW4` group physically co-located
-or interchangeable items. `H5_HEX_BIT` and `H3_HEX_BIT` are stored in
-`BIT_HOLDER1`; `T25_TORX_BIT` is stored in `BIT_HOLDER2`. For every other kind
+or interchangeable items. `ROW1_KIT`..`ROW4_KIT` identify the four graspable
+per-row kit boxes. `H5_HEX_BIT` and `H3_HEX_BIT` are stored in
+`BIT_HOLDER1`; `T25_TORX_BIT` is stored in `BIT_HOLDER2`.
+Canonical labels ending in `_ASSEMBLY` identify subassemblies that may already
+exist or may have been consumed into a later assembly. They are valid reference
+targets, but they are not fetchable pegboard objects; Python will explain their
+current task-graph location.
+For every other kind
 of question (how-to, status, explanation, general conversation), provide a
 concise natural-language answer grounded in the current task state.
 Natural-language answers are for assembly operators: use familiar phrases such
@@ -83,6 +108,8 @@ def _load_part_label_names() -> list[str]:
                       if row.get("target_name", "").strip()
                       and row.get("Verified", "o").strip().casefold() == "o"}
             labels.update(FASTENING_TOOL_LABELS)
+            labels.update(ROW_KIT_LABELS)
+            labels.update(ASSEMBLY_LABELS)
             return sorted(labels)
     except Exception:
         return []
@@ -171,7 +198,7 @@ class _VLMWorker:
         self._model_name    = model_name
         self._system_prompt = system_prompt
         self._job_queue: "queue.Queue[tuple | None]" = queue.Queue(maxsize=1)
-        self._result_queue: "queue.Queue[tuple[str, str]]" = queue.Queue()
+        self._result_queue: "queue.Queue[tuple[str, str, int | None]]" = queue.Queue()
         self._thread: threading.Thread | None = None
         self._running = False
 
@@ -179,6 +206,9 @@ class _VLMWorker:
         self._history_lock = threading.Lock()
         self._task_state: str = ""
         self._focused_step: str = ""   # injected before each inference
+        # Every submitted inference is tied to the assembly-state version it
+        # saw. Results from an older version must never reach robot/task policy.
+        self._context_version = 0
 
     def start(self) -> None:
         self._running = True
@@ -191,19 +221,27 @@ class _VLMWorker:
         image_paths: list[str],
         result_kind: str = "answer",
     ) -> bool:
+        with self._history_lock:
+            context_version = self._context_version
         try:
-            self._job_queue.put_nowait((question, list(image_paths), result_kind))
+            self._job_queue.put_nowait(
+                (question, list(image_paths), result_kind, context_version))
             return True
         except queue.Full:
-            self._result_queue.put(("error", "Previous query still running — please wait."))
+            self._result_queue.put(
+                ("error", "Previous query still running — please wait.",
+                 context_version))
             return False
 
-    def update_task_state(self, state: str) -> None:
+    def update_task_state(self, state: str) -> int:
         """Called on every graph state change. Replaces injected state and clears history."""
         with self._history_lock:
             self._task_state = state
             self._history.clear()
-        self._result_queue.put(("state_updated", state))
+            self._context_version += 1
+            context_version = self._context_version
+        self._result_queue.put(("state_updated", state, context_version))
+        return context_version
 
     def set_focused_step(self, focused: str) -> None:
         """Update which step the user has selected. Does NOT clear history."""
@@ -213,7 +251,7 @@ class _VLMWorker:
     def reset_history(self) -> None:
         with self._history_lock:
             self._history.clear()
-        self._result_queue.put(("history_reset", ""))
+        self._result_queue.put(("history_reset", "", None))
 
     def apply_policy_response(self, question: str, response: str) -> None:
         """Replace a raw label with the user-facing policy response in history.
@@ -246,8 +284,8 @@ class _VLMWorker:
                 if len(self._history) > max_msgs:
                     self._history = self._history[-max_msgs:]
 
-    def poll(self) -> list[tuple[str, str]]:
-        events: list[tuple[str, str]] = []
+    def poll(self) -> list[tuple[str, str, int | None]]:
+        events: list[tuple[str, str, int | None]] = []
         while True:
             try:
                 events.append(self._result_queue.get_nowait())
@@ -263,13 +301,15 @@ class _VLMWorker:
             pass
 
     def _loop(self) -> None:
-        self._result_queue.put(("status", f"Loading {self._model_name} ..."))
+        self._result_queue.put(
+            ("status", f"Loading {self._model_name} ...", None))
         try:
             model, processor = self._load_model()
         except Exception as e:
-            self._result_queue.put(("error", f"Model load failed: {e}"))
+            self._result_queue.put(
+                ("error", f"Model load failed: {e}", None))
             return
-        self._result_queue.put(("status", "ready"))
+        self._result_queue.put(("status", "ready", None))
 
         while self._running:
             try:
@@ -278,32 +318,45 @@ class _VLMWorker:
                 continue
             if job is None:
                 break
-            question, image_paths, result_kind = job
-            self._result_queue.put(("status", "thinking"))
+            question, image_paths, result_kind, context_version = job
+            self._result_queue.put(("status", "thinking", None))
             try:
                 answer = self._infer(
                     model,
                     processor,
                     question,
                     image_paths,
-                    record_history=(result_kind == "answer"),
+                    # Add legacy answer history only after confirming that the
+                    # graph context has not changed during generation.
+                    record_history=False,
                     use_history=(result_kind in {"answer", "intent"}),
                 )
-                self._result_queue.put((result_kind, answer))
+                with self._history_lock:
+                    still_current = context_version == self._context_version
+                if still_current:
+                    if result_kind == "answer":
+                        self.apply_policy_response(question, answer)
+                    self._result_queue.put(
+                        (result_kind, answer, context_version))
+                else:
+                    self._result_queue.put(
+                        ("stale", result_kind, context_version))
             except Exception as e:
-                self._result_queue.put(("error", f"Inference error: {e}"))
-            self._result_queue.put(("status", "ready"))
+                self._result_queue.put(
+                    ("error", f"Inference error: {e}", context_version))
+            self._result_queue.put(("status", "ready", None))
 
     def _load_model(self):
         try:
             from transformers import AutoModelForImageTextToText as ModelClass
         except ImportError:
             from transformers import AutoModelForVision2Seq as ModelClass
-        model = ModelClass.from_pretrained(
-            self._model_name, torch_dtype="auto", device_map="auto")
-        from transformers import AutoProcessor
-        processor = AutoProcessor.from_pretrained(self._model_name)
-        model.eval()
+        with GPU_INFERENCE_LOCK:
+            model = ModelClass.from_pretrained(
+                self._model_name, torch_dtype="auto", device_map="auto")
+            from transformers import AutoProcessor
+            processor = AutoProcessor.from_pretrained(self._model_name)
+            model.eval()
         return model, processor
 
     def _infer(
@@ -359,7 +412,7 @@ class _VLMWorker:
             inputs = processor(
                 text=[text], images=image_inputs, videos=video_inputs,
                 padding=True, return_tensors="pt"
-            ).to(model.device)
+            )
         except (ImportError, Exception):
             text = processor.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True)
@@ -367,10 +420,11 @@ class _VLMWorker:
                 text=[text],
                 images=pil_images if pil_images else None,
                 padding=True, return_tensors="pt",
-            ).to(model.device)
+            )
 
         import torch
-        with torch.no_grad():
+        with GPU_INFERENCE_LOCK, torch.no_grad():
+            inputs = inputs.to(model.device)
             output_ids = model.generate(**inputs, max_new_tokens=1024)
         trimmed = [out[len(inp):] for inp, out in zip(inputs.input_ids, output_ids)]
         answer = processor.batch_decode(trimmed, skip_special_tokens=True)[0].strip()
@@ -444,12 +498,25 @@ class VLMAssistant:
         self._awaiting_part_clarification = False
         self._ambiguous_part_text = ""
         self._pending_fetch_description = ""
+        self._last_resolved_part_label = ""
+        # Graph-validated set most recently shown to the operator. This lets a
+        # plural follow-up refer to exactly those objects instead of inviting
+        # the model to guess from the full ontology.
+        self._recent_part_candidates: list[str] = []
+        self._pending_candidate_constraint: list[str] = []
+        self._generic_plural_followup = False
+        self._context_version = 0
 
     # ── Public: called by the task graph on every state change ────────────────
 
     def notify_graph_event(self, event_label: str, state_summary: str) -> None:
         """Call this whenever the task graph changes (complete/undo/reset/live)."""
-        self._worker.update_task_state(f"Event: {event_label}\n\n{state_summary}")
+        self._last_resolved_part_label = ""
+        self._recent_part_candidates = []
+        self._pending_candidate_constraint = []
+        self._generic_plural_followup = False
+        self._context_version = self._worker.update_task_state(
+            f"Event: {event_label}\n\n{state_summary}")
 
     def set_focused_step(self, focused_text: str) -> None:
         """Tell the VLM which step the user has selected. Does NOT clear history."""
@@ -458,6 +525,24 @@ class VLMAssistant:
     def set_pending_fetch(self, description: str | None) -> None:
         """Tell intent inference whether a yes/no robot-fetch question is active."""
         self._pending_fetch_description = str(description or "").strip()
+
+    def set_resolved_part_context(self, label: str | None) -> None:
+        """Keep a graph-resolved single part available for pronoun follow-ups."""
+        self.set_resolved_part_candidates([label] if label else [])
+
+    def set_resolved_part_candidates(self, labels) -> None:
+        """Retain the graph-validated objects described in the last response."""
+        candidates: list[str] = []
+        for value in labels:
+            # Graph inputs may be instance-specific (for example
+            # PIN_ROW2_LEFT) while the physical ontology intentionally groups
+            # interchangeable/co-located objects under PIN or BEARING.
+            label = self._normalize_part_label(str(value or "").strip())
+            if label in self._part_labels and label not in candidates:
+                candidates.append(label)
+        self._recent_part_candidates = candidates
+        self._last_resolved_part_label = (
+            candidates[0] if len(candidates) == 1 else "")
 
     # ── Public: voice input ───────────────────────────────────────────────────
 
@@ -475,6 +560,17 @@ class VLMAssistant:
             return False
         self._pending_question = text
         self._pending_part_text = text
+        plural_pronoun = bool(re.search(
+            r"\b(?:those|them|one\s+of\s+(?:these|those|them))\b",
+            text, flags=re.IGNORECASE))
+        self._pending_candidate_constraint = (
+            list(self._recent_part_candidates) if plural_pronoun else [])
+        # A bare request for one member of a plural set is inherently
+        # under-specified. Even if the model guesses a member, policy must ask.
+        self._generic_plural_followup = bool(
+            self._pending_candidate_constraint
+            and re.search(r"\bone\s+of\s+(?:these|those|them)\b",
+                          text, flags=re.IGNORECASE))
         self._render_history(pending=True)
 
         clarification = ""
@@ -484,27 +580,47 @@ class VLMAssistant:
                 f"ambiguous reference: {self._ambiguous_part_text!r}.\n"
                 "Decide whether the current utterance clarifies that physical "
                 "part or instead starts an unrelated/general question.\n\n")
-        fetch_context = ""
+        reference_context = ""
+        if self._last_resolved_part_label:
+            reference_context = (
+                "Most recently resolved physical-part label: "
+                f"{self._last_resolved_part_label}. Use it only when a pronoun in "
+                "the current utterance clearly refers back to that object.\n\n")
+        elif self._recent_part_candidates:
+            reference_context = (
+                "Most recently presented physical-part candidates: "
+                f"{', '.join(self._recent_part_candidates)}. A plural pronoun "
+                "such as 'those' or 'them' refers only to this set. If the user "
+                "asks for one member without distinguishing it, return target "
+                "AMBIGUOUS and list this set as candidates; never guess.\n\n")
         if self._pending_fetch_description:
             fetch_context = (
                 "A robot-fetch confirmation is currently pending for: "
                 f"{self._pending_fetch_description}. Interpret a direct affirmative "
                 "or negative response as `fetch_confirmation`; otherwise classify "
                 "the new utterance normally.\n\n")
+        else:
+            fetch_context = (
+                "There is NO pending robot-fetch confirmation. Do NOT use "
+                "`fetch_confirmation`. A request such as 'get it for me' is a new "
+                "`part_reference` with `part_action` set to `fetch`; resolve 'it' "
+                "from the recent physical-part context when unambiguous.\n\n")
         prompt = f"""\
 Classify and answer the CURRENT USER UTTERANCE below. Infer its intent from its
 meaning; do not classify it by matching a fixed set of request verbs, and do
 not mistake part names appearing in the injected assembly state for user intent.
 
 Return ONLY one valid JSON object using exactly this schema:
-{{"intent":"part_reference|step_parts_request|recommendation_request|fetch_confirmation|general_question","part_action":"reference|fetch|","confirmation":"yes|no|","step_scope":"selected_step|next_step|","target":"ALLOWED_LABEL|AMBIGUOUS|","candidates":["ALLOWED_LABEL"],"exclude_labels":["ALLOWED_LABEL"],"answer":"text"}}
+{{"intent":"part_reference|step_parts_request|step_tools_request|recommendation_request|fetch_confirmation|general_question","part_action":"reference|fetch|find_step|status|","confirmation":"yes|no|","step_scope":"selected_step|next_step|","target":"ALLOWED_LABEL|AMBIGUOUS|","candidates":["ALLOWED_LABEL"],"exclude_labels":["ALLOWED_LABEL"],"answer":"text"}}
 
 Rules:
 - Use `part_reference` when the user is referring to, identifying, locating,
   requesting, or naming a physical part/tool—even when they use only a noun
   phrase or unfamiliar wording. Set `part_action` to `fetch` only when they ask
-  the robot to get, fetch, bring, retrieve, or hand over the object; otherwise
-  use `reference`. Infer this semantically rather than by matching one verb.
+  the robot to get, fetch, bring, retrieve, or hand over the object. Set it to
+  `find_step` when the user asks for the next assembly step that uses a named
+  part or tool. Otherwise use `reference`. Infer this semantically rather than
+  by matching one verb.
 - For one unambiguous part/tool: put its exact allowed label in `target`, use an
   empty `candidates` list, and leave `answer` empty.
 - For a genuinely ambiguous physical reference: set `target` to `AMBIGUOUS`,
@@ -520,13 +636,45 @@ Rules:
   inputs. Put any explicitly excluded physical objects, such as "other than the
   bearing", in `exclude_labels`. The task graph—not the language model—will
   decide whether the current step is complete enough to advance.
+- Words such as "the other part", "the remaining part", or "what else do I
+  need" do not name a physical category. When they refer to the selected/current
+  step, always use `step_parts_request` with `step_scope`=`selected_step` so the
+  graph can remove parts already supplied or assembled. Preserve a request to
+  get/fetch that outstanding part by setting `part_action`=`fetch`; otherwise
+  use `part_action`=`reference`.
+- For a task-relative request such as "Can you get a part for this step?",
+  preserve the requested robot action: return `step_parts_request` with
+  `part_action`=`fetch`, even when the user does not identify which required
+  part should be fetched. Python will select or clarify the outstanding item.
+- Use `step_tools_request` when the user asks generically which tool or tools
+  the selected/next step requires without naming a specific tool. Set
+  `step_scope` exactly as for `step_parts_request`. Use `part_action`=`status`
+  when they ask whether the required tool was given, delivered, or handed over;
+  use `fetch` when they ask the robot to get the required tool; otherwise use
+  `reference`. The graph—not the language model—determines all required tools
+  and their actual delivery status. Leave `target` and `candidates` empty.
+- Do not use `step_tools_request` after the user names a particular tool, bit,
+  driver, wrench, or holder. A named tool is always a `part_reference`, even
+  when the utterance also says "for this step". Resolve ordinary workshop
+  synonyms and a plausible speech-recognition substitution from the focused
+  step when it identifies one unique allowed tool. For example, "the wrench",
+  "bit wrench", and the likely ASR rendering "the ranch" mean `BIT_WRENCH`
+  while a fastening step is focused.
+- A request naming an actual object category—such as "the gear necessary for
+  this step"—is a `part_reference`, not a `step_parts_request`. Use the focused
+  step to resolve which gear, stand, or tool is meant when it makes the
+  reference unique. A request to "give" a named physical object is a fetch
+  request.
 - Use `general_question` for greetings, how-to/status questions, and ordinary
   conversation. Leave `step_scope` and `target` empty, use an empty
   `candidates` list, and put a concise operator-facing response in `answer`.
   Do not copy internal step IDs, canonical labels, or row.stage numbers into
   that answer. For a recommendation, state the physical action directly.
 - Use `recommendation_request` when the user asks what to do next, what to
-  start with, or requests the recommended step. Leave every other field empty.
+  start with, or requests the recommended step without naming a particular
+  physical part or tool. If a named part/tool constrains the requested next
+  step, use `part_reference` with `part_action` set to `find_step` instead.
+  Leave every other field empty.
   Python will select the READY step using the graph's deterministic policy and
   synchronize that selection with the GUI and Unity; do not choose the step in
   `answer` yourself.
@@ -536,19 +684,47 @@ Rules:
 
 Intent examples:
 - "Can you give me the part required for this step?" ->
-  {{"intent":"step_parts_request","step_scope":"selected_step","target":"","candidates":[],"exclude_labels":[],"answer":""}}
+  {{"intent":"step_parts_request","part_action":"","confirmation":"","step_scope":"selected_step","target":"","candidates":[],"exclude_labels":[],"answer":""}}
 - "Other than the bearing, what other part do I need for this step?" ->
-  {{"intent":"step_parts_request","step_scope":"selected_step","target":"","candidates":[],"exclude_labels":["BEARING"],"answer":""}}
+  {{"intent":"step_parts_request","part_action":"","confirmation":"","step_scope":"selected_step","target":"","candidates":[],"exclude_labels":["BEARING"],"answer":""}}
+- "Can you highlight the other part necessary for this step?" ->
+  {{"intent":"step_parts_request","part_action":"reference","confirmation":"","step_scope":"selected_step","target":"","candidates":[],"exclude_labels":[],"answer":""}}
+- "Can you get the other part required for this step?" ->
+  {{"intent":"step_parts_request","part_action":"fetch","confirmation":"","step_scope":"selected_step","target":"","candidates":[],"exclude_labels":[],"answer":""}}
+- "Can you get a part for me?" with a selected step ->
+  {{"intent":"step_parts_request","part_action":"fetch","confirmation":"","step_scope":"selected_step","target":"","candidates":[],"exclude_labels":[],"answer":""}}
+- "Did you give me the tool necessary for this step?" ->
+  {{"intent":"step_tools_request","part_action":"status","confirmation":"","step_scope":"selected_step","target":"","candidates":[],"exclude_labels":[],"answer":""}}
+- "What tools do I need for this step?" ->
+  {{"intent":"step_tools_request","part_action":"reference","confirmation":"","step_scope":"selected_step","target":"","candidates":[],"exclude_labels":[],"answer":""}}
+- "Can you get the tool needed for this step?" ->
+  {{"intent":"step_tools_request","part_action":"fetch","confirmation":"","step_scope":"selected_step","target":"","candidates":[],"exclude_labels":[],"answer":""}}
+- "Can you get me the wrench?" ->
+  {{"intent":"part_reference","part_action":"fetch","confirmation":"","step_scope":"","target":"BIT_WRENCH","candidates":[],"exclude_labels":[],"answer":""}}
+- With a fastening step focused, "Can you get me the ranch?" ->
+  {{"intent":"part_reference","part_action":"fetch","confirmation":"","step_scope":"","target":"BIT_WRENCH","candidates":[],"exclude_labels":[],"answer":""}}
 - "Can you get me the bearing?" ->
   {{"intent":"part_reference","part_action":"fetch","confirmation":"","step_scope":"","target":"BEARING","candidates":[],"exclude_labels":[],"answer":""}}
 - "Where is the bearing?" ->
   {{"intent":"part_reference","part_action":"reference","confirmation":"","step_scope":"","target":"BEARING","candidates":[],"exclude_labels":[],"answer":""}}
+- With the Row 1 gear-rod step focused, "Can you give me the gear necessary for this step?" ->
+  {{"intent":"part_reference","part_action":"fetch","confirmation":"","step_scope":"","target":"GEAR_ROW1_LEFT","candidates":[],"exclude_labels":[],"answer":""}}
+- "Can you get me the Row 1 kit?" ->
+  {{"intent":"part_reference","part_action":"fetch","confirmation":"","step_scope":"","target":"ROW1_KIT","candidates":[],"exclude_labels":[],"answer":""}}
+- "What is the next step that uses the Row 2 left gear?" ->
+  {{"intent":"part_reference","part_action":"find_step","confirmation":"","step_scope":"","target":"GEAR_ROW2_LEFT","candidates":[],"exclude_labels":[],"answer":""}}
+- "When do I use the T25 bit next?" ->
+  {{"intent":"part_reference","part_action":"find_step","confirmation":"","step_scope":"","target":"T25_TORX_BIT","candidates":[],"exclude_labels":[],"answer":""}}
 - "What should I start with?" ->
-  {{"intent":"recommendation_request","step_scope":"","target":"","candidates":[],"exclude_labels":[],"answer":""}}
+  {{"intent":"recommendation_request","part_action":"","confirmation":"","step_scope":"","target":"","candidates":[],"exclude_labels":[],"answer":""}}
 - "What is the next recommended step?" ->
-  {{"intent":"recommendation_request","step_scope":"","target":"","candidates":[],"exclude_labels":[],"answer":""}}
+  {{"intent":"recommendation_request","part_action":"","confirmation":"","step_scope":"","target":"","candidates":[],"exclude_labels":[],"answer":""}}
+- Pending fetch, then "Yes, please." ->
+  {{"intent":"fetch_confirmation","part_action":"","confirmation":"yes","step_scope":"","target":"","candidates":[],"exclude_labels":[],"answer":""}}
+- Pending fetch, then "No." ->
+  {{"intent":"fetch_confirmation","part_action":"","confirmation":"no","step_scope":"","target":"","candidates":[],"exclude_labels":[],"answer":""}}
 
-{clarification}{fetch_context}CURRENT USER UTTERANCE:
+{clarification}{reference_context}{fetch_context}CURRENT USER UTTERANCE:
 {text}
 """
         queued = self._worker.submit(
@@ -626,13 +802,21 @@ Intent examples:
             return
         if label == "STEP_PARTS":
             resolved = "Resolved request: parts required by the step"
+        elif label == "STEP_TOOLS":
+            resolved = "Resolved request: fastening tools required by the step"
         elif label == "RECOMMENDED_STEP":
             resolved = "Action: recommended step selected"
+        elif label == "FETCH_CONFIRMED":
+            resolved = "Action: robot fetch confirmed"
+        elif label == "FETCH_CANCELLED":
+            resolved = "Action: robot fetch cancelled"
         else:
             resolved = f"Resolved label: {label}"
         display_answer = f"{spoken}\n\n{resolved}"
         self._awaiting_part_clarification = label == "AMBIGUOUS"
         self._ambiguous_part_text = question if label == "AMBIGUOUS" else ""
+        if label in self._part_labels:
+            self._last_resolved_part_label = label
         replaced = False
         for index in range(len(self._exchanges) - 1, -1, -1):
             prior_question, _prior_answer = self._exchanges[index]
@@ -706,6 +890,8 @@ Intent examples:
 
         intent = str(value.get("intent", "")).strip().casefold()
         if intent == "fetch_confirmation":
+            if not self._pending_fetch_description:
+                return {"intent": "invalid", "raw": raw}
             confirmation = str(value.get("confirmation", "")).strip().casefold()
             if confirmation not in {"yes", "no"}:
                 return {"intent": "invalid", "raw": raw}
@@ -716,7 +902,7 @@ Intent examples:
             }
         if intent == "recommendation_request":
             return {"intent": intent, "raw": raw}
-        if intent == "step_parts_request":
+        if intent in {"step_parts_request", "step_tools_request"}:
             step_scope = str(value.get("step_scope", "")).strip().casefold()
             if step_scope not in {"selected_step", "next_step"}:
                 return {"intent": "invalid", "raw": raw}
@@ -727,9 +913,18 @@ Intent examples:
                     label = self._normalize_part_label(str(candidate))
                     if label in self._part_labels and label not in exclude_labels:
                         exclude_labels.append(label)
+            part_action = str(
+                value.get("part_action", "reference")).strip().casefold()
+            allowed_actions = (
+                {"reference", "fetch", "status", ""}
+                if intent == "step_tools_request"
+                else {"reference", "fetch", ""})
+            if part_action not in allowed_actions:
+                return {"intent": "invalid", "raw": raw}
             return {
                 "intent": intent,
                 "step_scope": step_scope,
+                "part_action": part_action or "reference",
                 "exclude_labels": exclude_labels,
                 "raw": raw,
             }
@@ -755,8 +950,18 @@ Intent examples:
         if target != "AMBIGUOUS":
             candidate_labels.clear()
         part_action = str(value.get("part_action", "reference")).strip().casefold()
-        if part_action not in {"reference", "fetch"}:
+        if part_action not in {"reference", "fetch", "find_step"}:
             return {"intent": "invalid", "raw": raw}
+        constrained = list(self._pending_candidate_constraint)
+        if constrained:
+            if self._generic_plural_followup or (
+                    target != "AMBIGUOUS" and target not in constrained):
+                target = "AMBIGUOUS"
+                candidate_labels = constrained
+            elif target == "AMBIGUOUS":
+                # Never allow the model to broaden a graph-validated set.
+                candidate_labels = [label for label in candidate_labels
+                                    if label in constrained] or constrained
         return {
             "intent": intent,
             "target": target,
@@ -825,7 +1030,15 @@ Intent examples:
     # ── Render-loop tick ──────────────────────────────────────────────────────
 
     def tick(self) -> None:
-        for kind, payload in self._worker.poll():
+        for kind, payload, context_version in self._worker.poll():
+            if (context_version is not None
+                    and context_version != self._context_version):
+                print(
+                    f"[VLM] Discarded stale {kind} result from graph context "
+                    f"v{context_version}; current is v{self._context_version}",
+                    flush=True,
+                )
+                continue
             if kind == "status":
                 self._set_status(payload)
                 if payload == "ready":
@@ -860,10 +1073,13 @@ Intent examples:
                     )
                     self._pending_question = ""
                     self._pending_part_text = ""
-                elif intent in {"part_reference", "step_parts_request"}:
+                elif intent in {"part_reference", "step_parts_request",
+                                "step_tools_request"}:
                     is_step_parts = intent == "step_parts_request"
-                    label = ("STEP_PARTS" if is_step_parts
-                             else str(envelope["target"]))
+                    is_step_tools = intent == "step_tools_request"
+                    label = ("STEP_PARTS" if is_step_parts else
+                             "STEP_TOOLS" if is_step_tools else
+                             str(envelope["target"]))
                     self._part_events.put({
                         "text": question,
                         "label": label,
@@ -878,6 +1094,7 @@ Intent examples:
                     _print_console_block(
                         "VLM INTENT",
                         f"{intent} -> {label}\n"
+                        f"part_action: {envelope.get('part_action', '')}\n"
                         f"step_scope: {envelope.get('step_scope', '')}\n"
                         f"exclude_labels: {envelope.get('exclude_labels', [])}\n"
                         f"candidates: {envelope.get('candidate_labels', [])}\n"
@@ -973,6 +1190,11 @@ Intent examples:
                 self._update_history_label()
                 self.dpg.set_value("vlm_answer",
                                    "Conversation cleared. Ask a new question.")
+
+            elif kind == "stale":
+                # The worker already discarded the generated payload because
+                # graph state changed while the model was thinking.
+                continue
 
     # ── File drop ─────────────────────────────────────────────────────────────
 

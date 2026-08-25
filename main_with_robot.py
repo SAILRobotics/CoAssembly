@@ -788,7 +788,10 @@ class _ToolLayoutManager:
 
     def __init__(self, json_path: str, ip: str):
         self._tools: list = []
+        # Confirmed physical releases and task-progression inference are kept
+        # separate so undo/reset can restore only the latter.
         self._delivered_ids: set[int] = set()
+        self._progress_delivered_ids: set[int] = set()
         ctx = zmq.Context()
         self._pub = ctx.socket(zmq.PUB)
         self._pub.connect(f"tcp://{ip}:{self.PORT}")
@@ -821,7 +824,8 @@ class _ToolLayoutManager:
     def publish(self, T: np.ndarray) -> None:
         out = []
         for t in self._tools:
-            if int(t["id"]) in self._delivered_ids:
+            if int(t["id"]) in (
+                    self._delivered_ids | self._progress_delivered_ids):
                 continue
             pos_w, R_world, sz = self._tool_box_world(t, T)
             q_xyzw  = ScipyR.from_matrix(R_world).as_quat()
@@ -848,6 +852,15 @@ class _ToolLayoutManager:
     def mark_delivered(self, tool_id: int) -> None:
         """Exclude an object from subsequent Unity layout publications."""
         self._delivered_ids.add(int(tool_id))
+
+    def set_progress_delivered(self, tool_ids) -> None:
+        """Replace task-inferred deliveries without touching real handovers."""
+        self._progress_delivered_ids = {int(tool_id) for tool_id in tool_ids}
+
+    def reset_delivered(self) -> None:
+        """Restore every layout object for a manually restocked inventory."""
+        self._delivered_ids.clear()
+        self._progress_delivered_ids.clear()
 
     def _tool_world_data(self, t: dict, T: np.ndarray) -> tuple:
         sz      = t.get("size", [0.05, 0.05, 0.05])
@@ -1024,6 +1037,16 @@ class _ToolSelectionManager:
             self._active_tool_id = tool_id
             self._active_hand    = hand
             self.send_color(tool_id, self._selected_or_semantic_color(tool_id))
+
+    def select_for_fetch(self, tool_id: int) -> None:
+        """Select one object non-interactively so the normal grasp path fetches it."""
+        tool_id = int(tool_id)
+        if self._active_tool_id is not None and self._active_tool_id != tool_id:
+            self._restore(self._active_tool_id)
+        self._hovered_tool_id = None
+        self._active_tool_id = tool_id
+        self._active_hand = "voice"
+        self.send_color(tool_id, self._selected_or_semantic_color(tool_id))
 
     def _handle_hover_enter(self, tool_id: int):
         # hand moved from tool A to tool B without a hover_exit(A) in between → clear A first
@@ -1452,6 +1475,51 @@ class _TaskGraphOpen3DReceiver:
             pass
 
 
+class _TaskGraphRobotStatusPublisher:
+    """Report semantic robot-supply state back to the task graph on port 5022."""
+
+    def __init__(self, port: int = cfg.GEARBOX_TASKGRAPH_PORT):
+        ctx = zmq.Context.instance()
+        self._pub = ctx.socket(zmq.PUB)
+        self._pub.setsockopt(zmq.LINGER, 0)
+        self._pub.connect(f"tcp://{cfg.LOCALHOST}:{port}")
+
+    def publish(self, *, status: str, tool_id: int, tool_name: str,
+                requested_parts=()) -> None:
+        msg = {
+            "event": "robot_part_status",
+            "status": str(status),
+            "tool_id": int(tool_id),
+            "tool_name": str(tool_name),
+            "requested_parts": list(dict.fromkeys(
+                str(part) for part in requested_parts if str(part))),
+        }
+        try:
+            self._pub.send_string(json.dumps(msg))
+        except Exception:
+            pass
+
+    def publish_snapshot(self, items, *, completed_stages=(),
+                         last_worked_row=None) -> None:
+        """Reply with retained task progress and physical supply state."""
+        msg = {
+            "event": "robot_part_state_snapshot",
+            "items": list(items),
+            "completed_stages": list(completed_stages),
+            "last_worked_row": last_worked_row,
+        }
+        try:
+            self._pub.send_string(json.dumps(msg))
+        except Exception:
+            pass
+
+    def close(self) -> None:
+        try:
+            self._pub.close(0)
+        except Exception:
+            pass
+
+
 class _GearboxUnityCommandPublisher:
     """Forward semantic gearbox-reference colors from the task graph to Unity."""
 
@@ -1758,7 +1826,8 @@ class MainScene:
                  load_pegboard_from_file: bool = cfg.LOAD_PEGBOARD_FROM_FILE,
                  gripper_collision: bool = True,
                  no_passthrough: bool = False,
-                 flat_tcp_ori: bool = False):
+                 flat_tcp_ori: bool = False,
+                 vlm_test_auto_deliver: bool = False):
 
         self.anchor_marker_id         = anchor_marker_id
         self.pegboard_marker_id       = pegboard_marker_id
@@ -1768,6 +1837,12 @@ class MainScene:
         self.board_marker_b           = board_marker_b
         self._load_pegboard_from_file   = load_pegboard_from_file
         self._no_passthrough            = no_passthrough
+        # Test-only shortcut: simulation can exercise post-handover VLM policy
+        # without requiring a tracked hand or physical pull from the gripper.
+        if vlm_test_auto_deliver and not simulation:
+            raise ValueError(
+                "vlm_test_auto_deliver is permitted only in simulation mode")
+        self._vlm_test_auto_deliver     = bool(vlm_test_auto_deliver)
 
         self._T_BOARD_FROM_MARKER = {
             board_marker_a: T_BOARD_FROM_MARKER_A,
@@ -1843,6 +1918,7 @@ class MainScene:
         self.grip_pose_bridge = _GripPoseBridge(quest_ip)
         self.gearbox_pose_rx = _GearboxPoseReceiver(quest_ip)
         self.taskgraph_o3d_rx = _TaskGraphOpen3DReceiver()
+        self.taskgraph_robot_status = _TaskGraphRobotStatusPublisher()
         self.gearbox_unity_cmd = _GearboxUnityCommandPublisher(quest_ip)
         self.workspace_bound_pub = _WorkspaceBoundPublisher(quest_ip)
 
@@ -1901,6 +1977,20 @@ class MainScene:
         self._pending_grasp_tool_id: "int | None"           = None   # tool ID being grasped (set on click, not yet read back)
         self._grasped_objects: list                          = []     # [(id, name)] of successfully grasped objects (cancelled grasps excluded)
         self._handed_over_objects: list                      = []     # [(id, name)] released successfully to the human
+        # Layout objects inferred as handed over from completed task steps.
+        # Unlike confirmed physical releases, this set is reversible.
+        self._progress_handed_over_ids: set[int]             = set()
+        # Runtime backup of task completion. gearbox_task_graph.py owns the
+        # graph while alive, but this long-running process retains semantic
+        # row/stage events so a restarted GUI/VLM can reconstruct its graph.
+        self._completed_task_stages: set[tuple[int, int]]     = set()
+        self._completed_task_history: list[tuple[int, int]]   = []
+        self._last_worked_task_row: "int | None"              = None
+        self._load_task_progress()
+        # Semantic task-graph parts associated with a physical pegboard object.
+        # For example, tool 35 is ROW1_KIT while the request may specifically
+        # be BEARING_ROW1_RIGHT.
+        self._fetch_context_by_tool_id: dict[int, dict]       = {}
         self._handover_tool_id: "int | None"                 = None   # object currently awaiting/in handover
         self._last_left_pts:  "list | None"                 = None   # most recent left  hand joints from world_joints()
         self._last_right_pts: "list | None"                 = None   # most recent right hand joints from world_joints()
@@ -1920,18 +2010,37 @@ class MainScene:
         # explicit visual control surface.
         self._board_ar_visual_enabled = True
 
-        if self._load_pegboard_from_file:
+        if self.simulation:
+            # Simulation has no physical world-registration safety requirement.
+            # Keep the world genuinely unlocked, but install the saved pegboard
+            # pose immediately so recorded grasp joints can be exercised without
+            # first showing marker 100.
+            if self._load_pegboard_from_file:
+                self._try_load_pegboard_from_file()
+            print("[Simulation] World remains unlocked — marker "
+                  f"#{self.anchor_marker_id} is not required for tool fetches")
+            if self._vlm_test_auto_deliver:
+                print("[VLMTest] Auto-delivery enabled — successful grasps will "
+                      "be reported as handed over without waiting for a hand pull")
+        elif self._load_pegboard_from_file:
             self._preview_pegboard_from_file()
 
         print(f"\n[Running]  quest_ip={quest_ip}  "
               f"anchor_marker=#{anchor_marker_id}  "
               f"pegboard_marker=#{pegboard_marker_id}  "
               f"hand_port={hand_port}")
-        print(f"  Marker #{anchor_marker_id} auto-locks world + scene on first sight "
-              f"within {self._AUTO_LOCK_MAX_DIST:.1f}m (or press ENTER from any "
-              f"distance) — later re-locks need ENTER or the relock cube")
-        print(f"  ENTER with marker #{pegboard_marker_id} visible (after locking)"
-              f" → lock pegboard")
+        if simulation:
+            print("  Simulation world remains unlocked; "
+                  f"marker #{anchor_marker_id} is optional for tool fetches")
+        else:
+            print(f"  Marker #{anchor_marker_id} auto-locks world + scene on first sight "
+                  f"within {self._AUTO_LOCK_MAX_DIST:.1f}m (or press ENTER from any "
+                  f"distance) — later re-locks need ENTER or the relock cube")
+        if simulation and self._load_pegboard_from_file:
+            print("  Saved pegboard pose loaded for simulated tool grasps")
+        else:
+            print(f"  ENTER with marker #{pegboard_marker_id} visible (after locking)"
+                  f" → lock pegboard")
         _secondary = sorted(self.anchor._T_world_marker) or "none (no prescan file)"
         print(f"  Secondary relock cubes {_secondary}: click one for drift "
               f"correction when it lights up (proximity <{cfg.WORLD_MARKERS_PROXIMITY_MAX}m, "
@@ -1945,7 +2054,8 @@ class MainScene:
     def _try_load_pegboard_from_file(self) -> bool:
         """Load pegboard pose from scene_layout NPZ, inject it into the anchor,
         and publish the tool layout + PyBullet boxes immediately.
-        Returns True on success. Only meaningful once the anchor is locked."""
+        Returns True on success. The saved world-frame pose is also valid for
+        simulation fetches while the tracking-to-world anchor remains unlocked."""
         npz_path = cfg.SCENE_LAYOUT_DIR / "T_world10_pegboard101.npz"
         if not npz_path.exists():
             print(f"[PegboardFile] Not found: {npz_path}")
@@ -2004,7 +2114,8 @@ class MainScene:
         """Mirror the pegboard tool highlight (received by self.tools on 5024 and applied to the
         Unity tools) onto the local Open3D tool boxes — cyan, exactly like gearbox_control --open-3d.
         Always on; no argument gates it."""
-        handed_over = {tid for tid, _ in self._handed_over_objects}
+        handed_over = ({tid for tid, _ in self._handed_over_objects}
+                       | self._progress_handed_over_ids)
         colors = {
             self._tool_id_to_box_index[tid]: self.tools.highlight_colors.get(
                 tid, _ToolSelectionManager.HIGHLIGHT_COLOR)[:3]
@@ -2026,8 +2137,17 @@ class MainScene:
         if not any(tid == tool_id for tid, _ in self._handed_over_objects):
             self._handed_over_objects.append((tool_id, name))
         self.tool_layout.mark_delivered(tool_id)
+        self._refresh_handed_over_visibility()
+        self._save_task_progress()
+
+    def _refresh_handed_over_visibility(self) -> None:
+        """Hide the union of real and inferred handovers in Open3D and Unity."""
+        actual_ids = {tid for tid, _ in self._handed_over_objects}
+        hidden_ids = actual_ids | self._progress_handed_over_ids
+        self.tool_layout.set_progress_delivered(
+            self._progress_handed_over_ids)
         hidden = [self._tool_id_to_box_index[tid]
-                  for tid, _ in self._handed_over_objects
+                  for tid in hidden_ids
                   if tid in self._tool_id_to_box_index]
         self.vis.set_tool_hidden_indices(hidden)
         T_wp = self.anchor.T_pegboard_in_world
@@ -2035,6 +2155,244 @@ class MainScene:
             self.vis.update_tool_boxes(self.tool_layout.world_boxes(T_wp))
             # ToolSpawner despawns IDs omitted from a refreshed full layout.
             self.tool_layout.publish(T_wp)
+
+    def _apply_progress_handover_state(self, event: dict) -> None:
+        """Apply the task graph's complete/undo/reset-derived tool state."""
+        valid_ids = set(self._tool_id_to_box_index)
+        next_ids: set[int] = set()
+        for value in event.get("tool_ids", []):
+            try:
+                tool_id = int(value)
+            except (TypeError, ValueError):
+                continue
+            if tool_id in valid_ids:
+                next_ids.add(tool_id)
+        if next_ids == self._progress_handed_over_ids:
+            return
+        restored = self._progress_handed_over_ids - next_ids
+        added = next_ids - self._progress_handed_over_ids
+        self._progress_handed_over_ids = next_ids
+        self._refresh_handed_over_visibility()
+        if added:
+            names = [self.tool_layout.get_name(tool_id)
+                     for tool_id in sorted(added)]
+            print(f"[TaskProgress] Inferred handed over: {names}")
+        if restored:
+            # Objects that were also physically handed over remain hidden.
+            actual_ids = {tid for tid, _ in self._handed_over_objects}
+            names = [self.tool_layout.get_name(tool_id)
+                     for tool_id in sorted(restored - actual_ids)]
+            if names:
+                print(f"[TaskProgress] Restored to pegboard after undo/reset: "
+                      f"{names}")
+
+    def _remember_task_progress_event(self, event: dict) -> None:
+        """Retain and persist controller/GUI state for task-graph recovery."""
+        event_name = str(event.get("event", ""))
+        if event_name == "reset":
+            self._completed_task_stages.clear()
+            self._completed_task_history.clear()
+            self._last_worked_task_row = None
+            self._save_task_progress()
+            return
+        if event_name not in {"complete", "uncomplete"}:
+            return
+        try:
+            row = int(event.get("row", 0))
+            stage = int(event.get("stage", 0))
+        except (TypeError, ValueError):
+            return
+        if not ((1 <= row <= 4 and 1 <= stage <= 7)
+                or (row == 0 and stage == 8)):
+            return
+        coords = (row, stage)
+        if event_name == "complete":
+            if coords not in self._completed_task_stages:
+                self._completed_task_stages.add(coords)
+                self._completed_task_history.append(coords)
+        else:
+            self._completed_task_stages.discard(coords)
+            self._completed_task_history = [
+                value for value in self._completed_task_history
+                if value != coords
+            ]
+        if row > 0:
+            self._last_worked_task_row = row
+        self._save_task_progress()
+
+    def _load_task_progress(self) -> None:
+        """Load durable physical handovers and the row/stage snapshot."""
+        path = cfg.TASK_PROGRESS_FILE
+        if not path.exists():
+            return
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            valid_tool_ids = set(self._tool_id_to_box_index)
+            handed_over: list[tuple[int, str]] = []
+            handed_over_ids: set[int] = set()
+            records = data.get("handed_over_objects", [])
+            for record in records if isinstance(records, list) else []:
+                try:
+                    tool_id = int(record.get("tool_id"))
+                except (AttributeError, TypeError, ValueError):
+                    continue
+                if tool_id in valid_tool_ids and tool_id not in handed_over_ids:
+                    handed_over_ids.add(tool_id)
+                    handed_over.append(
+                        (tool_id, self.tool_layout.get_name(tool_id)))
+
+            records = data.get("completed_stages", [])
+            history: list[tuple[int, int]] = []
+            seen: set[tuple[int, int]] = set()
+            for record in records if isinstance(records, list) else []:
+                row = int(record.get("row", 0))
+                stage = int(record.get("stage", 0))
+                coords = (row, stage)
+                if (((1 <= row <= 4 and 1 <= stage <= 7)
+                     or (row == 0 and stage == 8))
+                        and coords not in seen):
+                    seen.add(coords)
+                    history.append(coords)
+            row_hint = data.get("last_worked_row")
+            row_hint = int(row_hint) if row_hint is not None else None
+            self._completed_task_stages = seen
+            self._completed_task_history = history
+            self._last_worked_task_row = (
+                row_hint if row_hint is not None and 1 <= row_hint <= 4 else None)
+            self._handed_over_objects = handed_over
+            for tool_id in handed_over_ids:
+                self.tool_layout.mark_delivered(tool_id)
+            self._refresh_handed_over_visibility()
+            print(f"[TaskProgress] Loaded {len(history)} completed stage(s) "
+                  f"and {len(handed_over)} confirmed handover(s) from {path}")
+        except (OSError, ValueError, TypeError, AttributeError,
+                json.JSONDecodeError) as exc:
+            print(f"[TaskProgress] Ignored invalid progress file {path}: {exc}")
+
+    def _save_task_progress(self) -> None:
+        """Atomically save the task snapshot consumed by task-graph recovery."""
+        path = cfg.TASK_PROGRESS_FILE
+        temp_path = path.with_suffix(path.suffix + ".tmp")
+        ordered = list(self._completed_task_history)
+        ordered.extend(sorted(
+            self._completed_task_stages - set(ordered),
+            key=lambda value: (value == (0, 8), value[0], value[1])))
+        payload = {
+            "handed_over_objects": [
+                {"tool_id": int(tool_id), "name": str(name)}
+                for tool_id, name in self._handed_over_objects
+            ],
+            "version": 1,
+            "completed_stages": [
+                {"row": row, "stage": stage} for row, stage in ordered
+            ],
+            "last_worked_row": self._last_worked_task_row,
+        }
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temp_path.write_text(
+                json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+            temp_path.replace(path)
+        except OSError as exc:
+            print(f"[TaskProgress] Save failed for {path}: {exc}")
+
+    def _reset_all_handover_state(self) -> None:
+        """Clear confirmed/inferred handovers and republish the full pegboard."""
+        self._handed_over_objects.clear()
+        self._grasped_objects.clear()
+        self._progress_handed_over_ids.clear()
+        self._fetch_context_by_tool_id.clear()
+        self._handover_tool_id = None
+        self._pending_handover = False
+        self.tool_layout.reset_delivered()
+        self.tools._apply_highlight_clear()
+        self._refresh_handed_over_visibility()
+        self._save_task_progress()
+        print("[HandoverReset] Cleared actual and task-inferred handovers; "
+              "all pegboard objects restored")
+
+    def _publish_robot_part_status(self, status: str, tool_id: int) -> None:
+        """Publish physical-container and requested-part identity together."""
+        context = self._fetch_context_by_tool_id.get(int(tool_id), {})
+        self.taskgraph_robot_status.publish(
+            status=status,
+            tool_id=tool_id,
+            tool_name=self.tool_layout.get_name(tool_id),
+            requested_parts=context.get("requested_parts", ()),
+        )
+
+    def _publish_robot_part_state_snapshot(self) -> None:
+        """Replay task progress and robot supply after task-graph restart."""
+        # Replay confirmed physical history only. Progress-inferred hiding is
+        # owned by the task graph and is rebuilt from its completed steps.
+        handed_over_ids = {
+            int(tool_id) for tool_id, _name in self._handed_over_objects
+        }
+        grasped_ids = {
+            int(tool_id) for tool_id, _name in self._grasped_objects
+        } - handed_over_ids
+        items = []
+        for status, tool_ids in (
+                ("handed_over", sorted(handed_over_ids)),
+                ("in_robot_gripper", sorted(grasped_ids))):
+            for tool_id in tool_ids:
+                context = self._fetch_context_by_tool_id.get(tool_id, {})
+                items.append({
+                    "event": "robot_part_status",
+                    "status": status,
+                    "tool_id": tool_id,
+                    "tool_name": self.tool_layout.get_name(tool_id),
+                    "requested_parts": list(
+                        context.get("requested_parts", ())),
+                })
+        ordered_completed = list(self._completed_task_history)
+        ordered_completed.extend(sorted(
+            self._completed_task_stages - set(ordered_completed),
+            key=lambda value: (value == (0, 8), value[0], value[1])))
+        completed_stages = [
+            {"row": row, "stage": stage}
+            for row, stage in ordered_completed
+        ]
+        self.taskgraph_robot_status.publish_snapshot(
+            items,
+            completed_stages=completed_stages,
+            last_worked_row=self._last_worked_task_row,
+        )
+        print(
+            f"[TaskRecovery] Replayed {len(completed_stages)} completed "
+            f"stage(s) and {len(items)} retained physical object state(s) "
+            "to gearbox_task_graph.py")
+
+    def _on_tool_grasp_complete(self, ok: bool, tool_id: int) -> None:
+        """Finish local grasp bookkeeping and notify the language assistant."""
+        self.tools.reset_to_category(tool_id)
+        self._robot_state = None
+        self._motion_source = None
+        self._pending_grasp_tool_id = None
+        name = self.tool_layout.get_name(tool_id)
+        if ok:
+            self._record_grasped_object(tool_id)
+            self._publish_robot_part_status("in_robot_gripper", tool_id)
+            print(f"[Robot] Grasp '{name}' (id={tool_id}) — OK ✓ "
+                  "(object in gripper)")
+            print(f"[Grasped so far] {[n for _, n in self._grasped_objects]}")
+            if self._vlm_test_auto_deliver:
+                self._record_handed_over_object(tool_id)
+                self._publish_robot_part_status("handed_over", tool_id)
+                print(f"[VLMTest] Auto-delivered '{name}' (id={tool_id}); "
+                      "physical handover intentionally skipped")
+                print(f"[Handed over so far] "
+                      f"{[n for _, n in self._handed_over_objects]}")
+                self._handover_tool_id = None
+                self._fetch_context_by_tool_id.pop(int(tool_id), None)
+                self._pending_handover = False
+            else:
+                self._pending_handover = True
+        else:
+            self._publish_robot_part_status("grasp_failed", tool_id)
+            self._fetch_context_by_tool_id.pop(int(tool_id), None)
+            print(f"[Robot] Grasp '{name}' (id={tool_id}) — "
+                  "FAILED ✗ (empty) — not tracked")
 
     def _on_object_released(self, ok: bool) -> None:
         tool_id = self._handover_tool_id
@@ -2044,11 +2402,13 @@ class MainScene:
         self._tcp_target_T = None
         if ok and tool_id is not None:
             self._record_handed_over_object(tool_id)
+            self._publish_robot_part_status("handed_over", tool_id)
             print(f"[Handover] Released '{self.tool_layout.get_name(tool_id)}' "
                   f"(id={tool_id}) to human — box removed")
             print(f"[Handed over so far] "
                   f"{[n for _, n in self._handed_over_objects]}")
             self._handover_tool_id = None
+            self._fetch_context_by_tool_id.pop(int(tool_id), None)
             self._pending_handover = False
             self._board_receive_after_handover = True
             print("[Handover] Empty gripper ready — click it to arm board "
@@ -2335,6 +2695,35 @@ class MainScene:
                 or (self.simulation
                     and self.robot.board_state == "holding_board"))
 
+    def _voice_fetch_blockers(self, tool_id: int) -> list[str]:
+        """Explain every gate that currently prevents a confirmed voice fetch."""
+        blockers: list[str] = []
+        handed_over_ids = ({done_id for done_id, _name
+                            in self._handed_over_objects}
+                           | self._progress_handed_over_ids)
+        if int(tool_id) in handed_over_ids:
+            blockers.append("this layout object was already handed over")
+        if self._pending_grasp_tool_id is not None:
+            blockers.append(
+                f"grasp id={self._pending_grasp_tool_id} is already active")
+        if not self.simulation and not self.anchor.locked:
+            blockers.append(f"world marker #{self.anchor_marker_id} is not locked")
+        if self.anchor.T_pegboard_in_world is None:
+            blockers.append("the pegboard pose is unavailable")
+        if self.robot is None:
+            blockers.append("RobotClient is unavailable")
+        else:
+            if not self.robot.connected:
+                blockers.append("robot_control_server.py is not connected")
+            if not self._board_allows_unrelated_motion():
+                blockers.append(
+                    f"board state '{self.robot.board_state}' blocks tool motion")
+            if self.robot.tool_grasp_running:
+                blockers.append("the robot is already executing a grasp")
+        if self.tool_layout.get_grasp_joints(int(tool_id)) is None:
+            blockers.append("the object has no grasp_joints in tool_layout1.json")
+        return blockers
+
     # ── Main loop ─────────────────────────────────────────────────────────────
 
     def run(self) -> None:
@@ -2350,6 +2739,7 @@ class MainScene:
                 if self.tools.drain_highlights(timeout_ms=0):
                     self._sync_vis_highlight()   # mirror the cyan highlight onto the Open3D boxes
                     for event in self.tools.pop_assembly_events():
+                        self._remember_task_progress_event(event)
                         self.vis.apply_gearbox_assembly_event(event)
                         if event.get("event") == "show":
                             self._move_robot_for_gearbox_step(event)
@@ -2357,7 +2747,39 @@ class MainScene:
                 gearbox_states = self.gearbox_pose_rx.poll()
                 for event in self.taskgraph_o3d_rx.poll():
                     event_name = event.get("event")
-                    if event_name == "reference_highlight":
+                    if event_name == "robot_part_state_request":
+                        self._publish_robot_part_state_snapshot()
+                    elif event_name == "progress_handover_sync":
+                        self._apply_progress_handover_state(event)
+                    elif event_name == "reset_all_handovers":
+                        self._reset_all_handover_state()
+                    elif event_name == "fetch_confirmed":
+                        try:
+                            fetch_id = int(event["tool_id"])
+                        except (KeyError, TypeError, ValueError):
+                            print(f"[VoiceFetch] Ignored malformed request: {event}")
+                            continue
+                        requested_parts = [
+                            str(part) for part in event.get("matched_parts", [])
+                            if str(part)
+                        ]
+                        self._fetch_context_by_tool_id[fetch_id] = {
+                            "label": str(event.get("label", "")),
+                            "requested_parts": requested_parts,
+                        }
+                        self.tools.select_for_fetch(fetch_id)
+                        self._sync_vis_highlight()
+                        print(f"[VoiceFetch] Confirmed id={fetch_id} "
+                              f"({self.tool_layout.get_name(fetch_id)}) → queued through "
+                              "the normal RobotClient grasp path")
+                        fetch_blockers = self._voice_fetch_blockers(fetch_id)
+                        if fetch_blockers:
+                            print("[VoiceFetch] WAITING — "
+                                  + "; ".join(fetch_blockers))
+                        else:
+                            print("[VoiceFetch] All motion gates passed — "
+                                  "starting grasp this frame")
+                    elif event_name == "reference_highlight":
                         self.tools._apply_highlight(
                             event.get("ids", []), event.get("color"))
                         self._sync_vis_highlight()
@@ -2380,6 +2802,7 @@ class MainScene:
                             {**event, "event": "show"})
                         self._move_robot_for_gearbox_step(event)
                     else:
+                        self._remember_task_progress_event(event)
                         if event_name == "reset":
                             self.tools._apply_highlight_clear()
                             self._sync_vis_highlight()
@@ -2720,9 +3143,11 @@ class MainScene:
 
                 # ── Tool click → grasp ────────────────────────────────────────
                 _tid = self.tools.active_tool_id
+                _all_handed_over_ids = (
+                    {done_id for done_id, _ in self._handed_over_objects}
+                    | self._progress_handed_over_ids)
                 if (_tid is not None
-                        and any(done_id == _tid
-                                for done_id, _ in self._handed_over_objects)):
+                        and _tid in _all_handed_over_ids):
                     print(f"[User] Ignoring id={_tid}; object was already handed over")
                     self.tools.deselect(_tid)
                     _tid = None
@@ -2741,9 +3166,10 @@ class MainScene:
 
                 if (_tid is not None
                         and _tid != self._TCP_TOOL_ID
-                        and self.anchor.locked
+                        and (self.simulation or self.anchor.locked)
                         and self.anchor.T_pegboard_in_world is not None
                         and self.robot is not None
+                        and self.robot.connected
                         and self._board_allows_unrelated_motion()
                         and not self.robot.tool_grasp_running):
                     tool_data = self.tool_layout.get_world_data(
@@ -2777,16 +3203,7 @@ class MainScene:
                                 on_phase     = lambda phase: (setattr(self, '_robot_state', phase),
                                                           print(f"[Robot] state → {phase}")),
                                 on_complete  = lambda ok, tid=_grasp_tid: (
-                                    self.tools.reset_to_category(tid),
-                                    setattr(self, '_robot_state', None),
-                                    setattr(self, '_motion_source', None),
-                                    setattr(self, '_pending_grasp_tool_id', None),
-                                    self._record_grasped_object(tid) if ok else None,
-                                    print(f"[Robot] Grasp '{self.tool_layout.get_name(tid)}' (id={tid}) — "
-                                          f"{'OK ✓ (object in gripper)' if ok else 'FAILED ✗ (empty) — not tracked'}"),
-                                    print(f"[Grasped so far] {[n for _, n in self._grasped_objects]}") if ok else None,
-                                    setattr(self, '_pending_handover', True) if ok else None,
-                                ),
+                                    self._on_tool_grasp_complete(ok, tid)),
                             )
                         else:
                             print(f"[User] Clicked {_cat} '{_name}' (id={_tid}) — no grasp_joints recorded, skipping")
@@ -3244,6 +3661,7 @@ class MainScene:
         self.grip_pose_bridge.close()
         self.gearbox_pose_rx.close()
         self.taskgraph_o3d_rx.close()
+        self.taskgraph_robot_status.close()
         self.gearbox_unity_cmd.close()
         self.workspace_bound_pub.close()
         self.hands.close()
@@ -3296,6 +3714,11 @@ def main():
                          "Quest tracking origin via the 'l' key (marker 100 assumed to sit at "
                          "the initial/recenter origin). Everything downstream unlocks exactly "
                          "as it does on a marker lock.")
+    ap.add_argument(
+        "--vlm-test-auto-deliver", action="store_true",
+        help="Simulation-only: after a successful grasp, immediately report the "
+             "object as handed over so post-delivery VLM behavior can be tested "
+             "without a tracked hand or physical pull")
     args = ap.parse_args()
     if args.anchor_marker == args.pegboard_marker:
         ap.error("--anchor-marker and --pegboard-marker must be different.")
@@ -3305,6 +3728,8 @@ def main():
             args.board_marker_a, args.board_marker_b}) != 4:
         ap.error("--anchor-marker, --pegboard-marker, --board-marker-a and "
                  "--board-marker-b must all be different.")
+    if args.vlm_test_auto_deliver and not args.simulation:
+        ap.error("--vlm-test-auto-deliver is test-only and requires --simulation.")
     scene = MainScene(
         quest_ip                   = args.quest_ip,
         anchor_marker_id           = args.anchor_marker,
@@ -3320,7 +3745,8 @@ def main():
         use_calibrated_robot_base  = args.calibrated_robot_base,
         load_pegboard_from_file    = args.load_pegboard_from_file,
         gripper_collision          = args.gripper_collision,
-        no_passthrough             = args.no_passthrough)
+        no_passthrough             = args.no_passthrough,
+        vlm_test_auto_deliver      = args.vlm_test_auto_deliver)
     scene.run()
 
 

@@ -15,3 +15,15 @@
 
 
 python3 workholding_study.py   --session-name target_setup   --mode hybrid   --target-navigation move   --target-poses-file task_graph/workholding_targets.json
+
+
+
+#Resume function based on json
+#Check the logic by typing? 
+#Real Robot Test
+
+
+python main_with_robot.py --simulation --vlm-test-auto-deliver
+
+
+python robot_control_server.py --simulation

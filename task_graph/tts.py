@@ -7,7 +7,7 @@ Alternates between two local TTS backends: Piper and NVIDIA NeMo
 Run:
     python task_graph/tts.py
     python task_graph/tts.py --engine nemo
-    python task_graph/tts.py --piper-model /path/to/voice.onnx
+    python task_graph/tts.py --piper-model /path/to/voice.onnx --speech-rate 0.85
 
 While running, type a sentence and press Enter to hear it. Commands:
     /piper          switch to the Piper backend
@@ -42,8 +42,11 @@ def play_wav(path: Path) -> None:
 class PiperBackend:
     name = "piper"
 
-    def __init__(self, model_path: Path):
+    def __init__(self, model_path: Path, speech_rate: float = 1.0):
+        if float(speech_rate) <= 0.0:
+            raise ValueError("speech_rate must be greater than zero")
         self.model_path = model_path
+        self.speech_rate = float(speech_rate)
         self._voice = None
 
     def _load(self):
@@ -67,8 +70,16 @@ class PiperBackend:
 
     def synthesize(self, text: str, out_path: Path) -> None:
         self._load()
+        try:
+            from piper.config import SynthesisConfig
+        except ImportError:
+            # Compatibility with Piper releases that re-export the class.
+            from piper import SynthesisConfig
+        # Piper's length_scale is duration, while the public option is a
+        # conventional rate: 0.85x => 1/0.85 times the normal duration.
+        syn_config = SynthesisConfig(length_scale=1.0 / self.speech_rate)
         with wave.open(str(out_path), "wb") as wav_file:
-            self._voice.synthesize_wav(text, wav_file)
+            self._voice.synthesize_wav(text, wav_file, syn_config=syn_config)
 
 
 class NemoBackend:
@@ -121,9 +132,10 @@ class TTSService:
     """
 
     def __init__(self, engine: str = "piper",
-                 piper_model: Path = DEFAULT_PIPER_MODEL) -> None:
+                 piper_model: Path = DEFAULT_PIPER_MODEL,
+                 speech_rate: float = 1.0) -> None:
         self._backends = {
-            "piper": PiperBackend(Path(piper_model)),
+            "piper": PiperBackend(Path(piper_model), speech_rate=speech_rate),
             "nemo": NemoBackend(),
         }
         if engine not in self._backends:
@@ -222,13 +234,16 @@ def parse_args() -> argparse.Namespace:
                         help="TTS backend to start with (default: piper)")
     parser.add_argument("--piper-model", type=Path, default=DEFAULT_PIPER_MODEL,
                         help="Path to a Piper voice .onnx file")
+    parser.add_argument(
+        "--speech-rate", type=float, default=0.85,
+        help="Piper speaking rate multiplier; below 1.0 is slower")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
     backends = {
-        "piper": PiperBackend(args.piper_model),
+        "piper": PiperBackend(args.piper_model, speech_rate=args.speech_rate),
         "nemo": NemoBackend(),
     }
     current = args.engine

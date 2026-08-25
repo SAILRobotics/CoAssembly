@@ -849,13 +849,25 @@ class GearboxController:
         poller = zmq.Poller()
         poller.register(self._sub, zmq.POLLIN)
         while self._running:
-            if not dict(poller.poll(timeout=100)):
+            try:
+                ready = dict(poller.poll(timeout=100))
+            except zmq.ZMQError:
+                # close() may invalidate the socket while this daemon thread is
+                # inside poll(). That is a normal shutdown, not a runtime fault.
+                if not self._running:
+                    break
+                raise
+            if not ready:
                 continue
             while True:
                 try:
                     raw = self._sub.recv_string(flags=zmq.NOBLOCK)
                 except zmq.Again:
                     break
+                except zmq.ZMQError:
+                    if not self._running:
+                        return
+                    raise
                 try:
                     msg = json.loads(raw)
                     name = msg["name"]
@@ -873,17 +885,17 @@ class GearboxController:
 
     def close(self):
         self._running = False
-        try: self._sub.close()
+        try: self._sub.close(0)
         except Exception: pass
-        try: self._pub.close()
+        try: self._pub.close(0)
         except Exception: pass
-        try: self._tg_pub.close()
+        try: self._tg_pub.close(0)
         except Exception: pass
         if self._hl_pub is not None:
-            try: self._hl_pub.close()
+            try: self._hl_pub.close(0)
             except Exception: pass
         if self._ss_sub is not None:
-            try: self._ss_sub.close()
+            try: self._ss_sub.close(0)
             except Exception: pass
         # Context is shared (Context.instance()); leave it for the process to reclaim.
 

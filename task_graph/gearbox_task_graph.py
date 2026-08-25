@@ -14,6 +14,7 @@ import json
 import queue
 import re
 import sys
+import time
 from pathlib import Path
 import threading
 from dataclasses import dataclass
@@ -525,11 +526,51 @@ class TaskGraph:
             return sorted(p for p in PROVIDED_PARTS if p.startswith("BEARING_"))
         if label == "PIN":
             return sorted(p for p in PROVIDED_PARTS if p.startswith("PIN_"))
+        kit = re.fullmatch(r"ROW([1-4])_KIT", label)
+        if kit:
+            row = kit.group(1)
+            prefixes = ("BEARING_", "SCREW_", "PIN_")
+            contents = [
+                part for part in PROVIDED_PARTS
+                if f"_ROW{row}_" in part and part.startswith(prefixes)
+            ]
+            if row == "1":
+                contents.append("CRANK_HANDLE_ROW1")
+            return sorted(contents)
         screw = re.fullmatch(r"SCREW_ROW([1-4])", label)
         if screw:
             row = screw.group(1)
             return [f"SCREW_ROW{row}_LEFT", f"SCREW_ROW{row}_RIGHT"]
         return [label] if label in PROVIDED_PARTS else []
+
+    @staticmethod
+    def parts_for_layout_object(tool_name: str) -> list[str]:
+        """Map one physical pegboard object to the graph parts/tools it supplies.
+
+        This path is required for gesture-originated fetches, which have a
+        layout ID/type but no VLM ``matched_parts`` payload.
+        """
+        name = str(tool_name).strip().upper()
+        if re.fullmatch(r"ROW[1-4]_KIT", name):
+            return TaskGraph.parts_for_reference_label(name)
+        stand = re.fullmatch(r"GEAR_STAND_ROW([1-4])_(LEFT|RIGHT)", name)
+        if stand:
+            row, side = stand.groups()
+            return [f"STAND_ROW{row}_{side}"]
+        tool_contents = {
+            "BIT_WRENCH": ["BIT_WRENCH"],
+            "BIT_SCREWDRIVER": ["BIT_SCREWDRIVER"],
+            # tool_layout1.json retains the historical one-l spelling.
+            "PHILIPS_SCREWDRIVER": ["PHILLIPS_SCREWDRIVER"],
+            "PHILLIPS_SCREWDRIVER": ["PHILLIPS_SCREWDRIVER"],
+            "BITHOLDER1": ["BIT_HOLDER1", "H5_HEX_BIT", "H3_HEX_BIT"],
+            "BIT_HOLDER1": ["BIT_HOLDER1", "H5_HEX_BIT", "H3_HEX_BIT"],
+            "BITHOLDER2": ["BIT_HOLDER2", "T25_TORX_BIT"],
+            "BIT_HOLDER2": ["BIT_HOLDER2", "T25_TORX_BIT"],
+        }
+        if name in tool_contents:
+            return tool_contents[name]
+        return [name] if name in PROVIDED_PARTS else []
 
     def current_container(self, part: str) -> str | None:
         """Return an active raw part or the active assembly containing it."""
@@ -848,6 +889,15 @@ class DearPyGuiTaskGraphApp:
             self._fetchable_tool_ids = set()
         # At most one object can wait for spoken fetch confirmation.
         self._pending_fetch: dict[str, object] | None = None
+        # Robot supply state is separate from assembly state: grasping or
+        # handing over a part does not consume it in the task graph.
+        self._robot_part_states: dict[str, dict[str, object]] = {}
+        # A restarted task-graph process asks the still-running Open3D/main
+        # process to replay its physical grasp/handover state. PUB/SUB may drop
+        # the first message while sockets connect, so the request is retried.
+        self._robot_state_sync_pending = False
+        self._robot_state_sync_next_at = 0.0
+        self._gui_built = False
 
     def build(self) -> None:
         """Construct, configure, and reveal the Dear PyGui interface."""
@@ -923,6 +973,7 @@ class DearPyGuiTaskGraphApp:
         dpg.setup_dearpygui()
         # Make the operating-system window visible.
         dpg.show_viewport()
+        self._gui_built = True
 
     def run(self, live_port: int | None = None,
             voice_device: str | None = None,
@@ -932,6 +983,7 @@ class DearPyGuiTaskGraphApp:
             select_port: int | None = None,
             tts_engine: str | None = "piper",
             piper_model: str | Path = DEFAULT_PIPER_MODEL,
+            tts_rate: float = 0.85,
             assistant_log_path: str | Path | None = None) -> None:
         """Start optional services, run the GUI loop, and clean up on exit."""
         # Pre-import transformers on the main thread before any worker threads start.
@@ -959,9 +1011,11 @@ class DearPyGuiTaskGraphApp:
             print(f"[VLM] Assistant created: {vlm_model}")
         if tts_engine is not None:
             try:
-                self._tts = TTSService(tts_engine, Path(piper_model))
+                self._tts = TTSService(
+                    tts_engine, Path(piper_model), speech_rate=tts_rate)
                 self._tts.start()
-                print(f"[TTS] Started asynchronous {tts_engine} speech output")
+                print(f"[TTS] Started asynchronous {tts_engine} speech output "
+                      f"(rate={tts_rate:.2f}x)")
             except Exception as error:
                 print(f"[TTS] Disabled: {error}")
         if assistant_log_path is not None:
@@ -1002,6 +1056,7 @@ class DearPyGuiTaskGraphApp:
         while dpg.is_dearpygui_running():
             # Apply queued controller messages on the main GUI thread.
             self._drain_live_queue()
+            self._request_robot_state_sync_if_due()
             # Apply speech status and transcript events on the main GUI thread.
             self._poll_speech()
             # Display VLM status changes and completed responses.
@@ -1111,9 +1166,21 @@ class DearPyGuiTaskGraphApp:
             return False
         # Retain the publisher for later selection callbacks.
         self._select_pub = pub
+        self._robot_state_sync_pending = True
+        self._robot_state_sync_next_at = time.monotonic() + 0.25
         # Report the outgoing endpoint in the application's terminal.
         self.log(f"Step-select link -> tcp://{_LOCALHOST}:{port} (open3d viewer).")
         return True
+
+    def _request_robot_state_sync_if_due(self) -> None:
+        """Request retained robot supply state until main acknowledges it."""
+        if not self._robot_state_sync_pending or self._select_pub is None:
+            return
+        now = time.monotonic()
+        if now < self._robot_state_sync_next_at:
+            return
+        self._send_select({"event": "robot_part_state_request"})
+        self._robot_state_sync_next_at = now + 1.0
 
     def _send_select(self, msg: dict) -> None:
         """Serialize and publish one selected-step event when connected."""
@@ -1143,16 +1210,47 @@ class DearPyGuiTaskGraphApp:
         """Apply one controller event (main/UI thread): purple overlay + built-in complete/undo."""
         # Read the event type and default missing coordinates to the global step.
         event = msg.get("event")
+        if event == "robot_part_state_snapshot":
+            restored, rejected = self._restore_completed_task_stages(
+                msg.get("completed_stages", []),
+                last_worked_row=msg.get("last_worked_row"),
+            )
+            # The main process owns physical supply history. Replace only its
+            # prior records; keep graph-progression inference independent.
+            for label, info in list(self._robot_part_states.items()):
+                if info.get("source") != "task_progression":
+                    self._robot_part_states.pop(label, None)
+            for item in msg.get("items", []):
+                if isinstance(item, dict):
+                    self._apply_robot_part_status(item, notify=False)
+            self._robot_state_sync_pending = False
+            self.log(
+                f"[TaskRecovery] Restored {restored} completed step(s) and "
+                f"{len(msg.get('items', []))} physical object state(s) from "
+                f"main_with_robot.py"
+                + (f"; rejected {rejected}" if rejected else ""))
+            self._notify_vlm("TASK AND ROBOT STATE RESTORED AFTER RESTART")
+            if self._gui_built:
+                self.refresh()
+            return
+        if event == "robot_part_status":
+            self._apply_robot_part_status(msg)
+            return
         row, stage = msg.get("row", 0), msg.get("stage", 0)
         # Translate controller coordinates into task IDs that exist in this graph.
         ids = [i for i in TaskGraph.steps_for_control(row, stage) if i in self.graph.by_id]
         # Highlight the step whose controller view was opened.
         if event == "show":
+            already_selected = bool(ids and self.selected_id == ids[0])
             self.active_ids = set(ids)
             if ids:
                 self.selected_id = ids[0]
                 selected = self.graph.by_id[ids[0]]
-                self._announce_step_selection(selected)
+                # Unity mirrors programmatic recommendations and part-specific
+                # selections back as ``show``. Avoid speaking the same selection
+                # twice when it was already selected locally.
+                if not already_selected:
+                    self._announce_step_selection(selected)
                 self._focus_vlm_on_step(selected)
         # Clear controller-driven highlighting when that view closes.
         elif event == "close":
@@ -1202,6 +1300,123 @@ class DearPyGuiTaskGraphApp:
             return
         # Redraw nodes and panels after applying the controller event.
         self.refresh()
+
+    def _restore_completed_task_stages(
+            self, stage_records, *, last_worked_row=None) -> tuple[int, int]:
+        """Rebuild the graph deterministically from main's row/stage snapshot."""
+        requested: list[tuple[int, int]] = []
+        seen: set[tuple[int, int]] = set()
+        rejected = 0
+        for record in stage_records if isinstance(stage_records, list) else []:
+            try:
+                row = int(record.get("row", 0))
+                stage = int(record.get("stage", 0))
+            except (AttributeError, TypeError, ValueError):
+                rejected += 1
+                continue
+            if not ((1 <= row <= 4 and 1 <= stage <= 7)
+                    or (row == 0 and stage == 8)):
+                rejected += 1
+                continue
+            coords = (row, stage)
+            if coords not in seen:
+                seen.add(coords)
+                requested.append(coords)
+
+        self.graph.reset()
+        pending = [
+            step_id
+            for row, stage in requested
+            for step_id in TaskGraph.steps_for_control(row, stage)
+            if step_id in self.graph.by_id
+        ]
+        # Multiple passes make recovery robust if future graph dependencies no
+        # longer match the controller's numeric stage ordering.
+        while pending:
+            progressed = False
+            for step_id in list(pending):
+                step = self.graph.by_id[step_id]
+                if not self.graph.is_ready(step):
+                    continue
+                ok, _message = self.graph.complete(step)
+                if ok:
+                    pending.remove(step_id)
+                    progressed = True
+            if not progressed:
+                break
+        rejected += len(pending)
+
+        try:
+            row_hint = int(last_worked_row)
+        except (TypeError, ValueError):
+            row_hint = 0
+        if 1 <= row_hint <= 4:
+            self.graph.last_worked_row = row_hint
+
+        self._sync_sm_from_graph()
+        if self.controller is not None:
+            self.controller.sm.history = [
+                TaskGraph.control_coords_for(step_id)
+                for step_id in self.graph.completed
+                if TaskGraph.control_coords_for(step_id) is not None
+            ]
+        return len(self.graph.completed), rejected
+
+    def _apply_robot_part_status(self, msg: dict, *, notify: bool = True) -> None:
+        """Remember which semantic parts the robot holds or already supplied."""
+        status = str(msg.get("status", "")).strip().lower()
+        if status not in {"in_robot_gripper", "handed_over", "grasp_failed"}:
+            return
+
+        requested_parts = [
+            str(part).strip().upper()
+            for part in msg.get("requested_parts", [])
+            if str(part).strip()
+        ]
+        tool_name = str(msg.get("tool_name", "")).strip().upper()
+        supplied_parts = list(requested_parts)
+        # Always resolve the physical layout object as well. Voice fetches add
+        # requested_parts, while gesture fetches depend entirely on this map.
+        # A row kit therefore expands to all of its contents; an individual
+        # gear, rod, or stand maps to its one canonical graph identifier.
+        supplied_parts.extend(self.graph.parts_for_layout_object(tool_name))
+        supply_labels = PROVIDED_PARTS | set(
+            gearbox_control.FASTENING_TOOL_SPECS)
+        supplied_parts = list(dict.fromkeys(
+            part for part in supplied_parts if part in supply_labels))
+        if not supplied_parts:
+            return
+
+        if status == "grasp_failed":
+            for part in supplied_parts:
+                existing = self._robot_part_states.get(part)
+                if (existing
+                        and existing.get("source") != "task_progression"
+                        and existing.get("tool_id") == msg.get("tool_id")):
+                    self._robot_part_states.pop(part, None)
+        else:
+            for part in supplied_parts:
+                self._robot_part_states[part] = {
+                    "status": status,
+                    "tool_id": msg.get("tool_id"),
+                    "tool_name": tool_name,
+                    "requested": part in requested_parts,
+                    "source": "robot",
+                }
+
+        friendly_requested = [
+            (self._friendly_reference_label(part, [])
+             if part in gearbox_control.FASTENING_TOOL_SPECS
+             else self.graph.friendly_part(part))
+            for part in requested_parts
+        ]
+        requested_text = ", ".join(friendly_requested) or tool_name
+        self.log(
+            f"[RobotSupply] {requested_text}: {status} via "
+            f"{tool_name} (id={msg.get('tool_id')})")
+        if notify:
+            self._notify_vlm(
+                f"ROBOT PART STATUS: {requested_text} -> {status.upper()}")
 
     # ── Dear PyGui construction ───────────────────────────────────────────────
 
@@ -1479,6 +1694,9 @@ class DearPyGuiTaskGraphApp:
         dpg.add_button(label="Recommend next step", tag="recommend_button",
                        callback=self._recommend_callback, width=-1)
         dpg.add_button(label="Reset all progress", callback=self._reset_callback, width=-1)
+        dpg.add_button(label="Reset progress + handovers",
+                       callback=self._reset_progress_and_handovers_callback,
+                       width=-1)
         dpg.add_spacer(height=8)
         dpg.add_separator()
         dpg.add_text("Active parts and assemblies")
@@ -1611,6 +1829,11 @@ class DearPyGuiTaskGraphApp:
         for result in self._vlm.poll_fetch_confirmations():
             self._handle_fetch_confirmation(result)
 
+    def _clear_pending_fetch(self) -> None:
+        self._pending_fetch = None
+        if self._vlm is not None:
+            self._vlm.set_pending_fetch(None)
+
     @staticmethod
     def _row_of_part(part: str) -> int | None:
         match = re.search(r"_ROW([1-4])(?:_|$)", str(part).upper())
@@ -1635,6 +1858,9 @@ class DearPyGuiTaskGraphApp:
     def _friendly_reference_label(self, label: str,
                                   parts: list[str]) -> str:
         label = label.upper()
+        kit = re.fullmatch(r"ROW([1-4])_KIT", label)
+        if kit:
+            return f"Row {kit.group(1)} kit"
         tool_spec = gearbox_control.FASTENING_TOOL_SPECS.get(label)
         if tool_spec is not None:
             return str(tool_spec["friendly"])
@@ -1864,6 +2090,7 @@ class DearPyGuiTaskGraphApp:
                 "event": "fetch_confirmed",
                 "tool_id": int(pending["tool_id"]),
                 "label": str(pending["label"]),
+                "matched_parts": list(pending.get("matched_parts", [])),
             })
             spoken = f"Okay. I asked the robot to get the {friendly}."
             display_label = "FETCH_CONFIRMED"
@@ -1877,11 +2104,251 @@ class DearPyGuiTaskGraphApp:
         if self._vlm is not None:
             self._vlm.apply_policy_response(question, display_label, spoken)
 
+    def _part_step_priority(self, step: Step) -> tuple[int, int, str]:
+        """Use the interface's deterministic ordering for a filtered step set."""
+        row = step.row if step.row > 0 else 999
+        coords = self.graph.control_coords_for(step.id)
+        stage = coords[1] if coords is not None else 999
+        return row, stage, step.id
+
+    def _tool_is_used_by_step(self, label: str, step: Step) -> bool:
+        """Return whether one fastening-tool label is required by ``step``."""
+        coords = self.graph.control_coords_for(step.id)
+        if coords is None or coords[1] not in (4, 6):
+            return False
+        required = set(gearbox_control.fastening_tool_labels(step.row))
+        if label == "BIT_HOLDER1":
+            return bool(required & {"H5_HEX_BIT", "H3_HEX_BIT"})
+        if label == "BIT_HOLDER2":
+            return "T25_TORX_BIT" in required
+        return label in required
+
+    def _tools_retained_from_completed_steps(self) -> dict[str, Step]:
+        """Tools used by a completed fastening step remain with the operator."""
+        retained: dict[str, Step] = {}
+        for step_id in self.graph.completed:
+            step = self.graph.by_id[step_id]
+            coords = self.graph.control_coords_for(step.id)
+            if coords is None or coords[1] not in (4, 6):
+                continue
+            for label in gearbox_control.fastening_tool_labels(step.row):
+                retained[label] = step
+        return retained
+
+    def _parts_supplied_by_completed_steps(self) -> dict[str, Step]:
+        """Return raw parts whose physical containers must already be supplied.
+
+        When one item from a row kit has been used, the entire physical kit is
+        treated as supplied because it is represented by one pegboard object.
+        The same grouping rule applies to any future shared physical container.
+        """
+        used_parts: dict[str, Step] = {}
+        for step_id in self.graph.completed:
+            step = self.graph.by_id[step_id]
+            for part in step.inputs:
+                if part in PROVIDED_PARTS:
+                    used_parts[part] = step
+
+        supplied: dict[str, Step] = {}
+        for used_part, step in used_parts.items():
+            tool_id = gearbox_control.tool_id_for_graph_part(
+                self._tool_index, used_part)
+            if tool_id is None:
+                continue
+            # Expand a physical row-kit box back to every semantic item stored
+            # inside it so the VLM does not offer a hidden kit item later.
+            container_parts = [
+                part for part in PROVIDED_PARTS
+                if gearbox_control.tool_id_for_graph_part(
+                    self._tool_index, part) == tool_id
+            ]
+            for part in container_parts or [used_part]:
+                supplied.setdefault(part, step)
+        return supplied
+
+    def _sync_progress_inferred_supply_statuses(self) -> None:
+        """Mirror parts/tools implied by completed work into handed-over state.
+
+        Consumed raw parts and tools used by completed fastening stages must
+        have been available to the operator. This records that fact in the same
+        state table used for robot handovers, with ``source=task_progression``
+        so it remains distinguishable and reversible.
+        """
+        inferred_supply = self._parts_supplied_by_completed_steps()
+        inferred_supply.update(self._tools_retained_from_completed_steps())
+
+        # Undo/reset must remove only inferred records. A real robot handover
+        # remains valid independently of subsequent task-graph edits.
+        for label, info in list(self._robot_part_states.items()):
+            if (info.get("source") == "task_progression"
+                    and label not in inferred_supply):
+                self._robot_part_states.pop(label, None)
+                self.log(
+                    f"[ProgressSupply] Removed inferred handover for {label} "
+                    "after task progression changed")
+
+        for label, step in inferred_supply.items():
+            existing = self._robot_part_states.get(label)
+            # A physical robot grasp/handover is stronger evidence and must not
+            # be overwritten by task progression.
+            if existing is not None and existing.get("source") != "task_progression":
+                continue
+            if label in gearbox_control.FASTENING_TOOL_SPECS:
+                ids = gearbox_control.tool_ids_for_reference(
+                    self._tool_index, label)
+            else:
+                tool_id = gearbox_control.tool_id_for_graph_part(
+                    self._tool_index, label)
+                ids = [] if tool_id is None else [tool_id]
+            layout_name = next(
+                (name for name, tool_id in self._tool_index.items()
+                 if ids and tool_id == ids[0]),
+                label,
+            )
+            new_info = {
+                "status": "handed_over",
+                "tool_id": ids[0] if ids else None,
+                "tool_name": layout_name,
+                "requested": False,
+                "source": "task_progression",
+                "inferred_from_step": step.id,
+            }
+            if existing != new_info:
+                self._robot_part_states[label] = new_info
+                self.log(
+                    f"[ProgressSupply] {label}: handed_over inferred from "
+                    f"completed step {step.id}")
+
+    def _publish_progress_handover_state(self) -> None:
+        """Synchronize progression-inferred pegboard removals with Open3D/Unity."""
+        inferred = {
+            label: info
+            for label, info in self._robot_part_states.items()
+            if info.get("source") == "task_progression"
+        }
+        tool_ids = sorted({
+            int(info["tool_id"])
+            for info in inferred.values()
+            if info.get("tool_id") is not None
+        })
+        self._send_select({
+            "event": "progress_handover_sync",
+            "tool_ids": tool_ids,
+            "items": [
+                {
+                    "label": label,
+                    "tool_id": info.get("tool_id"),
+                    "inferred_from_step": info.get("inferred_from_step"),
+                }
+                for label, info in sorted(inferred.items())
+            ],
+        })
+
+    def _handle_part_step_lookup(
+            self, result: dict[str, object], label: str,
+            parts: Iterable[str], *, is_tool: bool) -> None:
+        """Select the next READY graph step that uses a named part or tool."""
+        parts = list(parts)
+        if is_tool:
+            candidates = [
+                step for step in self.graph.steps
+                if step.id not in self.graph.completed
+                and self._tool_is_used_by_step(label, step)
+            ]
+        else:
+            current_objects = {
+                current for part in parts
+                if (current := self.graph.current_container(part)) is not None
+            }
+            candidates = [
+                step for step in self.graph.steps
+                if step.id not in self.graph.completed
+                and any(item in (*step.inputs, *step.context)
+                        for item in current_objects)
+            ]
+
+        # Preserve the interface preference inside this part-filtered set.
+        ready = [step for step in candidates if self.graph.is_ready(step)]
+        if ready and self.graph.last_worked_row is not None:
+            same_row = [step for step in ready
+                        if step.row == self.graph.last_worked_row]
+            if same_row:
+                ready = same_row
+
+        question = str(result.get("text", ""))
+        friendly = self._friendly_reference_label(label, parts)
+        if ready:
+            step = min(ready, key=self._part_step_priority)
+            self.recommended_id = step.id
+            self._select_step(step.id, announce=False)
+            if self.controller is not None:
+                self._animate_unity_callback()
+            action = self.graph.friendly_step_action(step)
+            spoken = (
+                f"I selected the next ready step that uses the {friendly}. "
+                f"{action.capitalize()}.")
+            self.log(f"[Part step] Auto-selected [{step.id}] for {label}")
+            self._speak(spoken)
+            coords = self.graph.control_coords_for(step.id)
+            highlight_ids = (
+                gearbox_control.appearing_ids(
+                    self._tool_index, coords[0], coords[1])
+                if coords is not None and coords[0] > 0 else [])
+            self._record_reference_decision(
+                result, "part_step_selected", parts or [label], (),
+                highlight_ids, (), spoken)
+            if self._vlm is not None:
+                self._vlm.apply_policy_response(
+                    question, "PART_STEP_SELECTED", spoken)
+            return
+
+        if candidates:
+            blocked = min(candidates, key=self._part_step_priority)
+            missing = self._friendly_missing(self.graph.missing(blocked))
+            spoken = (
+                f"The next step that uses the {friendly} is not ready. "
+                f"First, {missing}.")
+        else:
+            spoken = (
+                f"There is no remaining assembly step that uses the {friendly}.")
+        self._speak(spoken, warning=True)
+        self._record_reference_decision(
+            result, "part_step_unavailable", parts or [label], (), [], (),
+            spoken)
+        if self._vlm is not None:
+            self._vlm.apply_policy_response(
+                question, "PART_STEP_UNAVAILABLE", spoken)
+
+    def _robot_supply_response(
+            self, label: str, parts: Iterable[str]) -> tuple[str, str]:
+        """Return a user-facing response for parts already carried by the robot."""
+        parts = list(parts)
+        infos = [self._robot_part_states[part] for part in parts]
+        statuses = {str(info.get("status", "")) for info in infos}
+        friendly = self._friendly_reference_label(label, parts)
+        physical_names = {str(info.get("tool_name", "")) for info in infos}
+        kit_name = next(iter(physical_names)) if len(physical_names) == 1 else ""
+        kit_match = re.fullmatch(r"ROW([1-4])_KIT", kit_name)
+        kit_suffix = (f" as part of the Row {kit_match.group(1)} kit"
+                      if kit_match and label.upper() != kit_name else "")
+        if statuses == {"handed_over"}:
+            return (
+                "already_handed_over",
+                f"The {friendly} has already been delivered to you{kit_suffix}.",
+            )
+        return (
+            "already_in_robot_gripper",
+            f"The robot is already holding the {friendly}{kit_suffix}.",
+        )
+
     def _handle_part_reference(self, result: dict[str, object]) -> None:
         """Apply deterministic task-state policy to one VLM-resolved label."""
         label = str(result.get("label", "INVALID_OUTPUT"))
         if label == "STEP_PARTS":
             self._handle_step_parts_request(result)
+            return
+        if label == "STEP_TOOLS":
+            self._handle_step_tools_request(result)
             return
         if label == "AMBIGUOUS":
             candidate_labels = result.get("candidate_labels", [])
@@ -1899,7 +2366,8 @@ class DearPyGuiTaskGraphApp:
                                   if self._row_of_part(part) == row_hint]
                     if category:
                         category = f"Row {row_hint} {category.lower()}"
-            if self.selected_id and candidates:
+            if (result.get("part_action") != "find_step"
+                    and self.selected_id and candidates):
                 step = self.graph.by_id[self.selected_id]
                 step_parts = set((*step.inputs, *step.context))
                 relevant = [
@@ -1936,13 +2404,33 @@ class DearPyGuiTaskGraphApp:
                 return
 
         is_tool = label in gearbox_control.FASTENING_TOOL_SPECS
+        is_assembly = self.graph.producer_for(label) is not None
         parts = self.graph.parts_for_reference_label(label)
+        if is_assembly:
+            self._handle_assembly_reference(result, label)
+            return
         if label == "INVALID_OUTPUT" or (not parts and not is_tool):
             spoken = ("I could not identify one specific part or tool. Please mention "
                       "its row, side, color, shape, or driver marking.")
             self._emit_reference_decision(
                 result, "unresolved", [0.0, 1.0, 1.0, 0.2], spoken,
                 warning=True)
+            return
+
+        if result.get("part_action") == "find_step":
+            self._handle_part_step_lookup(
+                result, label, parts, is_tool=is_tool)
+            return
+
+        # A fully supplied specific/grouped reference has an answer even when
+        # no assembly step is selected. Do not ask the user to select a step or
+        # offer to fetch the same physical kit again.
+        if (parts and not is_tool
+                and all(part in self._robot_part_states for part in parts)):
+            decision, spoken = self._robot_supply_response(label, parts)
+            self._emit_reference_decision(
+                result, decision, [0.0, 1.0, 1.0, 0.2], spoken,
+                matched_parts=parts)
             return
 
         if not self.selected_id:
@@ -1967,14 +2455,64 @@ class DearPyGuiTaskGraphApp:
                              or (label == "BIT_HOLDER2" and holder2_needed)))
             ids = gearbox_control.tool_ids_for_reference(self._tool_index, label)
             spoken_tool = self._friendly_reference_label(label, [])
+            supplied_info = self._robot_part_states.get(label)
+            if supplied_info is not None:
+                if supplied_info.get("source") == "task_progression":
+                    retained_step = self.graph.by_id.get(
+                        str(supplied_info.get("inferred_from_step", "")))
+                    prior_action = (
+                        self.graph.friendly_step_action(retained_step)
+                        if retained_step is not None else "complete earlier work")
+                    spoken = (
+                        f"You should already have the {spoken_tool}. It was "
+                        f"used earlier to {prior_action} and should still be "
+                        "with you.")
+                    decision = "tool_retained_by_operator"
+                elif supplied_info.get("status") == "in_robot_gripper":
+                    spoken = f"The robot is already holding the {spoken_tool}."
+                    decision = "tool_in_robot_gripper"
+                else:
+                    spoken = f"The {spoken_tool} has already been delivered to you."
+                    decision = "tool_handed_over"
+                self._emit_reference_decision(
+                    result, decision, [0.0, 1.0, 1.0, 0.2], spoken,
+                    ids=[], matched_parts=[label])
+                return
+            retained_step = self._tools_retained_from_completed_steps().get(label)
+            if retained_step is not None:
+                spoken = (
+                    f"The {spoken_tool} was already used to "
+                    f"{self.graph.friendly_step_action(retained_step)}, so it "
+                    "should still be with you for this step.")
+                self._emit_reference_decision(
+                    result, "tool_retained_by_operator",
+                    [0.0, 1.0, 1.0, 0.2], spoken,
+                    ids=[], matched_parts=[label])
+                return
             if relevant:
                 if result.get("part_action") == "fetch":
+                    if self.graph.state(step) != "ready":
+                        spoken = (
+                            f"The {spoken_tool} belongs to this step, but this step "
+                            "is not ready, so I will not fetch it yet.")
+                        self._emit_reference_decision(
+                            result, "fetch_blocked_step",
+                            [1.0, 0.72, 0.0, 0.2], spoken,
+                            ids=ids, matched_parts=[label], warning=True)
+                        return
                     self._arm_fetch_confirmation(
                         result, ids, spoken_tool, matched_parts=[label])
                     return
-                spoken = (f"Yes. The {spoken_tool} is needed to "
-                          f"{self.graph.friendly_step_action(step)}. "
-                          "I have highlighted it.")
+                if result.get("part_action") == "status":
+                    spoken = (f"No. The {spoken_tool} has not been delivered yet. "
+                              f"It is needed to "
+                              f"{self.graph.friendly_step_action(step)}. "
+                              "I have highlighted it.")
+                else:
+                    spoken = (f"The {spoken_tool} is needed to "
+                              f"{self.graph.friendly_step_action(step)}. "
+                              "I have highlighted it, but it has not been "
+                              "delivered yet.")
                 self._emit_reference_decision(
                     result, "relevant_tool", [0.0, 1.0, 1.0, 0.2], spoken,
                     ids=ids, matched_parts=[label])
@@ -1994,9 +2532,24 @@ class DearPyGuiTaskGraphApp:
         same_row = [part for part in parts
                     if step.row and self._row_of_part(part) == step.row]
         candidates = same_row or parts
+        # Row context may turn a broad label such as BEARING into a fully
+        # supplied row-specific set. Delivery state takes precedence over the
+        # selected-step relevance warning.
+        if (candidates
+                and all(part in self._robot_part_states for part in candidates)):
+            decision, spoken = self._robot_supply_response(label, candidates)
+            self._emit_reference_decision(
+                result, decision, [0.0, 1.0, 1.0, 0.2], spoken,
+                matched_parts=candidates)
+            return
         active_relevant = [part for part in candidates
                            if part in self.graph.active_parts
-                           and part in step_parts]
+                           and part in step_parts
+                           and part not in self._robot_part_states]
+        robot_supplied_relevant = [
+            part for part in candidates
+            if part in step_parts and part in self._robot_part_states
+        ]
         consumed = [(part, self.graph.current_container(part))
                     for part in candidates
                     if part not in self.graph.active_parts
@@ -2004,6 +2557,26 @@ class DearPyGuiTaskGraphApp:
         consumed_relevant = [(part, current) for part, current in consumed
                              if current in step_parts]
         spoken_part = self._friendly_reference_label(label, candidates)
+
+        if robot_supplied_relevant and not active_relevant:
+            states = {
+                str(self._robot_part_states[part].get("status", ""))
+                for part in robot_supplied_relevant
+            }
+            friendly_parts = [self.graph.friendly_part(part)
+                              for part in robot_supplied_relevant]
+            supplied_text = (friendly_parts[0] if len(friendly_parts) == 1
+                             else ", and ".join(friendly_parts))
+            if "in_robot_gripper" in states:
+                spoken = f"The robot is already holding {supplied_text}."
+                decision = "already_in_robot_gripper"
+            else:
+                spoken = f"{supplied_text.capitalize()} has already been handed to you."
+                decision = "already_handed_over"
+            self._emit_reference_decision(
+                result, decision, [0.0, 1.0, 1.0, 0.2], spoken,
+                matched_parts=robot_supplied_relevant)
+            return
 
         if consumed_relevant or (consumed and not active_relevant):
             consumed_source = consumed_relevant or consumed
@@ -2028,6 +2601,16 @@ class DearPyGuiTaskGraphApp:
                    for part in active_relevant]
             ids = [tool_id for tool_id in ids if tool_id is not None]
             if result.get("part_action") == "fetch":
+                if self.graph.state(step) != "ready":
+                    spoken = (
+                        f"The {spoken_part} belongs to this step, but this step "
+                        "is not ready, so I will not fetch it yet.")
+                    self._emit_reference_decision(
+                        result, "fetch_blocked_step",
+                        [1.0, 0.72, 0.0, 0.2], spoken,
+                        ids=ids, matched_parts=active_relevant,
+                        warning=True)
+                    return
                 self._arm_fetch_confirmation(
                     result, ids, spoken_part,
                     matched_parts=active_relevant,
@@ -2062,6 +2645,237 @@ class DearPyGuiTaskGraphApp:
         self._emit_reference_decision(
             result, "not_relevant", [1.0, 0.0, 0.0, 0.25], spoken,
             ids=ids, matched_parts=candidates, warning=True)
+
+    def _handle_assembly_reference(
+            self, result: dict[str, object], label: str) -> None:
+        """Explain where a graph subassembly is without treating it as fetchable.
+
+        Subassemblies are semantic task-graph objects rather than independent
+        pegboard objects. Their visible highlight is therefore formed from the
+        original physical components currently contained in that assembly.
+        """
+        producer = self.graph.producer_for(label)
+        current = self.graph.current_container(label)
+        if label in self.graph.active_parts:
+            current = label
+
+        highlight_container = current or label
+        components = sorted(
+            part for part in PROVIDED_PARTS
+            if self.graph.current_container(part) == highlight_container
+        )
+        friendly = self.graph.friendly_part(label)
+        current_friendly = (
+            self.graph.friendly_part(current) if current is not None else "")
+        selected = (
+            self.graph.by_id.get(self.selected_id) if self.selected_id else None)
+        selected_items = (
+            set((*selected.inputs, *selected.context)) if selected else set())
+        relevant = bool(
+            selected and (label in selected_items or current in selected_items))
+
+        if current == label:
+            bearing_stand = re.fullmatch(
+                r"BEARING_STAND_ROW([1-4])_(LEFT|RIGHT)_ASSEMBLY", label)
+            if bearing_stand:
+                row, side = bearing_stand.groups()
+                spoken = (
+                    f"Yes. The Row {row} {side.lower()} stand was already "
+                    f"supplied. You fitted its bearing, so it is now {friendly}.")
+            elif producer is not None:
+                made_by = self.graph.friendly_step_action(producer)
+                spoken = f"You already created {friendly} when you {made_by}."
+            else:
+                spoken = f"{friendly.capitalize()} is already assembled."
+            if relevant and selected is not None:
+                spoken += (
+                    f" It is ready for this step: "
+                    f"{self.graph.friendly_step_action(selected)}.")
+                decision = "active_subassembly_relevant"
+                color = [0.0, 1.0, 1.0, 0.2]
+                warning = False
+            elif selected is not None:
+                spoken += (
+                    f" It is not needed for this step. This step is to "
+                    f"{self.graph.friendly_step_action(selected)}.")
+                decision = "active_subassembly_not_relevant"
+                color = [1.0, 0.0, 0.0, 0.25]
+                warning = True
+            else:
+                decision = "active_subassembly"
+                color = [1.0, 0.92, 0.02, 1.0]
+                warning = False
+            if result.get("part_action") == "fetch":
+                spoken += " It is on the gearbox, so the robot does not need to fetch it."
+            self._emit_reference_decision(
+                result, decision, color, spoken,
+                matched_parts=[label], current_assemblies=[label],
+                assembly_parts=components, warning=warning)
+            return
+
+        if current is not None:
+            spoken = (
+                f"{friendly.capitalize()} has already been used. It is now "
+                f"part of {current_friendly}. I have highlighted it on the gearbox.")
+            self._emit_reference_decision(
+                result, "subassembly_consumed", [1.0, 0.92, 0.02, 1.0],
+                spoken, matched_parts=[label], current_assemblies=[current],
+                assembly_parts=components)
+            return
+
+        if producer is None:
+            spoken = "I could not locate that subassembly in the task graph."
+            decision = "subassembly_unknown"
+        elif self.graph.state(producer) == "ready":
+            spoken = (
+                f"{friendly.capitalize()} has not been assembled yet. You can "
+                f"make it now: {self.graph.friendly_step_action(producer)}.")
+            decision = "subassembly_not_created_ready"
+        else:
+            missing = self._friendly_missing(self.graph.missing(producer))
+            spoken = (
+                f"{friendly.capitalize()} has not been assembled yet. First, "
+                f"{missing}.")
+            decision = "subassembly_not_created_blocked"
+        self._emit_reference_decision(
+            result, decision, [1.0, 0.72, 0.0, 0.2], spoken,
+            matched_parts=[label], warning=True)
+
+    def _handle_step_tools_request(self, result: dict[str, object]) -> None:
+        """Report/fetch the fastening tools required by a selected or next step."""
+        scope = str(result.get("step_scope", ""))
+        if scope == "selected_step":
+            if not self.selected_id:
+                self._emit_reference_decision(
+                    result, "no_selected_step", [0.0, 1.0, 1.0, 0.2],
+                    "Please select an assembly step first.", warning=True)
+                return
+            step = self.graph.by_id[self.selected_id]
+        elif scope == "next_step":
+            step = self.graph.recommend_next_step()
+            if step is None:
+                self._emit_reference_decision(
+                    result, "no_next_step", [0.0, 1.0, 1.0, 0.2],
+                    "There is no ready next step right now.", warning=True)
+                return
+        else:
+            self._emit_reference_decision(
+                result, "invalid_step_scope", [0.0, 1.0, 1.0, 0.2],
+                "Please say whether you mean this step or the next step.",
+                warning=True)
+            return
+
+        coords = self.graph.control_coords_for(step.id)
+        required = list(
+            gearbox_control.fastening_tool_labels(step.row)
+            if coords is not None and coords[1] in (4, 6) else ())
+        if not required:
+            self._emit_reference_decision(
+                result, "no_step_tools", [0.0, 1.0, 1.0, 0.2],
+                "This step does not require a fastening tool.")
+            return
+
+        retained = self._tools_retained_from_completed_steps()
+        supplied = [label for label in required
+                    if label in self._robot_part_states or label in retained]
+        outstanding = [label for label in required
+                       if label not in self._robot_part_states
+                       and label not in retained]
+        friendly = [self._friendly_reference_label(label, [])
+                    for label in required]
+        friendly_text = (friendly[0] if len(friendly) == 1 else
+                         " and ".join(friendly))
+        outstanding_ids = sorted({
+            tool_id
+            for label in outstanding
+            for tool_id in gearbox_control.tool_ids_for_reference(
+                self._tool_index, label)
+        })
+        action = str(result.get("part_action", "reference"))
+
+        if not outstanding:
+            directly_delivered = all(
+                label in self._robot_part_states
+                and self._robot_part_states[label].get("source")
+                != "task_progression"
+                for label in required)
+            if directly_delivered:
+                spoken = (f"Yes. The {friendly_text} "
+                          f"{'has' if len(required) == 1 else 'have'} already "
+                          "been delivered to you.")
+                decision = "step_tools_already_delivered"
+            else:
+                prior_steps = list(dict.fromkeys(
+                    self.graph.friendly_step_action(retained[label])
+                    for label in required if label in retained))
+                prior_text = " and ".join(prior_steps)
+                spoken = (f"You should already have the {friendly_text}. "
+                          f"{'It was' if len(required) == 1 else 'They were'} "
+                          f"used earlier to {prior_text} and should still be "
+                          "with you.")
+                decision = "step_tools_retained_by_operator"
+            self._emit_reference_decision(
+                result, decision,
+                [0.0, 1.0, 1.0, 0.2], spoken,
+                matched_parts=required)
+            return
+
+        outstanding_friendly = [self._friendly_reference_label(label, [])
+                                for label in outstanding]
+        outstanding_text = (outstanding_friendly[0]
+                            if len(outstanding_friendly) == 1 else
+                            " and ".join(outstanding_friendly))
+        if action == "fetch":
+            if self.graph.state(step) != "ready":
+                spoken = "This step is not ready, so I will not fetch its tools yet."
+                self._emit_reference_decision(
+                    result, "fetch_blocked_step_tools",
+                    [1.0, 0.72, 0.0, 0.2], spoken,
+                    ids=outstanding_ids, matched_parts=outstanding,
+                    warning=True)
+                return
+            # A fastening operation can require a driver plus an insert. The
+            # robot fetches one physical object per confirmation, so offer the
+            # primary driver first instead of asking the user to name it again.
+            primary_label = outstanding[0]
+            primary_ids = gearbox_control.tool_ids_for_reference(
+                self._tool_index, primary_label)
+            if len(primary_ids) == 1:
+                primary_friendly = self._friendly_reference_label(
+                    primary_label, [])
+                if len(outstanding) > 1:
+                    insert_text = " and ".join(
+                        self._friendly_reference_label(label, [])
+                        for label in outstanding[1:])
+                    primary_friendly += f", used with the {insert_text}"
+                self._arm_fetch_confirmation(
+                    result, primary_ids, primary_friendly,
+                    matched_parts=[primary_label])
+                return
+            spoken = (f"This step still needs the {outstanding_text}. "
+                      "Please name the one you want the robot to get first.")
+            self._emit_reference_decision(
+                result, "fetch_step_tools_not_specific",
+                [0.0, 1.0, 1.0, 0.2], spoken,
+                ids=outstanding_ids, matched_parts=outstanding)
+            return
+
+        if supplied:
+            supplied_text = " and ".join(
+                self._friendly_reference_label(label, []) for label in supplied)
+            spoken = (f"You should already have the {supplied_text}. "
+                      f"You still need the {outstanding_text}. "
+                      "I have highlighted it.")
+        elif action == "status":
+            spoken = (f"No. This step requires the {friendly_text}, and "
+                      f"{'it has' if len(required) == 1 else 'they have'} not "
+                      "been delivered yet. I have highlighted them.")
+        else:
+            spoken = (f"This step requires the {friendly_text}. "
+                      "They have not been delivered yet, so I have highlighted them.")
+        self._emit_reference_decision(
+            result, "step_tools_outstanding", [0.0, 1.0, 1.0, 0.2],
+            spoken, ids=outstanding_ids, matched_parts=required)
 
     def _handle_step_parts_request(self, result: dict[str, object]) -> None:
         """Resolve task-relative phrases such as "parts for the next step"."""
@@ -2107,10 +2921,28 @@ class DearPyGuiTaskGraphApp:
         excluded_parts: set[str] = set()
         for label in result.get("exclude_labels", []):
             excluded_parts.update(self.graph.parts_for_reference_label(str(label)))
+        supplied_inputs = [part for part in step.inputs
+                           if part in self._robot_part_states
+                           and part not in excluded_parts]
         active_inputs = [part for part in step.inputs
                          if part in self.graph.active_parts
-                         and part not in excluded_parts]
+                         and part not in excluded_parts
+                         and part not in self._robot_part_states]
         if not active_inputs:
+            if supplied_inputs:
+                descriptions = [self.graph.friendly_part(part)
+                                for part in supplied_inputs]
+                supplied_text = (descriptions[0] if len(descriptions) == 1
+                                 else ", and ".join(descriptions))
+                self._emit_reference_decision(
+                    result,
+                    ("no_other_next_step_parts" if scope == "next_step"
+                     else "no_other_selected_step_parts"),
+                    [0.0, 1.0, 1.0, 0.2],
+                    f"All required parts are already supplied. You have {supplied_text}.",
+                    matched_parts=supplied_inputs,
+                )
+                return
             self._emit_reference_decision(
                 result,
                 ("no_other_next_step_parts" if scope == "next_step"
@@ -2134,7 +2966,7 @@ class DearPyGuiTaskGraphApp:
 
         ids = [gearbox_control.tool_id_for_graph_part(self._tool_index, part)
                for part in raw_active]
-        ids = [tool_id for tool_id in ids if tool_id is not None]
+        ids = sorted({tool_id for tool_id in ids if tool_id is not None})
         descriptions = [self.graph.friendly_part(part) for part in active_inputs]
         if not descriptions:
             needed_text = "its required active assembly"
@@ -2145,9 +2977,87 @@ class DearPyGuiTaskGraphApp:
         else:
             needed_text = ", ".join(descriptions[:-1]) + f", and {descriptions[-1]}"
         action = self.graph.friendly_step_action(step)
+        if result.get("part_action") == "fetch":
+            if self.graph.state(step) != "ready":
+                spoken = (
+                    f"{scope_text} is not ready, so I will not fetch its parts yet.")
+                self._emit_reference_decision(
+                    result, "fetch_blocked_step_parts",
+                    [1.0, 0.72, 0.0, 0.2], spoken,
+                    ids=ids, matched_parts=active_inputs,
+                    assembly_parts=component_parts, warning=True)
+                return
+            if not raw_active:
+                available_text = (
+                    descriptions[0] if len(descriptions) == 1 else needed_text)
+                supplied_prefix = ""
+                if supplied_inputs:
+                    supplied_descriptions = [
+                        self.graph.friendly_part(part)
+                        for part in supplied_inputs
+                    ]
+                    supplied_text = (
+                        supplied_descriptions[0]
+                        if len(supplied_descriptions) == 1
+                        else ", and ".join(supplied_descriptions))
+                    supplied_prefix = (
+                        f"{supplied_text.capitalize()} "
+                        f"{'has' if len(supplied_descriptions) == 1 else 'have'} "
+                        "already been "
+                        "supplied. ")
+                spoken = (
+                    f"{supplied_prefix}{available_text.capitalize()} is already "
+                    "assembled and in the work area. There is no separate "
+                    "pegboard part for the robot to fetch.")
+                self._emit_reference_decision(
+                    result, "step_parts_already_in_work_area",
+                    [0.0, 1.0, 1.0, 0.2], spoken,
+                    matched_parts=active_inputs,
+                    current_assemblies=active_inputs,
+                    assembly_parts=component_parts)
+                return
+            if len(active_inputs) == 1 and len(ids) == 1:
+                friendly = descriptions[0]
+                if friendly.lower().startswith("the "):
+                    friendly = friendly[4:]
+                self._arm_fetch_confirmation(
+                    result, ids, friendly,
+                    matched_parts=active_inputs,
+                    assembly_parts=component_parts)
+                if self._vlm is not None:
+                    self._vlm.set_resolved_part_context(active_inputs[0])
+                return
+            spoken = (
+                f"You still need {needed_text}. Please name the one you want "
+                "the robot to get.")
+            self._emit_reference_decision(
+                result, "fetch_step_parts_not_specific",
+                [0.0, 1.0, 1.0, 0.2], spoken,
+                ids=ids, matched_parts=active_inputs,
+                assembly_parts=component_parts)
+            if self._vlm is not None:
+                self._vlm.set_resolved_part_candidates(active_inputs)
+            return
+
         highlight_pronoun = "it" if len(active_inputs) == 1 else "them"
+        supplied_prefix = ""
+        if supplied_inputs:
+            supplied_descriptions = [self.graph.friendly_part(part)
+                                     for part in supplied_inputs]
+            already_text = (supplied_descriptions[0]
+                            if len(supplied_descriptions) == 1
+                            else ", and ".join(supplied_descriptions))
+            statuses = {
+                str(self._robot_part_states[part].get("status", ""))
+                for part in supplied_inputs
+            }
+            location = ("is already in the robot gripper"
+                        if "in_robot_gripper" in statuses
+                        else "has already been handed to you")
+            supplied_prefix = f"{already_text.capitalize()} {location}. "
         spoken = (
-            f"{scope_text} is to {action}. You need {needed_text}. "
+            f"{supplied_prefix}{scope_text} is to {action}. "
+            f"You still need {needed_text}. "
             f"I have highlighted {highlight_pronoun}.")
         self._emit_reference_decision(
             result,
@@ -2158,6 +3068,8 @@ class DearPyGuiTaskGraphApp:
             matched_parts=active_inputs,
             assembly_parts=component_parts,
         )
+        if self._vlm is not None:
+            self._vlm.set_resolved_part_candidates(active_inputs)
 
     def _friendly_missing(self, missing: list[str]) -> str:
         descriptions = []
@@ -2228,8 +3140,66 @@ class DearPyGuiTaskGraphApp:
 
     def _notify_vlm(self, event_label: str) -> None:
         """Replace the VLM's stored graph context after a state-changing event."""
+        self._clear_pending_fetch()
+        # Once an assembly step consumes a supplied raw part, its location is
+        # represented by transform_history/current_container instead of the
+        # robot-supply layer.
+        for part in list(self._robot_part_states):
+            if (part in PROVIDED_PARTS
+                    and part not in self.graph.active_parts
+                    and self._robot_part_states[part].get("source")
+                    != "task_progression"):
+                self._robot_part_states.pop(part, None)
+        # A completed fastening step proves that its tools were available to
+        # the operator. Add/remove those inferred handovers after every graph
+        # change so complete, undo, live events, and reset behave identically.
+        self._sync_progress_inferred_supply_statuses()
+        self._publish_progress_handover_state()
         if self._vlm is not None:
-            self._vlm.notify_graph_event(event_label, self.graph.state_summary())
+            self._vlm.notify_graph_event(
+                event_label, self._assistant_state_summary())
+
+    def _assistant_state_summary(self) -> str:
+        """Combine assembly progress with live robot grasp/handover state."""
+        summary = self.graph.state_summary()
+        lines = [summary]
+        if self._robot_part_states:
+            lines.extend(["", "ROBOT-SUPPLIED PART/TOOL STATE:"])
+            for part in sorted(self._robot_part_states):
+                info = self._robot_part_states[part]
+                status = str(info.get("status", "")).upper()
+                if info.get("source") == "task_progression":
+                    lines.append(
+                        f"  - {part}: {status} (inferred from completed step "
+                        f"{info.get('inferred_from_step', 'unknown')})")
+                else:
+                    lines.append(
+                        f"  - {part}: {status} (physical object: "
+                        f"{info.get('tool_name', 'unknown')}, "
+                        f"id={info.get('tool_id')})")
+            lines.append(
+                "Items marked IN_ROBOT_GRIPPER or HANDED_OVER are already "
+                "supplied. Do not offer to fetch them again or describe them "
+                "as outstanding. Supplied raw parts remain active task inputs "
+                "until an assembly step consumes them; supplied tools remain "
+                "available to the operator.")
+        retained = self._tools_retained_from_completed_steps()
+        retained = {label: step for label, step in retained.items()
+                    if label not in self._robot_part_states}
+        if retained:
+            lines.extend([
+                "",
+                "TOOLS RETAINED BY THE OPERATOR FROM EARLIER STEPS:",
+            ])
+            for label, step in sorted(retained.items()):
+                lines.append(
+                    f"  - {label}: already used in {step.id} and assumed to "
+                    "remain with the operator")
+            lines.append(
+                "Treat these tools as already available for later fastening "
+                "steps. Do not claim that a separate robot handover was "
+                "recorded unless their status above is HANDED_OVER.")
+        return "\n".join(lines)
 
     # ── User actions and GUI callbacks ───────────────────────────────────────
 
@@ -2298,6 +3268,7 @@ class DearPyGuiTaskGraphApp:
 
     def _select_step(self, step_id: str, *, announce: bool) -> None:
         """Synchronize one selection with DearPyGui and external 3D viewers."""
+        self._clear_pending_fetch()
         self.selected_id = step_id
         self.refresh()
         step = self.graph.by_id[step_id]
@@ -2371,12 +3342,16 @@ class DearPyGuiTaskGraphApp:
                 "must be completed first.", warning=True)
         self.refresh()
 
-    def _reset_callback(self) -> None:
-        """Reset graph, controller, Unity visualization, selection, and VLM state."""
+    def _reset_state(self, *, clear_handovers: bool) -> None:
+        """Reset progress, optionally treating the physical inventory as restocked."""
         self.graph.reset()
         self.selected_id    = None
         self.recommended_id = None
+        if clear_handovers:
+            self._robot_part_states.clear()
         self._send_select({"event": "reset"})
+        if clear_handovers:
+            self._send_select({"event": "reset_all_handovers"})
         if self.controller is not None:
             # Sync sm state from the now-empty graph (all done = False), then send
             # Unity commands directly — bypassing the ZMQ round-trip so we don't
@@ -2387,11 +3362,27 @@ class DearPyGuiTaskGraphApp:
             self.controller.send({"command": "reset"})    # clear Unity part colors
             self.controller.send({"command": "show_all"}) # make all rows visible
             self.controller.send({"command": "ui", "show": False})  # hide in-headset UI
-        self.log("All assembly progress was reset.")
-        self._speak("Assembly progress has been reset.", warning=True)
+        if clear_handovers:
+            self.log("All assembly progress and handover records were reset.")
+            self._speak(
+                "Assembly progress and handed-over inventory have been reset.",
+                warning=True)
+        else:
+            self.log("All assembly progress was reset.")
+            self._speak("Assembly progress has been reset.", warning=True)
         self.refresh()
         self._send_select({"event": "clear"})
-        self._notify_vlm("RESET: all progress cleared")
+        event = ("RESET: progress and all handovers cleared"
+                 if clear_handovers else "RESET: all progress cleared")
+        self._notify_vlm(event)
+
+    def _reset_callback(self) -> None:
+        """Reset task progress while preserving confirmed robot handovers."""
+        self._reset_state(clear_handovers=False)
+
+    def _reset_progress_and_handovers_callback(self) -> None:
+        """Reset progress and repopulate the complete physical inventory."""
+        self._reset_state(clear_handovers=True)
 
     def log(self, message: str) -> None:
         """Write an operational message to the system console."""
@@ -2628,6 +3619,9 @@ def main() -> None:
     parser.add_argument("--piper-model", default=str(DEFAULT_PIPER_MODEL),
                         help="Piper voice .onnx file used for spoken guidance.")
     parser.add_argument(
+        "--tts-rate", type=float, default=0.85,
+        help="Piper speaking-rate multiplier; values below 1.0 speak more slowly.")
+    parser.add_argument(
         "--assistant-log",
         default=str(Path(__file__).resolve().parent / "task_assistant_interactions.csv"),
         help="Append part-reference decisions to this CSV file.")
@@ -2651,6 +3645,8 @@ def main() -> None:
     parser.add_argument("--no-highlight", action="store_true",
                         help="With --with-controller: disable the controller's pegboard tool highlighting.")
     args = parser.parse_args()
+    if args.tts_rate <= 0.0:
+        parser.error("--tts-rate must be greater than zero.")
     if args.self_test:
         run_self_test()
         return
@@ -2663,6 +3659,7 @@ def main() -> None:
     # talking over the localhost live link (task-graph port). Both files still run standalone.
     app = DearPyGuiTaskGraphApp()
     controller = None
+    controller_click_thread = None
     if args.with_controller:
         if args.no_live:
             parser.error("--with-controller needs the live link; do not pass --no-live.")
@@ -2670,7 +3667,9 @@ def main() -> None:
             args.unity_ip, args.cmd_port, args.click_port,
             _LOCALHOST, _DEFAULT_CTRL_EVENTS_IN_PORT, no_highlight=args.no_highlight)
         app.controller = controller
-        threading.Thread(target=controller.run_click_loop, daemon=True).start()
+        controller_click_thread = threading.Thread(
+            target=controller.run_click_loop, daemon=True)
+        controller_click_thread.start()
         print(f"[Controller] in-process — cmd -> {args.unity_ip}:{args.cmd_port}, "
               f"clicks <- {args.unity_ip}:{args.click_port}, "
               f"mirror -> {_LOCALHOST}:{_DEFAULT_CTRL_EVENTS_IN_PORT}")
@@ -2689,12 +3688,15 @@ def main() -> None:
             select_port=select_port,
             tts_engine=None if args.no_tts else args.tts_engine,
             piper_model=args.piper_model,
+            tts_rate=args.tts_rate,
             assistant_log_path=(None if args.no_assistant_log
                                 else args.assistant_log),
         )
     finally:
         if controller is not None:
             controller.stop()
+            if controller_click_thread is not None:
+                controller_click_thread.join(timeout=1.0)
             controller.close()
 
 

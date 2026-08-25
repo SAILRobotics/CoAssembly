@@ -31,6 +31,11 @@ from collections import deque
 
 import numpy as np
 
+try:
+    from .inference_lock import GPU_INFERENCE_LOCK
+except ImportError:  # Script execution: task_graph is placed directly on sys.path.
+    from inference_lock import GPU_INFERENCE_LOCK
+
 # ── Audio-capture backend ─────────────────────────────────────────────────────
 # "auto" selects sounddevice on Windows and PulseAudio (parec) elsewhere.
 # Force a specific backend by setting this to "sounddevice" or "pulseaudio".
@@ -249,6 +254,34 @@ class SpeechListener:
 
     # ── Background threads ────────────────────────────────────────────────────
 
+    @staticmethod
+    def _is_fatal_cuda_error(error: BaseException) -> bool:
+        """Return whether CUDA cannot safely be reused in this process."""
+        message = str(error).casefold()
+        fatal_markers = (
+            "illegal memory access",
+            "illegal address",
+            "device-side assert",
+            "unspecified launch failure",
+        )
+        return "cuda" in message and any(
+            marker in message for marker in fatal_markers)
+
+    def _stop_after_fatal_asr_error(self) -> None:
+        """Stop capture after CUDA context corruption; retries cannot recover."""
+        self._running = False
+        self._model_ready.clear()
+        if self._sd_stream is not None:
+            try:
+                self._sd_stream.stop()
+            except Exception:
+                pass
+        if self._process is not None:
+            try:
+                self._process.terminate()
+            except Exception:
+                pass
+
     def _asr_worker(self) -> None:
         try:
             import nemo.collections.asr as nemo_asr
@@ -259,11 +292,12 @@ class SpeechListener:
         self._event_queue.put(("_status", self.STATUS_LOADING))
         try:
             import torch
-            model = nemo_asr.models.ASRModel.from_pretrained(self._model_name)
-            # Place on GPU when available rather than trusting NeMo's default.
-            if torch.cuda.is_available():
-                model = model.to("cuda")
-            model.eval()
+            with GPU_INFERENCE_LOCK:
+                model = nemo_asr.models.ASRModel.from_pretrained(self._model_name)
+                # Place on GPU when available rather than trusting NeMo's default.
+                if torch.cuda.is_available():
+                    model = model.to("cuda")
+                model.eval()
         except Exception as e:
             self._event_queue.put(("error", f"Model load failed: {e}"))
             return
@@ -280,7 +314,8 @@ class SpeechListener:
                 break
             self._event_queue.put(("_status", self.STATUS_TRANSCRIBE))
             try:
-                output = model.transcribe([utterance], batch_size=1)[0]
+                with GPU_INFERENCE_LOCK:
+                    output = model.transcribe([utterance], batch_size=1)[0]
                 text = (output.text if hasattr(output, "text") else str(output)).strip()
                 if text:
                     self._event_queue.put(("transcript", text))
@@ -288,6 +323,16 @@ class SpeechListener:
                     self._event_queue.put(("_status", self.STATUS_LISTENING
                                            if self.listening_active else self.STATUS_IDLE))
             except Exception as e:
+                if self._is_fatal_cuda_error(e):
+                    self._event_queue.put((
+                        "error",
+                        "Fatal CUDA ASR error. Voice input has stopped because "
+                        "retrying a corrupted CUDA context cannot recover it. "
+                        "Restart the application to restore Parakeet. "
+                        f"Details: {e}",
+                    ))
+                    self._stop_after_fatal_asr_error()
+                    break
                 self._event_queue.put(("error", f"Transcription error: {e}"))
 
     def _vad_loop(self) -> None:
