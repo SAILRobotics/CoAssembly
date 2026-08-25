@@ -1,16 +1,6 @@
 {
-  "handed_over_objects": [
-    {
-      "tool_id": 35,
-      "name": "ROW1_KIT"
-    }
-  ],
+  "handed_over_objects": [],
   "version": 1,
-  "completed_stages": [
-    {
-      "row": 1,
-      "stage": 1
-    }
-  ],
-  "last_worked_row": 1
+  "completed_stages": [],
+  "last_worked_row": null
 }

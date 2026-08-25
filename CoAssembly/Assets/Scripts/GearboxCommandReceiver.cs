@@ -206,6 +206,12 @@ public class GearboxCommandReceiver : MonoBehaviour
     private bool stageBlocked;
     private readonly List<(PartEntry part, Color prev)> blockedReds = new();
     private readonly List<(PartEntry part, Color prev, bool wasActive)> referenceColors = new();
+    // The most recent reference-color request from Python. View rebuilds (stage clicks, recolors,
+    // row/subset toggles) must clear the highlight before repainting parts, so they call
+    // ReapplyReferenceColors() afterward to restore it — the highlight then only goes away when
+    // Python explicitly sends "reference_clear" for a new decision, not on ordinary navigation.
+    private string[] currentReferenceNames;
+    private float[] currentReferenceRgba;
 
     // The board's orientation at load. Animation offsets are authored for this rest pose, so they
     // rotate only by the board's CHANGE from it (i.e. as it's grabbed/rotated) — at rest they equal
@@ -461,7 +467,7 @@ public class GearboxCommandReceiver : MonoBehaviour
                 case "stage":       PlayStage(cmd.row, cmd.stage, cmd.doneStages, cmd.stepDelay, cmd.slideSeconds); break;
                 case "recolor":     Recolor(cmd.row, cmd.doneStages); break;
                 case "reference_color": ApplyReferenceColor(cmd.parts, cmd.color); break;
-                case "reference_clear": ClearReferenceColors(); break;
+                case "reference_clear": ClearReferenceColorsPersistent(); break;
                 default:
                     Debug.LogWarning($"[GearboxCommandReceiver] Unknown command '{cmd.command}'");
                     break;
@@ -485,6 +491,7 @@ public class GearboxCommandReceiver : MonoBehaviour
         foreach (var p in parts)
             p.go.SetActive(p.rowNum == row);
         SetStateSpheresVisible(false);
+        ReapplyReferenceColors();
         Debug.Log($"[GearboxCommandReceiver] 👁 Showing only Row{row}");
     }
 
@@ -496,6 +503,7 @@ public class GearboxCommandReceiver : MonoBehaviour
         foreach (var p in parts)
             p.go.SetActive(true);
         SetStateSpheresVisible(true);   // back to the main state
+        ReapplyReferenceColors();
         Debug.Log("[GearboxCommandReceiver] 👁 Showing all rows");
     }
 
@@ -514,6 +522,7 @@ public class GearboxCommandReceiver : MonoBehaviour
             if (visible) shown++;
         }
         SetStateSpheresVisible(false);
+        ReapplyReferenceColors();
         Debug.Log($"[GearboxCommandReceiver] 👁 Row{row} subset [{string.Join(",", set)}] → {shown} parts");
     }
 
@@ -773,6 +782,7 @@ public class GearboxCommandReceiver : MonoBehaviour
             p.go.SetActive(true);
             ApplyPartColor(p, done);
         }
+        ReapplyReferenceColors();
 
         StartCoroutine(StageRoutine(gen, row, n, done, step, slide));
         Debug.Log($"[GearboxCommandReceiver] ▶ stage row{row} stage{n}");
@@ -972,6 +982,7 @@ public class GearboxCommandReceiver : MonoBehaviour
             if (p.rowNum != row || p.colorID == 0) continue;
             ApplyPartColor(p, done);
         }
+        ReapplyReferenceColors();
     }
 
     // Parse the row number that follows "Row" in a part name (e.g. "GearRodRow1" → 1).
@@ -994,6 +1005,8 @@ public class GearboxCommandReceiver : MonoBehaviour
 
     private void ApplyReferenceColor(string[] names, float[] rgba)
     {
+        currentReferenceNames = names;
+        currentReferenceRgba  = rgba;
         ClearReferenceColors();
         if (names == null || names.Length == 0) return;
         Color color = (rgba != null && rgba.Length >= 3)
@@ -1024,6 +1037,24 @@ public class GearboxCommandReceiver : MonoBehaviour
             part.go.SetActive(wasActive);
         }
         referenceColors.Clear();
+    }
+
+    // Re-applies the last reference-color request after a view rebuild's defensive
+    // ClearReferenceColors(), so the highlight survives ordinary navigation. No-op once Python has
+    // explicitly cleared it (ClearReferenceColorsPersistent nulls the stored request).
+    private void ReapplyReferenceColors()
+    {
+        if (currentReferenceNames == null || currentReferenceNames.Length == 0) return;
+        ApplyReferenceColor(currentReferenceNames, currentReferenceRgba);
+    }
+
+    // "reference_clear" from Python: forget the pending request too, so it does not resurrect on the
+    // next stage/recolor/view change the way a bare ClearReferenceColors() would allow.
+    private void ClearReferenceColorsPersistent()
+    {
+        currentReferenceNames = null;
+        currentReferenceRgba  = null;
+        ClearReferenceColors();
     }
 
     private void TogglePart(string name)

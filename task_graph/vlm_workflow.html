@@ -11,6 +11,7 @@
       --amber: #f3c563; --red: #b84a3d; --purple: #6055a5; --shadow: 0 14px 40px #26342d14;
       --overlay: rgba(255,255,255,.55); --example-bg: #fbf4df; --code-bg: #ece9e0;
       --inset-bg: #17201d; --inset-ink: #eaf5ef; --inset-muted: #aebbb5;
+      --lavender: #e9e5f5;
     }
     @media (prefers-color-scheme: dark) {
       :root:not([data-theme="light"]) {
@@ -18,6 +19,7 @@
         --line: #2b342c; --green: #55c298; --mint: #16332a; --cyan: #142a30;
         --amber: #f0c568; --red: #e08b7b; --purple: #a79bdb; --shadow: 0 14px 40px #0000006b;
         --overlay: rgba(255,255,255,.06); --example-bg: #2c2413; --code-bg: #202a22;
+        --lavender: #241f38;
       }
     }
     :root[data-theme="dark"] {
@@ -25,6 +27,7 @@
       --line: #2b342c; --green: #55c298; --mint: #16332a; --cyan: #142a30;
       --amber: #f0c568; --red: #e08b7b; --purple: #a79bdb; --shadow: 0 14px 40px #0000006b;
       --overlay: rgba(255,255,255,.06); --example-bg: #2c2413; --code-bg: #202a22;
+      --lavender: #241f38;
     }
     * { box-sizing: border-box; }
     html { scroll-behavior: smooth; }
@@ -37,25 +40,35 @@
     .navlinks { display: flex; gap: 8px; flex-wrap: wrap; }
     .navlinks a { color: var(--muted); text-decoration: none; padding: 8px 11px; border-radius: 9px; }
     .navlinks a:hover { background: var(--overlay); color: var(--ink); }
-    .hero { display: grid; grid-template-columns: 1.05fr .95fr; gap: 52px; align-items: center; margin-bottom: 72px; }
+    .hero { display: grid; grid-template-columns: 1.05fr .95fr; gap: 52px; align-items: center; margin-bottom: 28px; }
     .eyebrow { color: var(--green); font-weight: 750; text-transform: uppercase; letter-spacing: .13em; font-size: 12px; }
     h1 { margin: 12px 0 18px; font: 750 clamp(44px, 7vw, 78px)/.98 Georgia, serif; letter-spacing: -.055em; max-width: 800px; }
     .lede { font-size: 19px; color: var(--muted); max-width: 660px; }
     .pills { display: flex; gap: 9px; flex-wrap: wrap; margin-top: 25px; }
     .pill { border: 1px solid var(--line); background: var(--overlay); padding: 7px 11px; border-radius: 999px; font-size: 13px; }
+    .legend { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin: 0 0 72px; }
+    .who { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 999px; font: 700 11px ui-monospace, monospace; text-transform: uppercase; letter-spacing: .05em; }
+    .who::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+    .who-vlm { background: var(--lavender); color: var(--purple); }
+    .who-py { background: var(--mint); color: var(--green); }
+    .legend .sep { color: var(--line); }
     .terminal { background: #17201d; color: #eaf5ef; border-radius: 20px; padding: 21px; box-shadow: 0 25px 70px #17201d33; transform: rotate(1deg); }
     .dots { color: #74817b; letter-spacing: 5px; margin-bottom: 17px; }
     .terminal pre { white-space: pre-wrap; font: 13px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace; margin: 0; }
-    .key { color: #8ed2b4; } .str { color: #f2cd79; }
+    .key { color: #8ed2b4; } .str { color: #f2cd79; } .lbl { color: #8b968f; } .vlmkey { color: #b9ade8; }
     section { margin: 76px 0; }
     .section-head { display: flex; justify-content: space-between; gap: 30px; align-items: end; margin-bottom: 25px; }
     h2 { font: 700 clamp(30px, 4vw, 46px)/1.08 Georgia, serif; letter-spacing: -.035em; margin: 0; }
     .section-head p { color: var(--muted); max-width: 510px; margin: 0; }
     .flow { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
     .flow-card, .card { border: 1px solid var(--line); background: var(--panel); border-radius: 16px; box-shadow: var(--shadow); }
-    .flow-card { padding: 18px; min-height: 174px; position: relative; }
+    .flow-card { padding: 18px 18px 18px 21px; min-height: 174px; position: relative; border-left: 3px solid var(--line); }
     .flow-card:not(:last-child)::after { content: "→"; position: absolute; right: -18px; top: 42%; z-index: 2; width: 24px; height: 24px; border-radius: 50%; background: var(--inset-bg); color: var(--inset-ink); display: grid; place-items: center; }
-    .num { color: var(--green); font: 700 12px ui-monospace, monospace; }
+    .flow-vlm { border-left-color: var(--purple); }
+    .flow-vlm .num { color: var(--purple); }
+    .flow-py { border-left-color: var(--green); }
+    .flow-py .num { color: var(--green); }
+    .num { color: var(--muted); font: 700 12px ui-monospace, monospace; }
     h3 { font-size: 17px; letter-spacing: -.02em; margin: 12px 0 6px; }
     .flow-card p, .card p { color: var(--muted); margin: 0; font-size: 14px; }
     .router { display: grid; grid-template-columns: 300px 1fr; gap: 22px; }
@@ -67,11 +80,16 @@
     .detail { padding: 27px; min-height: 420px; }
     .detail-top { display: flex; align-items: start; justify-content: space-between; gap: 20px; }
     .tag { padding: 6px 9px; border-radius: 8px; background: var(--mint); color: var(--green); font: 700 12px ui-monospace, monospace; }
+    .tag-vlm { padding: 6px 9px; border-radius: 8px; background: var(--lavender); color: var(--purple); font: 700 12px ui-monospace, monospace; }
     .example { margin: 22px 0; border-left: 3px solid var(--amber); padding: 12px 16px; background: var(--example-bg); border-radius: 0 10px 10px 0; }
     .example q { font: 20px Georgia, serif; }
     .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
     .mini { border-top: 1px solid var(--line); padding-top: 15px; }
-    .mini h4 { margin: 0 0 7px; font-size: 12px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
+    .mini h4 { margin: 0 0 9px; font-size: 12px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+    .mini-vlm { border-top: 2px solid var(--purple); }
+    .mini-vlm h4 { color: var(--purple); }
+    .mini-py { border-top: 2px solid var(--green); }
+    .mini-py h4 { color: var(--green); }
     code { font: 12px ui-monospace, SFMono-Regular, monospace; background: var(--code-bg); border-radius: 5px; padding: 2px 5px; }
     .boundary { display: grid; grid-template-columns: 1fr 58px 1fr; align-items: stretch; }
     .boundary .card { padding: 25px; }
@@ -118,12 +136,12 @@
         </div>
         <div class="terminal" aria-label="Example structured VLM response">
           <div class="dots">● ● ●</div>
-          <pre><span class="key">user</span>  “What step uses the T25 bit next?”
+          <pre><span class="lbl">user</span>  “What step uses the T25 bit next?”
 
-<span class="key">intent</span> {
-  <span class="key">"intent"</span>: <span class="str">"part_reference"</span>,
-  <span class="key">"part_action"</span>: <span class="str">"find_step"</span>,
-  <span class="key">"target"</span>: <span class="str">"T25_TORX_BIT"</span>
+<span class="vlmkey">intent</span> {
+  <span class="vlmkey">"intent"</span>: <span class="str">"part_reference"</span>,
+  <span class="vlmkey">"part_action"</span>: <span class="str">"find_step"</span>,
+  <span class="vlmkey">"target"</span>: <span class="str">"T25_TORX_BIT"</span>
 }
 
 <span class="key">policy</span>  READY step found → select + sync
@@ -131,14 +149,16 @@
         </div>
       </div>
 
+      <div class="legend"><span class="who who-vlm">VLM</span> interprets language and proposes an intent <span class="sep">|</span> <span class="who who-py">Python</span> checks state and decides what happens</div>
+
       <section id="workflow">
-        <div class="section-head"><h2>One request, five boundaries</h2><p>Every utterance follows the same path, whether it originated in the microphone or the text field.</p></div>
+        <div class="section-head"><h2>One request, five boundaries</h2><p>Every utterance follows the same path, whether it originated in the microphone or the text field. Only step 03 belongs to the VLM; everything else is deterministic Python.</p></div>
         <div class="flow">
           <article class="flow-card"><span class="num">01 / INPUT</span><h3>Capture</h3><p>Parakeet transcript, typed question, and optional dropped images.</p></article>
-          <article class="flow-card"><span class="num">02 / CONTEXT</span><h3>Inject state</h3><p>Current graph, focused step, recent object reference, and pending fetch.</p></article>
-          <article class="flow-card"><span class="num">03 / VLM</span><h3>Infer intent</h3><p>Qwen returns one strict JSON envelope—never a direct robot command.</p></article>
-          <article class="flow-card"><span class="num">04 / POLICY</span><h3>Validate & decide</h3><p>Python verifies schema, readiness, inventory, ambiguity, and graspability.</p></article>
-          <article class="flow-card"><span class="num">05 / EFFECT</span><h3>Respond</h3><p>Speak, highlight, select a step, request confirmation, or command a fetch.</p></article>
+          <article class="flow-card"><span class="num">02 / CONTEXT</span><h3>Inject state</h3><p>Python assembles the current graph, focused step, recent object reference, and pending fetch.</p></article>
+          <article class="flow-card flow-vlm"><span class="num">03 / VLM</span><h3>Infer intent</h3><p>Qwen returns one strict JSON envelope—never a direct robot command.</p><span class="who who-vlm" style="margin-top:12px;">VLM decides this</span></article>
+          <article class="flow-card flow-py"><span class="num">04 / POLICY</span><h3>Validate &amp; decide</h3><p>Python verifies schema, readiness, inventory, ambiguity, and graspability.</p><span class="who who-py" style="margin-top:12px;">Python decides this</span></article>
+          <article class="flow-card flow-py"><span class="num">05 / EFFECT</span><h3>Respond</h3><p>Speak, highlight, select a step, request confirmation, or command a fetch.</p></article>
         </div>
       </section>
 
@@ -153,7 +173,7 @@
       <section id="boundary">
         <div class="section-head"><h2>Model judgment stops here</h2><p>The architecture deliberately separates semantic interpretation from actions that mutate task or physical state.</p></div>
         <div class="boundary">
-          <article class="card"><span class="tag">VLM · probabilistic</span><h3>Understands the operator</h3><ul class="clean"><li>Classifies the utterance</li><li>Resolves names and pronouns</li><li>Returns ambiguity candidates</li><li>Drafts general answers</li><li>Uses visual context when provided</li></ul></article>
+          <article class="card"><span class="tag-vlm">VLM · probabilistic</span><h3>Understands the operator</h3><ul class="clean"><li>Classifies the utterance</li><li>Resolves names and pronouns</li><li>Returns ambiguity candidates</li><li>Drafts general answers</li><li>Uses visual context when provided</li></ul></article>
           <div class="divider"><span>VALIDATION GATE</span></div>
           <article class="card"><span class="tag">PYTHON · deterministic</span><h3>Owns the consequences</h3><ul class="clean"><li>Checks graph prerequisites</li><li>Tracks supplied and consumed parts</li><li>Maps semantic labels to tool IDs</li><li>Requires one unique graspable object</li><li>Requests confirmation before motion</li></ul></article>
         </div>
@@ -197,7 +217,7 @@
     function showIntent(index) {
       const item = intents[index];
       [...list.children].forEach((button, i) => button.classList.toggle('active', i === index));
-      detail.innerHTML = `<div class="detail-top"><div><span class="eyebrow">Routed intent</span><h2>${item.id}</h2></div><span class="tag">validated JSON</span></div><div class="example"><q>${item.example}</q></div><div class="detail-grid"><div class="mini"><h4>What the VLM extracts</h4><p>${item.extracts}</p></div><div class="mini"><h4>What Python decides</h4><p>${item.policy}</p></div><div class="mini"><h4>Observable effect</h4><p>${item.effect}</p></div><div class="mini"><h4>Route key</h4><p><code>${item.id}</code><br>${item.sub}</p></div></div>`;
+      detail.innerHTML = `<div class="detail-top"><div><span class="eyebrow">Routed intent</span><h2>${item.id}</h2></div><span class="tag">validated JSON</span></div><div class="example"><q>${item.example}</q></div><div class="detail-grid"><div class="mini mini-vlm"><h4><span class="who who-vlm">VLM</span> extracts</h4><p>${item.extracts}</p></div><div class="mini mini-py"><h4><span class="who who-py">Python</span> decides</h4><p>${item.policy}</p></div><div class="mini"><h4>Observable effect</h4><p>${item.effect}</p></div><div class="mini"><h4>Route key</h4><p><code>${item.id}</code><br>${item.sub}</p></div></div>`;
     }
     intents.forEach((item, index) => {
       const button = document.createElement('button');
