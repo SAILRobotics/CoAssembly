@@ -17,6 +17,7 @@ import re
 import sys
 import threading
 import csv
+import json
 from pathlib import Path
 
 _THUMB_W, _THUMB_H = 96, 72
@@ -30,7 +31,8 @@ FASTENING_TOOL_LABELS = (
     "H3_HEX_BIT",
     "BIT_SCREWDRIVER",
     "BIT_WRENCH",
-    "BIT_HOLDER",
+    "BIT_HOLDER1",
+    "BIT_HOLDER2",
     "PHILLIPS_SCREWDRIVER",
 )
 
@@ -39,21 +41,27 @@ You are an expert assembly assistant for a gearbox assembly task.
 Use the task description below as your primary reference when answering questions.
 When images are provided, identify components and their assembly state from the visuals.
 
-If the user is asking you to identify, fetch, or hand over a specific physical
-part (e.g. "can you get me the X", "I need the Y part", "give me the Z"),
-respond with ONLY that part's or tool's label from the list below, with identical
-spelling, and nothing else -- no explanation, no punctuation, no JSON. If the
-expression could refer to multiple non-interchangeable objects and the current
-selected step does not resolve it, return exactly `AMBIGUOUS`. For example,
-"the gear" is ambiguous without a row, color, position, or other identifying
-detail. Never guess one label when multiple labels fit. Most
-labels use the referring-expression dataset names. Most are canonical graph
+Infer the user's intent from the complete utterance rather than relying on a
+fixed list of request words. A physical-part reference may be phrased as a
+request, a question, or only a noun phrase. Greetings, task-status questions,
+how-to questions, and ordinary conversation are not physical-part references.
+
+When a prompt requests a structured intent envelope, obey its JSON schema
+exactly. For a physical-part reference, resolve the part or tool to a label from
+the allowed list below. If multiple non-interchangeable objects fit, report the
+reference as ambiguous and list every plausible allowed label as candidates.
+Never guess one label when multiple labels fit. Most labels are canonical graph
 identifiers, such as `BASE_BOARD`, `STAND_ROW2_LEFT`, and `GEAR_ROW2_RIGHT`.
 `BEARING`, `PIN`, and `SCREW_ROW1`..`SCREW_ROW4` group physically co-located
-or interchangeable items. `H5_HEX_BIT`, `T25_TORX_BIT`, and `H3_HEX_BIT`
-refer to inserts kept in the shared bit holder. For every other kind of question
-(how-to, status, explanation, general conversation), answer normally in
-natural language.
+or interchangeable items. `H5_HEX_BIT` and `H3_HEX_BIT` are stored in
+`BIT_HOLDER1`; `T25_TORX_BIT` is stored in `BIT_HOLDER2`. For every other kind
+of question (how-to, status, explanation, general conversation), provide a
+concise natural-language answer grounded in the current task state.
+Natural-language answers are for assembly operators: use familiar phrases such
+as "the Row 1 right bearing" and "put the bearing into the right stand." Never
+expose internal graph IDs such as `[r1_bearing_right]`, uppercase canonical
+labels such as `BEARING_ROW1_RIGHT`, filenames, or interface numbering such as
+`Row 1.1` unless the user explicitly asks for internal/debug identifiers.
 
 --- ALLOWED PART LABELS ---
 {part_labels}
@@ -96,6 +104,57 @@ def _strip_md(text: str) -> str:
     for pattern, repl in _MD_PATTERNS:
         text = pattern.sub(repl, text)
     return text
+
+
+def _humanize_general_answer(text: str) -> str:
+    """Remove internal graph notation from user-facing conversational answers."""
+    answer = _strip_md(str(text))
+    # Graph IDs and row.stage prefixes are useful for controller debugging but
+    # unfamiliar and distracting in speech output.
+    answer = re.sub(r"\[(?:r[1-4]_[a-z0-9_]+|finish_gearbox)\]\s*", "", answer,
+                    flags=re.IGNORECASE)
+    answer = re.sub(r"\bRow\s+([1-4])\.[1-7]\s*:\s*", r"Row \1: ", answer,
+                    flags=re.IGNORECASE)
+
+    answer = re.sub(r"\bBASE_BOARD\b", "the baseboard", answer)
+    answer = re.sub(r"\bCRANK_HANDLE_ROW1\b", "the Row 1 crank handle", answer)
+
+    def _gear_rod(match: re.Match) -> str:
+        return f"the Row {match.group(1)} gear rod"
+
+    answer = re.sub(r"\bGEAR_ROD_ROW([1-4])\b", _gear_rod, answer)
+
+    friendly_nouns = {
+        "BEARING": "bearing",
+        "STAND": "stand",
+        "SCREW": "screw",
+        "PIN": "wooden pin",
+        "GEAR": "gear",
+    }
+
+    def _sided_part(match: re.Match) -> str:
+        kind, row, side = match.groups()
+        return f"the Row {row} {side.lower()} {friendly_nouns[kind.upper()]}"
+
+    answer = re.sub(
+        r"\b(BEARING|STAND|SCREW|PIN|GEAR)_ROW([1-4])_(LEFT|RIGHT)\b",
+        _sided_part,
+        answer,
+    )
+    tool_names = {
+        "H5_HEX_BIT": "H5 hex bit",
+        "H3_HEX_BIT": "H3 hex bit",
+        "T25_TORX_BIT": "T25 Torx bit",
+        "PHILLIPS_SCREWDRIVER": "Phillips screwdriver",
+        "BIT_SCREWDRIVER": "bit screwdriver",
+        "BIT_WRENCH": "bit wrench",
+        "BIT_HOLDER1": "Bit Holder 1",
+        "BIT_HOLDER2": "Bit Holder 2",
+    }
+    for canonical, friendly in tool_names.items():
+        answer = re.sub(rf"\b{canonical}\b", friendly, answer)
+    answer = re.sub(r"[ \t]{2,}", " ", answer).strip()
+    return answer
 
 
 def _print_console_block(label: str, text: str) -> None:
@@ -156,6 +215,37 @@ class _VLMWorker:
             self._history.clear()
         self._result_queue.put(("history_reset", ""))
 
+    def apply_policy_response(self, question: str, response: str) -> None:
+        """Replace a raw label with the user-facing policy response in history.
+
+        Part identification first produces a machine label such as
+        ``GEAR_ROW1_LEFT`` or ``AMBIGUOUS``. The task graph then turns that label
+        into the text shown and spoken to the user. Keeping that final response
+        in model history lets a follow-up such as "the left one" refer to the
+        clarification the assistant actually gave.
+        """
+        with self._history_lock:
+            replaced = False
+            if len(self._history) >= 2:
+                user_msg = self._history[-2]
+                assistant_msg = self._history[-1]
+                user_content = user_msg.get("content", [])
+                same_question = bool(
+                    user_msg.get("role") == "user"
+                    and user_content
+                    and user_content[-1].get("text") == question)
+                if same_question and assistant_msg.get("role") == "assistant":
+                    assistant_msg["content"] = [{"type": "text", "text": response}]
+                    replaced = True
+            if not replaced:
+                self._history.extend([
+                    {"role": "user", "content": [{"type": "text", "text": question}]},
+                    {"role": "assistant", "content": [{"type": "text", "text": response}]},
+                ])
+                max_msgs = self.MAX_HISTORY_PAIRS * 2
+                if len(self._history) > max_msgs:
+                    self._history = self._history[-max_msgs:]
+
     def poll(self) -> list[tuple[str, str]]:
         events: list[tuple[str, str]] = []
         while True:
@@ -197,6 +287,7 @@ class _VLMWorker:
                     question,
                     image_paths,
                     record_history=(result_kind == "answer"),
+                    use_history=(result_kind in {"answer", "intent"}),
                 )
                 self._result_queue.put((result_kind, answer))
             except Exception as e:
@@ -222,6 +313,7 @@ class _VLMWorker:
         question: str,
         image_paths: list[str],
         record_history: bool = True,
+        use_history: bool = True,
     ) -> str:
         from PIL import Image
 
@@ -230,7 +322,7 @@ class _VLMWorker:
             focused_step = self._focused_step
             history_snap = (
                 list(self._history[-(self.MAX_HISTORY_PAIRS * 2):])
-                if record_history else []
+                if use_history else []
             )
 
         # Prepend state + focused step directly into the question text.
@@ -344,8 +436,14 @@ class VLMAssistant:
         self._current_status = "loading"
         self._history_count = 0   # tracks number of Q/A pairs stored in worker
         self._part_labels = _load_part_label_names()
-        self._part_events: "queue.Queue[dict[str, str]]" = queue.Queue()
+        self._part_events: "queue.Queue[dict[str, object]]" = queue.Queue()
+        self._answer_events: "queue.Queue[dict[str, str]]" = queue.Queue()
+        self._recommendation_events: "queue.Queue[dict[str, str]]" = queue.Queue()
+        self._fetch_confirmation_events: "queue.Queue[dict[str, str]]" = queue.Queue()
         self._pending_part_text = ""
+        self._awaiting_part_clarification = False
+        self._ambiguous_part_text = ""
+        self._pending_fetch_description = ""
 
     # ── Public: called by the task graph on every state change ────────────────
 
@@ -357,18 +455,109 @@ class VLMAssistant:
         """Tell the VLM which step the user has selected. Does NOT clear history."""
         self._worker.set_focused_step(focused_text)
 
+    def set_pending_fetch(self, description: str | None) -> None:
+        """Tell intent inference whether a yes/no robot-fetch question is active."""
+        self._pending_fetch_description = str(description or "").strip()
+
     # ── Public: voice input ───────────────────────────────────────────────────
 
     def submit_question(self, text: str) -> bool:
-        """Route an external text (e.g. voice transcript) as a VLM question.
-        Returns False if the model is busy; caller can log a warning."""
+        """Ask Qwen to infer intent, resolve references, or answer normally.
+
+        The model—not a Python keyword list—decides whether the utterance is a
+        physical-part reference. Python subsequently validates the structured
+        result before the task graph is allowed to act on it.
+        """
         if self._current_status != "ready":
             return False
+        text = str(text).strip()
+        if not text:
+            return False
         self._pending_question = text
+        self._pending_part_text = text
         self._render_history(pending=True)
-        queued = self._worker.submit(text, self._image_paths)
+
+        clarification = ""
+        if self._awaiting_part_clarification and self._ambiguous_part_text:
+            clarification = (
+                "The assistant previously asked the user to clarify this "
+                f"ambiguous reference: {self._ambiguous_part_text!r}.\n"
+                "Decide whether the current utterance clarifies that physical "
+                "part or instead starts an unrelated/general question.\n\n")
+        fetch_context = ""
+        if self._pending_fetch_description:
+            fetch_context = (
+                "A robot-fetch confirmation is currently pending for: "
+                f"{self._pending_fetch_description}. Interpret a direct affirmative "
+                "or negative response as `fetch_confirmation`; otherwise classify "
+                "the new utterance normally.\n\n")
+        prompt = f"""\
+Classify and answer the CURRENT USER UTTERANCE below. Infer its intent from its
+meaning; do not classify it by matching a fixed set of request verbs, and do
+not mistake part names appearing in the injected assembly state for user intent.
+
+Return ONLY one valid JSON object using exactly this schema:
+{{"intent":"part_reference|step_parts_request|recommendation_request|fetch_confirmation|general_question","part_action":"reference|fetch|","confirmation":"yes|no|","step_scope":"selected_step|next_step|","target":"ALLOWED_LABEL|AMBIGUOUS|","candidates":["ALLOWED_LABEL"],"exclude_labels":["ALLOWED_LABEL"],"answer":"text"}}
+
+Rules:
+- Use `part_reference` when the user is referring to, identifying, locating,
+  requesting, or naming a physical part/tool—even when they use only a noun
+  phrase or unfamiliar wording. Set `part_action` to `fetch` only when they ask
+  the robot to get, fetch, bring, retrieve, or hand over the object; otherwise
+  use `reference`. Infer this semantically rather than by matching one verb.
+- For one unambiguous part/tool: put its exact allowed label in `target`, use an
+  empty `candidates` list, and leave `answer` empty.
+- For a genuinely ambiguous physical reference: set `target` to `AMBIGUOUS`,
+  list every plausible exact allowed label in `candidates`, and leave `answer`
+  empty. Do not let the selected assembly step erase an ambiguity explicitly
+  present in the user's words.
+- Use `step_parts_request` when the user asks generically for the part or parts
+  needed by a step without naming a physical object, such as "the part for this
+  step" or "what do I need for the next step?" Set `step_scope` to
+  `selected_step` or `next_step` exactly as requested. Leave `target`,
+  `candidates`, and `answer` empty. A generic singular word such as "part" does
+  NOT authorize choosing the first input; the graph must return all required
+  inputs. Put any explicitly excluded physical objects, such as "other than the
+  bearing", in `exclude_labels`. The task graph—not the language model—will
+  decide whether the current step is complete enough to advance.
+- Use `general_question` for greetings, how-to/status questions, and ordinary
+  conversation. Leave `step_scope` and `target` empty, use an empty
+  `candidates` list, and put a concise operator-facing response in `answer`.
+  Do not copy internal step IDs, canonical labels, or row.stage numbers into
+  that answer. For a recommendation, state the physical action directly.
+- Use `recommendation_request` when the user asks what to do next, what to
+  start with, or requests the recommended step. Leave every other field empty.
+  Python will select the READY step using the graph's deterministic policy and
+  synchronize that selection with the GUI and Unity; do not choose the step in
+  `answer` yourself.
+- Use `fetch_confirmation` only when a robot-fetch confirmation is pending and
+  the user accepts or rejects it. Set `confirmation` to `yes` or `no`.
+- Do not include Markdown or any text outside the JSON object.
+
+Intent examples:
+- "Can you give me the part required for this step?" ->
+  {{"intent":"step_parts_request","step_scope":"selected_step","target":"","candidates":[],"exclude_labels":[],"answer":""}}
+- "Other than the bearing, what other part do I need for this step?" ->
+  {{"intent":"step_parts_request","step_scope":"selected_step","target":"","candidates":[],"exclude_labels":["BEARING"],"answer":""}}
+- "Can you get me the bearing?" ->
+  {{"intent":"part_reference","part_action":"fetch","confirmation":"","step_scope":"","target":"BEARING","candidates":[],"exclude_labels":[],"answer":""}}
+- "Where is the bearing?" ->
+  {{"intent":"part_reference","part_action":"reference","confirmation":"","step_scope":"","target":"BEARING","candidates":[],"exclude_labels":[],"answer":""}}
+- "What should I start with?" ->
+  {{"intent":"recommendation_request","step_scope":"","target":"","candidates":[],"exclude_labels":[],"answer":""}}
+- "What is the next recommended step?" ->
+  {{"intent":"recommendation_request","step_scope":"","target":"","candidates":[],"exclude_labels":[],"answer":""}}
+
+{clarification}{fetch_context}CURRENT USER UTTERANCE:
+{text}
+"""
+        queued = self._worker.submit(
+            prompt, self._image_paths, result_kind="intent")
         if queued:
             _print_console_block("VLM QUESTION", text)
+        else:
+            self._pending_question = ""
+            self._pending_part_text = ""
         return queued
 
     def submit_part_reference(self, text: str) -> bool:
@@ -376,12 +565,17 @@ class VLMAssistant:
         if self._current_status != "ready":
             return False
         self._pending_part_text = text
+        clarification = ""
+        if self._awaiting_part_clarification and self._ambiguous_part_text:
+            clarification = (
+                f"Previous ambiguous expression: {self._ambiguous_part_text}\n"
+                f"User clarification: {text}\n\n")
         prompt = (
             "The user is referring to one physical gearbox part. Resolve the "
             "following expression and return exactly one label from the allowed "
             "part-and-tool label list. If more than one non-interchangeable "
             "object fits, return AMBIGUOUS. Return only the label or AMBIGUOUS.\n\n"
-            f"Expression: {text}"
+            f"{clarification}Expression: {text}"
         )
         queued = self._worker.submit(prompt, self._image_paths,
                                      result_kind="part_reference")
@@ -391,39 +585,184 @@ class VLMAssistant:
             self._pending_part_text = ""
         return queued
 
-    def poll_part_references(self) -> list[dict[str, str]]:
-        events: list[dict[str, str]] = []
+    def poll_part_references(self) -> list[dict[str, object]]:
+        events: list[dict[str, object]] = []
         while True:
             try:
                 events.append(self._part_events.get_nowait())
             except queue.Empty:
                 return events
 
+    def poll_answers(self) -> list[dict[str, str]]:
+        """Return natural-language VLM answers that should be spoken by TTS."""
+        events: list[dict[str, str]] = []
+        while True:
+            try:
+                events.append(self._answer_events.get_nowait())
+            except queue.Empty:
+                return events
+
+    def poll_recommendation_requests(self) -> list[dict[str, str]]:
+        """Return model-recognized requests to select the recommended step."""
+        events: list[dict[str, str]] = []
+        while True:
+            try:
+                events.append(self._recommendation_events.get_nowait())
+            except queue.Empty:
+                return events
+
+    def poll_fetch_confirmations(self) -> list[dict[str, str]]:
+        events: list[dict[str, str]] = []
+        while True:
+            try:
+                events.append(self._fetch_confirmation_events.get_nowait())
+            except queue.Empty:
+                return events
+
+    def apply_policy_response(self, question: str, label: str, spoken: str) -> None:
+        """Show and remember the same friendly response that TTS receives."""
+        question = str(question).strip()
+        if not question:
+            return
+        if label == "STEP_PARTS":
+            resolved = "Resolved request: parts required by the step"
+        elif label == "RECOMMENDED_STEP":
+            resolved = "Action: recommended step selected"
+        else:
+            resolved = f"Resolved label: {label}"
+        display_answer = f"{spoken}\n\n{resolved}"
+        self._awaiting_part_clarification = label == "AMBIGUOUS"
+        self._ambiguous_part_text = question if label == "AMBIGUOUS" else ""
+        replaced = False
+        for index in range(len(self._exchanges) - 1, -1, -1):
+            prior_question, _prior_answer = self._exchanges[index]
+            if prior_question == question:
+                self._exchanges[index] = (prior_question, display_answer)
+                replaced = True
+                break
+        if not replaced:
+            self._exchanges.append((question, display_answer))
+            self._history_count = min(
+                self._history_count + 1, _VLMWorker.MAX_HISTORY_PAIRS)
+        # The debug label stays visible in the panel but is not fed back into
+        # model history, where it previously caused repeated BEARING answers.
+        self._worker.apply_policy_response(question, spoken)
+        self._render_history()
+        self._update_history_label()
+
     def _normalize_part_label(self, raw: str) -> str:
+        """Accept explicit labels only; never derive a label from chat prose."""
         cleaned = _strip_md(raw).strip().strip("`\"' .,:;\n\t")
         if cleaned.casefold() == "ambiguous":
             return "AMBIGUOUS"
         exact = {name.casefold(): name for name in self._part_labels}
         if cleaned.casefold() in exact:
             return exact[cleaned.casefold()]
-        try:
-            from evaluate_referring_expressions_qwen import parse_prediction
-            return parse_prediction(raw, self._part_labels)
-        except Exception:
-            return "INVALID_OUTPUT"
 
-    @staticmethod
-    def _generic_reference_is_ambiguous(text: str) -> bool:
-        """Catch the most dangerous bare nouns even if a model guesses a label."""
-        cleaned = re.sub(r"[^a-z0-9 ]+", " ", str(text).lower())
-        cleaned = " ".join(cleaned.split())
-        for prefix in ("the ", "that ", "this ", "a ", "an "):
-            if cleaned.startswith(prefix):
-                cleaned = cleaned[len(prefix):]
+        # Group a specific bearing/pin/screw identifier only if the complete
+        # model answer is that identifier. A substring match is unsafe: a
+        # normal greeting response can legitimately mention BEARING_ROW1_RIGHT.
+        canonical = cleaned.upper().removesuffix(".STL")
+        if re.fullmatch(r"BEARING_ROW[1-4]_(LEFT|RIGHT)", canonical):
+            return "BEARING"
+        if re.fullmatch(r"PIN_ROW[1-4]_(LEFT|RIGHT)", canonical):
+            return "PIN"
+        screw = re.fullmatch(r"SCREW_ROW([1-4])_(LEFT|RIGHT)", canonical)
+        if screw:
+            return f"SCREW_ROW{screw.group(1)}"
+
+        try:
+            value = json.loads(raw)
+            if isinstance(value, str):
+                return exact.get(value.strip().casefold(), "INVALID_OUTPUT")
+            if isinstance(value, dict):
+                for key in ("label", "prediction", "target_name"):
+                    candidate = str(value.get(key, "")).strip().casefold()
+                    if candidate in exact:
+                        return exact[candidate]
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return "INVALID_OUTPUT"
+
+    def _parse_intent_envelope(self, raw: str) -> dict[str, object]:
+        """Validate Qwen's intent JSON without inferring semantics in Python."""
+        text = str(raw).strip()
+        value = None
+        # Accept a JSON object surrounded by accidental whitespace or a fenced
+        # block, but never recover a part label from arbitrary prose.
+        decoder = json.JSONDecoder()
+        for offset, char in enumerate(text):
+            if char != "{":
+                continue
+            try:
+                candidate, _end = decoder.raw_decode(text[offset:])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(candidate, dict):
+                value = candidate
                 break
-        return cleaned in {
-            "gear", "gear stand", "stand", "support bracket", "bracket",
-            "screw", "screwdriver", "driver", "bit", "tool",
+        if value is None:
+            return {"intent": "invalid", "raw": raw}
+
+        intent = str(value.get("intent", "")).strip().casefold()
+        if intent == "fetch_confirmation":
+            confirmation = str(value.get("confirmation", "")).strip().casefold()
+            if confirmation not in {"yes", "no"}:
+                return {"intent": "invalid", "raw": raw}
+            return {
+                "intent": intent,
+                "confirmation": confirmation,
+                "raw": raw,
+            }
+        if intent == "recommendation_request":
+            return {"intent": intent, "raw": raw}
+        if intent == "step_parts_request":
+            step_scope = str(value.get("step_scope", "")).strip().casefold()
+            if step_scope not in {"selected_step", "next_step"}:
+                return {"intent": "invalid", "raw": raw}
+            exclude_labels: list[str] = []
+            raw_exclusions = value.get("exclude_labels", [])
+            if isinstance(raw_exclusions, list):
+                for candidate in raw_exclusions:
+                    label = self._normalize_part_label(str(candidate))
+                    if label in self._part_labels and label not in exclude_labels:
+                        exclude_labels.append(label)
+            return {
+                "intent": intent,
+                "step_scope": step_scope,
+                "exclude_labels": exclude_labels,
+                "raw": raw,
+            }
+        if intent == "general_question":
+            answer = str(value.get("answer", "")).strip()
+            if not answer:
+                return {"intent": "invalid", "raw": raw}
+            return {"intent": intent, "answer": answer, "raw": raw}
+        if intent != "part_reference":
+            return {"intent": "invalid", "raw": raw}
+
+        target = self._normalize_part_label(str(value.get("target", "")))
+        if target not in {*self._part_labels, "AMBIGUOUS"}:
+            return {"intent": "invalid", "raw": raw}
+
+        candidate_labels: list[str] = []
+        raw_candidates = value.get("candidates", [])
+        if isinstance(raw_candidates, list):
+            for candidate in raw_candidates:
+                label = self._normalize_part_label(str(candidate))
+                if label in self._part_labels and label not in candidate_labels:
+                    candidate_labels.append(label)
+        if target != "AMBIGUOUS":
+            candidate_labels.clear()
+        part_action = str(value.get("part_action", "reference")).strip().casefold()
+        if part_action not in {"reference", "fetch"}:
+            return {"intent": "invalid", "raw": raw}
+        return {
+            "intent": intent,
+            "target": target,
+            "part_action": part_action,
+            "candidate_labels": candidate_labels,
+            "raw": raw,
         }
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -494,8 +833,94 @@ class VLMAssistant:
                 elif payload == "thinking":
                     self.dpg.configure_item("vlm_ask_button", enabled=False)
 
+            elif kind == "intent":
+                question = self._pending_question
+                envelope = self._parse_intent_envelope(payload)
+                intent = envelope.get("intent")
+                if intent == "fetch_confirmation":
+                    self._fetch_confirmation_events.put({
+                        "text": question,
+                        "confirmation": str(envelope["confirmation"]),
+                        "raw": payload,
+                    })
+                    _print_console_block(
+                        "VLM INTENT",
+                        f"fetch_confirmation -> {envelope['confirmation']}\nraw: {payload}",
+                    )
+                    self._pending_question = ""
+                    self._pending_part_text = ""
+                elif intent == "recommendation_request":
+                    self._recommendation_events.put({
+                        "text": question,
+                        "raw": payload,
+                    })
+                    _print_console_block(
+                        "VLM INTENT",
+                        f"recommendation_request\nraw: {payload}",
+                    )
+                    self._pending_question = ""
+                    self._pending_part_text = ""
+                elif intent in {"part_reference", "step_parts_request"}:
+                    is_step_parts = intent == "step_parts_request"
+                    label = ("STEP_PARTS" if is_step_parts
+                             else str(envelope["target"]))
+                    self._part_events.put({
+                        "text": question,
+                        "label": label,
+                        "part_action": str(envelope.get("part_action", "reference")),
+                        "step_scope": str(envelope.get("step_scope", "")),
+                        "exclude_labels": list(
+                            envelope.get("exclude_labels", [])),
+                        "candidate_labels": list(
+                            envelope.get("candidate_labels", [])),
+                        "raw": payload,
+                    })
+                    _print_console_block(
+                        "VLM INTENT",
+                        f"{intent} -> {label}\n"
+                        f"step_scope: {envelope.get('step_scope', '')}\n"
+                        f"exclude_labels: {envelope.get('exclude_labels', [])}\n"
+                        f"candidates: {envelope.get('candidate_labels', [])}\n"
+                        f"raw: {payload}",
+                    )
+                    # The task-graph policy will add its validated, friendly
+                    # response to both the UI and conversation history.
+                    self._pending_question = ""
+                    self._pending_part_text = ""
+                else:
+                    if intent == "general_question":
+                        answer = _humanize_general_answer(str(envelope["answer"]))
+                    else:
+                        answer = (
+                            "I could not understand that reliably. Please rephrase "
+                            "your request or question.")
+                    _print_console_block(
+                        "VLM INTENT",
+                        "general_question" if intent == "general_question"
+                        else f"invalid\nraw: {payload}",
+                    )
+                    _print_console_block("VLM ANSWER", answer)
+                    self._answer_events.put({
+                        "text": question,
+                        "answer": answer,
+                        "intent": str(intent),
+                    })
+                    self._exchanges.append((question, answer))
+                    self._history_count = min(
+                        self._history_count + 1,
+                        _VLMWorker.MAX_HISTORY_PAIRS,
+                    )
+                    self._worker.apply_policy_response(question, answer)
+                    self._pending_question = ""
+                    self._pending_part_text = ""
+                    self._awaiting_part_clarification = False
+                    self._ambiguous_part_text = ""
+                    self._render_history()
+                    self._update_history_label()
+                    self.dpg.configure_item("vlm_ask_button", enabled=True)
+
             elif kind == "answer":
-                answer = _strip_md(payload)
+                answer = _humanize_general_answer(payload)
                 _print_console_block("VLM ANSWER", answer)
                 self._exchanges.append((self._pending_question, answer))
                 self._history_count = min(
@@ -504,23 +929,11 @@ class VLMAssistant:
                 self._render_history()
                 self._update_history_label()
                 self.dpg.configure_item("vlm_ask_button", enabled=True)
-                # Identification requests are instructed to return one exact
-                # label. Feed that machine-readable result to the deterministic
-                # task-state policy while retaining ordinary prose as chat only.
-                label = self._normalize_part_label(answer)
-                if self._generic_reference_is_ambiguous(self._exchanges[-1][0]):
-                    label = "AMBIGUOUS"
-                if label != "INVALID_OUTPUT":
-                    self._part_events.put({
-                        "text": self._exchanges[-1][0],
-                        "label": label,
-                        "raw": payload,
-                    })
+                # Retained for explicit legacy callers. Normal typed and voice
+                # questions use the structured ``intent`` result above.
 
             elif kind == "part_reference":
                 label = self._normalize_part_label(payload)
-                if self._generic_reference_is_ambiguous(self._pending_part_text):
-                    label = "AMBIGUOUS"
                 self._part_events.put({
                     "text": self._pending_part_text,
                     "label": label,
@@ -543,6 +956,8 @@ class VLMAssistant:
                 # Graph state changed — clear conversation and show a banner
                 self._exchanges.clear()
                 self._pending_question = ""
+                self._awaiting_part_clarification = False
+                self._ambiguous_part_text = ""
                 self._history_count = 0
                 self._update_history_label()
                 banner = "[Graph state changed — conversation reset]\n\n" + payload
@@ -552,6 +967,8 @@ class VLMAssistant:
             elif kind == "history_reset":
                 self._exchanges.clear()
                 self._pending_question = ""
+                self._awaiting_part_clarification = False
+                self._ambiguous_part_text = ""
                 self._history_count = 0
                 self._update_history_label()
                 self.dpg.set_value("vlm_answer",
@@ -602,11 +1019,8 @@ class VLMAssistant:
         question = (self.dpg.get_value("vlm_question") or "").strip()
         if not question:
             return
-        self._pending_question = question
         self.dpg.set_value("vlm_question", "")
-        self._render_history(pending=True)
-        if self._worker.submit(question, self._image_paths):
-            _print_console_block("VLM QUESTION", question)
+        self.submit_question(question)
 
     def _clear_history(self) -> None:
         self._worker.reset_history()

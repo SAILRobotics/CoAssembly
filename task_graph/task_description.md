@@ -159,15 +159,33 @@ The speech/VLM interface uses these fastening-tool labels:
 
 | Row | Fastening stages | Semantic tool labels | Pegboard objects highlighted |
 | --- | --- | --- | --- |
-| 1 | 1.4 and 1.6 | `BIT_WRENCH`, `H5_HEX_BIT` | interchangeable-bit wrench and shared bit holder |
-| 2 | 2.4 and 2.6 | `BIT_SCREWDRIVER`, `T25_TORX_BIT` | interchangeable-bit screwdriver and shared bit holder |
-| 3 | 3.4 and 3.6 | `BIT_WRENCH`, `H3_HEX_BIT` | interchangeable-bit wrench and shared bit holder |
+| 1 | 1.4 and 1.6 | `BIT_WRENCH`, `H5_HEX_BIT` | interchangeable-bit wrench and `BitHolder1` |
+| 2 | 2.4 and 2.6 | `BIT_SCREWDRIVER`, `T25_TORX_BIT` | interchangeable-bit screwdriver and `BitHolder2` |
+| 3 | 3.4 and 3.6 | `BIT_WRENCH`, `H3_HEX_BIT` | interchangeable-bit wrench and `BitHolder1` |
 | 4 | 4.4 and 4.6 | `PHILLIPS_SCREWDRIVER` | Phillips screwdriver |
 
-`BIT_HOLDER` refers to the shared holder containing the H5, T25, and H3
-inserts. An insert label therefore highlights the holder as its physical
-storage location. Tools are reusable resources: completing a step does not
-consume them into an assembly.
+`BIT_HOLDER1` contains the H5 and H3 hex inserts. `BIT_HOLDER2` contains the
+T25 Torx insert. Referring to an insert therefore highlights its correct
+physical storage holder. Tools are reusable resources: completing a step does
+not consume them into an assembly. A bare phrase such as "the bit holder" is
+ambiguous and should prompt the user to specify Holder 1, Holder 2, or the bit.
+
+### Row-Kit Storage
+
+The small components are organized into one physical kit box per assembly row:
+
+| Pegboard box | Physical contents |
+| --- | --- |
+| `ROW1_KIT` | two bearings, two mounting screws, two wooden pins, and the crank handle |
+| `ROW2_KIT` | two bearings, two mounting screws, and two wooden pins |
+| `ROW3_KIT` | two bearings, two mounting screws, and two wooden pins |
+| `ROW4_KIT` | two bearings, two mounting screws, and two wooden pins |
+
+The row and side identifiers in the task graph assign kit contents to assembly
+locations; they do not imply separate pegboard boxes for every small part.
+`GEAR_ROD_ROW4` has only one retaining-pin hole, so the current task graph uses
+`PIN_ROW4_LEFT`; the second wooden pin physically stored in `ROW4_KIT` is a
+spare and is not an input to an assembly step.
 
 ## Component Inventory
 
@@ -456,19 +474,24 @@ The gearbox assembly is complete when:
 - Treat the injected live state as authoritative for current progress and
   readiness. Recommend only a step explicitly listed as `READY`.
 - If asked for one next step when several are `READY`, use the same deterministic
-  policy as the interface: choose the lowest-numbered row first, then the lowest
-  user-facing stage number within that row. Treat the global Stage 8 finish step
-  as last. Explain that this selects a preferred option; other listed `READY`
-  steps remain valid and may be performed in any order allowed by the graph.
+  policy as the interface: prefer the row in which a step was most recently
+  completed or reverted, then choose the lowest user-facing stage number within
+  that row. When that row has no `READY` work, or no row has been worked yet,
+  choose the lowest-numbered `READY` row and stage. Treat the global Stage 8
+  finish step as last. Explain that this selects a preferred option; other
+  listed `READY` steps remain valid and may be performed in any order allowed
+  by the graph.
 - A step not listed as `COMPLETED` or `READY` is `BLOCKED`. When the selected-step
   context supplies `Blocked by`, repeat those missing prerequisites exactly. If
   that detail is absent, do not guess which input is missing.
 - When live context shows that a completed step consumed a raw part and produced
   an assembly, explain that transformation using the supplied canonical names.
   Do not claim that a part is currently active unless the live context says so.
-- Use canonical part and step names in backticks when practical, while accepting
-  ordinary references such as “left bearing,” “white row,” or “Stage 4.” Resolve
-  spatial terms using the fixed gearbox-local LEFT/RIGHT convention.
+- Use familiar operator-facing names in answers, such as “Row 1 right bearing,”
+  “right stand,” and “gear rod.” Accept internal canonical names as input, but do
+  not expose graph IDs, uppercase canonical labels, filenames, or row.stage
+  numbers unless the user explicitly requests debugging details. Resolve spatial
+  terms using the fixed gearbox-local LEFT/RIGHT convention.
 - Keep answers concise and action-oriented. Include the row, user-facing stage,
   required parts, and expected output when those details answer the question.
 - Never infer extra dependencies from prose order, stage numbers, the diagram,

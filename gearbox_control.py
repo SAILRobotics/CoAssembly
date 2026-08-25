@@ -140,9 +140,9 @@ _HIGHLIGHT_PARTS = [
 ]
 
 # Fastening-tool ontology used by both ordinary stage highlighting and the
-# speech/VLM part-reference policy. H5/T25/H3 inserts share the physical bit
-# holder (id resolved from BitHolder1); the separate driver handle is also
-# highlighted so the user sees the complete usable tool set.
+# speech/VLM part-reference policy. H5 and H3 are stored in BitHolder1; T25 is
+# stored in BitHolder2. The separate driver handle is also highlighted so the
+# user sees the complete usable tool set.
 FASTENING_TOOL_SPECS = {
     "H5_HEX_BIT": {
         "friendly": "5 millimetre hex bit, marked H5",
@@ -150,7 +150,7 @@ FASTENING_TOOL_SPECS = {
     },
     "T25_TORX_BIT": {
         "friendly": "Torx bit, marked T25",
-        "layout_types": ("BITHOLDER1",),
+        "layout_types": ("BITHOLDER2",),
     },
     "H3_HEX_BIT": {
         "friendly": "3 millimetre hex bit, marked H3",
@@ -164,9 +164,13 @@ FASTENING_TOOL_SPECS = {
         "friendly": "interchangeable-bit wrench",
         "layout_types": ("BIT_WRENCH",),
     },
-    "BIT_HOLDER": {
-        "friendly": "shared driver-bit holder",
+    "BIT_HOLDER1": {
+        "friendly": "Bit Holder 1, containing the H5 and H3 hex bits",
         "layout_types": ("BITHOLDER1",),
+    },
+    "BIT_HOLDER2": {
+        "friendly": "Bit Holder 2, containing the T25 Torx bit",
+        "layout_types": ("BITHOLDER2",),
     },
     "PHILLIPS_SCREWDRIVER": {
         "friendly": "Phillips screwdriver",
@@ -183,6 +187,16 @@ FASTENING_TOOLS_BY_ROW = {
     2: ("BIT_SCREWDRIVER", "T25_TORX_BIT"),
     3: ("BIT_WRENCH", "H3_HEX_BIT"),
     4: ("PHILLIPS_SCREWDRIVER",),
+}
+
+# Physical contents of the four row-kit boxes. Row 4 contains two wooden pins
+# physically, although the current task graph consumes only one because its
+# gear rod has one retaining-pin hole; the other pin is a spare.
+ROW_KIT_CONTENT_COUNTS = {
+    1: {"BEARING": 2, "SCREW": 2, "WOODEN_PIN": 2, "CRANK_HANDLE": 1},
+    2: {"BEARING": 2, "SCREW": 2, "WOODEN_PIN": 2},
+    3: {"BEARING": 2, "SCREW": 2, "WOODEN_PIN": 2},
+    4: {"BEARING": 2, "SCREW": 2, "WOODEN_PIN": 2},
 }
 
 

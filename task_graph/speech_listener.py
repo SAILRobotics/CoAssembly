@@ -1,7 +1,7 @@
 """speech_listener.py — Background speech capture + Parakeet ASR.
 
 Usage:
-    listener = SpeechListener(device="bluez_source...", wake_word="hey robot")
+    listener = SpeechListener(device="bluez_source...")
     listener.start()
 
     # each UI frame:
@@ -40,7 +40,9 @@ AUDIO_BACKEND = "auto"
 # PulseAudio source name is passed to the sounddevice backend, which can't use
 # it). For sounddevice: an int index or case-insensitive name substring, or
 # None for the system default input.
-DEFAULT_PULSEAUDIO_DEVICE  = "bluez_source.50_C2_ED_43_95_C8.handsfree_head_unit"
+# AOC ACW4212 headset used by microphone_test.py. Its microphone exists only
+# while the Bluetooth card is in the hands-free profile.
+DEFAULT_PULSEAUDIO_DEVICE  = "bluez_source.41_42_D1_99_84_1D.handsfree_head_unit"
 DEFAULT_SOUNDDEVICE_DEVICE = "Microphone Array"   # laptop built-in mic array
 
 
@@ -69,7 +71,7 @@ class SpeechListener:
     def __init__(
         self,
         device:           str | None = None,
-        wake_word:        str   = "hey robot",
+        wake_word:        str | None = None,
         listen_timeout:   float = 30.0,
         rms_threshold:    float = 0.015,
         end_silence:      float = 1.5,
@@ -82,7 +84,8 @@ class SpeechListener:
     ) -> None:
         self._backend         = _resolve_backend(backend)
         self._device          = self._resolve_device(device)
-        self._wake_word       = wake_word.lower()
+        self._wake_word       = (wake_word or "").strip().lower()
+        self.always_listening = not bool(self._wake_word)
         self._listen_timeout  = listen_timeout
         self._rms_threshold   = rms_threshold
         self._end_silence     = end_silence
@@ -105,10 +108,10 @@ class SpeechListener:
         # Public state — read after poll()
         self.current_status:   str   = self.STATUS_LOADING
         self.current_rms:      float = 0.0
-        self.listening_active: bool  = False
+        self.listening_active: bool  = self.always_listening
         self.last_speech_time: float = 0.0
         self.transcript_history: deque[str] = deque(maxlen=max_transcripts)
-        self.wake_word = wake_word   # original case for display
+        self.wake_word = (wake_word or "").strip()  # original case for display
 
     def _resolve_device(self, device):
         """Pick a sensible device for the active backend. A PulseAudio source
@@ -151,9 +154,38 @@ class SpeechListener:
 
     # ── Audio capture backends ────────────────────────────────────────────────
 
+    @staticmethod
+    def _bluetooth_card_from_source(source: str | None) -> str | None:
+        """Convert ``bluez_source.<address>.<profile>`` to its card name."""
+        source = str(source or "")
+        prefix = "bluez_source."
+        profile_suffixes = (
+            ".handsfree_head_unit",
+            ".headset_head_unit",
+        )
+        if not source.startswith(prefix):
+            return None
+        for suffix in profile_suffixes:
+            if source.endswith(suffix):
+                address = source[len(prefix):-len(suffix)]
+                return f"bluez_card.{address}" if address else None
+        return None
+
     def _start_pulseaudio(self) -> None:
         """Linux: capture from PulseAudio via a `parec` subprocess and feed the
         shared raw queue from a reader thread."""
+        # Match microphone_test.py: Bluetooth headset sources are unavailable
+        # in A2DP playback mode, so activate the microphone-capable profile
+        # before starting parec.
+        bluetooth_card = self._bluetooth_card_from_source(self._device)
+        if bluetooth_card is not None:
+            subprocess.run(
+                ["pactl", "set-card-profile", bluetooth_card,
+                 "handsfree_head_unit"],
+                check=True,
+            )
+            print(f"[SpeechListener] Bluetooth hands-free profile: {bluetooth_card}")
+        print(f"[SpeechListener] PulseAudio source: {self._device}")
         self._process = subprocess.Popen(
             ["parec", f"--device={self._device}", "--format=s16le",
              f"--rate={self.RATE}", f"--channels={self.CHANNELS}"],
@@ -315,7 +347,8 @@ class SpeechListener:
         now      = time.time()
         notable: list[tuple[str, str]] = []
 
-        if self.listening_active and now - self.last_speech_time > self._listen_timeout:
+        if (not self.always_listening and self.listening_active
+                and now - self.last_speech_time > self._listen_timeout):
             self.listening_active = False
             self.current_status   = self.STATUS_IDLE
             notable.append(("timeout", ""))
@@ -329,12 +362,19 @@ class SpeechListener:
             if kind == "rms":
                 self.current_rms = payload
             elif kind == "_status":
-                self.current_status = payload
+                self.current_status = (self.STATUS_LISTENING
+                                       if self.always_listening
+                                       and payload == self.STATUS_IDLE else payload)
                 if payload == self.STATUS_IDLE:
                     notable.append(("ready", ""))
             elif kind == "transcript":
                 text = str(payload)
-                if not self.listening_active:
+                if self.always_listening:
+                    self.last_speech_time = now
+                    self.transcript_history.append(text)
+                    self.current_status = self.STATUS_LISTENING
+                    notable.append(("transcript", text))
+                elif not self.listening_active:
                     if self._wake_word in text.lower():
                         self.listening_active = True
                         self.last_speech_time = now
@@ -354,6 +394,6 @@ class SpeechListener:
 
     @property
     def remaining_time(self) -> float:
-        if not self.listening_active:
+        if self.always_listening or not self.listening_active:
             return 0.0
         return max(0.0, self._listen_timeout - (time.time() - self.last_speech_time))

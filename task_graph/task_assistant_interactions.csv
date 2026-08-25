@@ -1,0 +1,66 @@
+event_index,timestamp,transcript,vlm_prediction,vlm_raw,selected_step,selected_step_state,graph_decision,matched_parts,current_assemblies,highlight_ids,assembly_highlight_parts,spoken_response
+1,2026-08-24T18:00:18-04:00,Can you get me the gear?,AMBIGUOUS,AMBIGUOUS,,none,ambiguous,[],[],[],[],"Which gear do you mean? Please give its row, color, size, or position."
+2,2026-08-24T18:00:45-04:00,Row1 Left Gear,GEAR_ROW1_LEFT,GEAR_ROW1_LEFT,,none,no_selected_step,"[""GEAR_ROW1_LEFT""]",[],[],[],"Please select an assembly step first, so I can check whether that part or tool belongs to the current task."
+3,2026-08-24T18:04:52-04:00,can you get me the white left gear?,GEAR_ROW1_LEFT,GEAR_ROW1_LEFT,r1_bearing_right,ready,not_relevant,"[""GEAR_ROW1_LEFT""]",[],[26],[],The the Row 1 left gear is not needed for the selected step. The selected task is Step 1.1: put the bearing into the right stand.
+4,2026-08-24T18:05:43-04:00,can you get me the row1 left gear stand?,STAND_ROW1_LEFT,STAND_ROW1_LEFT,r1_bearing_right,ready,not_relevant,"[""STAND_ROW1_LEFT""]",[],[18],[],The the Row 1 left stand is not needed for the selected step. The selected task is Step 1.1: put the bearing into the right stand.
+5,2026-08-24T18:57:10-04:00,Can you get me the left row1 gear stand?,STAND_ROW1_LEFT,STAND_ROW1_LEFT,r1_bearing_right,ready,not_relevant,"[""STAND_ROW1_LEFT""]",[],[18],[],The Row 1 left stand is not needed for this step. This step is to put the bearing into the right stand.
+6,2026-08-24T18:57:26-04:00,Can you give me gears?,AMBIGUOUS,AMBIGUOUS,r1_bearing_right,ready,ambiguous,[],[],[],[],"Which gear do you mean? Please give its row, color, size, or position."
+7,2026-08-24T18:57:38-04:00,Row1 Gear,GEAR_ROW1_LEFT,GEAR_ROW1_LEFT,r1_bearing_right,ready,not_relevant,"[""GEAR_ROW1_LEFT""]",[],[26],[],The Row 1 left gear is not needed for this step. This step is to put the bearing into the right stand.
+8,2026-08-24T19:29:24-04:00,Hello?,BEARING,"Hello! The gearbox assembly is ready to begin. You can start with any of the available steps. Following the deterministic preference, I recommend starting with:
+
+**Row 1.1: bearing into right stand** — install `BEARING_ROW1_RIGHT` into `STAND_ROW1_RIGHT`.
+
+Let me know if you’d like to proceed with this or choose another step!",,none,no_selected_step,"[""BEARING_ROW1_LEFT"", ""BEARING_ROW1_RIGHT"", ""BEARING_ROW2_LEFT"", ""BEARING_ROW2_RIGHT"", ""BEARING_ROW3_LEFT"", ""BEARING_ROW3_RIGHT"", ""BEARING_ROW4_LEFT"", ""BEARING_ROW4_RIGHT""]",[],[],[],"Please select an assembly step first, so I can check whether that part or tool belongs to the current task."
+9,2026-08-24T19:29:43-04:00,Hi.,BEARING,"I'm ready to assist with the gearbox assembly. Since multiple steps are currently READY, I'll follow the deterministic rule: start with Row 1, then proceed to the lowest stage within that row.
+
+The first step for Row 1 is:
+`r1_bearing_right` — Row 1.1: insert the right bearing into the right stand.
+
+This step requires:
+- `BEARING_ROW1_RIGHT`
+- `STAND_ROW1_RIGHT`
+
+Expected output:
+- `BEARING_STAND_ROW1_RIGHT_ASSEMBLY`
+
+Would you like to proceed with this step?",,none,no_selected_step,"[""BEARING_ROW1_LEFT"", ""BEARING_ROW1_RIGHT"", ""BEARING_ROW2_LEFT"", ""BEARING_ROW2_RIGHT"", ""BEARING_ROW3_LEFT"", ""BEARING_ROW3_RIGHT"", ""BEARING_ROW4_LEFT"", ""BEARING_ROW4_RIGHT""]",[],[],[],"Please select an assembly step first, so I can check whether that part or tool belongs to the current task."
+10,2026-08-24T19:29:56-04:00,What should I start with?,BEARING,r1_bearing_right,,none,no_selected_step,"[""BEARING_ROW1_LEFT"", ""BEARING_ROW1_RIGHT"", ""BEARING_ROW2_LEFT"", ""BEARING_ROW2_RIGHT"", ""BEARING_ROW3_LEFT"", ""BEARING_ROW3_RIGHT"", ""BEARING_ROW4_LEFT"", ""BEARING_ROW4_RIGHT""]",[],[],[],"Please select an assembly step first, so I can check whether that part or tool belongs to the current task."
+11,2026-08-24T19:30:13-04:00,Can you get me the gear for the Roll One?,GEAR_ROW1_LEFT,GEAR_ROW1_LEFT,r1_bearing_right,ready,not_relevant,"[""GEAR_ROW1_LEFT""]",[],[26],[],The Row 1 left gear is not relevant to this step. This step is to put the bearing into the right stand.
+12,2026-08-24T19:30:27-04:00,Can you give me the road to Gearstand?,BEARING,"The gear stand is not relevant to this step. This step is to put the bearing into the right stand.
+
+Resolved label: STAND_ROW1_RIGHT",r1_bearing_right,ready,relevant,"[""BEARING_ROW1_RIGHT""]",[],[35],"[""BEARING_ROW1_RIGHT""]",Yes. The bearing is needed to put the bearing into the right stand. I have highlighted its storage location.
+13,2026-08-24T19:30:46-04:00,Can you give me the Road Row Two gear stand?,BEARING,"The gear stand for Row 2 is not relevant to this step. This step is to put the bearing into the right stand.
+
+Resolved label: STAND_ROW2_RIGHT",r1_bearing_right,ready,relevant,"[""BEARING_ROW1_RIGHT""]",[],[35],"[""BEARING_ROW1_RIGHT""]",Yes. The bearing is needed to put the bearing into the right stand. I have highlighted its storage location.
+14,2026-08-24T19:31:01-04:00,Can you get me the Roll Two gear stand?,BEARING,"Yes. The bearing is needed to put the bearing into the right stand. I have highlighted its storage location.
+
+Resolved label: BEARING",r1_bearing_right,ready,relevant,"[""BEARING_ROW1_RIGHT""]",[],[35],"[""BEARING_ROW1_RIGHT""]",Yes. The bearing is needed to put the bearing into the right stand. I have highlighted its storage location.
+15,2026-08-24T19:31:17-04:00,Can you get me the Roll Two gearstand?,BEARING,"Yes. The bearing is needed to put the bearing into the right stand. I have highlighted its storage location.
+
+Resolved label: BEARING",r1_bearing_right,ready,relevant,"[""BEARING_ROW1_RIGHT""]",[],[35],"[""BEARING_ROW1_RIGHT""]",Yes. The bearing is needed to put the bearing into the right stand. I have highlighted its storage location.
+16,2026-08-24T19:31:32-04:00,Can you get me the Row Two gearstand?,BEARING,"Yes. The bearing is needed to put the bearing into the right stand. I have highlighted its storage location.
+
+Resolved label: BEARING",r1_bearing_right,ready,relevant,"[""BEARING_ROW1_RIGHT""]",[],[35],"[""BEARING_ROW1_RIGHT""]",Yes. The bearing is needed to put the bearing into the right stand. I have highlighted its storage location.
+17,2026-08-24T19:31:46-04:00,Can you give me the Roll Two gear stand?,BEARING,"Yes. The bearing is needed to put the bearing into the right stand. I have highlighted its storage location.
+
+Resolved label: BEARING",r1_bearing_right,ready,relevant,"[""BEARING_ROW1_RIGHT""]",[],[35],"[""BEARING_ROW1_RIGHT""]",Yes. The bearing is needed to put the bearing into the right stand. I have highlighted its storage location.
+18,2026-08-24T19:32:07-04:00,Can you get me the r gear stand for row two?,BEARING,"Yes. The bearing is needed to put the bearing into the right stand. I have highlighted its storage location.
+
+Resolved label: BEARING",r1_bearing_right,ready,relevant,"[""BEARING_ROW1_RIGHT""]",[],[35],"[""BEARING_ROW1_RIGHT""]",Yes. The bearing is needed to put the bearing into the right stand. I have highlighted its storage location.
+19,2026-08-24T19:32:24-04:00,I'm going to go to the,BEARING,"Yes. The bearing is needed to put the bearing into the right stand. I have highlighted its storage location.
+
+Resolved label: BEARING",r1_bearing_right,ready,relevant,"[""BEARING_ROW1_RIGHT""]",[],[35],"[""BEARING_ROW1_RIGHT""]",Yes. The bearing is needed to put the bearing into the right stand. I have highlighted its storage location.
+20,2026-08-24T19:33:01-04:00,Can you give me the right stand for this step?,STAND_ROW1_RIGHT,STAND_ROW1_RIGHT,r1_bearing_right,ready,relevant,"[""STAND_ROW1_RIGHT""]",[],[19],"[""STAND_ROW1_RIGHT""]",Yes. The Row 1 right stand is needed to put the bearing into the right stand. I have highlighted its storage location.
+21,2026-08-24T19:33:19-04:00,Can you get it for me?,BEARING,"Yes. The bearing is needed to put the bearing into the right stand. I have highlighted its storage location.
+
+Resolved label: BEARING",r1_bearing_right,ready,relevant,"[""BEARING_ROW1_RIGHT""]",[],[35],"[""BEARING_ROW1_RIGHT""]",Yes. The bearing is needed to put the bearing into the right stand. I have highlighted its storage location.
+22,2026-08-24T20:23:11-04:00,Can you get me the gearstand that is white and located on the left?,STAND_ROW1_LEFT,"{""intent"":""part_reference"",""target"":""STAND_ROW1_LEFT"",""candidates"":[],""answer"":"" ""}",,none,no_selected_step,"[""STAND_ROW1_LEFT""]",[],[],[],"Please select an assembly step first, so I can check whether that part or tool belongs to the current task."
+23,2026-08-24T20:23:30-04:00,Can you get me the gear stand for this step?,STAND_ROW1_RIGHT,"{""intent"":""part_reference"",""target"":""STAND_ROW1_RIGHT"",""candidates"":[],""answer"":""""}",r1_bearing_right,ready,relevant,"[""STAND_ROW1_RIGHT""]",[],[19],"[""STAND_ROW1_RIGHT""]",Yes. The Row 1 right stand is needed to put the bearing into the right stand. I have highlighted its storage location.
+24,2026-08-24T20:23:56-04:00,Can you get me the part for the next step?,BEARING,"{""intent"":""part_reference"",""target"":""BEARING_ROW1_RIGHT"",""candidates"":[],""answer"":""""}",r1_bearing_right,ready,relevant,"[""BEARING_ROW1_RIGHT""]",[],[35],"[""BEARING_ROW1_RIGHT""]",Yes. The bearing is needed to put the bearing into the right stand. I have highlighted its storage location.
+25,2026-08-24T20:24:43-04:00,Can you give me the Q rod required for this step?,GEAR_ROD_ROW1,"{""intent"":""part_reference"",""target"":""GEAR_ROD_ROW1"",""candidates"":[],""answer"":"" ""}",r1_gear_rod,ready,relevant,"[""GEAR_ROD_ROW1""]",[],[14],"[""GEAR_ROD_ROW1""]",Yes. The Row 1 gear rod is needed to put the gears on the gear rod and pin them. I have highlighted its storage location.
+26,2026-08-24T20:26:01-04:00,Can you give me the part required for this step?,BEARING,"{""intent"":""part_reference"",""target"":""BEARING_ROW1_RIGHT"",""candidates"":[],""answer"":""""}",r1_bearing_right,ready,relevant,"[""BEARING_ROW1_RIGHT""]",[],[35],"[""BEARING_ROW1_RIGHT""]",Yes. The bearing is needed to put the bearing into the right stand. I have highlighted its storage location.
+27,2026-08-24T20:26:17-04:00,"Okay, other than bearing, what par other part do I need for this step?",STAND_ROW1_RIGHT,"{""intent"":""part_reference"",""target"":""STAND_ROW1_RIGHT"",""candidates"":[],""answer"":"" ""}",r1_bearing_right,ready,relevant,"[""STAND_ROW1_RIGHT""]",[],[19],"[""STAND_ROW1_RIGHT""]",Yes. The Row 1 right stand is needed to put the bearing into the right stand. I have highlighted its storage location.
+28,2026-08-24T20:39:17-04:00,What parts are necessary for this step?,BEARING,"{""intent"":""part_reference"",""target"":""BEARING_ROW1_RIGHT"",""candidates"":[],""answer"":""""}",r1_bearing_right,ready,relevant,"[""BEARING_ROW1_RIGHT""]",[],[35],"[""BEARING_ROW1_RIGHT""]",Yes. The bearing is needed to put the bearing into the right stand. I have highlighted its storage location.
+29,2026-08-24T20:39:32-04:00,What other part is necessary for this step?,STAND_ROW1_RIGHT,"{""intent"":""part_reference"",""target"":""STAND_ROW1_RIGHT"",""candidates"":[],""answer"":"" ""}",r1_bearing_right,ready,relevant,"[""STAND_ROW1_RIGHT""]",[],[19],"[""STAND_ROW1_RIGHT""]",Yes. The Row 1 right stand is needed to put the bearing into the right stand. I have highlighted its storage location.
+30,2026-08-24T20:48:28-04:00,Can you give me the gear for the second roll?,GEAR_ROW2_LEFT,"{""intent"":""part_reference"",""step_scope"":"""",""target"":""GEAR_ROW2_LEFT"",""candidates"":[],""exclude_labels"":[],""answer"":""""}",r1_bearing_right,ready,not_relevant,"[""GEAR_ROW2_LEFT""]",[],[27],[],The Row 2 left gear is not relevant to this step. This step is to put the bearing into the right stand.
+31,2026-08-24T20:49:19-04:00,And take that.,BEARING,"{""intent"":""part_reference"",""step_scope"":"""",""target"":""BEARING_ROW1_RIGHT"",""candidates"":[],""exclude_labels"":[],""answer"":""""}",r1_bearing_right,ready,relevant,"[""BEARING_ROW1_RIGHT""]",[],[35],"[""BEARING_ROW1_RIGHT""]",Yes. The bearing is needed to put the bearing into the right stand. I have highlighted its storage location.

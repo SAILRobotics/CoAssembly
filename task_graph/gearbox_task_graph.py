@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from vlm_assistant import VLMAssistant  # noqa: E402
-from speech_listener import SpeechListener  # noqa: E402
+from speech_listener import SpeechListener, DEFAULT_PULSEAUDIO_DEVICE  # noqa: E402
 from tts import TTSService, DEFAULT_PIPER_MODEL  # noqa: E402
 import gearbox_control  # noqa: E402  (--with-controller: run the controller in-process)
 
@@ -252,6 +252,9 @@ class TaskGraph:
         self.initial_parts = set(available_parts)
         self.active_parts = set(self.initial_parts)
         self.completed: list[str] = []
+        # Row most recently changed by a successful complete/undo operation.
+        # Recommendation stays with this row while it still has READY work.
+        self.last_worked_row: int | None = None
 
         # In-memory mapping of each consumed input part to the assembly produced
         # from it: {input_part: output_assembly}. For example, completing a step
@@ -272,6 +275,7 @@ class TaskGraph:
         self.active_parts = set(self.initial_parts)
         self.completed.clear()
         self.transform_history.clear()
+        self.last_worked_row = None
 
     def missing(self, step: Step) -> list[str]:
         # Inputs are consumed and context parts must remain active. `requires`
@@ -304,6 +308,8 @@ class TaskGraph:
             self.transform_history[part] = step.output
         self.active_parts.add(step.output)
         self.completed.append(step.id)
+        if step.row > 0:
+            self.last_worked_row = step.row
         return True, (f"COMPLETED {step.id}: {', '.join(step.inputs)} transformed into "
                       f"{step.output}.")
 
@@ -385,6 +391,9 @@ class TaskGraph:
 
         # Mark the target step as no longer completed.
         self.completed.remove(target.id)
+        if target.row > 0:
+            # Reverting a specific row makes that row the current work focus.
+            self.last_worked_row = target.row
         return True, (f"UNDONE {target.id}: removed {target.output} and restored "
                       f"{', '.join(target.inputs)}.")
 
@@ -545,35 +554,33 @@ class TaskGraph:
             kind, row, side = match.groups()
             noun = {
                 "BEARING": "bearing",
-                "STAND": "support bracket",
-                "SCREW": "mounting screw",
-                "PIN": "wooden retaining pin",
+                "STAND": "stand",
+                "SCREW": "screw",
+                "PIN": "wooden pin",
                 "GEAR": "gear",
             }[kind]
             return f"the Row {row} {side.lower()} {noun}"
         match = re.fullmatch(r"GEAR_ROD_ROW([1-4])", name)
         if match:
-            return f"the Row {match.group(1)} gear shaft"
+            return f"the Row {match.group(1)} gear rod"
         if name == "CRANK_HANDLE_ROW1":
             return "the crank handle"
         if name == "BASE_BOARD":
             return "the gearbox baseboard"
         patterns = [
             (r"BEARING_STAND_ROW([1-4])_(LEFT|RIGHT)_ASSEMBLY",
-             lambda m: (f"the Row {m.group(1)} {m.group(2).lower()} support "
-                        "bracket with its bearing fitted")),
+             lambda m: (f"the Row {m.group(1)} {m.group(2).lower()} stand "
+                        "with its bearing")),
             (r"GEAR_ROD_ROW([1-4])_ASSEMBLY",
-             lambda m: f"the assembled Row {m.group(1)} gear shaft and gear set"),
+             lambda m: f"the assembled Row {m.group(1)} gear rod"),
             (r"FASTENED_STAND_ROW([1-4])_RIGHT_ASSEMBLY",
-             lambda m: (f"the Row {m.group(1)} right bearing bracket fastened "
-                        "to the baseboard")),
+             lambda m: f"the Row {m.group(1)} right stand fastened to the board"),
             (r"UNFASTENED_SECOND_STAND_ROW([1-4])_ASSEMBLY",
-             lambda m: (f"the Row {m.group(1)} gear shaft fitted between both "
-                        "support brackets, before the left bracket is fastened")),
+             lambda m: f"the Row {m.group(1)} gear rod fitted between both stands"),
             (r"MOUNTED_ROW([1-4])_ASSEMBLY",
-             lambda m: f"the fully mounted Row {m.group(1)} gear row"),
+             lambda m: f"the mounted Row {m.group(1)} assembly"),
             (r"CRANK_MOUNTED_ROW1_ASSEMBLY",
-             lambda _m: "the mounted Row 1 gear row with the crank handle attached"),
+             lambda _m: "the completed Row 1 assembly with its handle"),
             (r"COMPLETED_GEARBOX_ASSEMBLY",
              lambda _m: "the completed gearbox"),
         ]
@@ -583,28 +590,34 @@ class TaskGraph:
                 return describe(match)
         return name.replace("_", " ").lower()
 
-    def friendly_step(self, step: Step) -> str:
-        """Return one short action sentence suitable for speech output."""
-        row_stage = self.control_coords_for(step.id)
-        prefix = (f"Row {row_stage[0]}, step {row_stage[1]}"
-                  if row_stage and row_stage[0] else "the final check")
+    @staticmethod
+    def friendly_step_action(step: Step) -> str:
+        """Return only the short, familiar action phrase for a step."""
         if step.id.endswith("bearing_right"):
-            action = "fit the bearing into the right support bracket"
-        elif step.id.endswith("bearing_left"):
-            action = "fit the bearing into the left support bracket"
-        elif step.id.endswith("gear_rod"):
-            action = "assemble the gear shaft, gears, and retaining pins"
-        elif step.id.endswith("fasten_first_stand"):
-            action = "fasten the right support bracket to the baseboard"
-        elif step.id.endswith("insert_rod_and_fit_second"):
-            action = "insert the assembled gear shaft and fit the left support bracket"
-        elif step.id.endswith("fasten_second_stand"):
-            action = "fasten the left support bracket to the baseboard"
-        elif step.id == "r1_attach_handle":
-            action = "attach and pin the crank handle"
-        else:
-            action = "check alignment, gear meshing, and free rotation"
-        return f"{prefix}: {action}"
+            return "put the bearing into the right stand"
+        if step.id.endswith("bearing_left"):
+            return "put the bearing into the left stand"
+        if step.id.endswith("gear_rod"):
+            return "put the gears on the gear rod and pin them"
+        if step.id.endswith("fasten_first_stand"):
+            return "screw the right stand to the board"
+        if step.id.endswith("insert_rod_and_fit_second"):
+            return "insert the gear rod and fit the left stand"
+        if step.id.endswith("fasten_second_stand"):
+            return "screw the left stand to the board"
+        if step.id == "r1_attach_handle":
+            return "attach and pin the crank handle"
+        return "check that the gears line up and turn freely"
+
+    def friendly_step_label(self, step: Step) -> str:
+        """Return the compact user-facing stage label, such as ``Step 2.4``."""
+        row_stage = self.control_coords_for(step.id)
+        return (f"Step {row_stage[0]}.{row_stage[1]}"
+                if row_stage and row_stage[0] else "Final check")
+
+    def friendly_step(self, step: Step) -> str:
+        """Return one compact stage-and-action description."""
+        return f"{self.friendly_step_label(step)}: {self.friendly_step_action(step)}"
 
     @classmethod
     def validate(cls) -> list[str]:
@@ -675,6 +688,10 @@ class TaskGraph:
         assemblies = sorted(p for p in self.active_parts if p.endswith("_ASSEMBLY"))
 
         lines = [f"Progress: {len(completed)} / {len(self.steps)} steps completed"]
+        lines.append(
+            f"Recommendation focus row: {self.last_worked_row}"
+            if self.last_worked_row is not None
+            else "Recommendation focus row: none yet")
 
         if completed:
             lines.append("\nCompleted steps (most recent last):")
@@ -712,8 +729,10 @@ class TaskGraph:
             " Recommend only READY steps. Every listed READY step is valid and may"
             " be performed because all of its prerequisites are satisfied. When"
             " choosing among multiple READY steps, follow the same deterministic"
-            " rule as the interface: prefer Row 1, then Row 2, then Row 3, then"
-            " Row 4, and choose the lowest user-facing stage within that row."
+            " rule as the interface: first prefer the most recently completed or"
+            " reverted row while it has READY work, then choose the lowest"
+            " user-facing stage in that row. If that row has no READY work (or no"
+            " row has been worked yet), use the lowest-numbered READY row and stage."
             " Recommend the final gearbox step only when it is READY and no row"
             " assembly step remains READY. This preference selects among valid"
             " options; it is not an additional dependency or ordering constraint."
@@ -722,8 +741,8 @@ class TaskGraph:
 
         return "\n".join(lines)
 
-    def recommend_next_step(self) -> "Step | None":
-        """Pick the READY step with the lowest row and user-facing stage number.
+    def recommend_next_step(self, exclude_step_id: str | None = None) -> "Step | None":
+        """Prefer READY work in the last changed row, then row/stage order.
 
         ``Step.stage`` represents dependency depth and is not the stage number
         displayed by the interface or used by the controller. Use
@@ -731,9 +750,15 @@ class TaskGraph:
         documented Stage 1–8 sequence exactly. The global finish step is treated
         as the highest row and therefore comes after all ready row work.
         """
-        ready = [s for s in self.steps if self.is_ready(s)]
+        ready = [s for s in self.steps
+                 if self.is_ready(s) and s.id != exclude_step_id]
         if not ready:
             return None
+
+        if self.last_worked_row is not None:
+            same_row = [s for s in ready if s.row == self.last_worked_row]
+            if same_row:
+                ready = same_row
 
         def _priority(s: Step) -> tuple:
             row = s.row if s.row > 0 else 999
@@ -812,6 +837,17 @@ class DearPyGuiTaskGraphApp:
         self._assistant_logger: AssistantInteractionLogger | None = None
         self._tool_index = gearbox_control.load_tool_index(
             gearbox_control._DEFAULT_TOOL_JSON)
+        try:
+            layout = json.loads(Path(gearbox_control._DEFAULT_TOOL_JSON).read_text())
+            self._fetchable_tool_ids = {
+                int(item["id"])
+                for item in layout.get("tools", [])
+                if item.get("grasp_joints")
+            }
+        except (OSError, ValueError, TypeError, KeyError):
+            self._fetchable_tool_ids = set()
+        # At most one object can wait for spoken fetch confirmation.
+        self._pending_fetch: dict[str, object] | None = None
 
     def build(self) -> None:
         """Construct, configure, and reveal the Dear PyGui interface."""
@@ -890,7 +926,7 @@ class DearPyGuiTaskGraphApp:
 
     def run(self, live_port: int | None = None,
             voice_device: str | None = None,
-            wake_word: str = "hey robot",
+            wake_word: str | None = None,
             vlm_model: str | None = None,
             task_description_path: str | None = None,
             select_port: int | None = None,
@@ -972,6 +1008,9 @@ class DearPyGuiTaskGraphApp:
             if self._vlm is not None:
                 self._vlm.tick()
                 self._poll_vlm_part_references()
+                self._poll_vlm_fetch_confirmations()
+                self._poll_vlm_recommendation_requests()
+                self._poll_vlm_answers()
             self._poll_tts()
             # Draw one frame and process Dear PyGui interaction.
             dpg.render_dearpygui_frame()
@@ -1467,7 +1506,7 @@ class DearPyGuiTaskGraphApp:
         dpg.add_text("Transcripts:", color=(160, 170, 185))
         dpg.add_input_text(tag="voice_transcripts", multiline=True, readonly=True,
                            width=-1, height=120,
-                           default_value='Say "hey robot" to start...')
+                           default_value="Speak normally; no wake word is required.")
 
     # ── Voice input and VLM integration ──────────────────────────────────────
 
@@ -1479,15 +1518,17 @@ class DearPyGuiTaskGraphApp:
         events = self._speech.poll()
 
         # Status label + color
-        # loading=model starting; idle=waiting for wake word;
+        # loading=model starting; idle=waiting for an optional wake word;
         # speech=someone is talking and audio is being captured right now;
         # queued=captured audio is waiting for ASR; transcribing=ASR is running;
-        # listening=wake word was accepted and command mode remains active, even
-        # while the user is silent; error=capture or recognition failed.
+        # listening=continuous capture is active (or an optional wake word was
+        # accepted); error=capture or recognition failed.
         status = self._speech.current_status
         color, label = self._VOICE_STATUS_STYLE.get(
             status, ((200, 200, 200, 255), status))
-        if self._speech.listening_active:
+        if self._speech.always_listening:
+            label = "Listening — no wake word required"
+        elif self._speech.listening_active:
             label = f"Listening  (wake word: \"{self._speech.wake_word}\")"
         elif status == "idle":
             label = f"Idle — say \"{self._speech.wake_word}\""
@@ -1495,7 +1536,7 @@ class DearPyGuiTaskGraphApp:
         dpg.configure_item("voice_status", color=list(color))
 
         # Timer
-        if self._speech.listening_active:
+        if self._speech.listening_active and not self._speech.always_listening:
             dpg.set_value("voice_timer", f"{self._speech.remaining_time:.0f}s remaining")
         else:
             dpg.set_value("voice_timer", "")
@@ -1546,10 +1587,50 @@ class DearPyGuiTaskGraphApp:
         for result in self._vlm.poll_part_references():
             self._handle_part_reference(result)
 
+    def _poll_vlm_answers(self) -> None:
+        """Speak validated natural-language answers produced by the VLM."""
+        if self._vlm is None:
+            return
+        for result in self._vlm.poll_answers():
+            answer = result.get("answer", "").strip()
+            if answer:
+                self._speak(
+                    answer,
+                    warning=result.get("intent") == "invalid",
+                )
+
+    def _poll_vlm_recommendation_requests(self) -> None:
+        if self._vlm is None:
+            return
+        for result in self._vlm.poll_recommendation_requests():
+            self._activate_recommended_step(result.get("text", ""))
+
+    def _poll_vlm_fetch_confirmations(self) -> None:
+        if self._vlm is None:
+            return
+        for result in self._vlm.poll_fetch_confirmations():
+            self._handle_fetch_confirmation(result)
+
     @staticmethod
     def _row_of_part(part: str) -> int | None:
         match = re.search(r"_ROW([1-4])(?:_|$)", str(part).upper())
         return int(match.group(1)) if match else None
+
+    @staticmethod
+    def _row_hint_from_reference(text: str) -> int | None:
+        """Extract row numbers, including common Parakeet row/roll variants."""
+        words = str(text).lower()
+        number_words = {"one": 1, "two": 2, "three": 3, "four": 4}
+        match = re.search(r"\b(?:row|roll)\s*([1-4])\b", words)
+        if match:
+            return int(match.group(1))
+        match = re.search(r"\b(?:row|roll)\s+(one|two|three|four)\b", words)
+        if match:
+            return number_words[match.group(1)]
+        color_rows = {"white": 1, "red": 2, "green": 3, "blue": 4}
+        mentioned = [row for color, row in color_rows.items()
+                     if re.search(rf"\b{color}\b", words)]
+        return mentioned[0] if len(mentioned) == 1 else None
 
     def _friendly_reference_label(self, label: str,
                                   parts: list[str]) -> str:
@@ -1563,7 +1644,11 @@ class DearPyGuiTaskGraphApp:
             return "wooden retaining pin"
         if label.startswith("SCREW_ROW"):
             return f"Row {label[-1]} mounting screw"
-        return self.graph.friendly_part(parts[0]) if parts else "part"
+        friendly = self.graph.friendly_part(parts[0]) if parts else "part"
+        # Reference-response templates add their own article ("The"/"That").
+        # friendly_part() includes "the" when it is used as a standalone noun
+        # phrase, so remove it here to avoid speech such as "The the Row 1...".
+        return friendly[4:] if friendly.lower().startswith("the ") else friendly
 
     def _send_reference_highlight(self, ids: list[int], color: list[float],
                                   status: str, label: str,
@@ -1586,7 +1671,7 @@ class DearPyGuiTaskGraphApp:
                  "color": color}
                 if assembly_parts else {"command": "reference_clear"})
 
-    def _record_reference_decision(self, result: dict[str, str], decision: str,
+    def _record_reference_decision(self, result: dict[str, object], decision: str,
                                    matched_parts: Iterable[str],
                                    current_assemblies: Iterable[str], ids: list[int],
                                    assembly_parts: Iterable[str], spoken: str) -> None:
@@ -1611,7 +1696,7 @@ class DearPyGuiTaskGraphApp:
             self.log(f"[StudyLog error] {error}")
 
     def _emit_reference_decision(
-            self, result: dict[str, str], decision: str, color: list[float],
+            self, result: dict[str, object], decision: str, color: list[float],
             spoken: str, *, ids: list[int] | None = None,
             matched_parts: Iterable[str] = (),
             current_assemblies: Iterable[str] = (),
@@ -1621,6 +1706,12 @@ class DearPyGuiTaskGraphApp:
         self._send_reference_highlight(
             ids, color, decision, result.get("label", "INVALID_OUTPUT"),
             assembly_parts=assembly_parts)
+        if self._vlm is not None:
+            self._vlm.apply_policy_response(
+                result.get("text", ""),
+                result.get("label", "INVALID_OUTPUT"),
+                spoken,
+            )
         self._speak(spoken, warning=warning)
         self._record_reference_decision(
             result, decision, matched_parts, current_assemblies, ids,
@@ -1630,9 +1721,14 @@ class DearPyGuiTaskGraphApp:
     def _ambiguity_question(text: str) -> str:
         words = str(text).lower()
         if any(word in words for word in ("stand", "bracket", "support")):
+            if DearPyGuiTaskGraphApp._row_hint_from_reference(text) is not None:
+                return "Which side do you mean: left or right?"
             return "Which row and side do you mean: left or right?"
         if "gear" in words and "rod" not in words and "shaft" not in words:
             return "Which gear do you mean? Please give its row, color, size, or position."
+        if "holder" in words:
+            return ("Which bit holder do you mean: Bit Holder 1 with the H5 and "
+                    "H3 bits, or Bit Holder 2 with the T25 bit?")
         if any(word in words for word in ("screwdriver", "driver", "bit", "wrench")):
             return ("Which fastening tool do you mean: H5, T25, H3, or the "
                     "Phillips screwdriver? You can also tell me the row.")
@@ -1640,15 +1736,204 @@ class DearPyGuiTaskGraphApp:
             return "Which row are you assembling?"
         return "Which object do you mean? Please add its row, side, color, size, or position."
 
-    def _handle_part_reference(self, result: dict[str, str]) -> None:
-        """Apply deterministic task-state policy to one VLM-resolved label."""
-        label = result.get("label", "INVALID_OUTPUT")
-        if label == "AMBIGUOUS":
-            spoken = self._ambiguity_question(result.get("text", ""))
+    @staticmethod
+    def _ambiguous_part_category(text: str) -> tuple[str, list[str]]:
+        """Expand an ambiguous common noun without guessing a specific object."""
+        words = str(text).lower()
+        if any(word in words for word in ("stand", "bracket", "support")):
+            return "Gear stands", sorted(
+                part for part in PROVIDED_PARTS if part.startswith("STAND_"))
+        if "gear" in words and any(word in words for word in ("rod", "shaft")):
+            return "Gear rods", sorted(
+                part for part in PROVIDED_PARTS if part.startswith("GEAR_ROD_"))
+        if "gear" in words:
+            return "Gears", sorted(
+                part for part in PROVIDED_PARTS if part.startswith("GEAR_ROW"))
+        if "bearing" in words:
+            return "Bearings", sorted(
+                part for part in PROVIDED_PARTS if part.startswith("BEARING_"))
+        if "screw" in words:
+            return "Screws", sorted(
+                part for part in PROVIDED_PARTS if part.startswith("SCREW_"))
+        if "pin" in words:
+            return "Wooden pins", sorted(
+                part for part in PROVIDED_PARTS if part.startswith("PIN_"))
+        return "", []
+
+    def _candidate_parts_from_vlm(self, labels: Iterable[str]) -> list[str]:
+        """Expand validated VLM ambiguity candidates into graph part names."""
+        parts: list[str] = []
+        for label in labels:
+            for part in self.graph.parts_for_reference_label(label):
+                if part not in parts:
+                    parts.append(part)
+        return parts
+
+    def _friendly_candidate_category(self, candidates: Iterable[str]) -> str:
+        """Describe a VLM-provided candidate set without reparsing the speech."""
+        parts = list(candidates)
+        if not parts:
+            return ""
+        if all(part.startswith("STAND_") for part in parts):
+            category = "Gear stands"
+        elif all(part.startswith("GEAR_ROD_") for part in parts):
+            category = "Gear rods"
+        elif all(part.startswith("GEAR_ROW") for part in parts):
+            category = "Gears"
+        elif all(part.startswith("BEARING_") for part in parts):
+            category = "Bearings"
+        elif all(part.startswith("SCREW_") for part in parts):
+            category = "Screws"
+        elif all(part.startswith("PIN_") for part in parts):
+            category = "Wooden pins"
+        else:
+            return "Parts"
+        rows = {self._row_of_part(part) for part in parts}
+        rows.discard(None)
+        if len(rows) == 1:
+            return f"Row {next(iter(rows))} {category.lower()}"
+        return category
+
+    def _arm_fetch_confirmation(
+            self, result: dict[str, object], ids: Iterable[int], friendly: str,
+            *, matched_parts: Iterable[str],
+            assembly_parts: Iterable[str] = ()) -> bool:
+        """Highlight one graspable object and ask before moving the robot."""
+        unique_ids = sorted({int(tool_id) for tool_id in ids})
+        if len(unique_ids) != 1:
+            self._pending_fetch = None
+            if self._vlm is not None:
+                self._vlm.set_pending_fetch(None)
+            spoken = (
+                "I need one specific fetchable object. Please name only one part "
+                "or tool, including its row and side when necessary.")
             self._emit_reference_decision(
-                result, "ambiguous", [1.0, 0.72, 0.0, 0.2], spoken,
-                warning=True)
+                result, "fetch_not_specific", [1.0, 0.72, 0.0, 0.2],
+                spoken, warning=True)
+            return False
+
+        tool_id = unique_ids[0]
+        if tool_id not in self._fetchable_tool_ids:
+            self._pending_fetch = None
+            if self._vlm is not None:
+                self._vlm.set_pending_fetch(None)
+            spoken = (
+                f"I highlighted the {friendly}, but it has no recorded robot "
+                "grasp pose, so I cannot fetch it automatically.")
+            self._emit_reference_decision(
+                result, "fetch_pose_unavailable", [1.0, 0.72, 0.0, 0.2],
+                spoken, ids=[tool_id], matched_parts=matched_parts,
+                assembly_parts=assembly_parts, warning=True)
+            return False
+
+        self._pending_fetch = {
+            "tool_id": tool_id,
+            "label": str(result.get("label", "")),
+            "friendly": friendly,
+            "matched_parts": list(matched_parts),
+            "assembly_parts": list(assembly_parts),
+        }
+        if self._vlm is not None:
+            self._vlm.set_pending_fetch(friendly)
+        spoken = f"I highlighted the {friendly}. Do you want me to get it?"
+        self._emit_reference_decision(
+            result, "fetch_confirmation_pending", [0.0, 1.0, 1.0, 0.2],
+            spoken, ids=[tool_id], matched_parts=matched_parts,
+            assembly_parts=assembly_parts)
+        return True
+
+    def _handle_fetch_confirmation(self, result: dict[str, str]) -> None:
+        """Accept or cancel the single pending voice-requested robot fetch."""
+        pending = self._pending_fetch
+        question = result.get("text", "")
+        if pending is None:
+            spoken = "There is no pending robot fetch to confirm."
+            self._speak(spoken, warning=True)
+            if self._vlm is not None:
+                self._vlm.apply_policy_response(
+                    question, "FETCH_CANCELLED", spoken)
             return
+
+        confirmed = result.get("confirmation") == "yes"
+        self._pending_fetch = None
+        if self._vlm is not None:
+            self._vlm.set_pending_fetch(None)
+        friendly = str(pending["friendly"])
+        if confirmed:
+            self._send_select({
+                "event": "fetch_confirmed",
+                "tool_id": int(pending["tool_id"]),
+                "label": str(pending["label"]),
+            })
+            spoken = f"Okay. I asked the robot to get the {friendly}."
+            display_label = "FETCH_CONFIRMED"
+        else:
+            self._send_reference_highlight(
+                [], [0.0, 1.0, 1.0, 0.2], "fetch_cancelled",
+                str(pending["label"]))
+            spoken = f"Okay. I cancelled the fetch for the {friendly}."
+            display_label = "FETCH_CANCELLED"
+        self._speak(spoken, warning=not confirmed)
+        if self._vlm is not None:
+            self._vlm.apply_policy_response(question, display_label, spoken)
+
+    def _handle_part_reference(self, result: dict[str, object]) -> None:
+        """Apply deterministic task-state policy to one VLM-resolved label."""
+        label = str(result.get("label", "INVALID_OUTPUT"))
+        if label == "STEP_PARTS":
+            self._handle_step_parts_request(result)
+            return
+        if label == "AMBIGUOUS":
+            candidate_labels = result.get("candidate_labels", [])
+            candidates = self._candidate_parts_from_vlm(candidate_labels)
+            category = self._friendly_candidate_category(candidates)
+            # Backward compatibility for explicit callers of
+            # submit_part_reference(), which return only AMBIGUOUS. Normal
+            # voice/text questions now receive candidates directly from Qwen.
+            if not candidates:
+                category, candidates = self._ambiguous_part_category(
+                    result.get("text", ""))
+                row_hint = self._row_hint_from_reference(result.get("text", ""))
+                if row_hint is not None:
+                    candidates = [part for part in candidates
+                                  if self._row_of_part(part) == row_hint]
+                    if category:
+                        category = f"Row {row_hint} {category.lower()}"
+            if self.selected_id and candidates:
+                step = self.graph.by_id[self.selected_id]
+                step_parts = set((*step.inputs, *step.context))
+                relevant = [
+                    part for part in candidates
+                    if (part in step_parts
+                        or self.graph.current_container(part) in step_parts)
+                ]
+                if len(relevant) == 1:
+                    # The selected step supplies enough context to resolve an
+                    # otherwise generic expression, such as "the stand" when
+                    # only its right stand is an input.
+                    result = dict(result)
+                    result["label"] = relevant[0]
+                    label = relevant[0]
+                elif not relevant:
+                    ids = [
+                        gearbox_control.tool_id_for_graph_part(self._tool_index, part)
+                        for part in candidates if part in self.graph.active_parts
+                    ]
+                    ids = [tool_id for tool_id in ids if tool_id is not None]
+                    spoken = (
+                        f"{category} are not relevant to this step. "
+                        f"This step is to {self.graph.friendly_step_action(step)}.")
+                    self._emit_reference_decision(
+                        result, "not_relevant_ambiguous",
+                        [1.0, 0.0, 0.0, 0.25], spoken,
+                        ids=ids, matched_parts=candidates, warning=True)
+                    return
+            if label == "AMBIGUOUS":
+                spoken = self._ambiguity_question(result.get("text", ""))
+                self._emit_reference_decision(
+                    result, "ambiguous", [1.0, 0.72, 0.0, 0.2], spoken,
+                    warning=True)
+                return
 
         is_tool = label in gearbox_control.FASTENING_TOOL_SPECS
         parts = self.graph.parts_for_reference_label(label)
@@ -1672,17 +1957,24 @@ class DearPyGuiTaskGraphApp:
         if is_tool:
             coords = self.graph.control_coords_for(step.id)
             required = set(gearbox_control.fastening_tool_labels(step.row))
-            # The holder itself is relevant whenever this row needs one of its
-            # H5/T25/H3 inserts.
-            holder_needed = bool(required & {"H5_HEX_BIT", "T25_TORX_BIT", "H3_HEX_BIT"})
+            # Each holder is relevant only when the row needs an insert stored
+            # in that holder: H5/H3 in Holder 1 and T25 in Holder 2.
+            holder1_needed = bool(required & {"H5_HEX_BIT", "H3_HEX_BIT"})
+            holder2_needed = "T25_TORX_BIT" in required
             relevant = (coords is not None and coords[1] in (4, 6)
                         and (label in required
-                             or (label == "BIT_HOLDER" and holder_needed)))
+                             or (label == "BIT_HOLDER1" and holder1_needed)
+                             or (label == "BIT_HOLDER2" and holder2_needed)))
             ids = gearbox_control.tool_ids_for_reference(self._tool_index, label)
             spoken_tool = self._friendly_reference_label(label, [])
             if relevant:
-                spoken = (f"Yes. The {spoken_tool} is required for "
-                          f"{self.graph.friendly_step(step)}. I have highlighted it.")
+                if result.get("part_action") == "fetch":
+                    self._arm_fetch_confirmation(
+                        result, ids, spoken_tool, matched_parts=[label])
+                    return
+                spoken = (f"Yes. The {spoken_tool} is needed to "
+                          f"{self.graph.friendly_step_action(step)}. "
+                          "I have highlighted it.")
                 self._emit_reference_decision(
                     result, "relevant_tool", [0.0, 1.0, 1.0, 0.2], spoken,
                     ids=ids, matched_parts=[label])
@@ -1690,7 +1982,7 @@ class DearPyGuiTaskGraphApp:
                 required_text = self._fastening_tool_guidance(step)
                 suffix = (f" Use {required_text}." if required_text else
                           " This selected step does not require a fastening tool.")
-                spoken = f"The {spoken_tool} is not needed for this step.{suffix}"
+                spoken = f"The {spoken_tool} is not relevant to this step.{suffix}"
                 self._emit_reference_decision(
                     result, "not_relevant_tool", [1.0, 0.0, 0.0, 0.25], spoken,
                     ids=ids, matched_parts=[label], warning=True)
@@ -1735,6 +2027,12 @@ class DearPyGuiTaskGraphApp:
             ids = [gearbox_control.tool_id_for_graph_part(self._tool_index, part)
                    for part in active_relevant]
             ids = [tool_id for tool_id in ids if tool_id is not None]
+            if result.get("part_action") == "fetch":
+                self._arm_fetch_confirmation(
+                    result, ids, spoken_part,
+                    matched_parts=active_relevant,
+                    assembly_parts=active_relevant)
+                return
             if self.graph.state(step) == "blocked":
                 missing = self._friendly_missing(self.graph.missing(step))
                 spoken = (f"The {spoken_part} belongs to this task, and I have highlighted "
@@ -1742,57 +2040,168 @@ class DearPyGuiTaskGraphApp:
                           f"{missing}.")
                 warning = True
             else:
-                spoken = (f"Yes. The {spoken_part} is needed for "
-                          f"{self.graph.friendly_step(step)}. I have highlighted its "
+                spoken = (f"Yes. The {spoken_part} is needed to "
+                          f"{self.graph.friendly_step_action(step)}. "
+                          "I have highlighted its "
                           "storage location.")
                 warning = False
             self._emit_reference_decision(
                 result, "relevant", [0.0, 1.0, 1.0, 0.2], spoken,
-                ids=ids, matched_parts=active_relevant, warning=warning)
+                ids=ids, matched_parts=active_relevant,
+                # Mirror the same cyan semantic highlight onto the component
+                # in the assembled BoardAR gearbox, not only its pegboard
+                # storage object or row-kit box.
+                assembly_parts=active_relevant, warning=warning)
             return
 
         ids = [gearbox_control.tool_id_for_graph_part(self._tool_index, part)
                for part in candidates if part in self.graph.active_parts]
         ids = [tool_id for tool_id in ids if tool_id is not None]
-        spoken = (f"The {spoken_part} is not needed for the selected step. "
-                  f"The selected task is {self.graph.friendly_step(step)}.")
+        spoken = (f"The {spoken_part} is not relevant to this step. "
+                  f"This step is to {self.graph.friendly_step_action(step)}.")
         self._emit_reference_decision(
             result, "not_relevant", [1.0, 0.0, 0.0, 0.25], spoken,
             ids=ids, matched_parts=candidates, warning=True)
+
+    def _handle_step_parts_request(self, result: dict[str, object]) -> None:
+        """Resolve task-relative phrases such as "parts for the next step"."""
+        scope = str(result.get("step_scope", ""))
+        if scope == "selected_step":
+            if not self.selected_id:
+                self._emit_reference_decision(
+                    result, "no_selected_step", [0.0, 1.0, 1.0, 0.2],
+                    "Please select an assembly step first.", warning=True)
+                return
+            step = self.graph.by_id[self.selected_id]
+            scope_text = "This step"
+        elif scope == "next_step":
+            # Never skip over the user's current work. "Next" advances only
+            # after the selected step has actually been marked complete.
+            if self.selected_id:
+                selected = self.graph.by_id[self.selected_id]
+                if self.graph.state(selected) != "complete":
+                    self._emit_reference_decision(
+                        result,
+                        "current_step_incomplete",
+                        [1.0, 0.72, 0.0, 0.2],
+                        ("The current step is not complete yet. Finish it and "
+                         "mark it complete before asking for the next step."),
+                        warning=True,
+                    )
+                    return
+            step = self.graph.recommend_next_step()
+            if step is None:
+                self._emit_reference_decision(
+                    result, "no_next_step", [0.0, 1.0, 1.0, 0.2],
+                    "There is no other ready assembly step right now.",
+                    warning=True)
+                return
+            scope_text = "The next step"
+        else:
+            self._emit_reference_decision(
+                result, "invalid_step_scope", [0.0, 1.0, 1.0, 0.2],
+                "Please say whether you mean this step or the next step.",
+                warning=True)
+            return
+
+        excluded_parts: set[str] = set()
+        for label in result.get("exclude_labels", []):
+            excluded_parts.update(self.graph.parts_for_reference_label(str(label)))
+        active_inputs = [part for part in step.inputs
+                         if part in self.graph.active_parts
+                         and part not in excluded_parts]
+        if not active_inputs:
+            self._emit_reference_decision(
+                result,
+                ("no_other_next_step_parts" if scope == "next_step"
+                 else "no_other_selected_step_parts"),
+                [0.0, 1.0, 1.0, 0.2],
+                f"There are no other active parts required for {scope_text.lower()}.",
+            )
+            return
+        raw_active = [part for part in active_inputs if part in PROVIDED_PARTS]
+        component_parts: list[str] = list(raw_active)
+        # When an input is already a subassembly, highlight its consumed
+        # components on the assembled gearbox instead of looking for a removed
+        # pegboard object.
+        for assembly in active_inputs:
+            if assembly in PROVIDED_PARTS:
+                continue
+            for part in PROVIDED_PARTS:
+                if (self.graph.current_container(part) == assembly
+                        and part not in component_parts):
+                    component_parts.append(part)
+
+        ids = [gearbox_control.tool_id_for_graph_part(self._tool_index, part)
+               for part in raw_active]
+        ids = [tool_id for tool_id in ids if tool_id is not None]
+        descriptions = [self.graph.friendly_part(part) for part in active_inputs]
+        if not descriptions:
+            needed_text = "its required active assembly"
+        elif len(descriptions) == 1:
+            needed_text = descriptions[0]
+        elif len(descriptions) == 2:
+            needed_text = f"{descriptions[0]} and {descriptions[1]}"
+        else:
+            needed_text = ", ".join(descriptions[:-1]) + f", and {descriptions[-1]}"
+        action = self.graph.friendly_step_action(step)
+        highlight_pronoun = "it" if len(active_inputs) == 1 else "them"
+        spoken = (
+            f"{scope_text} is to {action}. You need {needed_text}. "
+            f"I have highlighted {highlight_pronoun}.")
+        self._emit_reference_decision(
+            result,
+            "next_step_parts" if scope == "next_step" else "selected_step_parts",
+            [0.0, 1.0, 1.0, 0.2],
+            spoken,
+            ids=ids,
+            matched_parts=active_inputs,
+            assembly_parts=component_parts,
+        )
 
     def _friendly_missing(self, missing: list[str]) -> str:
         descriptions = []
         for item in missing[:3]:
             if item in self.graph.by_id:
-                descriptions.append(self.graph.friendly_step(self.graph.by_id[item]))
+                descriptions.append(
+                    self.graph.friendly_step_action(self.graph.by_id[item]))
             else:
-                descriptions.append(self.graph.friendly_part(item))
-        return "; then ".join(descriptions)
+                producer = self.graph.producer_for(item)
+                descriptions.append(
+                    self.graph.friendly_step_action(producer)
+                    if producer is not None else self.graph.friendly_part(item))
+        if not descriptions:
+            return "the earlier steps"
+        if len(descriptions) == 1:
+            return descriptions[0]
+        return ", ".join(descriptions[:-1]) + f", and {descriptions[-1]}"
 
     def _fastening_tool_guidance(self, step: Step) -> str:
         coords = self.graph.control_coords_for(step.id)
         if coords is None or coords[1] not in (4, 6):
             return ""
-        names = [str(gearbox_control.FASTENING_TOOL_SPECS[label]["friendly"])
-                 for label in gearbox_control.fastening_tool_labels(step.row)]
-        if not names:
-            return ""
-        return names[0] if len(names) == 1 else f"{names[0]} with the {names[1]}"
+        return {
+            1: "the H5 bit from Holder 1 with the bit wrench",
+            2: "the T25 bit from Holder 2 with the bit screwdriver",
+            3: "the H3 bit from Holder 1 with the bit wrench",
+            4: "the Phillips screwdriver",
+        }.get(step.row, "")
 
     def _announce_step_selection(self, step: Step) -> None:
         state = self.graph.state(step)
-        action = self.graph.friendly_step(step)
+        action = self.graph.friendly_step_action(step)
         if state == "blocked":
             missing = self._friendly_missing(self.graph.missing(step))
             self._speak(
-                f"Do not start {action} yet. First complete or prepare {missing}.",
+                f"This step is not ready. First, {missing}.",
                 warning=True)
         elif state == "complete":
-            self._speak(f"{action} is already complete.")
+            self._speak("This step is already complete.")
         else:
             tool_guidance = self._fastening_tool_guidance(step)
-            suffix = f" Use the {tool_guidance}." if tool_guidance else ""
-            self._speak(f"Selected {action}. This step is ready.{suffix}")
+            spoken_action = action[0].upper() + action[1:]
+            suffix = f" Use {tool_guidance}." if tool_guidance else ""
+            self._speak(f"This step is ready. {spoken_action}.{suffix}")
 
     def _focus_vlm_on_step(self, step: Step) -> None:
         """Keep GUI- and Unity-originated selections identical for the VLM."""
@@ -1825,24 +2234,33 @@ class DearPyGuiTaskGraphApp:
     # ── User actions and GUI callbacks ───────────────────────────────────────
 
     def _recommend_callback(self) -> None:
-        """Highlight the preferred ready step and ask the VLM to explain it."""
+        """Select the preferred READY step in the GUI and Unity."""
+        self._activate_recommended_step()
+
+    def _activate_recommended_step(self, question: str = "") -> None:
+        """Apply the graph recommendation as a synchronized step selection."""
         step = self.graph.recommend_next_step()
         if step is None:
+            spoken = "There is no ready assembly step to recommend right now."
             self.log("[Recommend] No READY steps — assembly may be complete or stalled.")
+            self._speak(spoken, warning=True)
+            if question and self._vlm is not None:
+                self._vlm.apply_policy_response(
+                    question, "RECOMMENDED_STEP", spoken)
             return
         self.recommended_id = step.id
-        self.refresh()
-        self.log(f"[Recommend] Highlighted: [{step.id}]  {step.title}")
-        if self._vlm is not None:
-            q = (
-                f"The system recommends the next step as:\n"
-                f"  [{step.id}] {step.title}\n\n"
-                f"Briefly explain what this step involves and why it is the right"
-                f" choice now according to the row-by-row assembly policy."
-            )
-            sent = self._vlm.submit_question(q)
-            if not sent:
-                self.log("[Recommend] VLM busy — explanation skipped.")
+        self._select_step(step.id, announce=False)
+        if self.controller is not None:
+            self._animate_unity_callback()
+        action = self.graph.friendly_step_action(step)
+        tool_guidance = self._fastening_tool_guidance(step)
+        suffix = f" Use {tool_guidance}." if tool_guidance else ""
+        spoken = f"I selected the recommended step. {action.capitalize()}.{suffix}"
+        self.log(f"[Recommend] Auto-selected: [{step.id}]  {step.title}")
+        self._speak(spoken)
+        if question and self._vlm is not None:
+            self._vlm.apply_policy_response(
+                question, "RECOMMENDED_STEP", spoken)
 
     def _animate_unity_callback(self) -> None:
         """Ask the in-process controller to animate the selected task stage."""
@@ -1862,6 +2280,10 @@ class DearPyGuiTaskGraphApp:
             done_stages = [s for s in range(1, 8)]
             blocked     = False
             checked     = self.controller.sm.done8
+        # A Unity checkbox click after programmatic selection must apply to the
+        # same recommended stage, just as if the user had clicked its part.
+        self.controller.sm.current_row = row
+        self.controller.sm.current_stage = stage
         self.controller.send({"command": "stage", "row": row, "stage": stage,
                                "done_stages": done_stages,
                                "step_delay": gearbox_control.STEP_DELAY,
@@ -1872,21 +2294,26 @@ class DearPyGuiTaskGraphApp:
 
     def _select_callback(self, _sender, _app_data, user_data) -> None:
         """Select a graph step and update external viewers and VLM focus."""
-        self.selected_id = user_data
+        self._select_step(user_data, announce=True)
+
+    def _select_step(self, step_id: str, *, announce: bool) -> None:
+        """Synchronize one selection with DearPyGui and external 3D viewers."""
+        self.selected_id = step_id
         self.refresh()
-        step = self.graph.by_id[user_data]
-        self._announce_step_selection(step)
+        step = self.graph.by_id[step_id]
+        if announce:
+            self._announce_step_selection(step)
         if self.controller is not None:
             self.controller.send({"command": "reference_clear"})
-        coords = TaskGraph.control_coords_for(user_data)
+        coords = TaskGraph.control_coords_for(step_id)
         if coords is not None:
             row, stage = coords
             index = gearbox_control.load_tool_index(gearbox_control._DEFAULT_TOOL_JSON)
             ids = (gearbox_control.appearing_ids(index, row, stage)
                    if row > 0 else [])
             self._send_select({"event": "select", "row": row, "stage": stage,
-                               "step": user_data, "ids": ids,
-                               "blocked": self.graph.state(self.graph.by_id[user_data]) == "blocked"})
+                               "step": step_id, "ids": ids,
+                               "blocked": self.graph.state(step) == "blocked"})
         self._focus_vlm_on_step(step)
 
     def _sync_sm_from_graph(self) -> None:
@@ -2123,6 +2550,23 @@ def run_self_test() -> None:
     assert recommendation_graph.recommend_next_step().id == "r1_gear_rod"
     recommendation_graph.complete(recommendation_graph.by_id["r1_gear_rod"])
     assert recommendation_graph.recommend_next_step().id == "r1_bearing_left"
+
+    # Recommendation follows the row most recently changed by completion or
+    # undo, even while lower-numbered rows also contain READY work.
+    focus_graph = TaskGraph()
+    ok, _ = focus_graph.complete(focus_graph.by_id["r2_bearing_right"])
+    assert ok and focus_graph.last_worked_row == 2
+    assert focus_graph.recommend_next_step().id == "r2_gear_rod"
+    ok, _ = focus_graph.complete(focus_graph.by_id["r3_bearing_right"])
+    assert ok and focus_graph.last_worked_row == 3
+    assert focus_graph.recommend_next_step().id == "r3_gear_rod"
+    ok, _ = focus_graph.undo(focus_graph.by_id["r2_bearing_right"])
+    assert ok and focus_graph.last_worked_row == 2
+    assert focus_graph.recommend_next_step().id == "r2_bearing_right"
+    focus_graph.reset()
+    assert focus_graph.last_worked_row is None
+    assert focus_graph.recommend_next_step().id == "r1_bearing_right"
+
     graph = TaskGraph()
     assert graph.is_ready(graph.by_id["r1_bearing_right"])
     assert not graph.is_ready(graph.by_id["r1_bearing_left"])
@@ -2165,12 +2609,15 @@ def main() -> None:
     parser.add_argument("--self-test", action="store_true", help="test the task model without opening the GUI")
     parser.add_argument("--no-live", action="store_true",
                         help="Disable the live controller link (open the viewer standalone).")
-    parser.add_argument("--voice-device", default="bluez_source.50_C2_ED_43_95_C8.handsfree_head_unit",
-                        help="PulseAudio source name for voice input (pass empty string to disable).")
+    parser.add_argument(
+        "--voice-device", default=DEFAULT_PULSEAUDIO_DEVICE,
+        help=("PulseAudio source name for voice input "
+              f"(default: {DEFAULT_PULSEAUDIO_DEVICE})."))
     parser.add_argument("--no-voice", action="store_true",
                         help="Disable voice input.")
-    parser.add_argument("--wake-word", default="hey robot",
-                        help="Wake word to activate transcription (default: 'hey robot').")
+    parser.add_argument(
+        "--wake-word", default="",
+        help="Optional wake word. By default speech is accepted continuously without one.")
     parser.add_argument("--vlm-model", default=None,
                         help="Enable VLM assistant with this model name "
                              "(for example Qwen/Qwen3-VL-8B-Instruct). Omit to disable.")
