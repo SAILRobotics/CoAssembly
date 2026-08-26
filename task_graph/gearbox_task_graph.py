@@ -1252,6 +1252,7 @@ class DearPyGuiTaskGraphApp:
                 if not already_selected:
                     self._announce_step_selection(selected)
                 self._focus_vlm_on_step(selected)
+                self._publish_selected_step_board_highlight()
         # Clear controller-driven highlighting when that view closes.
         elif event == "close":
             self.active_ids = set()
@@ -1876,14 +1877,69 @@ class DearPyGuiTaskGraphApp:
         # phrase, so remove it here to avoid speech such as "The the Row 1...".
         return friendly[4:] if friendly.lower().startswith("the ") else friendly
 
+    def _selected_step_board_parts(self) -> list[str]:
+        """Return raw BoardAR components relevant to the selected step."""
+        if not self.selected_id or self.selected_id not in self.graph.by_id:
+            return []
+        step = self.graph.by_id[self.selected_id]
+        required = set((*step.inputs, *step.context))
+        parts: list[str] = []
+        for part in sorted(PROVIDED_PARTS):
+            current = self.graph.current_container(part)
+            if part in required or current in required:
+                parts.append(part)
+        return parts
+
+    def _publish_selected_step_board_highlight(self) -> None:
+        """Keep selected-step BoardAR and pegboard context cyan on every route."""
+        parts = self._selected_step_board_parts()
+        step_ids = self._selected_step_pegboard_ids()
+        color = [0.0, 1.0, 1.0, 0.2]
+        self._send_select({
+            "event": "step_context_highlight",
+            "step_ids": step_ids,
+        })
+        self._send_select({
+            "event": "board_step_highlight",
+            "assembly_parts": parts,
+            "assembly_color": color,
+        })
+        if self.controller is not None:
+            self.controller.send(
+                {"command": "reference_color", "parts": parts, "color": color}
+                if parts else {"command": "reference_clear"})
+
+    def _selected_step_pegboard_ids(self) -> list[int]:
+        """Return pegboard objects entering the currently selected stage."""
+        if not self.selected_id:
+            return []
+        coords = TaskGraph.control_coords_for(self.selected_id)
+        if coords is None or coords[0] <= 0:
+            return []
+        index = gearbox_control.load_tool_index(
+            gearbox_control._DEFAULT_TOOL_JSON)
+        return gearbox_control.appearing_ids(index, coords[0], coords[1])
+
     def _send_reference_highlight(self, ids: list[int], color: list[float],
                                   status: str, label: str,
                                   assembly_parts: Iterable[str] = ()) -> None:
-        assembly_parts = list(dict.fromkeys(assembly_parts))
+        selected_parts = self._selected_step_board_parts()
+        step_ids = self._selected_step_pegboard_ids()
+        assembly_parts = list(dict.fromkeys(
+            (*selected_parts, *assembly_parts)))
+        # Pegboard references may use warning/status colors, but BoardAR keeps
+        # the selected step's semantic context consistently cyan.
+        assembly_color = ([0.0, 1.0, 1.0, 0.2]
+                          if selected_parts else list(color))
+        referred_ids = (sorted({int(tool_id) for tool_id in ids})
+                        if len(set(ids)) == 1 and label != "AMBIGUOUS" else [])
         self._send_select({
             "event": "reference_highlight",
             "ids": sorted({int(tool_id) for tool_id in ids}),
+            "step_ids": step_ids,
+            "referred_ids": referred_ids,
             "color": color,
+            "assembly_color": assembly_color,
             "status": status,
             "label": label,
             "assembly_parts": assembly_parts,
@@ -1894,7 +1950,7 @@ class DearPyGuiTaskGraphApp:
         if self.controller is not None:
             self.controller.send(
                 {"command": "reference_color", "parts": assembly_parts,
-                 "color": color}
+                 "color": assembly_color}
                 if assembly_parts else {"command": "reference_clear"})
 
     def _record_reference_decision(self, result: dict[str, object], decision: str,
@@ -2052,6 +2108,9 @@ class DearPyGuiTaskGraphApp:
                 assembly_parts=assembly_parts, warning=True)
             return False
 
+        previous_friendly = (
+            str(self._pending_fetch.get("friendly", ""))
+            if self._pending_fetch is not None else "")
         self._pending_fetch = {
             "tool_id": tool_id,
             "label": str(result.get("label", "")),
@@ -2061,7 +2120,11 @@ class DearPyGuiTaskGraphApp:
         }
         if self._vlm is not None:
             self._vlm.set_pending_fetch(friendly)
-        spoken = f"I highlighted the {friendly}. Do you want me to get it?"
+        replacement = (
+            f"I cancelled the pending request for the {previous_friendly}. "
+            if previous_friendly and previous_friendly != friendly else "")
+        spoken = (f"{replacement}I highlighted the {friendly}. "
+                  "Do you want me to get it?")
         self._emit_reference_decision(
             result, "fetch_confirmation_pending", [0.0, 1.0, 1.0, 0.2],
             spoken, ids=[tool_id], matched_parts=matched_parts,
@@ -2382,6 +2445,12 @@ class DearPyGuiTaskGraphApp:
                     result = dict(result)
                     result["label"] = relevant[0]
                     label = relevant[0]
+                elif relevant:
+                    # Keep the clarification grounded in the selected step.
+                    # The original ontology candidate (for example BEARING)
+                    # may expand across every row, but only these instances are
+                    # plausible antecedents of "one of them" here.
+                    candidates = relevant
                 elif not relevant:
                     ids = [
                         gearbox_control.tool_id_for_graph_part(self._tool_index, part)
@@ -2397,10 +2466,25 @@ class DearPyGuiTaskGraphApp:
                         ids=ids, matched_parts=candidates, warning=True)
                     return
             if label == "AMBIGUOUS":
-                spoken = self._ambiguity_question(result.get("text", ""))
+                if 1 < len(candidates) <= 6:
+                    choices = []
+                    for part in candidates:
+                        friendly = self.graph.friendly_part(part)
+                        if friendly.lower().startswith("the "):
+                            friendly = friendly[4:]
+                        if friendly not in choices:
+                            choices.append(friendly)
+                    if len(choices) == 2:
+                        choice_text = f"{choices[0]} or {choices[1]}"
+                    else:
+                        choice_text = (", ".join(choices[:-1])
+                                       + f", or {choices[-1]}")
+                    spoken = f"Which one do you mean: {choice_text}?"
+                else:
+                    spoken = self._ambiguity_question(result.get("text", ""))
                 self._emit_reference_decision(
                     result, "ambiguous", [1.0, 0.72, 0.0, 0.2], spoken,
-                    warning=True)
+                    matched_parts=candidates, warning=True)
                 return
 
         is_tool = label in gearbox_control.FASTENING_TOOL_SPECS
@@ -3137,6 +3221,18 @@ class DearPyGuiTaskGraphApp:
         if missing:
             focused += f"\nBlocked by: {', '.join(missing)}"
         self._vlm.set_focused_step(focused)
+        # A selection/recommendation also establishes the objects behind a
+        # follow-up such as "one of them", even before the operator explicitly
+        # asks for the step's parts.
+        step_candidates: list[str] = []
+        for item in step.inputs:
+            if item in PROVIDED_PARTS:
+                step_candidates.append(item)
+                continue
+            for part in sorted(PROVIDED_PARTS):
+                if self.graph.current_container(part) == item:
+                    step_candidates.append(part)
+        self._vlm.set_resolved_part_candidates(step_candidates)
 
     def _notify_vlm(self, event_label: str) -> None:
         """Replace the VLM's stored graph context after a state-changing event."""
@@ -3285,6 +3381,7 @@ class DearPyGuiTaskGraphApp:
             self._send_select({"event": "select", "row": row, "stage": stage,
                                "step": step_id, "ids": ids,
                                "blocked": self.graph.state(step) == "blocked"})
+        self._publish_selected_step_board_highlight()
         self._focus_vlm_on_step(step)
 
     def _sync_sm_from_graph(self) -> None:

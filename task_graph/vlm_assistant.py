@@ -505,6 +505,8 @@ class VLMAssistant:
         self._recent_part_candidates: list[str] = []
         self._pending_candidate_constraint: list[str] = []
         self._generic_plural_followup = False
+        self._pending_other_exclusion = ""
+        self._pending_other_candidates: list[str] = []
         self._context_version = 0
 
     # ── Public: called by the task graph on every state change ────────────────
@@ -515,6 +517,8 @@ class VLMAssistant:
         self._recent_part_candidates = []
         self._pending_candidate_constraint = []
         self._generic_plural_followup = False
+        self._pending_other_exclusion = ""
+        self._pending_other_candidates = []
         self._context_version = self._worker.update_task_state(
             f"Event: {event_label}\n\n{state_summary}")
 
@@ -544,6 +548,24 @@ class VLMAssistant:
         self._last_resolved_part_label = (
             candidates[0] if len(candidates) == 1 else "")
 
+    @staticmethod
+    def _same_reference_category(first: str, second: str) -> bool:
+        """Return whether two ontology labels name the same object category."""
+        def category(label: str) -> str:
+            label = str(label).upper()
+            if re.fullmatch(r"GEAR_ROW[1-4]_(LEFT|RIGHT)", label):
+                return "GEAR"
+            if re.fullmatch(r"STAND_ROW[1-4]_(LEFT|RIGHT)", label):
+                return "STAND"
+            if label.startswith("BEARING"):
+                return "BEARING"
+            if label.startswith("PIN"):
+                return "PIN"
+            if label.startswith("SCREW_ROW"):
+                return "SCREW"
+            return label
+        return category(first) == category(second)
+
     # ── Public: voice input ───────────────────────────────────────────────────
 
     def submit_question(self, text: str) -> bool:
@@ -571,6 +593,29 @@ class VLMAssistant:
             self._pending_candidate_constraint
             and re.search(r"\bone\s+of\s+(?:these|those|them)\b",
                           text, flags=re.IGNORECASE))
+        self._pending_other_exclusion = (
+            self._last_resolved_part_label
+            if (self._last_resolved_part_label
+                and re.search(r"\b(?:the\s+other|another|what\s+else)\b",
+                              text, flags=re.IGNORECASE))
+            else "")
+        self._pending_other_candidates = []
+        if self._pending_other_exclusion:
+            words = text.casefold()
+            explicitly_categorized = bool(re.search(
+                r"\b(?:gear|stand|bearing|pin|screw|tool|bit|wrench|driver)\b",
+                words))
+            # "Other gear" is constrained to gears. "Other one" inherits the
+            # category of the last resolved object. Generic "other part" keeps
+            # using the broader selected-step outstanding-input policy.
+            if explicitly_categorized or re.search(
+                    r"\b(?:other|another)\s+one\b", words):
+                self._pending_other_candidates = [
+                    label for label in self._recent_part_candidates
+                    if label != self._pending_other_exclusion
+                    and self._same_reference_category(
+                        label, self._pending_other_exclusion)
+                ]
         self._render_history(pending=True)
 
         clarification = ""
@@ -913,6 +958,12 @@ Intent examples:
                     label = self._normalize_part_label(str(candidate))
                     if label in self._part_labels and label not in exclude_labels:
                         exclude_labels.append(label)
+            if (intent == "step_parts_request"
+                    and self._pending_other_exclusion
+                    and self._pending_other_exclusion not in exclude_labels):
+                # "The other part" means the selected step's outstanding
+                # inputs except the last specifically referenced object.
+                exclude_labels.append(self._pending_other_exclusion)
             part_action = str(
                 value.get("part_action", "reference")).strip().casefold()
             allowed_actions = (
@@ -921,6 +972,17 @@ Intent examples:
                 else {"reference", "fetch", ""})
             if part_action not in allowed_actions:
                 return {"intent": "invalid", "raw": raw}
+            if intent == "step_parts_request" and self._pending_other_candidates:
+                alternatives = list(self._pending_other_candidates)
+                return {
+                    "intent": "part_reference",
+                    "target": (alternatives[0]
+                               if len(alternatives) == 1 else "AMBIGUOUS"),
+                    "part_action": part_action or "reference",
+                    "candidate_labels": ([] if len(alternatives) == 1
+                                         else alternatives),
+                    "raw": raw,
+                }
             return {
                 "intent": intent,
                 "step_scope": step_scope,
@@ -947,11 +1009,25 @@ Intent examples:
                 label = self._normalize_part_label(str(candidate))
                 if label in self._part_labels and label not in candidate_labels:
                     candidate_labels.append(label)
-        if target != "AMBIGUOUS":
-            candidate_labels.clear()
         part_action = str(value.get("part_action", "reference")).strip().casefold()
         if part_action not in {"reference", "fetch", "find_step"}:
             return {"intent": "invalid", "raw": raw}
+        if self._pending_other_candidates:
+            alternatives = list(self._pending_other_candidates)
+            target = alternatives[0] if len(alternatives) == 1 else "AMBIGUOUS"
+            candidate_labels = [] if len(alternatives) == 1 else alternatives
+        elif target != "AMBIGUOUS" and candidate_labels:
+            # A specific target plus different candidates is internally
+            # contradictory model output. Preserve every possibility and ask;
+            # never silently discard the evidence of ambiguity.
+            alternatives = list(dict.fromkeys([target, *candidate_labels]))
+            if len(alternatives) > 1:
+                target = "AMBIGUOUS"
+                candidate_labels = alternatives
+            else:
+                candidate_labels.clear()
+        elif target != "AMBIGUOUS":
+            candidate_labels.clear()
         constrained = list(self._pending_candidate_constraint)
         if constrained:
             if self._generic_plural_followup or (

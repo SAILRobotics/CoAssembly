@@ -927,6 +927,7 @@ class _ToolSelectionManager:
     TOOL_COLOR     = [0.80, 0.88, 1.0,  0.15]    # light blue for "tool" category
     PART_COLOR     = [1.0,  0.78, 0.78, 0.15]    # light red  for "part" category
     HIGHLIGHT_COLOR = [0.0, 1.0, 1.0, 0.15]       # cyan — pegboard tool needed for the current step
+    VLM_REFERENCE_COLOR = [1.0, 0.92, 0.02, 0.15] # yellow — one VLM-resolved referent
 
     def __init__(self, quest_ip: str, click_port: int = cfg.TOOL_CLICK_PORT,
                  color_port: int = cfg.TOOL_COLOR_PORT,
@@ -951,6 +952,7 @@ class _ToolSelectionManager:
         self._highlighted:      set[int]                = set()
         self._highlight_colors: dict[int, list[float]]  = {}
         self._semantic_highlighted: set[int]            = set()
+        self._step_context_ids: set[int]                 = set()
         self._assembly_events:  list[dict]              = []
         self._on_cancel = None
         self._last_color_refresh = 0.0
@@ -1055,6 +1057,10 @@ class _ToolSelectionManager:
         self._hovered_tool_id = None
         # hovering over the already-selected tool — don't downgrade its color to HOVER_COLOR
         if tool_id == self._active_tool_id:
+            return
+        if tool_id in self._highlighted:
+            # Semantic step/reference colors are persistent context, not hover
+            # feedback. Unity interaction must not erase cyan/yellow meaning.
             return
         self._hovered_tool_id = tool_id
         self.send_color(tool_id, self.HOVER_COLOR)
@@ -1196,7 +1202,7 @@ class _ToolSelectionManager:
             else:
                 self.reset_to_category(tid)
         self._highlight_colors = {tid: list(rgba) for tid in new}
-        self._semantic_highlighted = set(new) if semantic_color else set()
+        self._semantic_highlighted = set(new)
         for tid in new:                              # new or recolored highlight
             # A semantic VLM result (especially red/not-relevant) must remain
             # visible even if this was the last pegboard item the user clicked.
@@ -1204,7 +1210,33 @@ class _ToolSelectionManager:
                 self.send_color(tid, self._highlight_color_for(tid))
         self._highlighted = new
 
-    def _apply_highlight_clear(self) -> None:
+    def _apply_layered_highlight(self, step_ids, referred_ids=()) -> None:
+        """Paint relevant step objects cyan and one VLM referent yellow."""
+        base = {int(value) for value in step_ids}
+        self._step_context_ids = set(base)
+        referred = {int(value) for value in referred_ids}
+        new = base | referred
+        colors = {tool_id: list(self.HIGHLIGHT_COLOR) for tool_id in base}
+        colors.update({tool_id: list(self.VLM_REFERENCE_COLOR)
+                       for tool_id in referred})
+        for tool_id in self._highlighted - new:
+            if tool_id == self._active_tool_id:
+                self.send_color(tool_id, self.SELECTED_COLOR)
+            else:
+                self.reset_to_category(tool_id)
+        self._highlighted = new
+        self._highlight_colors = colors
+        self._semantic_highlighted = set(new)
+        for tool_id in new:
+            self.send_color(tool_id, self._highlight_color_for(tool_id))
+
+    def _apply_highlight_clear(self, *, clear_step_context: bool = False) -> None:
+        """Clear transient highlighting, preserving selected-step cyan by default."""
+        if not clear_step_context and self._step_context_ids:
+            self._apply_layered_highlight(self._step_context_ids)
+            return
+        if clear_step_context:
+            self._step_context_ids.clear()
         for tid in self._highlighted:
             if tid == self._active_tool_id:
                 self.send_color(tid, self.SELECTED_COLOR)
@@ -2305,7 +2337,7 @@ class MainScene:
         self._handover_tool_id = None
         self._pending_handover = False
         self.tool_layout.reset_delivered()
-        self.tools._apply_highlight_clear()
+        self.tools._apply_highlight_clear(clear_step_context=True)
         self._refresh_handed_over_visibility()
         self._save_task_progress()
         print("[HandoverReset] Cleared actual and task-inferred handovers; "
@@ -2780,22 +2812,42 @@ class MainScene:
                             print("[VoiceFetch] All motion gates passed — "
                                   "starting grasp this frame")
                     elif event_name == "reference_highlight":
-                        self.tools._apply_highlight(
-                            event.get("ids", []), event.get("color"))
+                        self.tools._apply_layered_highlight(
+                            event.get("step_ids", []),
+                            event.get("referred_ids", []))
                         self._sync_vis_highlight()
                         assembly_parts = event.get("assembly_parts", [])
+                        assembly_color = event.get(
+                            "assembly_color",
+                            event.get("color", [1.0, 0.92, 0.02, 1.0]))
                         self.vis.apply_gearbox_assembly_event({
                             "event": "assembly_reference",
                             "parts": assembly_parts,
-                            "color": event.get("color", [1.0, 0.92, 0.02, 1.0]),
+                            "color": assembly_color,
                         })
                         self.gearbox_unity_cmd.reference(
                             assembly_parts,
-                            event.get("color", [1.0, 0.92, 0.02, 1.0]))
+                            assembly_color)
                         print(f"[PartReference] {event.get('status', '?')}: "
                               f"{event.get('label', '?')} -> {event.get('ids', [])}")
+                    elif event_name == "board_step_highlight":
+                        assembly_parts = event.get("assembly_parts", [])
+                        assembly_color = event.get(
+                            "assembly_color", [0.0, 1.0, 1.0, 0.2])
+                        self.vis.apply_gearbox_assembly_event({
+                            "event": "assembly_reference",
+                            "parts": assembly_parts,
+                            "color": assembly_color,
+                        })
+                        self.gearbox_unity_cmd.reference(
+                            assembly_parts, assembly_color)
+                    elif event_name == "step_context_highlight":
+                        self.tools._apply_layered_highlight(
+                            event.get("step_ids", []))
+                        self._sync_vis_highlight()
                     elif event_name == "select":
-                        self.tools._apply_highlight(event.get("ids", []))
+                        self.tools._apply_layered_highlight(
+                            event.get("ids", []))
                         self._sync_vis_highlight()
                         self.gearbox_unity_cmd.clear_reference()
                         self.vis.apply_gearbox_assembly_event(
@@ -2804,7 +2856,8 @@ class MainScene:
                     else:
                         self._remember_task_progress_event(event)
                         if event_name == "reset":
-                            self.tools._apply_highlight_clear()
+                            self.tools._apply_highlight_clear(
+                                clear_step_context=True)
                             self._sync_vis_highlight()
                             self.gearbox_unity_cmd.clear_reference()
                         self.vis.apply_gearbox_assembly_event(event)

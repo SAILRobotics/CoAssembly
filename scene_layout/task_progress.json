@@ -1,5 +1,10 @@
 {
-  "handed_over_objects": [],
+  "handed_over_objects": [
+    {
+      "tool_id": 19,
+      "name": "GEAR_STAND_ROW1_RIGHT"
+    }
+  ],
   "version": 1,
   "completed_stages": [],
   "last_worked_row": null
