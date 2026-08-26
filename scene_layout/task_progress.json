@@ -3,9 +3,86 @@
     {
       "tool_id": 19,
       "name": "GEAR_STAND_ROW1_RIGHT"
+    },
+    {
+      "tool_id": 35,
+      "name": "ROW1_KIT"
+    },
+    {
+      "tool_id": 14,
+      "name": "GEAR_ROD_ROW1"
+    },
+    {
+      "tool_id": 26,
+      "name": "GEAR_ROW1_LEFT"
+    },
+    {
+      "tool_id": 18,
+      "name": "GEAR_STAND_ROW1_LEFT"
+    },
+    {
+      "tool_id": 9,
+      "name": "bit_wrench"
+    },
+    {
+      "tool_id": 28,
+      "name": "GEAR_ROW2_RIGHT"
+    },
+    {
+      "tool_id": 27,
+      "name": "GEAR_ROW2_LEFT"
+    },
+    {
+      "tool_id": 15,
+      "name": "GEAR_ROD_ROW2"
     }
   ],
   "version": 1,
-  "completed_stages": [],
-  "last_worked_row": null
+  "completed_stages": [
+    {
+      "row": 1,
+      "stage": 1
+    },
+    {
+      "row": 1,
+      "stage": 2
+    },
+    {
+      "row": 1,
+      "stage": 3
+    },
+    {
+      "row": 1,
+      "stage": 4
+    },
+    {
+      "row": 1,
+      "stage": 5
+    },
+    {
+      "row": 1,
+      "stage": 6
+    },
+    {
+      "row": 1,
+      "stage": 7
+    },
+    {
+      "row": 2,
+      "stage": 1
+    },
+    {
+      "row": 2,
+      "stage": 4
+    },
+    {
+      "row": 2,
+      "stage": 3
+    },
+    {
+      "row": 2,
+      "stage": 2
+    }
+  ],
+  "last_worked_row": 2
 }

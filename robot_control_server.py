@@ -88,9 +88,12 @@ class _PbJointRunner:
     """Linear joint interpolation over time — sim equivalent of moveJ."""
     _DURATION_S = 3.0
 
-    def __init__(self, start_q: np.ndarray, target_q: np.ndarray):
+    def __init__(self, start_q: np.ndarray, target_q: np.ndarray,
+                 duration_s: float | None = None):
         self.start_q  = np.asarray(start_q, dtype=float)
         self.target_q = np.asarray(target_q, dtype=float)
+        self.duration_s = (self._DURATION_S if duration_s is None
+                           else max(float(duration_s), 1e-3))
         self._elapsed = 0.0
         self.done     = False
 
@@ -99,7 +102,7 @@ class _PbJointRunner:
             return
         import pybullet as p
         self._elapsed += dt
-        t = min(self._elapsed / self._DURATION_S, 1.0)
+        t = min(self._elapsed / self.duration_s, 1.0)
         q = self.start_q + t * (self.target_q - self.start_q)
         for j_idx, q_j in zip(arm_indices, q):
             p.resetJointState(robot_id, j_idx, float(q_j))
@@ -244,6 +247,10 @@ class RobotControlServer:
     _HANDOVER_LOOKAHEAD_NEAR_S = 0.10
     _HANDOVER_GAIN_FAR = 450
     _HANDOVER_GAIN_NEAR = 380
+    # Each approach/grasp/retract waypoint normally takes three seconds in the
+    # visual simulator. Tool fetching is intentionally quicker for iteration;
+    # this value is never used for physical-robot motion.
+    _SIM_TOOL_GRASP_DURATION_S = 0.75
 
     def __init__(self, quest_ip: str, robot_ip: "str | None", simulation: bool,
                  use_calibrated_robot_base: bool, gripper_collision: bool,
@@ -286,6 +293,7 @@ class RobotControlServer:
         self._grasp_q_above:           "np.ndarray | None" = None
         self._grasp_q_above_approach:  "np.ndarray | None" = None
         self._grasp_runner       = None          # sim only: _PbJointRunner
+        self._grasp_sim_duration_s = _PbJointRunner._DURATION_S
         self._grasp_move_sent:    bool           = False   # real only: async moveJ sent
         self._grasp_settle_start: "float | None" = None    # real only: close+settle timer
         self._grasp_ok:             bool           = False   # real only: object detected
@@ -596,7 +604,8 @@ class RobotControlServer:
         cq = self.pb_scene.current_q.copy()
         if self._grasp_phase == 'approach':
             # approach → grasp (same for tools and parts)
-            self._grasp_runner = _PbJointRunner(cq, self._grasp_joints)
+            self._grasp_runner = _PbJointRunner(
+                cq, self._grasp_joints, self._grasp_sim_duration_s)
             self._grasp_phase  = 'grasp'
             print("[Robot sim] At approach → moveJ to grasp")
             self._fire_phase(self._grasp_on_phase, "grasping")
@@ -604,13 +613,15 @@ class RobotControlServer:
             self._fire_phase(self._grasp_on_phase, "grasped")
             if self._grasp_q_above is not None:
                 # parts: lift 5 cm above grasp
-                self._grasp_runner = _PbJointRunner(cq, self._grasp_q_above)
+                self._grasp_runner = _PbJointRunner(
+                    cq, self._grasp_q_above, self._grasp_sim_duration_s)
                 self._grasp_phase  = 'lift'
                 print("[Robot sim] Grasp done → lifting 5 cm")
                 self._fire_phase(self._grasp_on_phase, "retracting")
             elif self._grasp_q_approach is not None:
                 # tools: retract straight to approach
-                self._grasp_runner = _PbJointRunner(cq, self._grasp_q_approach)
+                self._grasp_runner = _PbJointRunner(
+                    cq, self._grasp_q_approach, self._grasp_sim_duration_s)
                 self._grasp_phase  = 'retract'
                 print("[Robot sim] Grasp done → retracting to approach")
                 self._fire_phase(self._grasp_on_phase, "retracting")
@@ -619,11 +630,14 @@ class RobotControlServer:
         elif self._grasp_phase == 'lift':
             if self._grasp_q_above_approach is not None:
                 # parts: retract to 5 cm above approach, stay there
-                self._grasp_runner = _PbJointRunner(cq, self._grasp_q_above_approach)
+                self._grasp_runner = _PbJointRunner(
+                    cq, self._grasp_q_above_approach,
+                    self._grasp_sim_duration_s)
                 self._grasp_phase  = 'ret_above_approach'
                 print("[Robot sim] Lifted → retracting to above_approach")
             elif self._grasp_q_approach is not None:
-                self._grasp_runner = _PbJointRunner(cq, self._grasp_q_approach)
+                self._grasp_runner = _PbJointRunner(
+                    cq, self._grasp_q_approach, self._grasp_sim_duration_s)
                 self._grasp_phase  = 'retract'
                 print("[Robot sim] Lifted → retracting to approach")
             else:
@@ -1493,6 +1507,9 @@ class RobotControlServer:
                     grasp_joints = _wrap_nearest(gj_arr, q_approach)
 
         if self.simulation:
+            self._grasp_sim_duration_s = (
+                self._SIM_TOOL_GRASP_DURATION_S
+                if category == "tool" else _PbJointRunner._DURATION_S)
             self._grasp_on_complete       = on_complete
             self._grasp_on_phase          = on_phase
             self._grasp_joints            = np.array(grasp_joints, dtype=float)
@@ -1504,13 +1521,15 @@ class RobotControlServer:
                                              if q_above_approach is not None else None)
             if self._grasp_q_approach is not None:
                 self._grasp_runner = _PbJointRunner(
-                    self.pb_scene.current_q.copy(), self._grasp_q_approach)
+                    self.pb_scene.current_q.copy(), self._grasp_q_approach,
+                    self._grasp_sim_duration_s)
                 self._grasp_phase  = 'approach'
                 print("[Robot sim] moveJ → approach")
                 self._fire_phase(on_phase, "approaching")
             else:
                 self._grasp_runner = _PbJointRunner(
-                    self.pb_scene.current_q.copy(), self._grasp_joints)
+                    self.pb_scene.current_q.copy(), self._grasp_joints,
+                    self._grasp_sim_duration_s)
                 self._grasp_phase  = 'grasp'
                 print("[Robot sim] moveJ → grasp_joints")
                 self._fire_phase(on_phase, "grasping")

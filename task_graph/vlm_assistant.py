@@ -497,28 +497,29 @@ class VLMAssistant:
         self._pending_part_text = ""
         self._awaiting_part_clarification = False
         self._ambiguous_part_text = ""
+        # Preserve the requested operation while the user disambiguates an
+        # object.  A noun-only answer such as "gear stand" normally looks like
+        # a reference to the VLM, but it must remain a fetch when it answers
+        # "Which one should I get?".
+        self._pending_clarification_action = ""
         self._pending_fetch_description = ""
         self._last_resolved_part_label = ""
         # Graph-validated set most recently shown to the operator. This lets a
         # plural follow-up refer to exactly those objects instead of inviting
         # the model to guess from the full ontology.
         self._recent_part_candidates: list[str] = []
-        self._pending_candidate_constraint: list[str] = []
-        self._generic_plural_followup = False
-        self._pending_other_exclusion = ""
-        self._pending_other_candidates: list[str] = []
         self._context_version = 0
 
     # ── Public: called by the task graph on every state change ────────────────
 
     def notify_graph_event(self, event_label: str, state_summary: str) -> None:
         """Call this whenever the task graph changes (complete/undo/reset/live)."""
-        self._last_resolved_part_label = ""
-        self._recent_part_candidates = []
-        self._pending_candidate_constraint = []
-        self._generic_plural_followup = False
-        self._pending_other_exclusion = ""
-        self._pending_other_candidates = []
+        # Preserve structured discourse across delivery/progress updates so a
+        # later semantic relation such as alternative_to_previous can still be
+        # resolved. A true reset starts a new task and clears that discourse.
+        if str(event_label).strip().upper().startswith("RESET"):
+            self._last_resolved_part_label = ""
+            self._recent_part_candidates = []
         self._context_version = self._worker.update_task_state(
             f"Event: {event_label}\n\n{state_summary}")
 
@@ -532,7 +533,9 @@ class VLMAssistant:
 
     def set_resolved_part_context(self, label: str | None) -> None:
         """Keep a graph-resolved single part available for pronoun follow-ups."""
-        self.set_resolved_part_candidates([label] if label else [])
+        normalized = self._normalize_part_label(str(label or "").strip())
+        self._last_resolved_part_label = (
+            normalized if normalized in self._part_labels else "")
 
     def set_resolved_part_candidates(self, labels) -> None:
         """Retain the graph-validated objects described in the last response."""
@@ -548,23 +551,30 @@ class VLMAssistant:
         self._last_resolved_part_label = (
             candidates[0] if len(candidates) == 1 else "")
 
-    @staticmethod
-    def _same_reference_category(first: str, second: str) -> bool:
-        """Return whether two ontology labels name the same object category."""
-        def category(label: str) -> str:
-            label = str(label).upper()
-            if re.fullmatch(r"GEAR_ROW[1-4]_(LEFT|RIGHT)", label):
-                return "GEAR"
-            if re.fullmatch(r"STAND_ROW[1-4]_(LEFT|RIGHT)", label):
-                return "STAND"
-            if label.startswith("BEARING"):
-                return "BEARING"
-            if label.startswith("PIN"):
-                return "PIN"
-            if label.startswith("SCREW_ROW"):
-                return "SCREW"
-            return label
-        return category(first) == category(second)
+    def _carry_part_clarification_action(self, label: str, action: str) -> str:
+        """Carry a fetch request through a noun-only ambiguity clarification."""
+        label = str(label)
+        action = str(action or "reference")
+        if label == "AMBIGUOUS":
+            if action == "fetch":
+                self._pending_clarification_action = "fetch"
+            elif (self._awaiting_part_clarification
+                  and self._pending_clarification_action == "fetch"):
+                # The clarification was still not specific enough. Keep the
+                # original requested operation for another clarification turn.
+                action = "fetch"
+            else:
+                self._pending_clarification_action = ""
+            return action
+        if (self._awaiting_part_clarification
+                and self._pending_clarification_action == "fetch"
+                and label in self._part_labels):
+            # Consume it before queueing the result.  This makes the carry-over
+            # strictly one-shot even if graph policy handling is delayed or
+            # fails before apply_policy_response() performs its normal cleanup.
+            self._pending_clarification_action = ""
+            return "fetch"
+        return action
 
     # ── Public: voice input ───────────────────────────────────────────────────
 
@@ -582,40 +592,6 @@ class VLMAssistant:
             return False
         self._pending_question = text
         self._pending_part_text = text
-        plural_pronoun = bool(re.search(
-            r"\b(?:those|them|one\s+of\s+(?:these|those|them))\b",
-            text, flags=re.IGNORECASE))
-        self._pending_candidate_constraint = (
-            list(self._recent_part_candidates) if plural_pronoun else [])
-        # A bare request for one member of a plural set is inherently
-        # under-specified. Even if the model guesses a member, policy must ask.
-        self._generic_plural_followup = bool(
-            self._pending_candidate_constraint
-            and re.search(r"\bone\s+of\s+(?:these|those|them)\b",
-                          text, flags=re.IGNORECASE))
-        self._pending_other_exclusion = (
-            self._last_resolved_part_label
-            if (self._last_resolved_part_label
-                and re.search(r"\b(?:the\s+other|another|what\s+else)\b",
-                              text, flags=re.IGNORECASE))
-            else "")
-        self._pending_other_candidates = []
-        if self._pending_other_exclusion:
-            words = text.casefold()
-            explicitly_categorized = bool(re.search(
-                r"\b(?:gear|stand|bearing|pin|screw|tool|bit|wrench|driver)\b",
-                words))
-            # "Other gear" is constrained to gears. "Other one" inherits the
-            # category of the last resolved object. Generic "other part" keeps
-            # using the broader selected-step outstanding-input policy.
-            if explicitly_categorized or re.search(
-                    r"\b(?:other|another)\s+one\b", words):
-                self._pending_other_candidates = [
-                    label for label in self._recent_part_candidates
-                    if label != self._pending_other_exclusion
-                    and self._same_reference_category(
-                        label, self._pending_other_exclusion)
-                ]
         self._render_history(pending=True)
 
         clarification = ""
@@ -629,8 +605,9 @@ class VLMAssistant:
         if self._last_resolved_part_label:
             reference_context = (
                 "Most recently resolved physical-part label: "
-                f"{self._last_resolved_part_label}. Use it only when a pronoun in "
-                "the current utterance clearly refers back to that object.\n\n")
+                f"{self._last_resolved_part_label}. When the current utterance "
+                "refers back to that same object, return reference_relation "
+                "`same_as_previous`; do not use `alternative_to_previous`.\n\n")
         elif self._recent_part_candidates:
             reference_context = (
                 "Most recently presented physical-part candidates: "
@@ -641,9 +618,13 @@ class VLMAssistant:
         if self._pending_fetch_description:
             fetch_context = (
                 "A robot-fetch confirmation is currently pending for: "
-                f"{self._pending_fetch_description}. Interpret a direct affirmative "
-                "or negative response as `fetch_confirmation`; otherwise classify "
-                "the new utterance normally.\n\n")
+                f"{self._pending_fetch_description}. Use `fetch_confirmation` ONLY "
+                "when the entire communicative purpose of the current utterance is "
+                "to accept or reject that exact pending fetch. If the utterance "
+                "names, describes, contrasts, sequences, replaces, or asks for an "
+                "object—even if it also sounds agreeable—it is a new part/tool "
+                "request and must be classified normally. A request to handle a "
+                "different object first is not confirmation.\n\n")
         else:
             fetch_context = (
                 "There is NO pending robot-fetch confirmation. Do NOT use "
@@ -656,9 +637,22 @@ meaning; do not classify it by matching a fixed set of request verbs, and do
 not mistake part names appearing in the injected assembly state for user intent.
 
 Return ONLY one valid JSON object using exactly this schema:
-{{"intent":"part_reference|step_parts_request|step_tools_request|recommendation_request|fetch_confirmation|general_question","part_action":"reference|fetch|find_step|status|","confirmation":"yes|no|","step_scope":"selected_step|next_step|","target":"ALLOWED_LABEL|AMBIGUOUS|","candidates":["ALLOWED_LABEL"],"exclude_labels":["ALLOWED_LABEL"],"answer":"text"}}
+{{"intent":"part_reference|step_parts_request|step_tools_request|recommendation_request|fetch_confirmation|general_question","part_action":"reference|fetch|find_step|status|","reference_relation":"direct|same_as_previous|alternative_to_previous|member_of_recent_set|","confirmation":"yes|no|","step_scope":"selected_step|next_step|","target":"ALLOWED_LABEL|AMBIGUOUS|","candidates":["ALLOWED_LABEL"],"exclude_labels":["ALLOWED_LABEL"],"answer":"text"}}
 
 Rules:
+- Use `reference_relation` to describe discourse semantics rather than choosing
+  an object yourself. Use `same_as_previous` when the request refers back to
+  the most recently resolved object. Use `alternative_to_previous` only when
+  the requested object contrasts with that previous target.
+  `member_of_recent_set` means an unspecified member of the recently presented
+  candidates, and `direct` means an explicitly identified object. Python will
+  calculate same/alternative targets from structured conversation and graph
+  state. Do not guess a target or exclusion for either relation.
+- For every part or tool intent, infer `part_action` from the requested physical
+  outcome. If the operator wants an object transferred to them, use `fetch`
+  regardless of their wording. If they only want identification, location, or
+  an explanation, use `reference`. Never leave `part_action` empty for these
+  intents. Do not rely on a fixed vocabulary of command verbs.
 - Use `part_reference` when the user is referring to, identifying, locating,
   requesting, or naming a physical part/tool—even when they use only a noun
   phrase or unfamiliar wording. Set `part_action` to `fetch` only when they ask
@@ -702,9 +696,7 @@ Rules:
   driver, wrench, or holder. A named tool is always a `part_reference`, even
   when the utterance also says "for this step". Resolve ordinary workshop
   synonyms and a plausible speech-recognition substitution from the focused
-  step when it identifies one unique allowed tool. For example, "the wrench",
-  "bit wrench", and the likely ASR rendering "the ranch" mean `BIT_WRENCH`
-  while a fastening step is focused.
+  step when it identifies one unique allowed tool.
 - A request naming an actual object category—such as "the gear necessary for
   this step"—is a `part_reference`, not a `step_parts_request`. Use the focused
   step to resolve which gear, stand, or tool is meant when it makes the
@@ -724,7 +716,10 @@ Rules:
   synchronize that selection with the GUI and Unity; do not choose the step in
   `answer` yourself.
 - Use `fetch_confirmation` only when a robot-fetch confirmation is pending and
-  the user accepts or rejects it. Set `confirmation` to `yes` or `no`.
+  the user directly accepts or rejects that exact action without introducing
+  any object choice, modification, replacement, ordering, or new request. Set
+  `confirmation` to `yes` or `no` and leave every other field empty. Never use
+  confirmation merely because a new request is compatible with fetching.
 - Do not include Markdown or any text outside the JSON object.
 
 Intent examples:
@@ -733,9 +728,13 @@ Intent examples:
 - "Other than the bearing, what other part do I need for this step?" ->
   {{"intent":"step_parts_request","part_action":"","confirmation":"","step_scope":"selected_step","target":"","candidates":[],"exclude_labels":["BEARING"],"answer":""}}
 - "Can you highlight the other part necessary for this step?" ->
-  {{"intent":"step_parts_request","part_action":"reference","confirmation":"","step_scope":"selected_step","target":"","candidates":[],"exclude_labels":[],"answer":""}}
+  {{"intent":"step_parts_request","part_action":"reference","reference_relation":"alternative_to_previous","confirmation":"","step_scope":"selected_step","target":"","candidates":[],"exclude_labels":[],"answer":""}}
 - "Can you get the other part required for this step?" ->
-  {{"intent":"step_parts_request","part_action":"fetch","confirmation":"","step_scope":"selected_step","target":"","candidates":[],"exclude_labels":[],"answer":""}}
+  {{"intent":"step_parts_request","part_action":"fetch","reference_relation":"alternative_to_previous","confirmation":"","step_scope":"selected_step","target":"","candidates":[],"exclude_labels":[],"answer":""}}
+- "Can you get one of them?" after multiple parts were presented ->
+  {{"intent":"part_reference","part_action":"fetch","reference_relation":"member_of_recent_set","confirmation":"","step_scope":"","target":"AMBIGUOUS","candidates":[],"exclude_labels":[],"answer":""}}
+- After the gear rod was resolved, "Can you bring it to me?" ->
+  {{"intent":"part_reference","part_action":"fetch","reference_relation":"same_as_previous","confirmation":"","step_scope":"","target":"","candidates":[],"exclude_labels":[],"answer":""}}
 - "Can you get a part for me?" with a selected step ->
   {{"intent":"step_parts_request","part_action":"fetch","confirmation":"","step_scope":"selected_step","target":"","candidates":[],"exclude_labels":[],"answer":""}}
 - "Did you give me the tool necessary for this step?" ->
@@ -860,6 +859,8 @@ Intent examples:
         display_answer = f"{spoken}\n\n{resolved}"
         self._awaiting_part_clarification = label == "AMBIGUOUS"
         self._ambiguous_part_text = question if label == "AMBIGUOUS" else ""
+        if label != "AMBIGUOUS":
+            self._pending_clarification_action = ""
         if label in self._part_labels:
             self._last_resolved_part_label = label
         replaced = False
@@ -958,12 +959,18 @@ Intent examples:
                     label = self._normalize_part_label(str(candidate))
                     if label in self._part_labels and label not in exclude_labels:
                         exclude_labels.append(label)
-            if (intent == "step_parts_request"
-                    and self._pending_other_exclusion
-                    and self._pending_other_exclusion not in exclude_labels):
-                # "The other part" means the selected step's outstanding
-                # inputs except the last specifically referenced object.
-                exclude_labels.append(self._pending_other_exclusion)
+            reference_relation = str(
+                value.get("reference_relation", "direct")).strip().casefold()
+            if reference_relation not in {
+                    "direct", "same_as_previous", "alternative_to_previous",
+                    "member_of_recent_set", ""}:
+                return {"intent": "invalid", "raw": raw}
+            if (reference_relation == "alternative_to_previous"
+                    and self._last_resolved_part_label
+                    and self._last_resolved_part_label not in exclude_labels):
+                # The VLM supplies only the semantic relation; Python derives
+                # the actual exclusion from structured discourse state.
+                exclude_labels = [self._last_resolved_part_label]
             part_action = str(
                 value.get("part_action", "reference")).strip().casefold()
             allowed_actions = (
@@ -972,21 +979,11 @@ Intent examples:
                 else {"reference", "fetch", ""})
             if part_action not in allowed_actions:
                 return {"intent": "invalid", "raw": raw}
-            if intent == "step_parts_request" and self._pending_other_candidates:
-                alternatives = list(self._pending_other_candidates)
-                return {
-                    "intent": "part_reference",
-                    "target": (alternatives[0]
-                               if len(alternatives) == 1 else "AMBIGUOUS"),
-                    "part_action": part_action or "reference",
-                    "candidate_labels": ([] if len(alternatives) == 1
-                                         else alternatives),
-                    "raw": raw,
-                }
             return {
                 "intent": intent,
                 "step_scope": step_scope,
                 "part_action": part_action or "reference",
+                "reference_relation": reference_relation or "direct",
                 "exclude_labels": exclude_labels,
                 "raw": raw,
             }
@@ -999,8 +996,6 @@ Intent examples:
             return {"intent": "invalid", "raw": raw}
 
         target = self._normalize_part_label(str(value.get("target", "")))
-        if target not in {*self._part_labels, "AMBIGUOUS"}:
-            return {"intent": "invalid", "raw": raw}
 
         candidate_labels: list[str] = []
         raw_candidates = value.get("candidates", [])
@@ -1012,11 +1007,63 @@ Intent examples:
         part_action = str(value.get("part_action", "reference")).strip().casefold()
         if part_action not in {"reference", "fetch", "find_step"}:
             return {"intent": "invalid", "raw": raw}
-        if self._pending_other_candidates:
-            alternatives = list(self._pending_other_candidates)
-            target = alternatives[0] if len(alternatives) == 1 else "AMBIGUOUS"
-            candidate_labels = [] if len(alternatives) == 1 else alternatives
-        elif target != "AMBIGUOUS" and candidate_labels:
+        reference_relation = str(
+            value.get("reference_relation", "direct")).strip().casefold()
+        if reference_relation not in {
+                "direct", "same_as_previous", "alternative_to_previous",
+                "member_of_recent_set", ""}:
+            return {"intent": "invalid", "raw": raw}
+        if (reference_relation == "same_as_previous"
+                and target not in self._part_labels
+                and self._last_resolved_part_label):
+            # The relation fills an omitted/ambiguous target. If the model also
+            # resolved a valid explicit label, that concrete label takes
+            # precedence over a contradictory discourse tag.
+            target, candidate_labels = self._last_resolved_part_label, []
+        elif reference_relation == "alternative_to_previous":
+            target_is_specific_alternative = (
+                target in self._part_labels
+                and (not self._last_resolved_part_label
+                     or target != self._last_resolved_part_label)
+            )
+            if target_is_specific_alternative:
+                # The model may attach the relation to an explicitly named
+                # alternative. Keep that valid target; there is nothing left
+                # for Python to calculate or clarify.
+                candidate_labels = []
+            else:
+                alternatives = [
+                    label for label in self._recent_part_candidates
+                    if label != self._last_resolved_part_label
+                ]
+                if len(alternatives) == 1:
+                    target, candidate_labels = alternatives[0], []
+                elif alternatives:
+                    target, candidate_labels = "AMBIGUOUS", alternatives
+        elif reference_relation == "member_of_recent_set":
+            # A first unspecified-member request has no narrowed candidates,
+            # so retain the full recent set and ask. A later clarification may
+            # keep the same discourse relation while supplying one or more
+            # candidates; honor that graph-validated narrowing instead of
+            # expanding it back to the original set.
+            if (self._awaiting_part_clarification
+                    and target in self._recent_part_candidates):
+                # On a clarification turn an exact validated target is itself
+                # a sufficient narrowing, even if Qwen omitted candidates.
+                narrowed = [target]
+            else:
+                narrowed = [
+                    label for label in candidate_labels
+                    if label in self._recent_part_candidates
+                ]
+            alternatives = narrowed or list(self._recent_part_candidates)
+            if len(alternatives) == 1:
+                target, candidate_labels = alternatives[0], []
+            elif alternatives:
+                target, candidate_labels = "AMBIGUOUS", alternatives
+        if target not in {*self._part_labels, "AMBIGUOUS"}:
+            return {"intent": "invalid", "raw": raw}
+        if target != "AMBIGUOUS" and candidate_labels:
             # A specific target plus different candidates is internally
             # contradictory model output. Preserve every possibility and ask;
             # never silently discard the evidence of ambiguity.
@@ -1028,20 +1075,11 @@ Intent examples:
                 candidate_labels.clear()
         elif target != "AMBIGUOUS":
             candidate_labels.clear()
-        constrained = list(self._pending_candidate_constraint)
-        if constrained:
-            if self._generic_plural_followup or (
-                    target != "AMBIGUOUS" and target not in constrained):
-                target = "AMBIGUOUS"
-                candidate_labels = constrained
-            elif target == "AMBIGUOUS":
-                # Never allow the model to broaden a graph-validated set.
-                candidate_labels = [label for label in candidate_labels
-                                    if label in constrained] or constrained
         return {
             "intent": intent,
             "target": target,
             "part_action": part_action,
+            "reference_relation": reference_relation or "direct",
             "candidate_labels": candidate_labels,
             "raw": raw,
         }
@@ -1156,10 +1194,17 @@ Intent examples:
                     label = ("STEP_PARTS" if is_step_parts else
                              "STEP_TOOLS" if is_step_tools else
                              str(envelope["target"]))
+                    part_action = str(
+                        envelope.get("part_action", "reference"))
+                    if intent == "part_reference":
+                        part_action = self._carry_part_clarification_action(
+                            label, part_action)
                     self._part_events.put({
                         "text": question,
                         "label": label,
-                        "part_action": str(envelope.get("part_action", "reference")),
+                        "part_action": part_action,
+                        "reference_relation": str(
+                            envelope.get("reference_relation", "direct")),
                         "step_scope": str(envelope.get("step_scope", "")),
                         "exclude_labels": list(
                             envelope.get("exclude_labels", [])),
@@ -1170,7 +1215,9 @@ Intent examples:
                     _print_console_block(
                         "VLM INTENT",
                         f"{intent} -> {label}\n"
-                        f"part_action: {envelope.get('part_action', '')}\n"
+                        f"part_action: {part_action}\n"
+                        f"reference_relation: "
+                        f"{envelope.get('reference_relation', 'direct')}\n"
                         f"step_scope: {envelope.get('step_scope', '')}\n"
                         f"exclude_labels: {envelope.get('exclude_labels', [])}\n"
                         f"candidates: {envelope.get('candidate_labels', [])}\n"
@@ -1208,6 +1255,7 @@ Intent examples:
                     self._pending_part_text = ""
                     self._awaiting_part_clarification = False
                     self._ambiguous_part_text = ""
+                    self._pending_clarification_action = ""
                     self._render_history()
                     self._update_history_label()
                     self.dpg.configure_item("vlm_ask_button", enabled=True)
@@ -1251,6 +1299,7 @@ Intent examples:
                 self._pending_question = ""
                 self._awaiting_part_clarification = False
                 self._ambiguous_part_text = ""
+                self._pending_clarification_action = ""
                 self._history_count = 0
                 self._update_history_label()
                 banner = "[Graph state changed — conversation reset]\n\n" + payload
@@ -1262,6 +1311,7 @@ Intent examples:
                 self._pending_question = ""
                 self._awaiting_part_clarification = False
                 self._ambiguous_part_text = ""
+                self._pending_clarification_action = ""
                 self._history_count = 0
                 self._update_history_label()
                 self.dpg.set_value("vlm_answer",

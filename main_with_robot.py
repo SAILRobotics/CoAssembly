@@ -2855,11 +2855,18 @@ class MainScene:
                         self._move_robot_for_gearbox_step(event)
                     else:
                         self._remember_task_progress_event(event)
+                        if event_name in {"complete", "uncomplete", "close", "reset"}:
+                            # BoardAR semantic reference colors (cyan/yellow/red)
+                            # are an overlay on top of Unity's persistent
+                            # progression colors. Drop that overlay whenever
+                            # progression changes so the controller's green
+                            # completed and orange intermediate colors become
+                            # visible again.
+                            self.gearbox_unity_cmd.clear_reference()
                         if event_name == "reset":
                             self.tools._apply_highlight_clear(
                                 clear_step_context=True)
                             self._sync_vis_highlight()
-                            self.gearbox_unity_cmd.clear_reference()
                         self.vis.apply_gearbox_assembly_event(event)
                 _link_poses = None
                 if self.robot is not None:

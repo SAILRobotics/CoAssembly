@@ -1840,22 +1840,6 @@ class DearPyGuiTaskGraphApp:
         match = re.search(r"_ROW([1-4])(?:_|$)", str(part).upper())
         return int(match.group(1)) if match else None
 
-    @staticmethod
-    def _row_hint_from_reference(text: str) -> int | None:
-        """Extract row numbers, including common Parakeet row/roll variants."""
-        words = str(text).lower()
-        number_words = {"one": 1, "two": 2, "three": 3, "four": 4}
-        match = re.search(r"\b(?:row|roll)\s*([1-4])\b", words)
-        if match:
-            return int(match.group(1))
-        match = re.search(r"\b(?:row|roll)\s+(one|two|three|four)\b", words)
-        if match:
-            return number_words[match.group(1)]
-        color_rows = {"white": 1, "red": 2, "green": 3, "blue": 4}
-        mentioned = [row for color, row in color_rows.items()
-                     if re.search(rf"\b{color}\b", words)]
-        return mentioned[0] if len(mentioned) == 1 else None
-
     def _friendly_reference_label(self, label: str,
                                   parts: list[str]) -> str:
         label = label.upper()
@@ -2003,8 +1987,6 @@ class DearPyGuiTaskGraphApp:
     def _ambiguity_question(text: str) -> str:
         words = str(text).lower()
         if any(word in words for word in ("stand", "bracket", "support")):
-            if DearPyGuiTaskGraphApp._row_hint_from_reference(text) is not None:
-                return "Which side do you mean: left or right?"
             return "Which row and side do you mean: left or right?"
         if "gear" in words and "rod" not in words and "shaft" not in words:
             return "Which gear do you mean? Please give its row, color, size, or position."
@@ -2423,12 +2405,6 @@ class DearPyGuiTaskGraphApp:
             if not candidates:
                 category, candidates = self._ambiguous_part_category(
                     result.get("text", ""))
-                row_hint = self._row_hint_from_reference(result.get("text", ""))
-                if row_hint is not None:
-                    candidates = [part for part in candidates
-                                  if self._row_of_part(part) == row_hint]
-                    if category:
-                        category = f"Row {row_hint} {category.lower()}"
             if (result.get("part_action") != "find_step"
                     and self.selected_id and candidates):
                 step = self.graph.by_id[self.selected_id]
@@ -2877,6 +2853,12 @@ class DearPyGuiTaskGraphApp:
         })
         action = str(result.get("part_action", "reference"))
 
+        # Make pronoun follow-ups refer to the tools just described, rather
+        # than an older set of assembly parts.  This is especially important
+        # after "Which tools do I need?" followed by "get one of them".
+        if self._vlm is not None:
+            self._vlm.set_resolved_part_candidates(outstanding or required)
+
         if not outstanding:
             directly_delivered = all(
                 label in self._robot_part_states
@@ -3013,6 +2995,25 @@ class DearPyGuiTaskGraphApp:
                          and part not in excluded_parts
                          and part not in self._robot_part_states]
         if not active_inputs:
+            outstanding_all = [
+                part for part in step.inputs
+                if part in self.graph.active_parts
+                and part not in self._robot_part_states
+            ]
+            if outstanding_all:
+                outstanding_text = ", and ".join(
+                    self.graph.friendly_part(part) for part in outstanding_all)
+                self._emit_reference_decision(
+                    result,
+                    "excluded_outstanding_step_parts",
+                    [1.0, 0.72, 0.0, 0.2],
+                    (f"You still need {outstanding_text}. The requested relation "
+                     "excluded that outstanding part, so I will not report all "
+                     "required parts as supplied."),
+                    matched_parts=outstanding_all,
+                    warning=True,
+                )
+                return
             if supplied_inputs:
                 descriptions = [self.graph.friendly_part(part)
                                 for part in supplied_inputs]
