@@ -986,18 +986,35 @@ class DearPyGuiTaskGraphApp:
             tts_rate: float = 0.85,
             assistant_log_path: str | Path | None = None) -> None:
         """Start optional services, run the GUI loop, and clean up on exit."""
+        startup_started = time.perf_counter()
+
+        def startup(message: str) -> None:
+            elapsed = time.perf_counter() - startup_started
+            print(f"[STARTUP +{elapsed:6.2f}s] {message}", flush=True)
+
+        startup(
+            "Beginning task graph startup "
+            f"(live={'on' if live_port is not None else 'off'}, "
+            f"voice={'on' if voice_device is not None else 'off'}, "
+            f"vlm={'on' if vlm_model is not None else 'off'}, "
+            f"tts={'on' if tts_engine is not None else 'off'})")
         # Pre-import transformers on the main thread before any worker threads start.
         # The VLM thread and ASR (NeMo) thread both import from transformers; if they
         # race during the initial import, Python's partially-initialized sys.modules
         # entry causes "cannot import name X from transformers".
-        try:
-            import transformers as _tf  # noqa: F401
-        except Exception:
-            # Voice/VLM initialization will report a useful error later if needed.
-            pass
+        if vlm_model is not None or voice_device is not None:
+            startup("Importing transformers for voice/VLM...")
+            try:
+                import transformers as _tf  # noqa: F401
+                startup("Transformers import complete")
+            except Exception as error:
+                startup(f"Transformers pre-import failed: {error}")
+        else:
+            startup("Skipping transformers (voice and VLM disabled)")
 
         # Create the VLM assistant only when the caller supplies a model.
         if vlm_model is not None:
+            startup(f"Creating VLM assistant: {vlm_model}")
             # Use the requested prompt file or the repository's default description.
             desc_path = task_description_path or str(
                 Path(__file__).parent / "task_description.md")
@@ -1010,6 +1027,7 @@ class DearPyGuiTaskGraphApp:
             # Report model selection in the operating-system terminal.
             print(f"[VLM] Assistant created: {vlm_model}")
         if tts_engine is not None:
+            startup(f"Starting TTS backend: {tts_engine}")
             try:
                 self._tts = TTSService(
                     tts_engine, Path(piper_model), speech_rate=tts_rate)
@@ -1021,19 +1039,29 @@ class DearPyGuiTaskGraphApp:
         if assistant_log_path is not None:
             self._assistant_logger = AssistantInteractionLogger(assistant_log_path)
             print(f"[StudyLog] Part-reference decisions -> {assistant_log_path}")
+        startup("Building Dear PyGui task graph...")
         # Build and show the Dear PyGui interface.
         self.build()
+        # Paint the graph before starting audio/controller services. Some audio
+        # backends can take several seconds to resolve a device; without this
+        # first frame the already-visible viewport appears as a blank black
+        # window during that startup work.
+        self.dpg.render_dearpygui_frame()
+        startup("Task graph window rendered")
         # Seed the model with the graph before the first question; subsequent
         # complete/undo/reset events replace this live-state block.
         self._notify_vlm("INITIAL STATE")
         # Start receiving controller events when a live port was supplied.
         if live_port is not None:
+            startup(f"Starting live event listener on port {live_port}")
             self.start_live_listener(live_port)
         # Start publishing node selections when an output port was supplied.
         if select_port is not None:
+            startup(f"Starting step-selection publisher on port {select_port}")
             self.start_select_publisher(select_port)
         # Start speech recognition only when an audio device was supplied.
         if voice_device is not None:
+            startup(f"Starting speech listener for {voice_device}...")
             try:
                 # Create and launch the background speech listener.
                 self._speech = SpeechListener(device=voice_device, wake_word=wake_word)
@@ -1049,6 +1077,8 @@ class DearPyGuiTaskGraphApp:
                 self.dpg.set_viewport_drop_callback(self._vlm.on_file_drop)
             except Exception:
                 pass  # older DPG versions may not support this
+
+        startup("Startup complete; entering GUI render loop")
 
         # Use a local reference in the high-frequency render loop.
         dpg = self.dpg
@@ -3178,9 +3208,9 @@ class DearPyGuiTaskGraphApp:
         if coords is None or coords[1] not in (4, 6):
             return ""
         return {
-            1: "the H5 bit from Holder 1 with the bit wrench",
+            1: "the H5 bit from Holder 1 with the bit screwdriver",
             2: "the T25 bit from Holder 2 with the bit screwdriver",
-            3: "the H3 bit from Holder 1 with the bit wrench",
+            3: "the H3 bit from Holder 1 with the bit screwdriver",
             4: "the Phillips screwdriver",
         }.get(step.row, "")
 

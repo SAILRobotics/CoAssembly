@@ -71,6 +71,7 @@ class SpeechListener:
     STATUS_QUEUED     = "queued"
     STATUS_TRANSCRIBE = "transcribing"
     STATUS_LISTENING  = "listening"
+    STATUS_DISABLED   = "disabled"
     STATUS_ERROR      = "error"
 
     def __init__(
@@ -106,6 +107,8 @@ class SpeechListener:
         # stdout pipe directly, so both backends share the same downstream path).
         self._raw_queue: "queue.Queue[np.ndarray]" = queue.Queue(maxsize=64)
         self._model_ready = threading.Event()
+        self._input_enabled = threading.Event()
+        self._input_enabled.set()
         self._running     = False
         self._process: "subprocess.Popen | None" = None
         self._sd_stream = None   # sounddevice.InputStream when backend == sounddevice
@@ -156,6 +159,29 @@ class SpeechListener:
             self._process.terminate()
             self._process.wait()
             self._process = None
+
+    @property
+    def input_enabled(self) -> bool:
+        return self._input_enabled.is_set()
+
+    def set_input_enabled(self, enabled: bool) -> None:
+        """Pause/resume recognition without unloading the ASR model."""
+        if enabled:
+            self._input_enabled.set()
+            self.listening_active = self.always_listening
+            self.current_status = (self.STATUS_LISTENING if self.always_listening
+                                   else self.STATUS_IDLE)
+            return
+        self._input_enabled.clear()
+        self.listening_active = False
+        self.current_rms = 0.0
+        self.current_status = self.STATUS_DISABLED
+        for pending in (self._audio_queue, self._raw_queue):
+            while True:
+                try:
+                    pending.get_nowait()
+                except queue.Empty:
+                    break
 
     # ── Audio capture backends ────────────────────────────────────────────────
 
@@ -315,7 +341,8 @@ class SpeechListener:
             self._event_queue.put(("_status", self.STATUS_TRANSCRIBE))
             try:
                 with GPU_INFERENCE_LOCK:
-                    output = model.transcribe([utterance], batch_size=1)[0]
+                    output = model.transcribe(
+                        [utterance], batch_size=1, verbose=False)[0]
                 text = (output.text if hasattr(output, "text") else str(output)).strip()
                 if text:
                     self._event_queue.put(("transcript", text))
@@ -348,6 +375,13 @@ class SpeechListener:
             try:
                 samples = self._raw_queue.get(timeout=0.5)
             except queue.Empty:
+                continue
+            if not self.input_enabled:
+                pre_roll.clear()
+                utt_blocks = []
+                utt_samples = 0
+                sil_samples = 0
+                speech_active = False
                 continue
             rms = float(np.sqrt(np.mean(samples ** 2)))
             self._event_queue.put(("rms", rms))
@@ -391,6 +425,18 @@ class SpeechListener:
         ("wake_word", text), ("transcript", text), ("ready", ""), ("error", msg)."""
         now      = time.time()
         notable: list[tuple[str, str]] = []
+
+        if not self.input_enabled:
+            self.current_status = self.STATUS_DISABLED
+            self.current_rms = 0.0
+            while True:
+                try:
+                    kind, payload = self._event_queue.get_nowait()
+                except queue.Empty:
+                    break
+                if kind == "error":
+                    notable.append(("error", str(payload)))
+            return notable
 
         if (not self.always_listening and self.listening_active
                 and now - self.last_speech_time > self._listen_timeout):

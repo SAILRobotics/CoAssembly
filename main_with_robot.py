@@ -954,6 +954,10 @@ class _ToolSelectionManager:
         self._semantic_highlighted: set[int]            = set()
         self._step_context_ids: set[int]                 = set()
         self._assembly_events:  list[dict]              = []
+        # Raw Unity interaction events are retained for study-specific scoring.
+        # MainScene may ignore this queue; dedicated study runtimes can drain it
+        # without changing the normal hover/select color behavior.
+        self._interaction_events: list[dict]            = []
         self._on_cancel = None
         self._last_color_refresh = 0.0
 
@@ -981,12 +985,21 @@ class _ToolSelectionManager:
         return processed
 
     def _handle_event(self, tool_id: int, event_type: str, hand: str = "unknown"):
+        self._interaction_events.append({
+            "tool_id": int(tool_id), "event_type": str(event_type),
+            "hand": str(hand), "timestamp": time.time(),
+        })
         if event_type == "selected":
             self._handle_click(tool_id, hand)
         elif event_type == "hover_enter":
             self._handle_hover_enter(tool_id)
         elif event_type == "hover_exit":
             self._handle_hover_exit(tool_id)
+
+    def pop_interaction_events(self) -> list[dict]:
+        events = self._interaction_events
+        self._interaction_events = []
+        return events
 
     def set_category_color(self, tool_id: int, color: list[float]) -> None:
         """Store the tool's base category color and paint it. Call from _apply_tool_category_colors.

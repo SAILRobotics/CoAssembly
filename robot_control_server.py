@@ -208,6 +208,7 @@ def _load_pegboard_cbf_obstacle() -> "list[dict]":
 class RobotControlServer:
     _STATE_INTERVAL          = 1.0 / 30.0
     _BASE_YAW_CORRECTION_DEG = -90.0
+    _PALM_OBSTACLE_TIMEOUT_S = 0.25
     _MOVE_POS_TOL_M          = 0.03
     _MOVE_ANGLE_TOL_RAD      = np.deg2rad(10.0)
     _BOARD_MOVE_POS_TOL_M    = 0.01
@@ -334,6 +335,8 @@ class RobotControlServer:
         self._move_progress_t:  float               = 0.0
         self._move_is_board:    bool                = False
         self._move_motion_profile: str              = "default"
+        self._palm_obstacle_last_update = 0.0
+        self._palm_obstacle_active = False
 
         # Direct joint move used by gearbox step selection.
         self._joint_move_target: "np.ndarray | None" = None
@@ -341,6 +344,7 @@ class RobotControlServer:
         self._joint_move_sent = False
         self._joint_move_started = 0.0
         self._joint_move_on_complete: "Callable | None" = None
+        self._joint_move_speed_multiplier = 1.0
 
         # Automatic startup positioning, shared by simulation and hardware.
         self._startup_active = True
@@ -498,11 +502,31 @@ class RobotControlServer:
         elif cmd == "move_to_joints":
             self.move_to_joints(
                 msg["joints"],
+                speed_multiplier=msg.get("speed_multiplier", 1.0),
                 on_complete=lambda ok, rid=rid: self._publish_event(
                     "move_done", rid, ok=bool(ok)))
 
         elif cmd == "update_move_target":
             self.update_move_target(msg["pos"], msg.get("quat"))
+
+        elif cmd == "update_palm_obstacle":
+            center = msg.get("center")
+            if center is None:
+                self._clear_palm_obstacle()
+            else:
+                center = np.asarray(center, dtype=float)
+                if center.shape != (3,) or not np.all(np.isfinite(center)):
+                    raise ValueError("palm obstacle center must be 3 finite values")
+                radius = float(msg.get("radius", 0.05))
+                clearance = float(msg.get("clearance", 0.01))
+                if (not np.isfinite(radius) or radius <= 0.0
+                        or not np.isfinite(clearance) or clearance < 0.0):
+                    raise ValueError("palm obstacle radius/clearance is invalid")
+                self._palm_obstacle_last_update = time.perf_counter()
+                self._palm_obstacle_active = True
+                if self._frax is not None:
+                    self._frax.set_dynamic_sphere(
+                        center, radius=radius, clearance=clearance)
 
         elif cmd == "cancel_move":
             self.cancel_move()
@@ -548,6 +572,11 @@ class RobotControlServer:
 
                 self._poll_commands()
 
+                if (self._palm_obstacle_active
+                        and time.perf_counter() - self._palm_obstacle_last_update
+                        > self._PALM_OBSTACLE_TIMEOUT_S):
+                    self._clear_palm_obstacle()
+
                 if not self.simulation:
                     q_fresh = self.poll_q()
                     if q_fresh is not None:
@@ -570,6 +599,11 @@ class RobotControlServer:
             self.close()
             self.pb_scene.disconnect()
             print("[RobotServer] Shutting down.")
+
+    def _clear_palm_obstacle(self) -> None:
+        self._palm_obstacle_active = False
+        if self._frax is not None:
+            self._frax.set_dynamic_sphere(None)
 
     # ── Grasp state (property + tick) ─────────────────────────────────────────
 
@@ -646,7 +680,8 @@ class RobotControlServer:
             # ret_above_approach or retract → done
             self._finish_grasp(True)
 
-    def move_to_joints(self, joints, on_complete=None) -> None:
+    def move_to_joints(self, joints, speed_multiplier: float = 1.0,
+                       on_complete=None) -> None:
         """Start a guarded direct joint-space move; input is radians."""
         busy = (self._startup_active or self._move_phase is not None
                 or self._grasp_phase is not None or self._handover_pull_active
@@ -671,13 +706,21 @@ class RobotControlServer:
             if on_complete:
                 on_complete(False)
             return
+        speed_multiplier = float(speed_multiplier)
+        if not np.isfinite(speed_multiplier) or not 0.1 <= speed_multiplier <= 2.0:
+            print("[Robot] Joint move rejected — speed multiplier must be 0.1..2.0")
+            if on_complete:
+                on_complete(False)
+            return
         self._joint_move_target = _wrap_nearest(q, self.pb_scene.current_q.copy())
+        self._joint_move_speed_multiplier = speed_multiplier
         self._joint_move_on_complete = on_complete
         self._joint_move_sent = False
         self._joint_move_started = time.monotonic()
         if self.simulation:
             self._joint_move_runner = _PbJointRunner(
-                self.pb_scene.current_q.copy(), self._joint_move_target)
+                self.pb_scene.current_q.copy(), self._joint_move_target,
+                _PbJointRunner._DURATION_S / speed_multiplier)
         print(f"[Robot] Gearbox moveJ → "
               f"{np.round(np.rad2deg(self._joint_move_target), 2).tolist()}")
 
@@ -687,6 +730,7 @@ class RobotControlServer:
         self._joint_move_runner = None
         self._joint_move_sent = False
         self._joint_move_on_complete = None
+        self._joint_move_speed_multiplier = 1.0
         if cb:
             cb(bool(ok))
 
@@ -708,7 +752,8 @@ class RobotControlServer:
             err = np.max(np.abs(_wrap_nearest(target, self.pb_scene.current_q)
                                 - self.pb_scene.current_q))
             if not self._joint_move_sent:
-                speed = 0.5 * self._speed_scale
+                speed = (0.5 * self._speed_scale
+                         * self._joint_move_speed_multiplier)
                 ctrl.moveJ(list(target), speed, speed, asynchronous=True)
                 self._joint_move_sent = True
             elif err < np.deg2rad(1.0):
@@ -1367,9 +1412,8 @@ class RobotControlServer:
                 # Still apply CBF safety filter even in IK mode
                 qdot = (q_target - q_cur) / max(control_dt, 1e-6)
                 try:
-                    qdot_safe = np.asarray(
-                        self._frax._cbf.safety_filter(
-                            _jnp.array(q_cur), _jnp.array(qdot)))
+                    qdot_safe = self._frax.filter_velocity(
+                        _jnp.array(q_cur), _jnp.array(qdot))
                     q_target = q_cur + qdot_safe * control_dt
                 except Exception:
                     pass

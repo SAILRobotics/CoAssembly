@@ -1,0 +1,44 @@
+{
+  // ---------------------------------------------------------------------------
+  // Compiler: Tectonic (installed in the conda env "texcheck").
+  // Tectonic is self-contained and downloads/caches any LaTeX packages it needs
+  // on first use, so there is no system TeX Live to maintain.
+  // ---------------------------------------------------------------------------
+  "latex-workshop.latex.tools": [
+    {
+      "name": "tectonic",
+      "command": "tectonic",
+      "args": [
+        "-X", "compile",
+        "%DOC_EXT%",
+        "--synctex",
+        "--keep-logs",
+        "--outdir", "%OUTDIR%"
+      ],
+      "env": {
+        "PATH": "/home/skim3674/anaconda3/envs/texcheck/bin:${env:PATH}"
+      }
+    }
+  ],
+
+  "latex-workshop.latex.recipes": [
+    { "name": "tectonic", "tools": ["tectonic"] }
+  ],
+  "latex-workshop.latex.recipe.default": "tectonic",
+
+  // Build on save; show the PDF in a VSCode tab with SyncTeX (ctrl/cmd+click to
+  // jump between source and PDF).
+  "latex-workshop.latex.autoBuild.run": "onSave",
+  "latex-workshop.view.pdf.viewer": "tab",
+  "latex-workshop.latex.outDir": "%DIR%",
+  "latex-workshop.synctex.afterBuild.enabled": true,
+
+  // Tectonic runs bibtex internally, so no separate bib step is needed.
+  "latex-workshop.latex.autoClean.run": "onBuilt",
+  "latex-workshop.latex.clean.fileTypes": [
+    "*.aux", "*.bbl", "*.blg", "*.idx", "*.ind", "*.lof", "*.lot",
+    "*.out", "*.toc", "*.acn", "*.acr", "*.alg", "*.glg", "*.glo",
+    "*.gls", "*.fls", "*.log", "*.fdb_latexmk", "*.snm", "*.nav",
+    "*.dvi", "*.bcf", "*.run.xml", "*.xdv"
+  ]
+}

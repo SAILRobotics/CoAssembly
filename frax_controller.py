@@ -292,6 +292,10 @@ if _FRAX_AVAILABLE:
             gripper_collision: bool = True,
         ) -> None:
             self._qdot_max = float(qdot_max)
+            self._dynamic_sphere_center = None
+            self._dynamic_sphere_radius = 0.05
+            self._dynamic_sphere_clearance = 0.01
+            self._dynamic_sphere_alpha = float(cbf_alpha)
 
             # Base frame: frax URDF convention has a Rz(180°) offset
             _Rz180       = ScipyR.from_euler('z', np.pi).as_matrix()
@@ -400,7 +404,68 @@ if _FRAX_AVAILABLE:
             except Exception:
                 pass
 
+            if _UR_COLLISION_AVAILABLE:
+                base_R_j = jnp.asarray(self._base_R)
+                base_p_j = jnp.asarray(self._base_pos)
+
+                @jax.jit
+                def _dynamic_sphere_filter(q, qdot, center, radius, clearance,
+                                           alpha):
+                    """Project qdot onto moving-sphere CBF half-spaces."""
+                    def barriers(q_eval):
+                        positions_b, link_radii = self.robot.link_collision_data(
+                            q_eval)
+                        positions_w = positions_b @ base_R_j.T + base_p_j
+                        distances = jnp.linalg.norm(
+                            positions_w - center[None, :], axis=1)
+                        return (distances - jnp.asarray(link_radii)
+                                - radius - clearance)
+
+                    h = barriers(q)
+                    dh_dq = jax.jacfwd(barriers)(q)
+
+                    def project_one(index, velocity):
+                        gradient = dh_dq[index]
+                        # CBF condition: dh/dq*qdot + alpha*h >= 0.
+                        deficit = -(gradient @ velocity + alpha * h[index])
+                        correction = (jnp.maximum(deficit, 0.0)
+                                      / jnp.maximum(gradient @ gradient, 1e-9))
+                        return velocity + correction * gradient
+
+                    return jax.lax.fori_loop(
+                        0, dh_dq.shape[0], project_one, qdot)
+
+                self._dynamic_sphere_filter = _dynamic_sphere_filter
+            else:
+                self._dynamic_sphere_filter = None
+
         # ── Public API ────────────────────────────────────────────────────────
+
+        def set_dynamic_sphere(self, center_world: "np.ndarray | None",
+                               radius: float = 0.05,
+                               clearance: float = 0.01) -> None:
+            """Set/clear the live world-frame spherical CBF obstacle."""
+            self._dynamic_sphere_center = (
+                None if center_world is None
+                else np.asarray(center_world, dtype=float).reshape(3))
+            self._dynamic_sphere_radius = float(radius)
+            self._dynamic_sphere_clearance = float(clearance)
+
+        def filter_velocity(self, q, qdot):
+            """Apply the static CBF and the live palm-sphere CBF."""
+            q_j = jnp.asarray(q)
+            center = self._dynamic_sphere_center
+            # Preserve the original main_with_robot.py control path: exactly
+            # one static CBF solve per servo cycle. The moving palm adds one
+            # subsequent half-space projection only when tracking is active.
+            safe = self._cbf.safety_filter(q_j, jnp.asarray(qdot))
+            if center is not None and self._dynamic_sphere_filter is not None:
+                safe = self._dynamic_sphere_filter(
+                    q_j, safe, jnp.asarray(center),
+                    self._dynamic_sphere_radius,
+                    self._dynamic_sphere_clearance,
+                    self._dynamic_sphere_alpha)
+            return np.asarray(safe)
 
         def servo_step(self,
                        target_pos_world: np.ndarray,
@@ -418,7 +483,7 @@ if _FRAX_AVAILABLE:
                                   des_pos, des_rot,
                                   jnp.zeros(3), jnp.zeros(3), J, M_inv)
             qdot      = qdot * float(speed_scale)
-            qdot_safe = np.asarray(self._cbf.safety_filter(q, qdot))
+            qdot_safe = self.filter_velocity(q, qdot)
             qdot_limit = self._qdot_max * float(speed_scale)
             qdot_np   = np.clip(qdot_safe, -qdot_limit, qdot_limit)
             return q_current + qdot_np * dt
@@ -659,8 +724,8 @@ class RobotController:
         if self._frax is not None:
             qdot = (q_limited - q) / max(dt, 1e-6)
             try:
-                qdot_safe = np.asarray(
-                    self._frax._cbf.safety_filter(jnp.array(q), jnp.array(qdot)))
+                qdot_safe = self._frax.filter_velocity(
+                    jnp.array(q), jnp.array(qdot))
             except Exception:
                 qdot_safe = qdot
             q_target = q + qdot_safe * dt
@@ -718,8 +783,8 @@ class RobotController:
             if self._frax is not None:
                 qdot = (q_limited - q_cur) / max(dt, 1e-6)
                 try:
-                    qdot_safe = np.asarray(
-                        self._frax._cbf.safety_filter(jnp.array(q_cur), jnp.array(qdot)))
+                    qdot_safe = self._frax.filter_velocity(
+                        jnp.array(q_cur), jnp.array(qdot))
                 except Exception:
                     qdot_safe = qdot
                 q_target = q_cur + qdot_safe * dt

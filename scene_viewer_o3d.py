@@ -10,9 +10,22 @@ Used by main_with_robot.py:
 """
 
 import copy
+from pathlib import Path
 import re
+import sys
+import types
 import xml.etree.ElementTree as ET
 import numpy as np
+
+# Open3D imports its optional ML stack eagerly, even though this visualizer only
+# uses geometry and rendering.  On the lab machines those dependencies live on
+# NFS and can add minutes to a cold start.  A placeholder prevents that unused
+# subpackage from loading while leaving the core Open3D modules untouched.
+if "open3d.ml" not in sys.modules:
+    _open3d_ml_placeholder = types.ModuleType("open3d.ml")
+    _open3d_ml_placeholder.__path__ = []
+    sys.modules["open3d.ml"] = _open3d_ml_placeholder
+
 import open3d as o3d
 from scipy.spatial.transform import Rotation as ScipyR
 
@@ -150,6 +163,7 @@ class SceneVis:
     def __init__(self, title: str, width: int = 1000, height: int = 680,
                  board_ar_asset: str = "NewBaseBoard.obj",
                  load_gearbox_mirror: bool = True,
+                 load_robot_assets: bool = True,
                  enable_key_callbacks: bool = False):
         self.vis = (o3d.visualization.VisualizerWithKeyCallback()
                     if enable_key_callbacks
@@ -290,6 +304,7 @@ class SceneVis:
         self._gearbox_root_initial_T = None
         self._gearbox_done = {row: set() for row in range(1, 5)}
         self._gearbox_blocked_view = None
+        self._gearbox_active_view = None
         self._gearbox_reference_parts: set[str] = set()
         self._gearbox_reference_color = [1.0, 0.92, 0.02]
         if load_gearbox_mirror:
@@ -311,7 +326,8 @@ class SceneVis:
         # Full gripper/adapter model whose OBJ origin is authored at the robot
         # TCP. It follows the same live/commanded TCP transform used by the
         # handover visualization in update_tcp().
-        _gripper_path = (_asset_dir / "RobotiqGripperWithAdapters.obj")
+        _gripper_path = ((_asset_dir / "RobotiqGripperWithAdapters.obj")
+                         if load_robot_assets else Path("__robot_assets_disabled__"))
         if _gripper_path.exists():
             _mesh = o3d.io.read_triangle_mesh(str(_gripper_path))
             _mesh.compute_vertex_normals()
@@ -369,10 +385,10 @@ class SceneVis:
                 self._tcp_gripper_mesh = _mesh
                 print(f"[SceneVis] Falling back to rigid TCP gripper from "
                       f"{_gripper_path.name} ({len(_mesh.vertices)} verts)")
-        else:
+        elif load_robot_assets:
             print(f"[SceneVis] TCP gripper not found at {_gripper_path}")
 
-        _UR10E_VIS = [
+        _UR10E_VIS = ([
             ("base.obj",     [0,       0,      0      ], [0,         0,       np.pi       ]),
             ("shoulder.obj", [0,       0,      0      ], [0,         0,       np.pi       ]),
             ("upperarm.obj", [0,       0,      0.1762 ], [np.pi/2,   0,      -np.pi/2    ]),
@@ -380,7 +396,7 @@ class SceneVis:
             ("wrist1.obj",   [0,       0,     -0.135  ], [np.pi/2,   0,       0          ]),
             ("wrist2.obj",   [0,       0,     -0.12   ], [0,         0,       0          ]),
             ("wrist3.obj",   [0,       0,     -0.1168 ], [np.pi/2,   0,       0          ]),
-        ]
+        ] if load_robot_assets else [])
         _mesh_dir = cfg.SCENE_LAYOUT_DIR.parent / "robot_assets" / "meshes" / "ur10e" / "visual"
         self._robot_meshes: list = []
         self._robot_mesh_Ts: list = []
@@ -797,6 +813,14 @@ class SceneVis:
                         and self._gearbox_part_in_stage(
                             ptype, row, side, blocked_view[0], blocked_view[1])):
                     color = blocked
+                active_view = self._gearbox_active_view
+                if (active_view is not None
+                        and self._gearbox_part_in_stage(
+                            ptype, row, side, active_view[0], active_view[1])):
+                    # Match Unity's ready-stage appearance. Completion colors
+                    # are recomputed after the complete event, when this active
+                    # overlay is cleared.
+                    color = built
             if name in self._gearbox_reference_parts:
                 color = self._gearbox_reference_color
             entry["mesh"].paint_uniform_color(color)
@@ -842,21 +866,27 @@ class SceneVis:
             for done in self._gearbox_done.values():
                 done.clear()
             self._gearbox_blocked_view = None
+            self._gearbox_active_view = None
         elif event == "complete" and row in self._gearbox_done:
             self._gearbox_reference_parts.clear()
             self._gearbox_done[row].add(stage)
             self._gearbox_blocked_view = None
+            self._gearbox_active_view = None
         elif event == "uncomplete" and row in self._gearbox_done:
             self._gearbox_reference_parts.clear()
             self._gearbox_done[row].discard(stage)
             self._gearbox_blocked_view = None
+            self._gearbox_active_view = None
         elif event == "show":
             self._gearbox_reference_parts.clear()
             self._gearbox_blocked_view = ((row, stage)
                                           if msg.get("blocked", False) else None)
+            self._gearbox_active_view = (None if msg.get("blocked", False)
+                                         else (row, stage))
         elif event == "close":
             self._gearbox_reference_parts.clear()
             self._gearbox_blocked_view = None
+            self._gearbox_active_view = None
         else:
             return
         self._refresh_gearbox_assembly_colors()
@@ -1228,6 +1258,15 @@ class SceneVis:
         self._left_hand_gripper_mesh.transform(delta)
         self.vis.update_geometry(self._left_hand_gripper_mesh)
         self._left_hand_gripper_T = T_new
+
+    def set_left_hand_gripper_color(self, color) -> None:
+        """Set the handover-preview gripper RGB color."""
+        if self._left_hand_gripper_mesh is None:
+            return
+        rgb = np.asarray(color, dtype=float).reshape(-1)[:3]
+        self._left_hand_gripper_mesh.paint_uniform_color(
+            np.clip(rgb, 0.0, 1.0).tolist())
+        self.vis.update_geometry(self._left_hand_gripper_mesh)
 
     def update_tcp_target(self, T: "np.ndarray | None"):
         """Draw the move_to_pose target as a magenta sphere + RGB axes frame."""
