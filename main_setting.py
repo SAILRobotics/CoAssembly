@@ -102,7 +102,6 @@ WORLD_MARKER_SIZE    = 0.100   # markers 104-107: 10 cm
 # ── World marker click-to-relock (secondary markers) ──────────────────────────
 WORLD_MARKERS_FILE         = SCENE_LAYOUT_DIR / "world_markers_T_ref_from_marker.json"
 EYE_OFFSET_FILE            = SCENE_LAYOUT_DIR / "eye_offset_calibration.json"
-TASK_PROGRESS_FILE         = SCENE_LAYOUT_DIR / "task_progress.json"
 WORLD_MARKERS_PROXIMITY_MAX = 1.0                    # metres — max distance to relock
 WORLD_MARKERS_TILT_MAX_DEG = 45.0                    # max degrees off face-on to relock
 WORLD_MARKERS_RELOCK_COOLDOWN = 1.0                  # seconds between secondary relocks
