@@ -126,6 +126,44 @@ def _load_part_labels() -> str:
     return ("\n".join(f"- {name}" for name in labels)
             if labels else "(part label list unavailable)")
 
+
+def _layout_type_to_allowed_label(layout_type: str) -> str:
+    """Translate scene-layout names into the assistant's canonical ontology."""
+    raw = str(layout_type).strip()
+    special = {
+        "philips_screwdriver": "PHILLIPS_SCREWDRIVER",
+        "BitHolder1": "BIT_HOLDER1",
+        "BitHolder2": "BIT_HOLDER2",
+    }
+    label = special.get(raw, raw.upper())
+    if label.startswith("GEAR_STAND_"):
+        label = label.removeprefix("GEAR_")
+    return label
+
+
+def _load_physical_layout_inventory() -> str:
+    """Build concise VLM context from the live pegboard layout."""
+    try:
+        path = (Path(__file__).resolve().parent.parent / "scene_layout" /
+                "tool_layout1.json")
+        entries = json.loads(path.read_text(encoding="utf-8")).get("tools", [])
+        allowed = set(_load_part_label_names())
+        lines: list[str] = []
+        for entry in entries:
+            source_name = str(entry.get("type", "")).strip()
+            label = _layout_type_to_allowed_label(source_name)
+            if not source_name or label not in allowed:
+                continue
+            category = str(entry.get("category", "object")).strip() or "object"
+            friendly = source_name.replace("_", " ")
+            lines.append(
+                f"- {friendly} ({category}); allowed output label: `{label}`")
+        return ("\n".join(lines) if lines
+                else "(physical layout inventory unavailable)")
+    except Exception as exc:
+        print(f"[VLM] Could not load physical layout inventory: {exc}")
+        return "(physical layout inventory unavailable)"
+
 _MD_PATTERNS = [
     (re.compile(r'\*\*(.+?)\*\*'), r'\1'),
     (re.compile(r'\*(.+?)\*'),     r'\1'),
@@ -517,6 +555,15 @@ class VLMAssistant:
                 "language/visual evidence only. Do not use assembly progress, step "
                 "validity, or ordering to choose or reject a target.\n")
         elif study4_condition == "task_aware":
+            self._system_prompt += (
+                "\n--- CURRENT PHYSICAL PEGBOARD INVENTORY "
+                "(from scene_layout/tool_layout1.json) ---\n"
+                + _load_physical_layout_inventory()
+                + "\n--- END CURRENT PHYSICAL PEGBOARD INVENTORY ---\n"
+                "This inventory defines which objects are independently "
+                "selectable. Use its allowed output labels. The task "
+                "description separately explains how those physical objects "
+                "participate in the assembly.\n")
             self._system_prompt += (
                 "\nSTUDY CONDITION: Use the focused assembly-step description to "
                 "scope ambiguous physical references. Return only candidates you "
@@ -1199,8 +1246,10 @@ Return only independently selectable physical objects on the pegboard:
   row-kit label instead of an individual bearing/screw/pin label.
 - A removable bit is physically selected through its holder. Return
   `BIT_HOLDER1` for H5 or H3 and `BIT_HOLDER2` for T25.
-- Include the separate driver handle when fastening requires one:
-  `BIT_SCREWDRIVER` for Rows 1-3 or `PHILLIPS_SCREWDRIVER` for Row 4.
+- Include the separate compatible driver handle when fastening requires one.
+  Infer the appropriate driver/holder from the selected action, the Study 4
+  description, and available visual/language evidence; do not use a hidden
+  per-row answer lookup.
 - Include a stand, gear, or gear rod directly when that standalone object is
   newly required by the focused step.
 """

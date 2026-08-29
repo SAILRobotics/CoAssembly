@@ -1637,9 +1637,16 @@ class DearPyGuiTaskGraphApp:
         # Create the VLM assistant only when the caller supplies a model.
         if vlm_model is not None:
             startup(f"Creating VLM assistant: {vlm_model}")
-            # Use the requested prompt file or the repository's default description.
+            # TEMPORARY STUDY COMPARISON: give both language conditions the
+            # simplified Study 4 domain description.  The language condition
+            # still receives no focused-step/task-state context; only the
+            # background description is shared.
+            default_description = (
+                "study4_condition3_task_description.md"
+                if self.study4_condition in {"language", "task_aware"}
+                else "task_description.md")
             desc_path = task_description_path or str(
-                Path(__file__).parent / "task_description.md")
+                Path(__file__).parent / default_description)
             # Construct the assistant before build() so its panel can be created.
             self._vlm = VLMAssistant(
                 self.dpg,
@@ -4344,7 +4351,10 @@ class DearPyGuiTaskGraphApp:
         elif state == "complete":
             self._speak("This step is already complete.")
         else:
-            tool_guidance = self._fastening_tool_guidance(step)
+            # In Condition 3, exact tool guidance would reveal the candidate
+            # answer before the task-aware VLM makes its prediction.
+            tool_guidance = ("" if self.study4_condition == "task_aware"
+                             else self._fastening_tool_guidance(step))
             spoken_action = action[0].upper() + action[1:]
             suffix = f" Use {tool_guidance}." if tool_guidance else ""
             self._speak(f"This step is ready. {spoken_action}.{suffix}")
@@ -4354,22 +4364,11 @@ class DearPyGuiTaskGraphApp:
         if self._vlm is None:
             return
         state = self.graph.state(step)
-        missing = self.graph.missing(step)
-        coords = self.graph.control_coords_for(step.id)
-        fastening_labels = (gearbox_control.fastening_tool_labels(step.row)
-                            if coords is not None and coords[1] in (4, 6)
-                            else ())
         focused = (
-            f"[{step.id}] {step.title}\n"
+            f"Title: {step.title}\n"
             f"State: {state.upper()}\n"
-            f"Description: {step.description}\n"
-            f"Inputs: {', '.join(step.inputs)}\n"
-            f"Context: {', '.join(step.context) or '(none)'}\n"
-            f"Fastening tools: {', '.join(fastening_labels) or '(none)'}\n"
-            f"Produces: {step.output}"
+            f"Action: {self.graph.friendly_step_action(step)}"
         )
-        if missing:
-            focused += f"\nBlocked by: {', '.join(missing)}"
         self._vlm.set_focused_step(focused)
         # Do not seed discourse with graph-ground-truth inputs. Candidate
         # highlights and follow-ups such as "the other one" must be based on a

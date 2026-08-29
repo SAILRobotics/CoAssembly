@@ -2014,6 +2014,7 @@ class MainScene:
         self._tracking_hand_side: "str | None"           = None   # 'left' | 'right' while tracking
         self._last_ar_board_T: "np.ndarray | None"    = None   # last AR box pose from _GripPoseBridge; persists between polls
         self._last_tcp_color_state: "str | None"      = None
+        self._last_handover_ghost_color: "tuple[float, ...] | None" = None
         self._board_regrasp_available: bool            = False
         # Set after a tool/part is physically pulled from the gripper.  The
         # next TCP click arms board reception at the current handover pose
@@ -2476,6 +2477,39 @@ class MainScene:
             self._TCP_TOOL_ID, color if forced else None)
         print(f"[TCP Color] board={state} → {color}")
 
+    def _update_handover_ghost_color(self) -> None:
+        """Color the Unity target gripper by real-TCP handover proximity."""
+        board_state = (self.robot.board_state
+                       if self.robot is not None else "inactive")
+        active = (board_state == "inactive"
+                  and self._robot_state == "moving_to_pose"
+                  and self._motion_source == "hand"
+                  and self._T_world_tcp is not None
+                  and self._tcp_target_T is not None)
+        if not active:
+            if self._last_handover_ghost_color is not None:
+                self._last_handover_ghost_color = None
+                # A board-state transition owns its own forced color. Only
+                # restore the ordinary TCP color when no board interaction is
+                # using this same Unity object.
+                if board_state == "inactive":
+                    self.tools.set_forced_color(self._TCP_TOOL_ID, None)
+            return
+
+        dist = float(np.linalg.norm(
+            self._T_world_tcp[:3, 3] - self._tcp_target_T[:3, 3]))
+        # Red at >= 40 cm, yellow halfway, green at the 5 cm handover
+        # convergence boundary. Quantization avoids flooding port 5010.
+        progress = float(np.clip((0.40 - dist) / (0.40 - 0.05), 0.0, 1.0))
+        if progress < 0.5:
+            rgb = (1.0, 2.0 * progress, 0.0)
+        else:
+            rgb = (2.0 * (1.0 - progress), 1.0, 0.0)
+        color = tuple(round(component, 2) for component in (*rgb, 0.25))
+        if color != self._last_handover_ghost_color:
+            self._last_handover_ghost_color = color
+            self.tools.set_forced_color(self._TCP_TOOL_ID, list(color))
+
     def _on_board_move_complete(self, ok: bool) -> None:
         _tcp = self._T_world_tcp
         _tgt = self._tcp_target_T
@@ -2805,6 +2839,7 @@ class MainScene:
                     self.robot.poll()   # drain robot_control_server.py state/events
                     self._sync_tcp_board_color()
                     self._T_world_tcp = self.robot.tcp_pose
+                    self._update_handover_ghost_color()
                     _link_poses       = self.robot.arm_link_poses()
                     if self._T_world_tcp is not None and self._tcp_synth is not None:
                         # In hand-tracking mode, show Unity the same projected

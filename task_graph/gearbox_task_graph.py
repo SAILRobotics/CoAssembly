@@ -1315,6 +1315,7 @@ class DearPyGuiTaskGraphApp:
             # Send the updated state to the VLM when the event mapped to a step.
             if ids:
                 self._notify_vlm(f"COMPLETE (live): {', '.join(ids)}")
+            self._publish_selected_step_board_highlight()
         # Undo mapped steps in reverse dependency order.
         elif event == "uncomplete":
             for sid in reversed(ids):
@@ -1326,6 +1327,7 @@ class DearPyGuiTaskGraphApp:
             # Send the updated state to the VLM when the event mapped to a step.
             if ids:
                 self._notify_vlm(f"UNDO (live): {', '.join(ids)}")
+            self._publish_selected_step_board_highlight()
         # Ignore external event types this application does not recognize.
         else:
             return
@@ -1905,23 +1907,20 @@ class DearPyGuiTaskGraphApp:
         return parts
 
     def _publish_selected_step_board_highlight(self) -> None:
-        """Keep selected-step BoardAR and pegboard context cyan on every route."""
-        parts = self._selected_step_board_parts()
+        """Highlight pegboard inputs without overriding gearbox progression."""
         step_ids = self._selected_step_pegboard_ids()
-        color = [0.0, 1.0, 1.0, 0.2]
         self._send_select({
             "event": "step_context_highlight",
             "step_ids": step_ids,
         })
+        # BoardAR/Open3D gearbox parts use only progression colors: green,
+        # orange, and red. Never place the cyan selected-step overlay on them.
         self._send_select({
             "event": "board_step_highlight",
-            "assembly_parts": parts,
-            "assembly_color": color,
+            "assembly_parts": [],
         })
         if self.controller is not None:
-            self.controller.send(
-                {"command": "reference_color", "parts": parts, "color": color}
-                if parts else {"command": "reference_clear"})
+            self.controller.send({"command": "reference_clear"})
 
     def _selected_step_pegboard_ids(self) -> list[int]:
         """Return pegboard objects entering the currently selected stage."""
@@ -1937,14 +1936,11 @@ class DearPyGuiTaskGraphApp:
     def _send_reference_highlight(self, ids: list[int], color: list[float],
                                   status: str, label: str,
                                   assembly_parts: Iterable[str] = ()) -> None:
-        selected_parts = self._selected_step_board_parts()
         step_ids = self._selected_step_pegboard_ids()
-        assembly_parts = list(dict.fromkeys(
-            (*selected_parts, *assembly_parts)))
-        # Pegboard references may use warning/status colors, but BoardAR keeps
-        # the selected step's semantic context consistently cyan.
-        assembly_color = ([0.0, 1.0, 1.0, 0.2]
-                          if selected_parts else list(color))
+        # References may color pegboard storage objects, but never override
+        # the assembled gearbox's green/orange/red progression palette.
+        assembly_parts = []
+        assembly_color = list(color)
         referred_ids = (sorted({int(tool_id) for tool_id in ids})
                         if len(set(ids)) == 1 and label != "AMBIGUOUS" else [])
         self._send_select({
@@ -1962,10 +1958,7 @@ class DearPyGuiTaskGraphApp:
         # not running. When main is present, receiving the same idempotent
         # reference color a second time is harmless.
         if self.controller is not None:
-            self.controller.send(
-                {"command": "reference_color", "parts": assembly_parts,
-                 "color": assembly_color}
-                if assembly_parts else {"command": "reference_clear"})
+            self.controller.send({"command": "reference_clear"})
 
     def _record_reference_decision(self, result: dict[str, object], decision: str,
                                    matched_parts: Iterable[str],
@@ -3457,6 +3450,7 @@ class DearPyGuiTaskGraphApp:
                 self._send_select({"event": "uncomplete" if was_complete else "complete",
                                    "row": coords[0], "stage": coords[1],
                                    "step": self.selected_id})
+            self._publish_selected_step_board_highlight()
         self.log(message)
         if ok and was_complete:
             self._speak(f"Undid {self.graph.friendly_step(step)}.")
