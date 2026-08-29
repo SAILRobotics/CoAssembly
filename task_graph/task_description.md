@@ -159,9 +159,9 @@ The speech/VLM interface uses these fastening-tool labels:
 
 | Row | Fastening stages | Semantic tool labels | Pegboard objects highlighted |
 | --- | --- | --- | --- |
-| 1 | 1.4 and 1.6 | `BIT_WRENCH`, `H5_HEX_BIT` | interchangeable-bit wrench and `BitHolder1` |
+| 1 | 1.4 and 1.6 | `BIT_SCREWDRIVER`, `H5_HEX_BIT` | interchangeable-bit screwdriver and `BitHolder1` |
 | 2 | 2.4 and 2.6 | `BIT_SCREWDRIVER`, `T25_TORX_BIT` | interchangeable-bit screwdriver and `BitHolder2` |
-| 3 | 3.4 and 3.6 | `BIT_WRENCH`, `H3_HEX_BIT` | interchangeable-bit wrench and `BitHolder1` |
+| 3 | 3.4 and 3.6 | `BIT_SCREWDRIVER`, `H3_HEX_BIT` | interchangeable-bit screwdriver and `BitHolder1` |
 | 4 | 4.4 and 4.6 | `PHILLIPS_SCREWDRIVER` | Phillips screwdriver |
 
 `BIT_HOLDER1` contains the H5 and H3 hex inserts. `BIT_HOLDER2` contains the

@@ -954,6 +954,10 @@ class _ToolSelectionManager:
         self._semantic_highlighted: set[int]            = set()
         self._step_context_ids: set[int]                 = set()
         self._assembly_events:  list[dict]              = []
+        # Raw Unity interaction events are retained for study-specific scoring.
+        # MainScene may ignore this queue; dedicated study runtimes can drain it
+        # without changing the normal hover/select color behavior.
+        self._interaction_events: list[dict]            = []
         self._on_cancel = None
         self._last_color_refresh = 0.0
 
@@ -981,12 +985,21 @@ class _ToolSelectionManager:
         return processed
 
     def _handle_event(self, tool_id: int, event_type: str, hand: str = "unknown"):
+        self._interaction_events.append({
+            "tool_id": int(tool_id), "event_type": str(event_type),
+            "hand": str(hand), "timestamp": time.time(),
+        })
         if event_type == "selected":
             self._handle_click(tool_id, hand)
         elif event_type == "hover_enter":
             self._handle_hover_enter(tool_id)
         elif event_type == "hover_exit":
             self._handle_hover_exit(tool_id)
+
+    def pop_interaction_events(self) -> list[dict]:
+        events = self._interaction_events
+        self._interaction_events = []
+        return events
 
     def set_category_color(self, tool_id: int, color: list[float]) -> None:
         """Store the tool's base category color and paint it. Call from _apply_tool_category_colors.
@@ -2001,6 +2014,7 @@ class MainScene:
         self._tracking_hand_side: "str | None"           = None   # 'left' | 'right' while tracking
         self._last_ar_board_T: "np.ndarray | None"    = None   # last AR box pose from _GripPoseBridge; persists between polls
         self._last_tcp_color_state: "str | None"      = None
+        self._last_handover_ghost_color: "tuple[float, ...] | None" = None
         self._board_regrasp_available: bool            = False
         # Set after a tool/part is physically pulled from the gripper.  The
         # next TCP click arms board reception at the current handover pose
@@ -2018,7 +2032,6 @@ class MainScene:
         self._completed_task_stages: set[tuple[int, int]]     = set()
         self._completed_task_history: list[tuple[int, int]]   = []
         self._last_worked_task_row: "int | None"              = None
-        self._load_task_progress()
         # Semantic task-graph parts associated with a physical pegboard object.
         # For example, tool 35 is ROW1_KIT while the request may specifically
         # be BEARING_ROW1_RIGHT.
@@ -2170,7 +2183,6 @@ class MainScene:
             self._handed_over_objects.append((tool_id, name))
         self.tool_layout.mark_delivered(tool_id)
         self._refresh_handed_over_visibility()
-        self._save_task_progress()
 
     def _refresh_handed_over_visibility(self) -> None:
         """Hide the union of real and inferred handovers in Open3D and Unity."""
@@ -2219,13 +2231,12 @@ class MainScene:
                       f"{names}")
 
     def _remember_task_progress_event(self, event: dict) -> None:
-        """Retain and persist controller/GUI state for task-graph recovery."""
+        """Retain controller/GUI state in memory for same-process recovery."""
         event_name = str(event.get("event", ""))
         if event_name == "reset":
             self._completed_task_stages.clear()
             self._completed_task_history.clear()
             self._last_worked_task_row = None
-            self._save_task_progress()
             return
         if event_name not in {"complete", "uncomplete"}:
             return
@@ -2250,83 +2261,6 @@ class MainScene:
             ]
         if row > 0:
             self._last_worked_task_row = row
-        self._save_task_progress()
-
-    def _load_task_progress(self) -> None:
-        """Load durable physical handovers and the row/stage snapshot."""
-        path = cfg.TASK_PROGRESS_FILE
-        if not path.exists():
-            return
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            valid_tool_ids = set(self._tool_id_to_box_index)
-            handed_over: list[tuple[int, str]] = []
-            handed_over_ids: set[int] = set()
-            records = data.get("handed_over_objects", [])
-            for record in records if isinstance(records, list) else []:
-                try:
-                    tool_id = int(record.get("tool_id"))
-                except (AttributeError, TypeError, ValueError):
-                    continue
-                if tool_id in valid_tool_ids and tool_id not in handed_over_ids:
-                    handed_over_ids.add(tool_id)
-                    handed_over.append(
-                        (tool_id, self.tool_layout.get_name(tool_id)))
-
-            records = data.get("completed_stages", [])
-            history: list[tuple[int, int]] = []
-            seen: set[tuple[int, int]] = set()
-            for record in records if isinstance(records, list) else []:
-                row = int(record.get("row", 0))
-                stage = int(record.get("stage", 0))
-                coords = (row, stage)
-                if (((1 <= row <= 4 and 1 <= stage <= 7)
-                     or (row == 0 and stage == 8))
-                        and coords not in seen):
-                    seen.add(coords)
-                    history.append(coords)
-            row_hint = data.get("last_worked_row")
-            row_hint = int(row_hint) if row_hint is not None else None
-            self._completed_task_stages = seen
-            self._completed_task_history = history
-            self._last_worked_task_row = (
-                row_hint if row_hint is not None and 1 <= row_hint <= 4 else None)
-            self._handed_over_objects = handed_over
-            for tool_id in handed_over_ids:
-                self.tool_layout.mark_delivered(tool_id)
-            self._refresh_handed_over_visibility()
-            print(f"[TaskProgress] Loaded {len(history)} completed stage(s) "
-                  f"and {len(handed_over)} confirmed handover(s) from {path}")
-        except (OSError, ValueError, TypeError, AttributeError,
-                json.JSONDecodeError) as exc:
-            print(f"[TaskProgress] Ignored invalid progress file {path}: {exc}")
-
-    def _save_task_progress(self) -> None:
-        """Atomically save the task snapshot consumed by task-graph recovery."""
-        path = cfg.TASK_PROGRESS_FILE
-        temp_path = path.with_suffix(path.suffix + ".tmp")
-        ordered = list(self._completed_task_history)
-        ordered.extend(sorted(
-            self._completed_task_stages - set(ordered),
-            key=lambda value: (value == (0, 8), value[0], value[1])))
-        payload = {
-            "handed_over_objects": [
-                {"tool_id": int(tool_id), "name": str(name)}
-                for tool_id, name in self._handed_over_objects
-            ],
-            "version": 1,
-            "completed_stages": [
-                {"row": row, "stage": stage} for row, stage in ordered
-            ],
-            "last_worked_row": self._last_worked_task_row,
-        }
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            temp_path.write_text(
-                json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-            temp_path.replace(path)
-        except OSError as exc:
-            print(f"[TaskProgress] Save failed for {path}: {exc}")
 
     def _reset_all_handover_state(self) -> None:
         """Clear confirmed/inferred handovers and republish the full pegboard."""
@@ -2339,7 +2273,6 @@ class MainScene:
         self.tool_layout.reset_delivered()
         self.tools._apply_highlight_clear(clear_step_context=True)
         self._refresh_handed_over_visibility()
-        self._save_task_progress()
         print("[HandoverReset] Cleared actual and task-inferred handovers; "
               "all pegboard objects restored")
 
@@ -2543,6 +2476,39 @@ class MainScene:
         self.tools.set_forced_color(
             self._TCP_TOOL_ID, color if forced else None)
         print(f"[TCP Color] board={state} → {color}")
+
+    def _update_handover_ghost_color(self) -> None:
+        """Color the Unity target gripper by real-TCP handover proximity."""
+        board_state = (self.robot.board_state
+                       if self.robot is not None else "inactive")
+        active = (board_state == "inactive"
+                  and self._robot_state == "moving_to_pose"
+                  and self._motion_source == "hand"
+                  and self._T_world_tcp is not None
+                  and self._tcp_target_T is not None)
+        if not active:
+            if self._last_handover_ghost_color is not None:
+                self._last_handover_ghost_color = None
+                # A board-state transition owns its own forced color. Only
+                # restore the ordinary TCP color when no board interaction is
+                # using this same Unity object.
+                if board_state == "inactive":
+                    self.tools.set_forced_color(self._TCP_TOOL_ID, None)
+            return
+
+        dist = float(np.linalg.norm(
+            self._T_world_tcp[:3, 3] - self._tcp_target_T[:3, 3]))
+        # Red at >= 40 cm, yellow halfway, green at the 5 cm handover
+        # convergence boundary. Quantization avoids flooding port 5010.
+        progress = float(np.clip((0.40 - dist) / (0.40 - 0.05), 0.0, 1.0))
+        if progress < 0.5:
+            rgb = (1.0, 2.0 * progress, 0.0)
+        else:
+            rgb = (2.0 * (1.0 - progress), 1.0, 0.0)
+        color = tuple(round(component, 2) for component in (*rgb, 0.25))
+        if color != self._last_handover_ghost_color:
+            self._last_handover_ghost_color = color
+            self.tools.set_forced_color(self._TCP_TOOL_ID, list(color))
 
     def _on_board_move_complete(self, ok: bool) -> None:
         _tcp = self._T_world_tcp
@@ -2873,6 +2839,7 @@ class MainScene:
                     self.robot.poll()   # drain robot_control_server.py state/events
                     self._sync_tcp_board_color()
                     self._T_world_tcp = self.robot.tcp_pose
+                    self._update_handover_ghost_color()
                     _link_poses       = self.robot.arm_link_poses()
                     if self._T_world_tcp is not None and self._tcp_synth is not None:
                         # In hand-tracking mode, show Unity the same projected

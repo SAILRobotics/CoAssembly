@@ -180,12 +180,12 @@ FASTENING_TOOL_SPECS = {
 }
 
 # Every right/left stand-fastening operation in a row uses the same tool set.
-# Row 1 and Row 3 internal-hex screws use the bit wrench; Row 2 uses the bit
-# screwdriver with its Torx insert; Row 4 has a dedicated Phillips driver.
+# Rows 1-3 use the interchangeable-bit screwdriver with the row-specific bit;
+# Row 4 has a dedicated Phillips driver.
 FASTENING_TOOLS_BY_ROW = {
-    1: ("BIT_WRENCH", "H5_HEX_BIT"),
+    1: ("BIT_SCREWDRIVER", "H5_HEX_BIT"),
     2: ("BIT_SCREWDRIVER", "T25_TORX_BIT"),
-    3: ("BIT_WRENCH", "H3_HEX_BIT"),
+    3: ("BIT_SCREWDRIVER", "H3_HEX_BIT"),
     4: ("PHILLIPS_SCREWDRIVER",),
 }
 
@@ -372,7 +372,7 @@ class GearboxStateMachine:
     dependency/lock/completion logic; Unity choreographs the motion. State lives as attributes,
     matching the house style of _ToolSelectionManager (main_with_robot.py)."""
 
-    def __init__(self, send, notify=None, highlight=None):
+    def __init__(self, send, notify=None, highlight=None, completion_guard=None):
         self._send = send                       # send(dict) -> publishes a command to Unity
         # notify(dict) -> publishes a semantic (row, stage) event to the task-graph viewer.
         # Optional: defaults to a no-op so headless tests can construct GearboxStateMachine(send).
@@ -381,6 +381,9 @@ class GearboxStateMachine:
         # appearing parts to tool ids). Same optional add-on pattern as notify, so the older
         # GearboxStateMachine(send) / (send, notify) constructions keep working unchanged.
         self._highlight = highlight or (lambda _msg: None)
+        # Optional Study-4 gate: return True (or (True, reason)) only after all
+        # required acquisition clicks for the current step are complete.
+        self.completion_guard = completion_guard
         self.done = {r: {s: False for s in range(1, 8)} for r in range(1, 5)}
         self.done8 = False                      # global "verify" stage (stage 8)
         self.current_row = None
@@ -484,8 +487,9 @@ class GearboxStateMachine:
         # to request an empty set. Locked/blocked stages still highlight (informational).
         self._highlight({"event": "highlight", "row": row, "stage": stage,
                          "complete": self.done[row][stage]})
-        print(f"  row {row}: stage {stage}  "
-              f"({'LOCKED' if blocked else 'ready'}, done={self.done[row][stage]})")
+        print(f"[STEP  ] row={row} stage={stage} "
+              f"status={'blocked' if blocked else 'ready'} "
+              f"done={self.done[row][stage]}", flush=True)
 
     def _handle_checkbox(self):
         if self.current_stage == 8:                       # global verify
@@ -507,6 +511,19 @@ class GearboxStateMachine:
         if not self.unlocked(row, stage):
             print(f"  (checkbox ignored: stage {stage} is locked)")
             return
+        if not self.done[row][stage] and self.completion_guard is not None:
+            verdict = self.completion_guard(row, stage)
+            allowed, reason = ((bool(verdict[0]), str(verdict[1]))
+                               if isinstance(verdict, tuple)
+                               else (bool(verdict), "acquisition incomplete"))
+            if not allowed:
+                self._send({"command": "ui", "show": True, "row": row,
+                            "checked": False, "blocked": True})
+                self._notify({"event": "acquisition_blocked", "row": row,
+                              "stage": stage, "reason": reason})
+                print(f"[STEP  ] completion_blocked row={row} stage={stage} "
+                      f"reason={reason}", flush=True)
+                return
         if not self.done[row][stage]:
             self.done[row][stage] = True
             self.history.append((row, stage))
@@ -525,10 +542,31 @@ class GearboxStateMachine:
                     "checked": self.done[row][stage], "blocked": False})
         self._notify({"event": "complete" if self.done[row][stage] else "uncomplete",
                       "row": row, "stage": stage})
-        print(f"  row {row}: stage {stage} done={self.done[row][stage]}")
+        print(f"[STEP  ] row={row} stage={stage} "
+              f"done={self.done[row][stage]}", flush=True)
 
         if self.done[row][stage] and self.all_rows_done():
             self._show_stage8()
+
+    def complete_automatically(self, row: int, stage: int) -> bool:
+        """Complete one unlocked stage without requiring its checkbox/acquisition guard."""
+        row, stage = int(row), int(stage)
+        if row not in self.done or stage not in self.done[row]:
+            return False
+        if self.done[row][stage]:
+            return True
+        if not self.unlocked(row, stage):
+            return False
+        self.done[row][stage] = True
+        self.history.append((row, stage))
+        self._send({"command": "recolor", "row": row,
+                    "done_stages": self._completed_stages(row)})
+        self._notify({"event": "complete", "row": row, "stage": stage,
+                      "automatic": True})
+        print(f"[STEP  ] AUTO-COMPLETE row={row} stage={stage}", flush=True)
+        if self.all_rows_done():
+            self._show_stage8()
+        return True
 
     def revert_last(self):
         """The revert button: turn the most-recently completed step back to incomplete. Updates the
@@ -877,7 +915,7 @@ class GearboxController:
                     continue
                 if event != "selected":
                     continue
-                print(f"\nclick: {name}")
+                print(f"[CLICK ] selected name={name}", flush=True)
                 self.sm.handle_click(name)
 
     def stop(self):

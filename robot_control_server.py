@@ -208,6 +208,7 @@ def _load_pegboard_cbf_obstacle() -> "list[dict]":
 class RobotControlServer:
     _STATE_INTERVAL          = 1.0 / 30.0
     _BASE_YAW_CORRECTION_DEG = -90.0
+    _PALM_OBSTACLE_TIMEOUT_S = 0.25
     _MOVE_POS_TOL_M          = 0.03
     _MOVE_ANGLE_TOL_RAD      = np.deg2rad(10.0)
     _BOARD_MOVE_POS_TOL_M    = 0.01
@@ -216,8 +217,18 @@ class RobotControlServer:
     # 1 cm/3 deg values remain an IK-validation criterion, not a study result.
     _WORKHOLDING_MOVE_POS_TOL_M = 0.05
     _WORKHOLDING_MOVE_ANGLE_TOL_RAD = np.deg2rad(15.0)
-    _HANDOVER_MOVE_POS_TOL_M = 0.015
-    _HANDOVER_MOVE_ANGLE_TOL_RAD = np.deg2rad(6.0)
+    # A hand target moves slightly even while the user tries to hold still.
+    # Give the presenting motion a modestly wider completion envelope than
+    # the former 1.5 cm / 6 deg / 0.30 s criterion.
+    _HANDOVER_MOVE_POS_TOL_M = 0.050
+    _HANDOVER_MOVE_ANGLE_TOL_RAD = np.deg2rad(8.0)
+    _HANDOVER_MOVE_DWELL_S   = 0.20
+    # Study-3 handover staging configuration.  It is the final waypoint of a
+    # successful grasp sequence, so no second client-side moveJ can overlap
+    # the retract program.
+    _HANDOVER_STAGE_JOINT_RAD = np.deg2rad(np.array(
+        [-100.16, -84.88, -136.53, -138.25, -99.46, -185.97], dtype=float))
+    _HANDOVER_STAGE_SPEED_RAD_S = 1.0
     _MOVE_DWELL_S            = 0.30
     _MOVE_STALL_TIMEOUT_S     = 3.0
     _MOVE_PROGRESS_POS_M      = 0.002
@@ -334,6 +345,8 @@ class RobotControlServer:
         self._move_progress_t:  float               = 0.0
         self._move_is_board:    bool                = False
         self._move_motion_profile: str              = "default"
+        self._palm_obstacle_last_update = 0.0
+        self._palm_obstacle_active = False
 
         # Direct joint move used by gearbox step selection.
         self._joint_move_target: "np.ndarray | None" = None
@@ -341,6 +354,7 @@ class RobotControlServer:
         self._joint_move_sent = False
         self._joint_move_started = 0.0
         self._joint_move_on_complete: "Callable | None" = None
+        self._joint_move_speed_multiplier = 1.0
 
         # Automatic startup positioning, shared by simulation and hardware.
         self._startup_active = True
@@ -498,11 +512,31 @@ class RobotControlServer:
         elif cmd == "move_to_joints":
             self.move_to_joints(
                 msg["joints"],
+                speed_multiplier=msg.get("speed_multiplier", 1.0),
                 on_complete=lambda ok, rid=rid: self._publish_event(
                     "move_done", rid, ok=bool(ok)))
 
         elif cmd == "update_move_target":
             self.update_move_target(msg["pos"], msg.get("quat"))
+
+        elif cmd == "update_palm_obstacle":
+            center = msg.get("center")
+            if center is None:
+                self._clear_palm_obstacle()
+            else:
+                center = np.asarray(center, dtype=float)
+                if center.shape != (3,) or not np.all(np.isfinite(center)):
+                    raise ValueError("palm obstacle center must be 3 finite values")
+                radius = float(msg.get("radius", 0.05))
+                clearance = float(msg.get("clearance", 0.01))
+                if (not np.isfinite(radius) or radius <= 0.0
+                        or not np.isfinite(clearance) or clearance < 0.0):
+                    raise ValueError("palm obstacle radius/clearance is invalid")
+                self._palm_obstacle_last_update = time.perf_counter()
+                self._palm_obstacle_active = True
+                if self._frax is not None:
+                    self._frax.set_dynamic_sphere(
+                        center, radius=radius, clearance=clearance)
 
         elif cmd == "cancel_move":
             self.cancel_move()
@@ -548,6 +582,11 @@ class RobotControlServer:
 
                 self._poll_commands()
 
+                if (self._palm_obstacle_active
+                        and time.perf_counter() - self._palm_obstacle_last_update
+                        > self._PALM_OBSTACLE_TIMEOUT_S):
+                    self._clear_palm_obstacle()
+
                 if not self.simulation:
                     q_fresh = self.poll_q()
                     if q_fresh is not None:
@@ -570,6 +609,11 @@ class RobotControlServer:
             self.close()
             self.pb_scene.disconnect()
             print("[RobotServer] Shutting down.")
+
+    def _clear_palm_obstacle(self) -> None:
+        self._palm_obstacle_active = False
+        if self._frax is not None:
+            self._frax.set_dynamic_sphere(None)
 
     # ── Grasp state (property + tick) ─────────────────────────────────────────
 
@@ -642,11 +686,18 @@ class RobotControlServer:
                 print("[Robot sim] Lifted → retracting to approach")
             else:
                 self._finish_grasp(True)
+        elif self._grasp_phase in ('ret_above_approach', 'retract'):
+            self._grasp_runner = _PbJointRunner(
+                cq, _wrap_nearest(self._HANDOVER_STAGE_JOINT_RAD, cq),
+                self._grasp_sim_duration_s / 2.0)
+            self._grasp_phase = 'handover_stage'
+            print("[Robot sim] Retract done → moving to handover staging pose")
         else:
-            # ret_above_approach or retract → done
+            # handover_stage → done
             self._finish_grasp(True)
 
-    def move_to_joints(self, joints, on_complete=None) -> None:
+    def move_to_joints(self, joints, speed_multiplier: float = 1.0,
+                       on_complete=None) -> None:
         """Start a guarded direct joint-space move; input is radians."""
         busy = (self._startup_active or self._move_phase is not None
                 or self._grasp_phase is not None or self._handover_pull_active
@@ -671,13 +722,21 @@ class RobotControlServer:
             if on_complete:
                 on_complete(False)
             return
+        speed_multiplier = float(speed_multiplier)
+        if not np.isfinite(speed_multiplier) or not 0.1 <= speed_multiplier <= 2.0:
+            print("[Robot] Joint move rejected — speed multiplier must be 0.1..2.0")
+            if on_complete:
+                on_complete(False)
+            return
         self._joint_move_target = _wrap_nearest(q, self.pb_scene.current_q.copy())
+        self._joint_move_speed_multiplier = speed_multiplier
         self._joint_move_on_complete = on_complete
         self._joint_move_sent = False
         self._joint_move_started = time.monotonic()
         if self.simulation:
             self._joint_move_runner = _PbJointRunner(
-                self.pb_scene.current_q.copy(), self._joint_move_target)
+                self.pb_scene.current_q.copy(), self._joint_move_target,
+                _PbJointRunner._DURATION_S / speed_multiplier)
         print(f"[Robot] Gearbox moveJ → "
               f"{np.round(np.rad2deg(self._joint_move_target), 2).tolist()}")
 
@@ -687,6 +746,7 @@ class RobotControlServer:
         self._joint_move_runner = None
         self._joint_move_sent = False
         self._joint_move_on_complete = None
+        self._joint_move_speed_multiplier = 1.0
         if cb:
             cb(bool(ok))
 
@@ -708,7 +768,8 @@ class RobotControlServer:
             err = np.max(np.abs(_wrap_nearest(target, self.pb_scene.current_q)
                                 - self.pb_scene.current_q))
             if not self._joint_move_sent:
-                speed = 0.5 * self._speed_scale
+                speed = (0.5 * self._speed_scale
+                         * self._joint_move_speed_multiplier)
                 ctrl.moveJ(list(target), speed, speed, asynchronous=True)
                 self._joint_move_sent = True
             elif err < np.deg2rad(1.0):
@@ -1268,16 +1329,19 @@ class RobotControlServer:
                 print(f"[Robot] dist: {_dc}{dist*100:5.1f} cm{_RST}  "
                       f"angle: {_ac}{np.rad2deg(angle_err):5.1f}°{_RST}")
 
+            dwell_s = (self._HANDOVER_MOVE_DWELL_S
+                       if self._move_motion_profile == "handover"
+                       else self._MOVE_DWELL_S)
             if (dist < pos_tol and angle_err < angle_tol):
                 if self._move_conv_start is None:
                     self._move_conv_start = time.perf_counter()
                 elif (time.perf_counter() - self._move_conv_start
-                      >= self._MOVE_DWELL_S):
+                      >= dwell_s):
                     print(f"[Robot] move_to_pose converged "
                           f"({dist*100:.1f} cm < {pos_tol*100:.1f} cm, "
                           f"{np.rad2deg(angle_err):.1f}° < "
                           f"{np.rad2deg(angle_tol):.1f}°, "
-                          f"{self._MOVE_DWELL_S:.1f} s dwell) → idle")
+                          f"{dwell_s:.1f} s dwell) → idle")
                     self._finish_move(True)
                     return
             else:
@@ -1367,9 +1431,8 @@ class RobotControlServer:
                 # Still apply CBF safety filter even in IK mode
                 qdot = (q_target - q_cur) / max(control_dt, 1e-6)
                 try:
-                    qdot_safe = np.asarray(
-                        self._frax._cbf.safety_filter(
-                            _jnp.array(q_cur), _jnp.array(qdot)))
+                    qdot_safe = self._frax.filter_velocity(
+                        _jnp.array(q_cur), _jnp.array(qdot))
                     q_target = q_cur + qdot_safe * control_dt
                 except Exception:
                     pass
@@ -1844,6 +1907,17 @@ class RobotControlServer:
 
         def _done(ok: bool) -> None:
             result = False if self._grasp_cancel_pending else ok
+            # An asynchronous RTDE moveJ may report isSteady() before its UR
+            # script thread has fully exited.  Explicitly terminate that
+            # completed motion before publishing grasp_done; otherwise an
+            # immediate handover-staging moveJ can be rejected by PolyScope as
+            # "another thread is running".
+            if not self.simulation and self._rtde_ctrl is not None:
+                try:
+                    self._rtde_ctrl.stopJ(2.0)
+                    print("[Robot] Grasp moveJ program released")
+                except Exception as exc:
+                    print(f"[Robot] Grasp moveJ release warning: {exc}")
             self._grasp_phase          = None
             self._grasp_on_phase       = None
             self._grasp_cancel_pending = False
@@ -1871,22 +1945,27 @@ class RobotControlServer:
             self._fire_phase(self._grasp_on_phase, "approaching")
             _next('approach' if self._grasp_q_approach is not None else 'grasp')
 
-        elif phase in ('approach', 'grasp', 'lift', 'ret_above_approach', 'retract'):
+        elif phase in ('approach', 'grasp', 'lift', 'ret_above_approach',
+                       'retract', 'handover_stage'):
             target = {
                 'approach':          self._grasp_q_approach,
                 'grasp':             self._grasp_joints,
                 'lift':              self._grasp_q_above,
                 'ret_above_approach': self._grasp_q_above_approach,
                 'retract':           self._grasp_q_approach,
+                'handover_stage':    _wrap_nearest(
+                    self._HANDOVER_STAGE_JOINT_RAD,
+                    self.pb_scene.current_q),
             }[phase]
             speed = {
                 # Travel quickly through the known-clear waypoint segments,
                 # but retain a slower final descent at the object itself.
-                'approach':          0.85 * sc,
-                'grasp':             0.30 * sc,
-                'lift':              0.40 * sc,
-                'ret_above_approach': 0.55 * sc,
-                'retract':           0.85 * sc,
+                'approach':          cfg.REAL_FETCH_APPROACH_SPEED * sc,
+                'grasp':             cfg.REAL_FETCH_GRASP_SPEED * sc,
+                'lift':              cfg.REAL_FETCH_LIFT_SPEED * sc,
+                'ret_above_approach': cfg.REAL_FETCH_ABOVE_RETRACT_SPEED * sc,
+                'retract':           cfg.REAL_FETCH_RETRACT_SPEED * sc,
+                'handover_stage':    self._HANDOVER_STAGE_SPEED_RAD_S * sc,
             }[phase]
             if not self._grasp_move_sent:
                 c = _ctrl()
@@ -1916,7 +1995,14 @@ class RobotControlServer:
                                   if self._grasp_q_above_approach is not None
                                   else 'retract')
                         elif phase in ('ret_above_approach', 'retract'):
-                            _done(self._grasp_ok)
+                            if self._grasp_ok:
+                                print("[Handover] Retract complete → moving to "
+                                      "staging pose")
+                                _next('handover_stage')
+                            else:
+                                _done(False)
+                        elif phase == 'handover_stage':
+                            _done(True)
                 except Exception as e:
                     print(f"[Robot] isSteady failed ({phase}): {e}")
                     self._rtde_ctrl = None
@@ -1934,7 +2020,8 @@ class RobotControlServer:
             _next('settle')
 
         elif phase == 'settle':
-            if time.perf_counter() - (self._grasp_settle_start or 0.0) >= 1.0:
+            if (time.perf_counter() - (self._grasp_settle_start or 0.0)
+                    >= cfg.REAL_FETCH_SETTLE_SECONDS):
                 if self._grasp_cancel_pending:
                     _next('open_post')
                 else:
@@ -1946,7 +2033,10 @@ class RobotControlServer:
                     elif self._grasp_q_approach is not None:
                         _next('retract')
                     else:
-                        _done(self._grasp_ok)
+                        if self._grasp_ok:
+                            _next('handover_stage')
+                        else:
+                            _done(False)
 
         elif phase == 'open_post':
             try:

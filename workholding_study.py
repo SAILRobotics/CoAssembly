@@ -83,9 +83,11 @@ from main_with_robot import (
 )
 from robot_client import RobotClient
 from scene_viewer_o3d import SceneVis as _SceneVis
+from study_replay import ReplayRecorder
 
 _FILE_DIR = Path(__file__).resolve().parent
-_DEFAULT_LOG_DIR = _FILE_DIR / "study_logs"
+_STUDY_LOG_ROOT = _FILE_DIR / "study_logs"
+_DEFAULT_LOG_DIR = _STUDY_LOG_ROOT / "study2"
 
 _MODES = ("freedrive", "ar", "hybrid")
 # The manipulated variable: which control channel(s) the participant has.
@@ -409,6 +411,7 @@ class WorkholdingStudy:
     _COMPLETION_WARNING_S      = 3.0     # stationary warning before reset motion
     _STUDY_MOVE_THRESHOLD_MPS = 0.01    # m/s — freedrive movement-segment detector
     _STUDY_TRAJ_SAMPLE_HZ     = 10.0
+    _REPLAY_SAMPLE_HZ         = 30.0
     _TARGET_COLOR_NEAR_M      = _STUDY_POS_TOL_M
     _TARGET_COLOR_FAR_M       = 0.30
 
@@ -425,7 +428,8 @@ class WorkholdingStudy:
                  session_name: str, mode: str, seed: int, out_dir: Path,
                  teach_targets_path: "Path | None" = None,
                  target_poses_path: "Path | None" = None,
-                 target_navigation: str = "preview"):
+                 target_navigation: str = "preview",
+                 replay_log_path: "Path | None" = None):
         self.quest_ip           = quest_ip
         self.anchor_marker_id   = anchor_marker_id
         self.pegboard_marker_id = pegboard_marker_id
@@ -565,11 +569,20 @@ class WorkholdingStudy:
         self._completion_flash_state: "str | None" = None
         self._status_trial_cursor: "int | None" = None   # for the inline live-offset line
         self._last_status_print_t = 0.0
+        self._last_replay_t = 0.0
+        self._last_replay_flush_t = 0.0
+        self._session_id = f"{session_name}-{mode}-{int(time.time() * 1000)}"
 
         # ── Logging ────────────────────────────────────────────────────────
         out_dir.mkdir(parents=True, exist_ok=True)
         self._trials_path = out_dir / f"{session_name}-{mode}_trials.csv"
         self._traj_path   = out_dir / f"{session_name}-{mode}_trajectory.csv"
+        self._replay_path = (replay_log_path if replay_log_path is not None
+                             else out_dir / f"{session_name}-{mode}_replay.jsonl")
+        self._replay_path.parent.mkdir(parents=True, exist_ok=True)
+        self._replay = ReplayRecorder(
+            self._replay_path, "workholding_replay_v1", self._session_id,
+            session_name=self.session_name, mode=self.mode)
 
         # A stable session name is resumable. Completed trials remain in the
         # same files and the deterministic pose order resumes at the next one.
@@ -663,6 +676,7 @@ class WorkholdingStudy:
             self._traj_f.flush()
         print(f"[Study] Logging trials  → {self._trials_path}")
         print(f"[Study] Logging traj.   → {self._traj_path}")
+        print(f"[Study] Logging replay → {self._replay_path}")
         print(f"[Study] Mode: {mode}  (freedrive={'ON' if self._freedrive_enabled else 'off'}, "
               f"AR={'ON' if self._ar_enabled else 'off'})  "
               f"— {len(self._pose_order)} trials, seed={seed}")
@@ -680,8 +694,56 @@ class WorkholdingStudy:
         self.vis.set_teach_callbacks(
             self._mark_taught_target, self._undo_taught_target)
         self.vis.set_timer_toggle_callback(self._toggle_trial_timer)
+        self._replay_event(
+            "session_start", seed=seed, target_navigation=target_navigation,
+            pose_order=self._pose_order, target_poses=self._poses_T,
+            workspace_lo=self._ws_lo, workspace_hi=self._ws_hi,
+            calibrated_robot_base=use_calibrated_robot_base)
 
     # ── Helpers ──────────────────────────────────────────────────────────────
+
+    def _replay_event(self, event: str, **payload) -> None:
+        self._replay.record(
+            "interaction", trial_idx=self._trial_cursor, phase=self._phase,
+            event=event, **payload)
+
+    def _sample_replay(self, now: float) -> None:
+        if now - self._last_replay_t < 1.0 / self._REPLAY_SAMPLE_HZ:
+            return
+        self._last_replay_t = now
+        T_tcp = self.robot.tcp_pose
+        T_board = self._board_pose_from_tcp(T_tcp)
+        head_T = None
+        left_pts = right_pts = None
+        if self.anchor.locked:
+            center_eye = self.hands.center_eye_T()
+            head_T = (self.anchor.world_T(center_eye)
+                      if center_eye is not None else None)
+            left_pts, right_pts = self.hands.world_joints(
+                self.anchor.T_world_tracking)
+        target_idx = None
+        if self._trial_cursor < len(self._pose_order):
+            target_idx = self._pose_order[self._trial_cursor]
+        self._replay.record(
+            "frame", trial_idx=self._trial_cursor,
+            pose_idx=target_idx, phase=self._phase,
+            timer_running=self._trial_timer_running,
+            trial_elapsed_s=self._trial_elapsed(now),
+            interaction_count=self._trial_interactions,
+            robot_q_rad=self.robot.q, tcp_world_T=T_tcp,
+            robot_link_world_T=self.robot.arm_link_poses(),
+            board_world_T=T_board, target_board_world_T=self._trial_target_T,
+            head_world_T=head_T, left_hand_world=left_pts,
+            right_hand_world=right_pts,
+            world_tracking_T=self.anchor.T_world_tracking,
+            robot_board_state=self.robot.board_state,
+            robot_move_running=self.robot.move_running,
+            freedrive_enabled=self._freedrive_enabled,
+            ar_enabled=self._ar_enabled,
+            ar_move_pending=self._auto_move_pending,
+            target_color_state=self._target_proximity_state,
+            completion_flash_state=self._completion_flash_state,
+            target_navigation=self._target_navigation)
 
     @staticmethod
     def _pose_to_T(pos, euler_deg) -> np.ndarray:
@@ -859,6 +921,10 @@ class WorkholdingStudy:
         self._target_preview_cursor = (
             self._target_preview_cursor + delta) % len(self._pose_order)
         pose_idx = self._pose_order[self._target_preview_cursor]
+        self._replay_event("target_preview_changed", delta=int(delta),
+                           preview_trial_cursor=self._target_preview_cursor,
+                           pose_idx=pose_idx,
+                           target_navigation=self._target_navigation)
         pos, euler = self._poses_raw[pose_idx]
         print(f"[StudyVis] Preview target "
               f"{self._target_preview_cursor + 1}/{len(self._pose_order)} "
@@ -1029,17 +1095,23 @@ class WorkholdingStudy:
         self.anchor.lock(T_cam_anchor, self.cam.camera_T)
         self._last_proximity_relock_time = time.time()
         self.robot.set_scene_origin(np.eye(4))
+        self._replay_event("anchor_locked", marker_id=self.anchor_marker_id,
+                           world_tracking_T=self.anchor.T_world_tracking)
 
     # ── Study state machine ─────────────────────────────────────────────────
 
     def _on_auto_move_complete(self, ok: bool) -> None:
         self._auto_move_pending = False
         self._auto_move_result  = bool(ok)
+        self._replay_event("ar_move_complete", success=bool(ok))
 
     def _start_auto_move(self, pos: np.ndarray, quat: np.ndarray,
                          board_move: bool = True) -> None:
         self._auto_move_pending = True
         self._auto_move_result  = None
+        self._replay_event("ar_move_started", target_tcp_position=pos,
+                           target_tcp_quaternion=quat,
+                           board_move=bool(board_move))
         self.robot.move_to_pose(np.asarray(pos, dtype=float),
                                 np.asarray(quat, dtype=float),
                                 board_move=board_move,
@@ -1069,6 +1141,8 @@ class WorkholdingStudy:
               f"pose#{pose_idx}  pos={np.round(pos, 3).tolist()}  euler={euler}")
         print("[Trial] Ready — press S to start timing and interaction counting.")
         self._phase = "trial_running"
+        self._replay_event("trial_ready", pose_idx=pose_idx,
+                           target_board_world_T=self._trial_target_T)
 
     def _trial_elapsed(self, now: "float | None" = None) -> float:
         if now is None:
@@ -1094,6 +1168,8 @@ class WorkholdingStudy:
             self._close_status_line()
             print(f"[Trial] PAUSED at {self._trial_active_elapsed_s:.1f}s — "
                   "press S to resume.")
+            self._replay_event("trial_paused",
+                               elapsed_s=self._trial_active_elapsed_s)
         else:
             if self._trial_start_t <= 0.0:
                 self._trial_start_t = now
@@ -1104,6 +1180,8 @@ class WorkholdingStudy:
             self._prev_tcp_t_for_speed = None
             self._was_moving_freedrive = False
             print("[Trial] RUNNING — timing and interaction counting enabled.")
+            self._replay_event("trial_started_or_resumed",
+                               elapsed_s=self._trial_elapsed(now))
 
     def _start_next_trial_or_finish(self) -> None:
         while self._trial_cursor in self._completed_trial_indices:
@@ -1164,6 +1242,11 @@ class WorkholdingStudy:
             pos_err, ang_err, self._trial_interactions, reason,
         ])
         self._trials_f.flush()
+        self._replay_event("trial_complete", reason=reason,
+                           pose_idx=pose_idx, duration_s=duration,
+                           final_pos_error_m=pos_err,
+                           final_angle_error_deg=ang_err,
+                           num_interactions=self._trial_interactions)
         self._completed_trial_indices.add(self._trial_cursor)
         self._close_status_line()
         print(f"[Trial] done ({reason}) — {duration:.1f}s, "
@@ -1282,6 +1365,11 @@ class WorkholdingStudy:
                              if recording else "(not recorded)")
             print(f"[AR] Release {release_label} "
                   f"→ TCP {np.round(tcp_pos, 3).tolist()}")
+            self._replay_event("ar_handle_released",
+                               released_board_world_T=T_box_target,
+                               commanded_tcp_position=tcp_pos,
+                               commanded_tcp_quaternion=tcp_quat,
+                               recording=bool(recording))
             self._start_auto_move(tcp_pos, tcp_quat)
 
     def _tick_study(self, now: float) -> None:
@@ -1507,11 +1595,16 @@ class WorkholdingStudy:
                     self._prev_relock_available       = True
                     self._last_proximity_relock_time  = _now
                     print("[Relock] Relocked via proximity click")
+                    self._replay_event(
+                        "anchor_relocked_by_click",
+                        marker_id=self.anchor_marker_id,
+                        world_tracking_T=self.anchor.T_world_tracking)
                 self.tools.deselect(self.anchor_marker_id)
 
                 # Embedded Open3D mirror: robot + articulated gripper/adapters,
                 # actual and target boards, tracking, bounds, and study state.
                 self._update_visualizer()
+                self._sample_replay(_now)
 
                 # ── OpenCV display + key input surface ────────────────────────
                 disp = cv.resize(
@@ -1572,6 +1665,7 @@ class WorkholdingStudy:
                         if (self._phase == "trial_running"
                                 and self._trial_timer_running):
                             self._force_complete_requested = True
+                            self._replay_event("force_complete_requested")
                         elif self._phase == "trial_running":
                             print("[Trial] Force-complete ignored while paused; "
                                   "press S to resume recording first.")
@@ -1596,6 +1690,9 @@ class WorkholdingStudy:
                                 print(f"[ENTER] Relocked world to marker #{self.anchor_marker_id}")
                             else:
                                 self._lock_initial(T_cam_anchor)
+                                self._replay_event(
+                                    "anchor_locked_by_keyboard",
+                                    marker_id=self.anchor_marker_id)
                                 print(f"[ENTER] Locked world to marker #{self.anchor_marker_id}")
                         else:
                             print(f"[ENTER] Marker #{self.anchor_marker_id} not visible.")
@@ -1619,9 +1716,12 @@ class WorkholdingStudy:
             pass
         self._trials_f.flush(); self._trials_f.close()
         self._traj_f.flush(); self._traj_f.close()
+        self._replay_event("session_end", completed_trials=self._trial_cursor)
+        self._replay.close()
         print(f"[Study] Completed {self._trial_cursor}/{len(self._pose_order)} trials.")
         print(f"[Study] Trials CSV: {self._trials_path}")
         print(f"[Study] Trajectory CSV: {self._traj_path}")
+        print(f"[Study] Replay JSONL: {self._replay_path}")
         if self._teach_mode:
             self._save_taught_targets()
             print(f"[Teach] Saved {len(self._taught_poses)} target(s) → "
@@ -1657,6 +1757,10 @@ def main() -> None:
                     help="Seeds the pose shuffle (reproducible per run).")
     ap.add_argument("--out-dir", default=str(_DEFAULT_LOG_DIR))
     ap.add_argument(
+        "--replay-log", type=Path,
+        help="Optional JSONL replay path. By default it is written beside the "
+             "CSV logs as {session-name}-{mode}_replay.jsonl.")
+    ap.add_argument(
         "--teach-targets", type=Path, metavar="FILE",
         help="Freedrive teaching mode: press M to append the current held-board "
              "pose to FILE and U to remove the last pose.")
@@ -1690,6 +1794,7 @@ def main() -> None:
         teach_targets_path        = args.teach_targets,
         target_poses_path         = args.target_poses_file,
         target_navigation         = args.target_navigation,
+        replay_log_path           = args.replay_log,
     )
     print(f"\n[Study] Show marker #{args.anchor_marker} to lock the world "
           f"(auto within {WorkholdingStudy._AUTO_LOCK_MAX_DIST:.1f} m, or press ENTER).")

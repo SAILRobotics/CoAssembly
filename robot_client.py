@@ -269,6 +269,7 @@ class RobotClient:
         })
 
     def move_to_joints(self, joints, *, degrees: bool = False,
+                       speed_multiplier: float = 1.0,
                        on_complete: "Callable[[bool], None] | None" = None) -> None:
         """Move directly to a six-axis joint configuration."""
         q = np.asarray(joints, dtype=float)
@@ -279,7 +280,9 @@ class RobotClient:
             rid = self._next_request_id
             self._next_request_id += 1
             self._callbacks[rid] = lambda msg: on_complete(bool(msg.get("ok", False)))
-        self._send({"cmd": "move_to_joints", "joints": q.tolist(), "request_id": rid})
+        self._send({"cmd": "move_to_joints", "joints": q.tolist(),
+                    "speed_multiplier": float(speed_multiplier),
+                    "request_id": rid})
 
     def start_board_interaction(self, freedrive: bool = True) -> None:
         """Open for force-triggered board grasp (simulation enters held state).
@@ -317,6 +320,17 @@ class RobotClient:
     def cancel_move(self) -> None:
         """Cancel an in-progress move_to_pose."""
         self._send({"cmd": "cancel_move"})
+
+    def update_palm_obstacle(self, center_world=None, *, radius: float = 0.05,
+                             clearance: float = 0.01) -> None:
+        """Update or clear the live palm-centered spherical CBF obstacle."""
+        self._send({
+            "cmd": "update_palm_obstacle",
+            "center": (np.asarray(center_world, float).tolist()
+                       if center_world is not None else None),
+            "radius": float(radius),
+            "clearance": float(clearance),
+        })
 
     def cancel_motion(self) -> None:
         self._send({"cmd": "cancel"})
