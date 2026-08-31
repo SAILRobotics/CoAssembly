@@ -25,6 +25,8 @@ class RobotiqGripper:
     FLT = 'FLT'  # fault (0=ok, see manual for errors if not zero)
 
     ENCODING = 'UTF-8'  # ASCII and UTF-8 both seem to work
+    TRANSIENT_REPLY_RETRIES = 50
+    TRANSIENT_REPLY_DELAY_S = 0.05
 
     class GripperStatus(Enum):
         """Gripper status reported by the gripper. The integer values have to match what the gripper sends."""
@@ -91,25 +93,44 @@ class RobotiqGripper:
         """
         return self._set_vars(OrderedDict([(variable, value)]))
 
-    def _get_var(self, variable: str):
+    def _get_var(self, variable: str, transient_retries: int = TRANSIENT_REPLY_RETRIES):
         """Sends the appropriate command to retrieve the value of a variable from the gripper, blocking until the
         response is received or the socket times out.
         :param variable: Name of the variable to retrieve.
+        :param transient_retries: Number of retries for the gripper's temporary
+        '?' response while it is processing a command.
         :return: Value of the variable as integer.
         """
-        # atomic commands send/rcv
-        with self.command_lock:
-            cmd = f"GET {variable}\n"
-            self.socket.sendall(cmd.encode(self.ENCODING))
-            data = self.socket.recv(1024)
+        cmd = f"GET {variable}\n"
+        for attempt in range(transient_retries + 1):
+            # Keep each request/reply pair atomic with respect to other
+            # gripper commands issued by background threads.
+            with self.command_lock:
+                self.socket.sendall(cmd.encode(self.ENCODING))
+                data = self.socket.recv(1024)
 
-        # expect data of the form 'VAR x', where VAR is an echo of the variable name, and X the value
-        # note some special variables (like FLT) may send 2 bytes, instead of an integer. We assume integer here
-        var_name, value_str = data.decode(self.ENCODING).split()
-        if var_name != variable:
-            raise ValueError(f"Unexpected response {data} ({data.decode(self.ENCODING)}): does not match '{variable}'")
-        value = int(value_str)
-        return value
+            # Expect 'VAR x'. Some Robotiq firmware temporarily answers
+            # 'VAR ?' while processing a preceding SET command.
+            decoded = data.decode(self.ENCODING).strip()
+            fields = decoded.split()
+            if len(fields) != 2 or fields[0] != variable:
+                raise ValueError(
+                    f"Unexpected response {data} ({decoded}): does not match "
+                    f"'{variable}'")
+            value_str = fields[1]
+            if value_str != "?":
+                try:
+                    return int(value_str)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"Unexpected non-integer response for {variable}: "
+                        f"{value_str!r}") from exc
+            if attempt < transient_retries:
+                time.sleep(self.TRANSIENT_REPLY_DELAY_S)
+
+        raise RuntimeError(
+            f"Gripper returned '?' for {variable} after "
+            f"{transient_retries + 1} attempts")
 
     @staticmethod
     def _is_ack(data: str):
@@ -283,6 +304,7 @@ class RobotiqGripper:
         # wait until not moving
         cur_obj = self._get_var(self.OBJ)
         while RobotiqGripper.ObjectStatus(cur_obj) == RobotiqGripper.ObjectStatus.MOVING:
+            time.sleep(0.02)
             cur_obj = self._get_var(self.OBJ)
 
         # report the actual position and the object status

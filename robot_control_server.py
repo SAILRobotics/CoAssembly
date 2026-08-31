@@ -355,9 +355,14 @@ class RobotControlServer:
         self._joint_move_started = 0.0
         self._joint_move_on_complete: "Callable | None" = None
         self._joint_move_speed_multiplier = 1.0
+        self._joint_move_is_board = False
 
         # Automatic startup positioning, shared by simulation and hardware.
         self._startup_active = True
+        # Live startup is deliberately ordered: fully open the gripper before
+        # allowing any move toward the default joint pose.
+        self._startup_gripper_opened = simulation
+        self._startup_gripper_retry_t = 0.0
         self._startup_move_sent = False
         self._startup_runner = (
             _PbJointRunner(self.pb_scene.current_q.copy(), self._default_q)
@@ -512,6 +517,8 @@ class RobotControlServer:
         elif cmd == "move_to_joints":
             self.move_to_joints(
                 msg["joints"],
+                board_move=bool(msg.get("board_move", False)),
+                blocking=bool(msg.get("blocking", False)),
                 speed_multiplier=msg.get("speed_multiplier", 1.0),
                 on_complete=lambda ok, rid=rid: self._publish_event(
                     "move_done", rid, ok=bool(ok)))
@@ -696,15 +703,23 @@ class RobotControlServer:
             # handover_stage → done
             self._finish_grasp(True)
 
-    def move_to_joints(self, joints, speed_multiplier: float = 1.0,
+    def move_to_joints(self, joints, board_move: bool = False,
+                       blocking: bool = False,
+                       speed_multiplier: float = 1.0,
                        on_complete=None) -> None:
         """Start a guarded direct joint-space move; input is radians."""
         busy = (self._startup_active or self._move_phase is not None
                 or self._grasp_phase is not None or self._handover_pull_active
-                or self._board_force_mode is not None or self._board_state != "inactive"
                 or self._joint_move_target is not None)
+        valid_board_state = (board_move
+                             and self._board_state == "holding_board"
+                             and self._board_force_mode is None)
+        busy = (busy or (board_move and not valid_board_state)
+                or self._board_force_mode is not None
+                or (self._board_state != "inactive" and not valid_board_state))
         if busy:
-            print("[Robot] Gearbox joint move blocked — robot is busy")
+            print("[Robot] Direct moveJ blocked — robot is busy or board state "
+                  "is incompatible")
             if on_complete:
                 on_complete(False)
             return
@@ -728,7 +743,13 @@ class RobotControlServer:
             if on_complete:
                 on_complete(False)
             return
+        if board_move and not self._set_board_freedrive(False):
+            print("[Robot] Board moveJ blocked — could not disable freedrive")
+            if on_complete:
+                on_complete(False)
+            return
         self._joint_move_target = _wrap_nearest(q, self.pb_scene.current_q.copy())
+        self._joint_move_is_board = bool(board_move)
         self._joint_move_speed_multiplier = speed_multiplier
         self._joint_move_on_complete = on_complete
         self._joint_move_sent = False
@@ -737,16 +758,41 @@ class RobotControlServer:
             self._joint_move_runner = _PbJointRunner(
                 self.pb_scene.current_q.copy(), self._joint_move_target,
                 _PbJointRunner._DURATION_S / speed_multiplier)
-        print(f"[Robot] Gearbox moveJ → "
+        if board_move:
+            self._set_board_state("moving_board")
+        label = "Board" if board_move else "Direct"
+        execution = "blocking/single-thread" if blocking else "asynchronous"
+        print(f"[Robot] {label} moveJ ({execution}) → "
               f"{np.round(np.rad2deg(self._joint_move_target), 2).tolist()}")
+        if blocking:
+            target = self._joint_move_target.copy()
+            if self.simulation:
+                self.pb_scene.update_robot(target)
+                self._finish_joint_move(True)
+                return
+            try:
+                speed = (0.5 * self._speed_scale
+                         * self._joint_move_speed_multiplier)
+                ok = bool(self._rtde_ctrl_conn().moveJ(
+                    list(target), speed, speed, asynchronous=False))
+                self._finish_joint_move(ok)
+            except Exception as exc:
+                print(f"[Robot] Blocking board moveJ failed: {exc}")
+                self._finish_joint_move(False)
 
     def _finish_joint_move(self, ok: bool) -> None:
         cb = self._joint_move_on_complete
+        was_board_move = self._joint_move_is_board
         self._joint_move_target = None
         self._joint_move_runner = None
         self._joint_move_sent = False
         self._joint_move_on_complete = None
         self._joint_move_speed_multiplier = 1.0
+        self._joint_move_is_board = False
+        if was_board_move and self._board_state == "moving_board":
+            self._set_board_state("holding_board")
+            self._arm_board_force(None)
+            self._set_board_freedrive(self._board_freedrive_policy)
         if cb:
             cb(bool(ok))
 
@@ -784,7 +830,7 @@ class RobotControlServer:
             self._finish_joint_move(False)
 
     def _tick_startup_pose(self, dt: float) -> None:
-        """Move both simulated and real robots to the shared default pose."""
+        """Open the live gripper, then move to the shared default pose."""
         if self.simulation:
             runner = self._startup_runner
             if runner is None:
@@ -799,6 +845,22 @@ class RobotControlServer:
             self._startup_active = False
             print("[Robot sim] Startup default pose reached")
             return
+
+        if not self._startup_gripper_opened:
+            now = time.monotonic()
+            if now < self._startup_gripper_retry_t:
+                return
+            try:
+                print("[Robot] Startup opening gripper before default-pose move ...")
+                # This call blocks until the gripper reaches its open position.
+                self.open_gripper()
+                self._startup_gripper_opened = True
+                print("[Robot] Startup gripper open — default-pose move enabled")
+            except Exception as e:
+                self._startup_gripper_retry_t = now + 2.0
+                print(f"[Robot] Startup gripper open failed; robot will remain "
+                      f"stationary and retry in 2 s: {e}")
+                return
 
         q_cur = self.pb_scene.current_q.copy()
         target = _wrap_nearest(self._default_q, q_cur)
@@ -1685,10 +1747,12 @@ class RobotControlServer:
             self._finish_object_handover_pull(False)
         startup_was_active = self._startup_active
         joint_was_active = self._joint_move_target is not None
+        joint_was_board = self._joint_move_is_board
         joint_cb = self._joint_move_on_complete
         self._joint_move_target = None
         self._joint_move_runner = None
         self._joint_move_on_complete = None
+        self._joint_move_is_board = False
         self._startup_active = False
         self._startup_runner = None
         phase              = self._grasp_phase
@@ -1732,6 +1796,10 @@ class RobotControlServer:
                 joint_cb(False)
             except Exception:
                 pass
+        if joint_was_board and self._board_state == "moving_board":
+            self._set_board_state("holding_board")
+            self._arm_board_force(None)
+            self._set_board_freedrive(self._board_freedrive_policy)
 
     @staticmethod
     def _fire_phase(on_phase: "Callable[[str], None] | None", name: str) -> None:
@@ -1886,11 +1954,15 @@ class RobotControlServer:
             raise RuntimeError("RobotiqGripper not available.")
         if self._gripper is None:
             g = RobotiqGripper()
-            g.connect(self._robot_ip, 63352)
             try:
+                g.connect(self._robot_ip, 63352)
                 g.activate()
             except Exception as e:
-                print(f"[Robot] Gripper activation warning: {e}")
+                try:
+                    g.disconnect()
+                except Exception:
+                    pass
+                raise RuntimeError(f"Gripper connection/activation failed: {e}") from e
             self._gripper = g
             print("[Robot] Gripper ready.")
         return self._gripper

@@ -29,14 +29,11 @@ Usage
 """
 
 import argparse
-import csv
-import json
 import struct
 import sys
 import threading
 import time
 from pathlib import Path
-from datetime import datetime
 
 import cv2 as cv
 import numpy as np
@@ -57,9 +54,6 @@ from utils.pose_helpers import (
 )
 import main_setting as cfg
 from scene_viewer_o3d import SceneVis as _SceneVis
-from study_replay import ReplayRecorder, jsonable
-
-_STUDY3_LOG_DIR = Path(__file__).resolve().parent / "study_logs" / "study3"
 
 try:
     from robot_client import RobotClient
@@ -686,6 +680,7 @@ class _ObjectColorPublisher:
     APPROACHING = [1.0, 0.5, 0.0, 0.30]
     GRASPED = [0.0, 1.0, 0.0, 0.30]
     GHOST_VISIBLE = [0.20, 0.90, 0.40, 0.25]
+    GHOST_FIXED = [0.0, 0.0, 0.0, 0.25]  # C2 (ghost_no_color): no gradient
     GHOST_PROPOSAL = [1.00, 0.50, 0.00, 0.30]
     GHOST_INVALID = [1.00, 0.10, 0.10, 0.35]
     GHOST_HIDDEN = [0.20, 0.90, 0.40, 0.0]
@@ -831,9 +826,8 @@ class MainScene:
         "waiting_for_pull"})
     _PROXIMITY_FAR_M = 0.6
     _PROXIMITY_NEAR_M = 0.03
-    _REPLAY_INTERVAL_S = 1.0 / 30.0
     _HANDOVER_STAGE_JOINT_DEG = np.array(
-        [-100.16, -84.88, -136.53, -138.25, -99.46, -185.97],
+        [-131.77, -123.43, -101.97, -131.33, -135.75, 182.50],
         dtype=float)
     _HANDOVER_STAGE_SPEED_MULTIPLIER = 2.0
     WORKSPACE_LO = np.asarray(cfg.WORKSPACE_LO, dtype=float)
@@ -847,15 +841,12 @@ class MainScene:
                  pegboard_marker_size_m: float, hand_port: int,
                  simulation: bool, use_calibrated_robot_base: bool,
                  load_pegboard_from_file: bool, no_passthrough: bool,
-                 condition: str, log_path: str | Path,
-                 participant_id: str, replay_log_path: str | Path) -> None:
+                 condition: str, participant_id: str) -> None:
         self.anchor_marker_id = anchor_marker_id
         self.pegboard_marker_id = pegboard_marker_id
         self.simulation = simulation
         self.condition = condition
         self.participant_id = participant_id
-        self.log_path = Path(log_path)
-        self.replay_log_path = Path(replay_log_path)
         self._load_pegboard_from_file = load_pegboard_from_file
         self._no_passthrough = no_passthrough
 
@@ -925,7 +916,6 @@ class MainScene:
         self._resume_hand_tracking_on_next_robot_click = False
         self._c1_arm_pull_after_stop = False
         self._c1_resume_after_pull_cancel = False
-        self._last_replay_time = 0.0
         self._marker_relock_available = False
         self._marker_relock_green_until = 0.0
         self._last_marker_relock_time = 0.0
@@ -948,18 +938,6 @@ class MainScene:
         self.colors.publish(
             self.ROBOT_GRIPPER_TOOL_ID, _ObjectColorPublisher.GHOST_HIDDEN)
 
-        self.replay_log_path.parent.mkdir(parents=True, exist_ok=True)
-        self._session_id = (
-            f"{self.participant_id}-{int(time.time() * 1000)}")
-        self._replay = ReplayRecorder(
-            self.replay_log_path, "study3_replay_v1", self._session_id,
-            participant_id=self.participant_id, condition=self.condition)
-        self._replay_record("session_start", simulation=self.simulation,
-                            study_objects=list(self.STUDY_OBJECT_IDS),
-                            workspace_lo=self.WORKSPACE_LO,
-                            workspace_hi=self.WORKSPACE_HI,
-                            palm_standoff_m=self._PALM_TCP_STANDOFF_M)
-
         if simulation and load_pegboard_from_file:
             self._try_load_pegboard_from_file()
         print(f"[Study3] participant={participant_id} condition={condition}")
@@ -967,70 +945,14 @@ class MainScene:
               "all 6 gears")
 
     def _log(self, event: str, **values) -> None:
-        fields = ("timestamp", "participant_id", "trial", "condition",
-                  "event", "tool_id", "elapsed_s", "hand_to_target_m",
-                  "success")
-        row = {field: values.get(field, "") for field in fields}
-        row.update(
-            timestamp=datetime.now().astimezone().isoformat(timespec="milliseconds"),
-            participant_id=self.participant_id, trial=self._trial,
-            condition=self.condition, event=event,
-            tool_id=(self._handover_tool_id
-                     if self._handover_tool_id is not None else ""))
-        self.log_path.parent.mkdir(parents=True, exist_ok=True)
-        new_file = not self.log_path.exists() or self.log_path.stat().st_size == 0
-        with self.log_path.open("a", newline="", encoding="utf-8") as handle:
-            writer = csv.DictWriter(handle, fieldnames=fields)
-            if new_file:
-                writer.writeheader()
-            writer.writerow(row)
-        self._replay_record("interaction", event=event, **values)
-
-    @staticmethod
-    def _jsonable(value):
-        return jsonable(value)
+        """Compatibility hook for study events; Study 3 is not recorded."""
 
     def _replay_record(self, record_type: str, **payload) -> None:
-        recorder = getattr(self, "_replay", None)
-        if recorder is None:
-            return
-        recorder.record(record_type,
-            trial=self._trial,
-            robot_state=self._robot_state,
-            tool_id=self._handover_tool_id,
-            **payload)
+        """Compatibility hook; replay recording is disabled for Study 3."""
 
     def _log_replay_frame(self, head_T, left_pts, right_pts,
                           robot_link_poses) -> None:
-        now = time.perf_counter()
-        if now - self._last_replay_time < self._REPLAY_INTERVAL_S:
-            return
-        self._last_replay_time = now
-        robot_q = self.robot.q if self.robot is not None else None
-        ghost_color = self.colors._colors.get(200)
-        robot_gripper_color = self.colors._colors.get(self.ROBOT_GRIPPER_TOOL_ID)
-        self._replay_record(
-            "frame", robot_q_rad=robot_q, tcp_world_T=self._T_world_tcp,
-            robot_link_world_T=robot_link_poses,
-            head_world_T=head_T, left_hand_world=left_pts,
-            right_hand_world=right_pts, ghost_world_T=self._ghost_target_T,
-            ghost_color_rgba=ghost_color,
-            robot_gripper_color_rgba=robot_gripper_color,
-            commanded_target_world_T=self._tcp_target_T,
-            target_invalid_reason=self._ghost_invalid_reason,
-            proximity_closeness=self._proximity_closeness(),
-            ghost_visible=(self.condition in (self.C2, self.C4)
-                           and self._ghost_target_T is not None
-                           and (self._robot_state in self._GHOST_ACTIVE_STATES
-                                or self._pending_handover)),
-            robot_gripper_visible=(
-                self.condition == self.C3
-                and self._T_world_tcp is not None
-                and (self._robot_state in self._ROBOT_GRIPPER_ACTIVE_STATES
-                     or self._pending_handover)),
-            gripper_closed=self._robot_state in self._ROBOT_GRIPPER_ACTIVE_STATES,
-            world_tracking_T=self.anchor.T_world_tracking,
-            pegboard_world_T=self.anchor.T_pegboard_in_world)
+        """Replay-frame recording is disabled for the subjective study."""
 
     def _try_load_pegboard_from_file(self) -> bool:
         path = cfg.SCENE_LAYOUT_DIR / "T_world10_pegboard101.npz"
@@ -1122,7 +1044,7 @@ class MainScene:
         """Drive the toolId=200 (ghost) / 201 (robot-gripper proxy) colors
         each tick per the active condition's manipulation."""
         if self.condition == self.C2:
-            self.colors.publish(200, _ObjectColorPublisher.GHOST_VISIBLE)
+            self.colors.publish(200, _ObjectColorPublisher.GHOST_FIXED)
         elif self.condition == self.C4:
             self.colors.publish(
                 200, _ObjectColorPublisher.proximity_color(
@@ -1557,8 +1479,11 @@ class MainScene:
                     if self._start_handover(right_pts):
                         self._pending_handover = False
 
-                if (self._robot_state == "approaching_hand"
+                if (self._robot_state in self._GHOST_ACTIVE_STATES
                         and right_pts is not None and self.robot is not None):
+                    # Keep the ghost following the hand from the moment the
+                    # robot grasps the object (through retract/staging), not
+                    # just once it starts actively approaching.
                     pose = self._handover_pose(right_pts)
                     if pose is not None:
                         (position, quaternion, command_T, ghost_T,
@@ -1571,9 +1496,10 @@ class MainScene:
                             # controller follows the safely projected target,
                             # matching main_with_robot.py.
                             self._set_ghost_validity("outside_workspace")
-                        self._tcp_target_T = command_T
-                        self.robot.update_move_target(
-                            position, quaternion.tolist())
+                        if self._robot_state == "approaching_hand":
+                            self._tcp_target_T = command_T
+                            self.robot.update_move_target(
+                                position, quaternion.tolist())
 
                 pegboard_T = self.anchor.T_pegboard_in_world
                 if (pegboard_T is not None
@@ -1633,10 +1559,6 @@ class MainScene:
             self.close()
 
     def close(self) -> None:
-        self._replay_record("session_end")
-        replay = getattr(self, "_replay", None)
-        if replay is not None:
-            replay.close()
         self.aruco_worker.stop()
         self.cam.close()
         self.hands.close()
@@ -1680,7 +1602,7 @@ def main():
                          "the initial/recenter origin). Everything downstream unlocks exactly "
                          "as it does on a marker lock.")
     ap.add_argument("--participant-id", required=True,
-                    help="De-identified participant code recorded in the CSV")
+                    help="De-identified participant code shown during the session")
     ap.add_argument("--condition", dest="study3_condition",
                     choices=("no_ghost_no_color", "ghost_no_color",
                              "no_ghost_robot_color", "ghost_color"),
@@ -1688,12 +1610,6 @@ def main():
                     help="Study condition: no_ghost_no_color (C1) / "
                          "ghost_no_color (C2) / no_ghost_robot_color (C3) / "
                          "ghost_color (C4)")
-    ap.add_argument("--study3-log",
-                    default=str(_STUDY3_LOG_DIR / "handover_events.csv"),
-                    help="Study 3 event CSV")
-    ap.add_argument("--study3-replay-log",
-                    default=str(_STUDY3_LOG_DIR / "handover_replay.jsonl"),
-                    help="Replay JSONL with trajectories, tracking, targets, colors, and events")
     args = ap.parse_args()
     if args.anchor_marker == args.pegboard_marker:
         ap.error("--anchor-marker and --pegboard-marker must be different.")
@@ -1709,9 +1625,7 @@ def main():
         load_pegboard_from_file    = args.load_pegboard_from_file,
         no_passthrough             = args.no_passthrough,
         condition                  = args.study3_condition,
-        log_path                   = args.study3_log,
-        participant_id             = args.participant_id,
-        replay_log_path            = args.study3_replay_log)
+        participant_id             = args.participant_id)
     scene.run()
 
 

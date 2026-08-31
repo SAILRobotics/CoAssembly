@@ -27,3 +27,6 @@ study_logs/study4/*
 !study_logs/study4/.gitkeep
 
 paper/*
+
+# Machine-specific MCP server config (hardcodes an absolute nvm path)
+.mcp.json

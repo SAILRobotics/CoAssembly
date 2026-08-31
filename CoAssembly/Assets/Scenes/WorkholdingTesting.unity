@@ -13174,6 +13174,9 @@ MonoBehaviour:
   applyIncomingBoxSize: 0
   arHandle: {fileID: 1061834676}
   manipulationHandle: {fileID: 1061834678}
+  carriedGripperTemplate: {fileID: 1393319197}
+  showCarriedGripper: 1
+  carriedGripperForwardOffset: 0.23215
   worldRoot: {fileID: 1683168509}
   colorizeBoardState: 0
   targetPositionTolerance: 0.05
