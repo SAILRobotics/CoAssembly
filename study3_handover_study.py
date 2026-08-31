@@ -25,7 +25,7 @@ Keys (OpenCV window must be focused)
 
 Usage
 -----
-  python study3_handover_study.py --participant-id P01 --condition ar_preview
+  python study3_handover_study.py --participant-id P01 --condition ghost_color
 """
 
 import argparse
@@ -693,6 +693,25 @@ class _ObjectColorPublisher:
     SELECTED = [0.0, 1.0, 0.0, 0.15]
     RESET = [-1.0, -1.0, -1.0, -1.0]
 
+    # Continuous proximity gradient (Study 3 conditions C3/C4): red = far /
+    # outside workspace / IK-or-motion failure, ramping through orange to
+    # green as the robot's live TCP nears the handover target.
+    _PROXIMITY_RED    = [1.00, 0.10, 0.10]
+    _PROXIMITY_ORANGE = [1.00, 0.50, 0.00]
+    _PROXIMITY_GREEN  = [0.20, 0.90, 0.40]
+    _PROXIMITY_ALPHA  = 0.30
+
+    @classmethod
+    def proximity_color(cls, closeness: float) -> list:
+        """closeness in [0, 1]: 0 = far/invalid (red), 1 = arrived (green)."""
+        closeness = float(np.clip(closeness, 0.0, 1.0))
+        lo, hi, t = ((cls._PROXIMITY_RED, cls._PROXIMITY_ORANGE, closeness / 0.5)
+                     if closeness <= 0.5 else
+                     (cls._PROXIMITY_ORANGE, cls._PROXIMITY_GREEN,
+                      (closeness - 0.5) / 0.5))
+        rgb = [a + (b - a) * t for a, b in zip(lo, hi)]
+        return rgb + [cls._PROXIMITY_ALPHA]
+
     def __init__(self, quest_ip: str, port: int = cfg.TOOL_COLOR_PORT):
         self._pub = zmq.Context.instance().socket(zmq.PUB)
         self._pub.connect(f"tcp://{quest_ip}:{port}")
@@ -793,12 +812,25 @@ class MainScene:
     _AUTO_LOCK_MAX_DIST = 0.50
     _RELOCK_MAX_DIST_M = 1.0
     _RELOCK_COOLDOWN_S = 2.0
-    C1 = "continuous_no_preview"
-    C2 = "stability_committed_preview"
-    C3 = "continuous_preview"
-    _C2_STABLE_DURATION_S = 1.0
-    _C2_STABLE_POSITION_M = 0.025
-    _C2_STABLE_ANGLE_RAD = np.deg2rad(12.0)
+    # 2x2 design: ghost gripper preview (shown/hidden) x color coding
+    # (static/none vs continuous red->orange->green proximity gradient).
+    # Position updates are continuous hand-tracking in all four conditions.
+    C1 = "no_ghost_no_color"        # nothing shown
+    C2 = "ghost_no_color"           # ghost visible, fixed color
+    C3 = "no_ghost_robot_color"     # ghost hidden, real gripper proxy tinted
+    C4 = "ghost_color"              # ghost visible, proximity-tinted
+    ROBOT_GRIPPER_TOOL_ID = 201
+    # Ghost = destination preview; not shown once the robot has actually
+    # arrived (waiting_for_pull) since the real gripper is right there.
+    _GHOST_ACTIVE_STATES = frozenset({
+        "grasped", "retracting", "staging", "approaching_hand"})
+    # Robot-gripper proxy tracks the live TCP, so it stays meaningful (and
+    # green when arrived) through the pull-wait phase too.
+    _ROBOT_GRIPPER_ACTIVE_STATES = frozenset({
+        "grasped", "retracting", "staging", "approaching_hand",
+        "waiting_for_pull"})
+    _PROXIMITY_FAR_M = 0.6
+    _PROXIMITY_NEAR_M = 0.03
     _REPLAY_INTERVAL_S = 1.0 / 30.0
     _HANDOVER_STAGE_JOINT_DEG = np.array(
         [-100.16, -84.88, -136.53, -138.25, -99.46, -185.97],
@@ -844,6 +876,13 @@ class MainScene:
         self._unity_ghost = self.synth.add(
             [0.0, 0.0, 0.0], width=0.05, depth=0.05, height=0.05,
             name="handover_ghost")
+        # objects[1]: a second RobotiqGripperWithAdapters instance under
+        # WorldRoot, tracking the live TCP pose (not the hand target) so it
+        # can stand in for "the actual robot gripper" in C3, tinted via
+        # ToolColorReceiver toolId=ROBOT_GRIPPER_TOOL_ID (201).
+        self._unity_robot_gripper = self.synth.add(
+            [0.0, 0.0, 0.0], width=0.05, depth=0.05, height=0.05,
+            name="robot_gripper_proxy")
         self.workspace = _WorkspaceBoundPublisher(quest_ip)
         self.vis = _SceneVis(
             f"Study 3 Handover — marker #{anchor_marker_id}")
@@ -886,11 +925,6 @@ class MainScene:
         self._resume_hand_tracking_on_next_robot_click = False
         self._c1_arm_pull_after_stop = False
         self._c1_resume_after_pull_cancel = False
-        self._c2_stable_since: "float | None" = None
-        self._c2_stable_reference_T: "np.ndarray | None" = None
-        self._c2_committed_T: "np.ndarray | None" = None
-        self._c2_invalid_reference_T: "np.ndarray | None" = None
-        self._c2_reset_after_cancel = False
         self._last_replay_time = 0.0
         self._marker_relock_available = False
         self._marker_relock_green_until = 0.0
@@ -911,6 +945,8 @@ class MainScene:
                        else _ObjectColorPublisher.RESTING_TOOL)
             self.colors.publish(int(item["id"]), resting)
         self.colors.publish(200, _ObjectColorPublisher.GHOST_HIDDEN)
+        self.colors.publish(
+            self.ROBOT_GRIPPER_TOOL_ID, _ObjectColorPublisher.GHOST_HIDDEN)
 
         self.replay_log_path.parent.mkdir(parents=True, exist_ok=True)
         self._session_id = (
@@ -972,30 +1008,27 @@ class MainScene:
         self._last_replay_time = now
         robot_q = self.robot.q if self.robot is not None else None
         ghost_color = self.colors._colors.get(200)
+        robot_gripper_color = self.colors._colors.get(self.ROBOT_GRIPPER_TOOL_ID)
         self._replay_record(
             "frame", robot_q_rad=robot_q, tcp_world_T=self._T_world_tcp,
             robot_link_world_T=robot_link_poses,
             head_world_T=head_T, left_hand_world=left_pts,
             right_hand_world=right_pts, ghost_world_T=self._ghost_target_T,
             ghost_color_rgba=ghost_color,
+            robot_gripper_color_rgba=robot_gripper_color,
             commanded_target_world_T=self._tcp_target_T,
-            c2_committed_target_world_T=self._c2_committed_T,
-            c2_stable_elapsed_s=(
-                now - self._c2_stable_since
-                if self._c2_stable_since is not None else None),
             target_invalid_reason=self._ghost_invalid_reason,
-            ghost_visible=(self.condition in (self.C2, self.C3)
+            proximity_closeness=self._proximity_closeness(),
+            ghost_visible=(self.condition in (self.C2, self.C4)
                            and self._ghost_target_T is not None
-                           and (self._robot_state in {
-                                   "grasped", "retracting", "staging",
-                                   "approaching_hand", "c2_proposing",
-                                   "c2_resetting"}
-                                or (self.condition == self.C2
-                                    and self._robot_state ==
-                                    "waiting_for_pull"))),
-            gripper_closed=self._robot_state in {
-                "grasped", "retracting", "staging", "approaching_hand",
-                "waiting_for_pull"},
+                           and (self._robot_state in self._GHOST_ACTIVE_STATES
+                                or self._pending_handover)),
+            robot_gripper_visible=(
+                self.condition == self.C3
+                and self._T_world_tcp is not None
+                and (self._robot_state in self._ROBOT_GRIPPER_ACTIVE_STATES
+                     or self._pending_handover)),
+            gripper_closed=self._robot_state in self._ROBOT_GRIPPER_ACTIVE_STATES,
             world_tracking_T=self.anchor.T_world_tracking,
             pegboard_world_T=self.anchor.T_pegboard_in_world)
 
@@ -1068,123 +1101,37 @@ class MainScene:
     def _set_ghost_validity(self, reason: "str | None") -> None:
         reason_changed = reason != self._ghost_invalid_reason
         self._ghost_invalid_reason = reason
-        if self.condition != self.C1:
-            color = (_ObjectColorPublisher.GHOST_INVALID if reason
-                     else _ObjectColorPublisher.GHOST_VISIBLE)
-            if self.colors._colors.get(200) != color:
-                self.colors.publish(200, color)
         if reason and reason_changed:
             print(f"[Study3] Handover preview invalid: {reason}")
             self._log("handover_preview_invalid", success=0)
 
-    def _c2_reset_stability(self) -> None:
-        self._c2_stable_since = None
-        self._c2_stable_reference_T = None
+    def _proximity_closeness(self) -> float:
+        """0 = far, outside workspace, or IK/motion failure (red); 1 = the
+        live TCP has arrived at the handover target (green)."""
+        if self._ghost_invalid_reason is not None:
+            return 0.0
+        if self._T_world_tcp is None or self._ghost_target_T is None:
+            return 0.0
+        distance = float(np.linalg.norm(
+            self._T_world_tcp[:3, 3] - self._ghost_target_T[:3, 3]))
+        span = self._PROXIMITY_FAR_M - self._PROXIMITY_NEAR_M
+        return float(np.clip(
+            (self._PROXIMITY_FAR_M - distance) / span, 0.0, 1.0))
 
-    def _enter_c2_proposal(self, event: str = "c2_proposal_started") -> None:
-        self._pending_handover = False
-        self._robot_state = "c2_proposing"
-        self._tcp_target_T = None
-        self._c2_committed_T = None
-        self._c2_invalid_reference_T = None
-        self._c2_reset_stability()
-        self.colors.publish(200, _ObjectColorPublisher.GHOST_PROPOSAL)
-        self._log(event)
-
-    def _c2_pose_reachable(self, position, quaternion) -> bool:
-        """One-shot local IK validation without moving the displayed robot."""
-        if self.pb_scene is None or self.robot is None or self.robot.q is None:
-            return False
-        saved_q = np.asarray(self.robot.q, dtype=float).copy()
-        try:
-            q_ik = self.pb_scene.solve_ik(
-                saved_q, np.asarray(position, float),
-                np.asarray(quaternion, float), pos_tol=0.03,
-                orient_tol=np.deg2rad(10.0))
-            T_fk = self.pb_scene.update_tcp_bodies()
-            if T_fk is None or q_ik is None or not np.all(np.isfinite(q_ik)):
-                return False
-            pos_error = float(np.linalg.norm(
-                T_fk[:3, 3] - np.asarray(position, float)))
-            rot_error = float(ScipyR.from_matrix(
-                T_fk[:3, :3].T
-                @ ScipyR.from_quat(quaternion).as_matrix()).magnitude())
-            return pos_error <= 0.03 and rot_error <= np.deg2rad(10.0)
-        except Exception as error:
-            print(f"[Study3:C2] IK validation failed: {error}")
-            return False
-        finally:
-            self.pb_scene.update_robot(saved_q)
-
-    def _commit_c2_target(self, pose) -> None:
-        position, quaternion, target_T, ghost_T, _inside = pose
-        self._c2_committed_T = target_T.copy()
-        self._ghost_target_T = ghost_T.copy()
-        self._tcp_target_T = target_T.copy()
-        self._robot_state = "approaching_hand"
-        self.colors.publish(200, _ObjectColorPublisher.GHOST_VISIBLE)
-        self._trial_started_at = time.perf_counter()
-        self._log("c2_target_committed", target_world_T=target_T)
-        self.robot.move_to_pose(
-            position, quaternion.tolist(), motion_profile="handover",
-            on_complete=self._on_handover_arrival)
-
-    def _update_c2_proposal(self, right_pts, now: float) -> None:
-        if right_pts is None:
-            self._c2_reset_stability()
-            return
-        pose = self._handover_pose(right_pts)
-        if pose is None:
-            self._c2_reset_stability()
-            return
-        position, quaternion, command_T, ghost_T, inside_workspace = pose
-        self._ghost_target_T = ghost_T
-        # C2 promises that the displayed and executed target are identical;
-        # an inset-workspace projection therefore makes the proposal invalid.
-        projection_changed = not np.allclose(
-            command_T[:3, 3], ghost_T[:3, 3], atol=1e-6)
-        if not inside_workspace or projection_changed:
-            self._set_ghost_validity("outside_workspace")
-            self._c2_reset_stability()
-            return
-        if self._c2_invalid_reference_T is not None:
-            invalid_pos_change = float(np.linalg.norm(
-                ghost_T[:3, 3] - self._c2_invalid_reference_T[:3, 3]))
-            invalid_angle_change = float(ScipyR.from_matrix(
-                self._c2_invalid_reference_T[:3, :3].T
-                @ ghost_T[:3, :3]).magnitude())
-            if (invalid_pos_change <= self._C2_STABLE_POSITION_M
-                    and invalid_angle_change <= self._C2_STABLE_ANGLE_RAD):
-                return
-            self._c2_invalid_reference_T = None
-        self._ghost_invalid_reason = None
-        self.colors.publish(200, _ObjectColorPublisher.GHOST_PROPOSAL)
-
-        if self._c2_stable_reference_T is None:
-            self._c2_stable_reference_T = ghost_T.copy()
-            self._c2_stable_since = now
-            return
-        position_change = float(np.linalg.norm(
-            ghost_T[:3, 3] - self._c2_stable_reference_T[:3, 3]))
-        angle_change = float(ScipyR.from_matrix(
-            self._c2_stable_reference_T[:3, :3].T
-            @ ghost_T[:3, :3]).magnitude())
-        if (position_change > self._C2_STABLE_POSITION_M
-                or angle_change > self._C2_STABLE_ANGLE_RAD):
-            self._c2_stable_reference_T = ghost_T.copy()
-            self._c2_stable_since = now
-            return
-        if (self._c2_stable_since is None
-                or now - self._c2_stable_since
-                < self._C2_STABLE_DURATION_S):
-            return
-
-        if not self._c2_pose_reachable(position, quaternion):
-            self._set_ghost_validity("ik_unreachable")
-            self._c2_invalid_reference_T = ghost_T.copy()
-            self._c2_reset_stability()
-            return
-        self._commit_c2_target(pose)
+    def _publish_condition_colors(self) -> None:
+        """Drive the toolId=200 (ghost) / 201 (robot-gripper proxy) colors
+        each tick per the active condition's manipulation."""
+        if self.condition == self.C2:
+            self.colors.publish(200, _ObjectColorPublisher.GHOST_VISIBLE)
+        elif self.condition == self.C4:
+            self.colors.publish(
+                200, _ObjectColorPublisher.proximity_color(
+                    self._proximity_closeness()))
+        elif self.condition == self.C3:
+            self.colors.publish(
+                self.ROBOT_GRIPPER_TOOL_ID,
+                _ObjectColorPublisher.proximity_color(
+                    self._proximity_closeness()))
 
     def _on_grasp_complete(self, ok: bool, tool_id: int) -> None:
         self._robot_state = None
@@ -1221,10 +1168,7 @@ class MainScene:
             return
         _position, _quaternion, _target_T, ghost_T, inside = pose
         self._ghost_target_T = ghost_T
-        if self.condition == self.C2:
-            self.colors.publish(200, _ObjectColorPublisher.GHOST_PROPOSAL)
-        else:
-            self._set_ghost_validity(None if inside else "outside_workspace")
+        self._set_ghost_validity(None if inside else "outside_workspace")
         self._log("handover_preview_shown_after_grasp")
 
     def _on_handover_staging_complete(self, ok: bool) -> None:
@@ -1234,11 +1178,8 @@ class MainScene:
             self._set_ghost_validity("staging_move_failed")
             print("[Study3] Handover staging move failed; handover not started")
             return
-        if self.condition == self.C2:
-            self._enter_c2_proposal()
-        else:
-            self._robot_state = None
-            self._pending_handover = True
+        self._robot_state = None
+        self._pending_handover = True
 
     def _start_handover(self, hand_pts) -> bool:
         if self.robot is None:
@@ -1272,34 +1213,27 @@ class MainScene:
                   success=int(bool(ok)))
         self._robot_state = None
         if self._c1_arm_pull_after_stop:
-            # In C1 a robot click is also an early handover commit: freeze at
-            # the last safe controller target, then let a physical pull open
-            # the gripper and complete the trial.
+            # With no ghost to click (C1/C3), a robot click is also an early
+            # handover commit: freeze at the last safe controller target,
+            # then let a physical pull open the gripper and complete the trial.
             self._c1_arm_pull_after_stop = False
             self._robot_stop_requested = False
             self._pending_handover = False
             if self.robot is not None and self._handover_tool_id is not None:
                 self._robot_state = "waiting_for_pull"
                 self._log("robot_stop_pull_armed", success=1)
-                print("[Study3:C1] Robot stopped — pull the object to accept it")
+                print("[Study3] Robot stopped — pull the object to accept it")
                 self.robot.wait_for_handover_pull(on_complete=self._on_release)
-            return
-        if self._c2_reset_after_cancel:
-            self._c2_reset_after_cancel = False
-            self._robot_stop_requested = False
-            self._enter_c2_proposal("c2_destination_reset")
             return
         if self._robot_stop_requested:
             self._pending_handover = False
             self.colors.publish(200, _ObjectColorPublisher.GHOST_HIDDEN)
+            self.colors.publish(
+                self.ROBOT_GRIPPER_TOOL_ID, _ObjectColorPublisher.GHOST_HIDDEN)
             self._robot_stop_requested = False
             return
         if ok and self.robot is not None:
             self._set_ghost_validity(None)
-            self.colors.publish(
-                200, (_ObjectColorPublisher.GHOST_VISIBLE
-                      if self.condition == self.C2
-                      else _ObjectColorPublisher.GHOST_HIDDEN))
             self._robot_state = "waiting_for_pull"
             self.robot.wait_for_handover_pull(on_complete=self._on_release)
         elif self._handover_tool_id is not None:
@@ -1307,26 +1241,12 @@ class MainScene:
             # robot server. Keep the failed preview red long enough to be seen,
             # then retry from the participant's current hand pose.
             self._set_ghost_validity("ik_or_motion_failure")
-            if self.condition == self.C2:
-                self._enter_c2_proposal("c2_motion_failed_reproposal")
-            else:
-                self._retry_handover_after = time.perf_counter() + 2.0
-                self._pending_handover = True
+            self._retry_handover_after = time.perf_counter() + 2.0
+            self._pending_handover = True
 
     def _on_release(self, ok: bool) -> None:
         elapsed = (f"{time.perf_counter() - self._trial_started_at:.6f}"
                    if self._trial_started_at is not None else "")
-        if self._c2_reset_after_cancel:
-            # Intentional rejection after arrival is not a failed transfer.
-            # cancel_motion leaves the gripper closed and completes the pull
-            # callback with ok=False; return immediately to live proposal mode.
-            self._c2_reset_after_cancel = False
-            self._robot_stop_requested = False
-            self._log("c2_pull_wait_cancelled_for_reset", success=1)
-            self._enter_c2_proposal("c2_destination_reset_after_arrival")
-            print("[Study3:C2] Pull wait cancelled — move the hand to propose "
-                  "a new destination")
-            return
         self._log("transfer_complete" if ok else "transfer_failed",
                   elapsed_s=elapsed, success=int(bool(ok)))
         if ok:
@@ -1357,9 +1277,6 @@ class MainScene:
                     on_complete=self._on_default_return_complete)
                 return
         elif self._handover_tool_id is not None:
-            if self.condition == self.C2:
-                self._enter_c2_proposal("c2_release_failed_reproposal")
-                return
             self._pending_handover = True
         self._robot_state = None
 
@@ -1425,44 +1342,15 @@ class MainScene:
                         anchor_clicked = True
                     if (tool_id == _StudyInteractionReceiver.ROBOT_TOOL_ID
                             and event_type == "selected"):
-                        if self.condition == self.C2:
-                            if (self._robot_state == "waiting_for_pull"
-                                    and self.robot is not None):
-                                self._c2_reset_after_cancel = True
-                                self._robot_state = "c2_resetting"
-                                self._log("c2_ghost_clicked_reset_after_arrival")
-                                print("[Study3:C2] Ghost clicked after arrival — "
-                                      "keeping gripper closed and resetting "
-                                      "destination")
-                                self.robot.cancel_motion()
-                            elif (self._robot_state == "approaching_hand"
-                                    and self._c2_committed_T is not None
-                                    and self.robot is not None):
-                                self._c2_reset_after_cancel = True
-                                self._robot_stop_requested = True
-                                self._robot_state = "c2_resetting"
-                                self._log("c2_ghost_clicked_reset")
-                                print("[Study3:C2] Ghost clicked — cancelling "
-                                      "approach and resetting destination")
-                                self.robot.cancel_move()
-                            elif self._robot_state in {
-                                    "c2_proposing", "c2_resetting"}:
-                                self._enter_c2_proposal(
-                                    "c2_ghost_clicked_reset")
-                                print("[Study3:C2] Ghost clicked — destination "
-                                      "reset")
-                            else:
-                                print("[Study3:C2] No active proposal to reset")
-                            continue
-                        if (self.condition == self.C1
+                        if (self.condition in (self.C1, self.C3)
                                 and self._robot_state == "waiting_for_pull"
                                 and self._resume_hand_tracking_on_next_robot_click):
                             # A second click before the participant pulls backs
-                            # out of the frozen offer and resumes C1 tracking.
+                            # out of the frozen offer and resumes tracking.
                             self._c1_resume_after_pull_cancel = True
                             self._robot_state = "resuming_hand_tracking"
                             self._log("robot_clicked_controller_resume")
-                            print("[Study3:C1] ROBOT CLICKED AGAIN — cancelling "
+                            print("[Study3] ROBOT CLICKED AGAIN — cancelling "
                                   "pull wait and resuming right-hand tracking")
                             if self.robot is not None:
                                 self.robot.cancel_motion()
@@ -1480,7 +1368,7 @@ class MainScene:
                             self._resume_hand_tracking_on_next_robot_click = (
                                 was_tracking_hand)
                             self._c1_arm_pull_after_stop = bool(
-                                self.condition == self.C1
+                                self.condition in (self.C1, self.C3)
                                 and was_tracking_hand
                                 and self._handover_tool_id is not None)
                             self._pending_handover = False
@@ -1489,6 +1377,9 @@ class MainScene:
                             self._ghost_target_T = None
                             self.colors.publish(
                                 200, _ObjectColorPublisher.GHOST_HIDDEN)
+                            self.colors.publish(
+                                self.ROBOT_GRIPPER_TOOL_ID,
+                                _ObjectColorPublisher.GHOST_HIDDEN)
                             self._log(
                                 "robot_clicked_controller_stop", success=0)
                             print("[Study3] ROBOT CLICKED — controller motion "
@@ -1620,21 +1511,29 @@ class MainScene:
                     now = time.time()
                     if now - self._last_synth_pub_time >= self._SYNTH_INTERVAL:
                         ghost_visible = (
-                            self.condition in (self.C2, self.C3)
+                            self.condition in (self.C2, self.C4)
                             and self._ghost_target_T is not None
-                            and (self._robot_state in {
-                                    "grasped", "retracting", "staging",
-                                    "approaching_hand", "c2_proposing",
-                                    "c2_resetting"}
-                                 or (self.condition == self.C2
-                                     and self._robot_state ==
-                                     "waiting_for_pull")
+                            and (self._robot_state in self._GHOST_ACTIVE_STATES
                                  or self._pending_handover))
+                        robot_gripper_visible = (
+                            self.condition == self.C3
+                            and self._T_world_tcp is not None
+                            and (self._robot_state
+                                 in self._ROBOT_GRIPPER_ACTIVE_STATES
+                                 or self._pending_handover))
+                        visible_objects = []
                         if ghost_visible:
                             self._unity_ghost.centroid = self._ghost_target_T[:3, 3]
                             self._unity_ghost.R_o3d = self._ghost_target_T[:3, :3]
-                        self.synth.publish(
-                            [self._unity_ghost] if ghost_visible else [])
+                            visible_objects.append(self._unity_ghost)
+                        if robot_gripper_visible:
+                            self._unity_robot_gripper.centroid = \
+                                self._T_world_tcp[:3, 3]
+                            self._unity_robot_gripper.R_o3d = \
+                                self._T_world_tcp[:3, :3]
+                            visible_objects.append(self._unity_robot_gripper)
+                        self.synth.publish(visible_objects)
+                        self._publish_condition_colors()
                         self._last_synth_pub_time = now
 
                     head_position = (world_center[:3, 3]
@@ -1658,11 +1557,7 @@ class MainScene:
                     if self._start_handover(right_pts):
                         self._pending_handover = False
 
-                if self._robot_state == "c2_proposing":
-                    self._update_c2_proposal(right_pts, time.perf_counter())
-
                 if (self._robot_state == "approaching_hand"
-                        and self.condition in (self.C1, self.C3)
                         and right_pts is not None and self.robot is not None):
                     pose = self._handover_pose(right_pts)
                     if pose is not None:
@@ -1690,7 +1585,7 @@ class MainScene:
                 self.vis.update_hands(left_pts, right_pts)
                 self.vis.update_palm_triangles(left_pts, right_pts)
                 preview = None
-                if (self.condition in (self.C2, self.C3)
+                if (self.condition in (self.C2, self.C4)
                         and self._ghost_target_T is not None):
                     preview = self._ghost_target_T
                 self.vis.update_left_hand_gripper(preview)
@@ -1699,10 +1594,7 @@ class MainScene:
                 self.vis.set_left_hand_gripper_color(ghost_color[:3])
                 # Draw the physical/simulated Robotiq gripper on the live TCP.
                 # This is separate from the participant-preview ghost above.
-                gripper_closed = self._robot_state in {
-                    "grasped", "retracting", "staging", "approaching_hand",
-                    "waiting_for_pull",
-                }
+                gripper_closed = self._robot_state in self._ROBOT_GRIPPER_ACTIVE_STATES
                 self.vis.set_tcp_gripper_closed(gripper_closed)
                 self.vis.update_tcp(self._T_world_tcp)
                 self.vis.update_tcp_target(self._tcp_target_T)
@@ -1790,11 +1682,12 @@ def main():
     ap.add_argument("--participant-id", required=True,
                     help="De-identified participant code recorded in the CSV")
     ap.add_argument("--condition", dest="study3_condition",
-                    choices=("continuous_no_preview",
-                             "stability_committed_preview",
-                             "continuous_preview", "no_ar", "ar_preview"),
+                    choices=("no_ghost_no_color", "ghost_no_color",
+                             "no_ghost_robot_color", "ghost_color"),
                     required=True,
-                    help="Study condition (legacy no_ar/ar_preview aliases accepted)")
+                    help="Study condition: no_ghost_no_color (C1) / "
+                         "ghost_no_color (C2) / no_ghost_robot_color (C3) / "
+                         "ghost_color (C4)")
     ap.add_argument("--study3-log",
                     default=str(_STUDY3_LOG_DIR / "handover_events.csv"),
                     help="Study 3 event CSV")
@@ -1804,10 +1697,6 @@ def main():
     args = ap.parse_args()
     if args.anchor_marker == args.pegboard_marker:
         ap.error("--anchor-marker and --pegboard-marker must be different.")
-    args.study3_condition = {
-        "no_ar": MainScene.C1,
-        "ar_preview": MainScene.C3,
-    }.get(args.study3_condition, args.study3_condition)
     scene = MainScene(
         quest_ip                   = args.quest_ip,
         anchor_marker_id           = args.anchor_marker,
