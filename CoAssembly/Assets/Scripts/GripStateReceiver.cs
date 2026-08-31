@@ -86,6 +86,8 @@ public class GripStateReceiver : MonoBehaviour
     private MaterialPropertyBlock _boardColorBlock;
     private Material _targetOverlayMaterial;
     private GameObject _carriedGripper;
+    private Renderer[] _carriedGripperRenderers;
+    private bool _loggedCarriedGripperVisible;
 
     private static readonly Quaternion BoardMeshCorrection =
         Quaternion.AngleAxis(90f, Vector3.forward)
@@ -124,6 +126,8 @@ public class GripStateReceiver : MonoBehaviour
             _carriedGripper = Instantiate(
                 carriedGripperTemplate, parent, false);
             _carriedGripper.name = "CarriedBoardGripper";
+            _carriedGripperRenderers =
+                _carriedGripper.GetComponentsInChildren<Renderer>(true);
             foreach (MonoBehaviour behaviour in
                      _carriedGripper.GetComponentsInChildren<MonoBehaviour>(true))
                 behaviour.enabled = false;
@@ -137,6 +141,10 @@ public class GripStateReceiver : MonoBehaviour
                 body.detectCollisions = false;
             }
             _carriedGripper.SetActive(false);
+            SetRenderersVisible(_carriedGripperRenderers, false);
+            Debug.Log($"[GripStateReceiver] Created carried-board gripper "
+                      + $"from {carriedGripperTemplate.name} with "
+                      + $"{_carriedGripperRenderers.Length} renderer(s)");
         }
         if (arBox != null)
         {
@@ -157,6 +165,7 @@ public class GripStateReceiver : MonoBehaviour
         bool visible = showCarriedGripper && arBox != null
             && arBox.activeInHierarchy;
         _carriedGripper.SetActive(visible);
+        SetRenderersVisible(_carriedGripperRenderers, visible);
         if (!visible) return;
 
         // Python's board offset is TCP-local +Z. The Open3D-to-Unity mapping
@@ -165,6 +174,19 @@ public class GripStateReceiver : MonoBehaviour
         _carriedGripper.transform.position = arBox.transform.position
             - carriedGripperForwardOffset * offsetAxis;
         _carriedGripper.transform.rotation = arBox.transform.rotation;
+        if (!_loggedCarriedGripperVisible)
+        {
+            _loggedCarriedGripperVisible = true;
+            Debug.Log($"[GripStateReceiver] Carried-board gripper visible at "
+                      + $"{_carriedGripper.transform.position}");
+        }
+    }
+
+    private static void SetRenderersVisible(Renderer[] renderers, bool visible)
+    {
+        if (renderers == null) return;
+        foreach (Renderer renderer in renderers)
+            if (renderer != null) renderer.enabled = visible;
     }
 
     private void ReceiveLoop()
