@@ -29,13 +29,14 @@ class ReplayRecorder:
     """Line-buffered recorder shared by Study 2 and Study 3."""
 
     def __init__(self, path: str | Path, schema: str, session_id: str,
-                 **base_fields):
+                 *, overwrite: bool = False, **base_fields):
         self.path = Path(path)
         self.schema = schema
         self.session_id = session_id
         self.base_fields = dict(base_fields)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._handle = self.path.open("a", encoding="utf-8", buffering=1)
+        self._handle = self.path.open(
+            "w" if overwrite else "a", encoding="utf-8", buffering=1)
 
     def record(self, record_type: str, **payload) -> None:
         record = {

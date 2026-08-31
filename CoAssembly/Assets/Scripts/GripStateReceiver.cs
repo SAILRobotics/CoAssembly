@@ -23,6 +23,13 @@ public class GripStateReceiver : MonoBehaviour
     public GameObject          arHandle;
     public ARManipulationHandle manipulationHandle;
 
+    [Header("Carried-board gripper")]
+    [Tooltip("Template cloned for a gripper that follows the participant-moved AR board.")]
+    public GameObject          carriedGripperTemplate;
+    public bool                showCarriedGripper = true;
+    [Tooltip("Board-center offset from the TCP/gripper along Unity-local +Y.")]
+    public float               carriedGripperForwardOffset = 0.23215f;
+
     [Header("Parent")]
     public Transform worldRoot;
 
@@ -78,6 +85,7 @@ public class GripStateReceiver : MonoBehaviour
     private Renderer[] _boardRenderers;
     private MaterialPropertyBlock _boardColorBlock;
     private Material _targetOverlayMaterial;
+    private GameObject _carriedGripper;
 
     private static readonly Quaternion BoardMeshCorrection =
         Quaternion.AngleAxis(90f, Vector3.forward)
@@ -109,6 +117,27 @@ public class GripStateReceiver : MonoBehaviour
     {
         if (arBox    != null) arBox.SetActive(false);
         if (arHandle != null) arHandle.SetActive(false);
+        if (carriedGripperTemplate != null)
+        {
+            Transform parent = worldRoot != null
+                ? worldRoot : carriedGripperTemplate.transform.parent;
+            _carriedGripper = Instantiate(
+                carriedGripperTemplate, parent, false);
+            _carriedGripper.name = "CarriedBoardGripper";
+            foreach (MonoBehaviour behaviour in
+                     _carriedGripper.GetComponentsInChildren<MonoBehaviour>(true))
+                behaviour.enabled = false;
+            foreach (Collider collider in
+                     _carriedGripper.GetComponentsInChildren<Collider>(true))
+                collider.enabled = false;
+            foreach (Rigidbody body in
+                     _carriedGripper.GetComponentsInChildren<Rigidbody>(true))
+            {
+                body.isKinematic = true;
+                body.detectCollisions = false;
+            }
+            _carriedGripper.SetActive(false);
+        }
         if (arBox != null)
         {
             _boardRenderers = arBox.GetComponentsInChildren<Renderer>(true);
@@ -120,6 +149,22 @@ public class GripStateReceiver : MonoBehaviour
         _running = true;
         _thread  = new Thread(ReceiveLoop) { IsBackground = true };
         _thread.Start();
+    }
+
+    private void LateUpdate()
+    {
+        if (_carriedGripper == null) return;
+        bool visible = showCarriedGripper && arBox != null
+            && arBox.activeInHierarchy;
+        _carriedGripper.SetActive(visible);
+        if (!visible) return;
+
+        // Python's board offset is TCP-local +Z. The Open3D-to-Unity mapping
+        // turns that into Unity-local +Y, matching WorkholdingBoxReceiver.
+        Vector3 offsetAxis = arBox.transform.rotation * Vector3.up;
+        _carriedGripper.transform.position = arBox.transform.position
+            - carriedGripperForwardOffset * offsetAxis;
+        _carriedGripper.transform.rotation = arBox.transform.rotation;
     }
 
     private void ReceiveLoop()

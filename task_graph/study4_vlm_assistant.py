@@ -596,6 +596,7 @@ class VLMAssistant:
         self._answer_events: "queue.Queue[dict[str, str]]" = queue.Queue()
         self._pending_part_text = ""
         self._pending_task_candidate_action = "reference"
+        self._pending_task_candidate_relation = "direct"
         self._focused_step_available = False
         self._awaiting_part_clarification = False
         self._ambiguous_part_text = ""
@@ -687,6 +688,11 @@ class VLMAssistant:
 
     # ── Public: voice input ───────────────────────────────────────────────────
 
+    @property
+    def is_ready(self) -> bool:
+        """Whether the worker can accept a participant utterance now."""
+        return self._current_status == "ready"
+
     def submit_question(self, text: str) -> bool:
         """Ask Qwen to infer intent, resolve references, or answer normally.
 
@@ -729,15 +735,35 @@ class VLMAssistant:
                 "such as 'those' or 'them' refers only to this set. If the user "
                 "asks for one member without distinguishing it, return target "
                 "AMBIGUOUS and list this set as candidates; never guess.\n\n")
+        if self._study4_condition == "language":
+            allowed_intents = "part_reference|out_of_scope"
+            condition_intent_rule = (
+                "- CONDITION 2: `step_items_request` is unavailable. A generic "
+                "request for items required by the selected/current step is "
+                "`out_of_scope`, because this condition has no selected-step "
+                "or task-state access. A request naming a physical part or tool "
+                "remains `part_reference`. This condition-specific rule takes "
+                "priority over the general step-items rules and examples below. "
+                "Requests for a recommended/next step are also `out_of_scope`; "
+                "never emit `next_step_request` in Condition 2.\n")
+        else:
+            allowed_intents = (
+                "part_reference|step_items_request|next_step_request|"
+                "out_of_scope")
+            condition_intent_rule = (
+                "- CONDITION 3: Use `next_step_request` when the user asks "
+                "what to do next, what step is recommended, or what step to "
+                "start with. Leave all other fields empty.\n")
         prompt = f"""\
 Classify and answer the CURRENT USER UTTERANCE below. Infer its intent from its
 meaning; do not classify it by matching a fixed set of request verbs, and do
 not mistake part names appearing in the injected assembly state for user intent.
 
 Return ONLY one valid JSON object using exactly this schema:
-{{"intent":"part_reference|step_items_request|out_of_scope","item_scope":"parts|tools|all|","part_action":"reference|fetch|status|","reference_relation":"direct|same_as_previous|alternative_to_previous|member_of_recent_set|","step_scope":"selected_step|","target":"ALLOWED_LABEL|AMBIGUOUS|","candidates":["ALLOWED_LABEL"],"exclude_labels":["ALLOWED_LABEL"]}}
+{{"intent":"{allowed_intents}","item_scope":"parts|tools|all|","part_action":"reference|fetch|status|","reference_relation":"direct|same_as_previous|alternative_to_previous|member_of_recent_set|","step_scope":"selected_step|","target":"ALLOWED_LABEL|AMBIGUOUS|","candidates":["ALLOWED_LABEL"],"exclude_labels":["ALLOWED_LABEL"]}}
 
 Rules:
+{condition_intent_rule}
 - Use `reference_relation` to describe discourse semantics rather than choosing
   an object yourself. Use `same_as_previous` when the request refers back to
   the most recently resolved object. Use `alternative_to_previous` only when
@@ -745,7 +771,10 @@ Rules:
   `member_of_recent_set` means an unspecified member of the recently presented
   candidates, and `direct` means an explicitly identified object. Python will
   calculate same/alternative targets from structured conversation and graph
-  state. Do not guess a target or exclusion for either relation.
+  state. Do not guess a target or exclusion for either relation. If the user
+  explicitly names a physical category such as gear, gear rod, wooden pin,
+  bearing, stand, screw, or tool, always use `direct`; never reinterpret that
+  named category as `alternative_to_previous`.
 - For every part or tool intent, infer `part_action` from the requested physical
   outcome. If the operator wants an object transferred to them, use `fetch`
   regardless of their wording. If they only want identification, location, or
@@ -755,9 +784,8 @@ Rules:
   requesting, or naming a physical part/tool—even when they use only a noun
   phrase or unfamiliar wording. Set `part_action` to `fetch` only when they ask
   the robot to get, fetch, bring, retrieve, or hand over the object. Set it to
-  `reference` for identification or highlighting. Requests about future or
-  recommended steps are `out_of_scope`. Infer this semantically rather than by
-  matching one verb.
+  `reference` for identification or highlighting. Infer this semantically
+  rather than by matching one verb.
 - For one unambiguous part/tool: put its exact allowed label in `target`, use an
   empty `candidates` list, and leave `answer` empty.
 - For a genuinely ambiguous physical reference: set `target` to `AMBIGUOUS`,
@@ -782,7 +810,9 @@ Rules:
   step, always use `step_items_request` with `item_scope`=`parts` so the
   graph can remove parts already supplied or assembled. Preserve a request to
   get/fetch that outstanding part by setting `part_action`=`fetch`; otherwise
-  use `part_action`=`reference`.
+  use `part_action`=`reference`. Always set `reference_relation` to
+  `alternative_to_previous` for "other part(s)", "other one", "another one",
+  and equivalent requests so Condition 3 can advance its physical-object cycle.
 - For a task-relative request such as "Can you get a part for this step?",
   preserve the requested action: return `step_items_request` with
   `item_scope`=`parts` and
@@ -809,14 +839,17 @@ Rules:
   step to resolve which gear, stand, or tool is meant when it makes the
   reference unique. A request to "give" a named physical object is a fetch
   request.
-- Use `out_of_scope` for greetings, unrelated conversation, recommendations,
-  bare confirmations, or questions that do not identify/request a physical
-  object or the items required by a step. Leave every other field empty. The
-  study will ask the participant to make a part/tool request; do not answer the
-  unrelated question.
+- Use `out_of_scope` for greetings, unrelated conversation, bare confirmations,
+  or questions that do not identify/request a physical object, the items
+  required by a step, or (in Condition 3 only) the recommended next step. Leave
+  every other field empty.
 - Do not include Markdown or any text outside the JSON object.
 
 Intent examples:
+- "What's the next recommended step?" ->
+  {{"intent":"next_step_request","item_scope":"","part_action":"","reference_relation":"","step_scope":"","target":"","candidates":[],"exclude_labels":[]}}
+- "Can you highlight the parts required for this selected step?" ->
+  {{"intent":"step_items_request","item_scope":"parts","part_action":"reference","step_scope":"selected_step","target":"","candidates":[],"exclude_labels":[]}}
 - "Can you give me the part required for this step?" ->
   {{"intent":"step_items_request","item_scope":"parts","part_action":"reference","step_scope":"selected_step","target":"","candidates":[],"exclude_labels":[]}}
 - "Other than the bearing, what other part do I need for this step?" ->
@@ -997,7 +1030,16 @@ Intent examples:
             return {"intent": "invalid", "raw": raw}
 
         intent = str(value.get("intent", "")).strip().casefold()
+        if intent == "next_step_request":
+            if self._study4_condition != "task_aware":
+                return {"intent": "out_of_scope", "raw": raw}
+            return {"intent": intent, "raw": raw}
         if intent == "step_items_request":
+            if self._study4_condition == "language":
+                # Condition 2 intentionally has no task-relative intent. Keep
+                # this boundary deterministic even if the VLM violates its
+                # condition-specific output schema.
+                return {"intent": "out_of_scope", "raw": raw}
             item_scope = str(value.get("item_scope", "")).strip().casefold()
             if item_scope not in {"parts", "tools", "all"}:
                 return {"intent": "invalid", "raw": raw}
@@ -1077,6 +1119,12 @@ Intent examples:
                 # alternative. Keep that valid target; there is nothing left
                 # for Python to calculate or clarify.
                 candidate_labels = []
+            elif candidate_labels:
+                # Preserve an explicitly narrowed candidate set even when the
+                # model attached a contradictory "other" relation. The app
+                # can ground co-located semantic candidates physically.
+                target = (candidate_labels[0]
+                          if len(candidate_labels) == 1 else "AMBIGUOUS")
             else:
                 alternatives = [
                     label for label in self._recent_part_candidates
@@ -1086,6 +1134,12 @@ Intent examples:
                     target, candidate_labels = alternatives[0], []
                 elif alternatives:
                     target, candidate_labels = "AMBIGUOUS", alternatives
+                else:
+                    # A relation-only request such as "the other one" is
+                    # valid even when the assistant has only one prior label.
+                    # Condition 3 will derive alternatives from the selected
+                    # step's physical pegboard search space.
+                    target, candidate_labels = "AMBIGUOUS", []
         elif reference_relation == "member_of_recent_set":
             # A first unspecified-member request has no narrowed candidates,
             # so retain the full recent set and ask. A later clarification may
@@ -1213,15 +1267,22 @@ Intent examples:
                 question = self._pending_question
                 envelope = self._parse_intent_envelope(payload)
                 intent = envelope.get("intent")
-                if intent in {"part_reference", "step_items_request"}:
+                if intent in {
+                        "part_reference", "step_items_request",
+                        "next_step_request"}:
                     item_scope = str(envelope.get("item_scope", ""))
-                    label = ("STEP_ITEMS" if intent == "step_items_request"
-                             else str(envelope["target"]))
+                    label = (
+                        "STEP_ITEMS" if intent == "step_items_request" else
+                        "RECOMMEND_NEXT_STEP" if intent == "next_step_request" else
+                        str(envelope["target"]))
                     part_action = str(
                         envelope.get("part_action", "reference"))
                     if (intent == "step_items_request"
                             and self._study4_condition == "task_aware"
-                            and self._focused_step_available):
+                            and self._focused_step_available
+                            and str(envelope.get(
+                                "reference_relation", "direct"))
+                            != "alternative_to_previous"):
                         # Do not replace this with graph-derived inputs. Ask the
                         # VLM itself for a concrete candidate prediction using
                         # the focused-step context injected by _infer().
@@ -1254,6 +1315,8 @@ Return only independently selectable physical objects on the pegboard:
   newly required by the focused step.
 """
                         self._pending_task_candidate_action = part_action
+                        self._pending_task_candidate_relation = str(
+                            envelope.get("reference_relation", "direct"))
                         if self._worker.submit(
                                 candidate_prompt, self._image_paths,
                                 result_kind="task_candidates"):
@@ -1308,6 +1371,7 @@ Return only independently selectable physical objects on the pegboard:
                         "text": question,
                         "answer": answer,
                         "intent": str(intent),
+                        "raw": payload,
                     })
                     self._exchanges.append((question, answer))
                     self._history_count = min(
@@ -1357,7 +1421,10 @@ Return only independently selectable physical objects on the pegboard:
                         "text": question,
                         "label": label,
                         "part_action": part_action,
-                        "reference_relation": "direct",
+                        # Preserve discourse semantics from the user's original
+                        # request. The second pass predicts objects only and is
+                        # not allowed to erase "other"/"same" relationships.
+                        "reference_relation": self._pending_task_candidate_relation,
                         "step_scope": "selected_step",
                         "item_scope": "",
                         "exclude_labels": [],

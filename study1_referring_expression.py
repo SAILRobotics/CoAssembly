@@ -4,9 +4,9 @@
 Run:
     python3 study1_referring_expression.py
 
-Then open http://127.0.0.1:5000. Responses are written to
-task_graph/referring_expression_responses.csv and
-task_graph/referring_expression_responses.xlsx.
+Then open http://127.0.0.1:5000. Participant responses are written only to
+study_logs/study1/referring_expression_user.csv. The existing classified
+referring_expression_responses.csv and .xlsx files are not modified.
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ ASSET_DIR = ROOT / "robot_assets" / "gearbox_parts"
 PART_DIR = ASSET_DIR / "completed" / "colored_stl"
 CSV_PATH = ROOT / "task_graph" / "referring_expression_responses.csv"
 XLSX_PATH = ROOT / "task_graph" / "referring_expression_responses.xlsx"
+USER_CSV_PATH = ROOT / "study_logs" / "study1" / "referring_expression_user.csv"
 RENDER_DIR = ROOT / "task_graph" / "referring_expression_renderings"
 DETECTION_RENDER_DIR = ROOT / "task_graph" / "referring_expression_detection_renderings"
 WRITE_LOCK = threading.Lock()
@@ -43,6 +44,11 @@ FIELDS = [
     "index", "timestamp", "participant", "target_type", "target_id", "target_name",
     "render_index", "description", "referring_type", "traits_used",
     "presentation_number", "target_presentations", "Verified",
+]
+USER_FIELDS = [
+    "index", "timestamp", "participant", "target_type", "target_id",
+    "target_name", "render_index", "description", "presentation_number",
+    "target_presentations",
 ]
 
 # Rendering-class STL stem -> task-graph naming convention used in
@@ -87,7 +93,33 @@ app = Flask(__name__)
 
 
 def part_files() -> list[str]:
-    return sorted(path.name for path in PART_DIR.glob("*.stl"))
+    files = [path.name for path in PART_DIR.glob("*.stl")]
+
+    # Fixed semantic order for each Study 1 presentation pass. Filename order
+    # within a category gives Row 1..4 and Left before Right.
+    def presentation_key(filename: str) -> tuple[int, str]:
+        stem = Path(filename).stem
+        if "GearStand" in stem:
+            category = 0
+        elif "GearRod" in stem:
+            category = 1
+        elif "_Gear_" in stem:
+            category = 2
+        elif stem == "Bearing":
+            category = 3
+        elif "Screws" in stem:
+            category = 4
+        elif stem == "Handle":
+            category = 5
+        elif stem == "BaseBoard":
+            category = 6
+        elif stem == "WoodenPin":
+            category = 7
+        else:
+            category = 8
+        return category, filename
+
+    return sorted(files, key=presentation_key)
 
 
 def _semantic_obj_names() -> dict[str, str]:
@@ -259,6 +291,68 @@ def append_csv(row: dict[str, object]) -> None:
         if new_file:
             writer.writeheader()
         writer.writerow(row)
+
+
+def append_user_csv(row: dict[str, object]) -> None:
+    """Append participant-authored data without evaluator-only columns."""
+    USER_CSV_PATH.parent.mkdir(parents=True, exist_ok=True)
+    existing_rows = user_csv_rows()
+    if USER_CSV_PATH.exists() and existing_rows is not None:
+        # Repair headerless/legacy files before appending. This can happen when
+        # a placeholder file contains only a blank line, making it look
+        # non-empty to the original header-writing check.
+        with USER_CSV_PATH.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=USER_FIELDS, lineterminator="\n")
+            writer.writeheader()
+            writer.writerows(existing_rows)
+    new_file = not USER_CSV_PATH.exists() or USER_CSV_PATH.stat().st_size == 0
+    with USER_CSV_PATH.open("a", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=USER_FIELDS, lineterminator="\n")
+        if new_file:
+            writer.writeheader()
+        writer.writerow({field: row[field] for field in USER_FIELDS})
+
+
+def user_csv_rows() -> list[dict[str, str]]:
+    if not USER_CSV_PATH.exists() or USER_CSV_PATH.stat().st_size == 0:
+        return []
+    with USER_CSV_PATH.open(newline="", encoding="utf-8") as handle:
+        raw_rows = [row for row in csv.reader(handle) if any(cell.strip() for cell in row)]
+    if not raw_rows:
+        return []
+    if raw_rows[0] == USER_FIELDS:
+        return [dict(zip(USER_FIELDS, row)) for row in raw_rows[1:]
+                if len(row) == len(USER_FIELDS)]
+    if "index" in raw_rows[0]:
+        header = raw_rows[0]
+        return [
+            {field: dict(zip(header, row)).get(field, "") for field in USER_FIELDS}
+            for row in raw_rows[1:]
+        ]
+    # A headerless file: retain every complete row using the current column
+    # order. append_user_csv() will rewrite it with a proper header.
+    return [dict(zip(USER_FIELDS, row)) for row in raw_rows
+            if len(row) == len(USER_FIELDS)]
+
+
+def response_indices(rows: list[dict[str, str]]) -> list[int]:
+    """Return valid response indices without failing on malformed legacy rows."""
+    indices = []
+    for row in rows:
+        try:
+            indices.append(int(row.get("index", "")))
+        except (TypeError, ValueError):
+            continue
+    return indices
+
+
+def response_row(response_index: int) -> dict[str, str] | None:
+    """Find either a classified legacy response or a raw user response."""
+    return next(
+        (row for row in migrate_csv_schema() + user_csv_rows()
+         if response_indices([row]) == [response_index]),
+        None,
+    )
 
 
 def rebuild_xlsx() -> bool:
@@ -455,8 +549,7 @@ def rendering_status() -> Response:
     except ValueError:
         return jsonify({"error": "A valid response index is required"}), 400
     with WRITE_LOCK:
-        exists = any(int(row["index"]) == response_index
-                     for row in migrate_csv_schema())
+        exists = response_row(response_index) is not None
     if not exists:
         return jsonify({"error": "Unknown response index"}), 404
     prefix = f"response_{response_index:06d}_"
@@ -527,9 +620,8 @@ def save_rendering() -> Response:
         except (TypeError, ValueError):
             return jsonify({"error": "A response index is required"}), 400
         with WRITE_LOCK:
-            rows = migrate_csv_schema()
-        if not any(int(row["index"]) == response_index
-                   and row["target_id"] == target_id for row in rows):
+            row = response_row(response_index)
+        if row is None or row["target_id"] != target_id:
             return jsonify({"error": "Response index does not match this target"}), 400
     image = str(data.get("image", ""))
     prefix = "data:image/png;base64,"
@@ -636,15 +728,17 @@ def save_response() -> Response:
         presentation = max(1, int(data.get("presentation_number", 1)))
     except (TypeError, ValueError):
         return jsonify({"error": "Invalid presentation count"}), 400
-    # Study 1 protocol is fixed at two presentations per part. Do not allow a
+    # Study 1 protocol is fixed at one presentation per part. Do not allow a
     # stale browser or edited request payload to create a different condition.
-    target = 2
+    target = 1
     if action == "skip":
         # Skipping only advances the study UI; it is not a response record.
         return jsonify({"ok": True, "skipped": True, "xlsx": excel_available()})
     with WRITE_LOCK:
-        existing = migrate_csv_schema()
-        index = max((int(item["index"]) for item in existing), default=0) + 1
+        # Share an index namespace with the historical classified dataset so
+        # response rendering filenames can never collide.
+        existing = migrate_csv_schema() + user_csv_rows()
+        index = max(response_indices(existing), default=0) + 1
         row = {
             "index": index,
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -661,9 +755,8 @@ def save_response() -> Response:
             "target_presentations": target,
             "Verified": "",
         }
-        append_csv(row)
-        wrote_xlsx = rebuild_xlsx()
-    return jsonify({"ok": True, "index": index, "xlsx": wrote_xlsx})
+        append_user_csv(row)
+    return jsonify({"ok": True, "index": index, "user_csv": True})
 
 
 INDEX_HTML = r'''<!doctype html>
@@ -718,7 +811,7 @@ INDEX_HTML = r'''<!doctype html>
     <div id="form">
       <div class="formrow">
         <label>Participant name<input id="participant" autocomplete="name" placeholder="Enter name"></label>
-        <label>Descriptions per part<input id="target" type="number" value="2" readonly></label>
+        <label>Questions per part<input id="target" type="number" value="1" readonly></label>
       </div>
       <label>Describe the highlighted part<textarea id="description" placeholder="Type the participant's description…"></textarea></label>
       <div class="actions"><button id="submit" class="primary">Save &amp; continue</button><button id="skip">Skip to next part</button><button id="newRound">Restart sampling</button><span id="status"></span></div>
@@ -728,8 +821,7 @@ INDEX_HTML = r'''<!doctype html>
 <script>
 (() => {
   const $ = id => document.getElementById(id);
-  const PRESENTATIONS_PER_PART = 2;
-  const FIXED_PRESENTATION_SEED = 20260826;
+  const PRESENTATIONS_PER_PART = 1;
   const assemblyEngine = new BABYLON.Engine($('assemblyCanvas'), true, {preserveDrawingBuffer:true, stencil:true});
   const partEngine = new BABYLON.Engine($('partCanvas'), true, {preserveDrawingBuffer:true, stencil:true});
   let assemblyScene, assemblyCamera, partScene, currentPart, selectedAssemblyObject=null, allParts=[], parts=[], bag=[], counts={}, skipped={}, presentation=1, reviewActive=false;
@@ -1074,18 +1166,12 @@ INDEX_HTML = r'''<!doctype html>
     highlightSampledPart();
     $('description').value=''; $('description').focus();
   }
-  function fixedShuffle(items) {
-    const result=items.slice(); let seed=FIXED_PRESENTATION_SEED>>>0;
-    for(let i=result.length-1;i>0;i--){
-      seed=(Math.imul(1664525,seed)+1013904223)>>>0;
-      const j=seed%(i+1); [result[i],result[j]]=[result[j],result[i]];
-    }
-    return result;
-  }
   function refillBag() {
     const target=PRESENTATIONS_PER_PART;
-    bag=fixedShuffle(parts.filter(
-      p=>(counts[p.file]||0)<target&&!skipped[p.file]));
+    // nextPart() consumes with pop(), so reverse the server-provided semantic
+    // order here. Each part is presented once.
+    bag=parts.filter(
+      p=>(counts[p.file]||0)<target&&!skipped[p.file]).reverse();
   }
   function applyStudyFilter(individualOnly) {
     parts=individualOnly ? allParts.filter(part=>part.kind==='part') : allParts.slice();
@@ -1103,10 +1189,18 @@ INDEX_HTML = r'''<!doctype html>
   }
   function updateProgress(){const target=PRESENTATIONS_PER_PART, completed=Object.values(counts).reduce((a,b)=>a+b,0); $('progress').textContent=`showing ${presentation}/${target} · ${completed}/${parts.length*target} saved`;}
   async function applyReviewSelection(review) {
+    const wasReviewActive=reviewActive;
     reviewActive=Boolean(review.active);
     if(!reviewActive){
       $('submit').disabled=false; $('skip').disabled=false;
-      $('status').textContent='CSV review mode closed'; nextPart(true); return;
+      // The first poll also reports an inactive review state. Only advance
+      // when review mode was genuinely active and has just been closed;
+      // otherwise the initial first part would be skipped until the end.
+      if(wasReviewActive){
+        $('status').textContent='CSV review mode closed';
+        nextPart(true);
+      }
+      return;
     }
     let target=allParts.find(part=>part.file===review.target_id);
     if(review.target_id==='COMPLETED_GEARBOX_ASSEMBLY'){
@@ -1130,7 +1224,26 @@ INDEX_HTML = r'''<!doctype html>
     if(!currentPart) return;
     const description=$('description').value.trim(); if(action==='response'&&!description){showError('Please enter a description, or use Skip.');return;}
     setBusy(true); const payload={participant:$('participant').value,target_id:currentPart.file,description,presentation_number:presentation,target_presentations:PRESENTATIONS_PER_PART,action};
-    try { const res=await fetch('/api/responses',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}); const data=await res.json(); if(!res.ok)throw new Error(data.error||'Save failed'); let captured=true;if(action==='response'){captured=await captureRendering(currentPart.file,currentPart.render_index,$('partCanvas'),partScene,data.index);counts[currentPart.file]=(counts[currentPart.file]||0)+1;}else skipped[currentPart.file]=true; $('status').textContent=action==='skip'?'Part skipped':(captured?'Response and views saved':'Response saved; image capture failed'); nextPart(action==='skip'); }
+    try {
+      const res=await fetch('/api/responses',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      const data=await res.json();
+      if(!res.ok)throw new Error(data.error||'Save failed');
+      let captured=true;
+      if(action==='response'){
+        captured=await captureRendering(currentPart.file,currentPart.render_index,$('partCanvas'),partScene,data.index);
+        counts[currentPart.file]=(counts[currentPart.file]||0)+1;
+      }else skipped[currentPart.file]=true;
+      if(action==='response'&&(counts[currentPart.file]||0)<PRESENTATIONS_PER_PART){
+        presentation=(counts[currentPart.file]||0)+1;
+        $('description').value='';
+        $('description').focus();
+        updateProgress();
+        $('status').textContent=captured?'First response saved; enter a second description for the same part':'Response saved; image capture failed. Enter a second description for the same part';
+      }else{
+        $('status').textContent=action==='skip'?'Part skipped':(captured?'Response saved; advancing to the next part':'Response saved; image capture failed');
+        nextPart(action==='skip');
+      }
+    }
     catch(e){showError(e);} finally{setBusy(false);}
   }
   function setBusy(v){$('submit').disabled=v;$('skip').disabled=v;}
@@ -1194,7 +1307,7 @@ def main() -> None:
     if not PART_DIR.is_dir():
         raise SystemExit(f"Missing colored STL directory: {PART_DIR}")
     print("Open http://127.0.0.1:5000")
-    print(f"Responses: {CSV_PATH}")
+    print(f"Participant responses: {USER_CSV_PATH}")
     if not excel_available():
         print("Tip: install openpyxl to also save an .xlsx workbook")
     app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)

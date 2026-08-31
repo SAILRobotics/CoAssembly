@@ -185,7 +185,250 @@ class PartAcquisitionStepLogger:
             writer = csv.DictWriter(handle, fieldnames=self.FIELDS)
             if new_file:
                 writer.writeheader()
-            writer.writerow(row)
+                writer.writerow(row)
+
+
+class Study4SessionLogger:
+    """Completed-step CSV plus an atomic live JSON resume checkpoint."""
+
+    FIELDS = (
+        "timestamp", "participant_id", "condition", "event_type", "modality",
+        "step_id", "step_title", "step_state", "step_attempt",
+        "step_event_index",
+        "tool_id", "tool_name", "part_elapsed_s",
+        "step_elapsed_s", "head_translation_m", "head_rotation_deg",
+        "correct", "transcript", "vlm_prediction",
+        "vlm_raw", "graph_decision", "spoken_response", "state_json",
+    )
+
+    def __init__(self, path: str | Path, participant_id: str,
+                 condition: str, *, fresh_run: bool = False) -> None:
+        self.path = Path(path)
+        self.state_path = self.path.with_name(f"{self.path.stem}_state.json")
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.participant_id = participant_id
+        self.condition = condition
+        self._lock = threading.Lock()
+        self._pending_rows: list[dict[str, object]] = []
+        self._latest_state: dict[str, object] | None = None
+        if fresh_run:
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            for existing in (self.path, self.state_path):
+                if existing.exists() and existing.stat().st_size:
+                    backup = existing.with_name(
+                        f"{existing.stem}_archived_{stamp}{existing.suffix}")
+                    existing.replace(backup)
+                    print(f"[StudyLog] Archived fresh-run file -> {backup}")
+        if self.path.exists() and self.path.stat().st_size:
+            try:
+                with self.path.open(newline="", encoding="utf-8-sig") as handle:
+                    reader = csv.DictReader(handle)
+                    fields = tuple(reader.fieldnames or ())
+                    rows = list(reader)
+                if fields != self.FIELDS:
+                    backup = self.path.with_name(
+                        f"{self.path.stem}_legacy_{int(time.time())}"
+                        f"{self.path.suffix}")
+                    self.path.replace(backup)
+                    attempts: dict[tuple[str, str], int] = {}
+                    event_indices: dict[tuple[str, str], int] = {}
+                    with self.path.open("w", newline="", encoding="utf-8") as handle:
+                        writer = csv.DictWriter(handle, fieldnames=self.FIELDS)
+                        writer.writeheader()
+                        for old_row in rows:
+                            key = (old_row.get("participant_id", ""),
+                                   old_row.get("condition", ""))
+                            if old_row.get("event_type") in {
+                                    "step_selected", "step_started"}:
+                                attempts[key] = attempts.get(key, 0) + 1
+                                event_indices[key] = 0
+                            attempt = attempts.get(key, 0)
+                            if attempt:
+                                event_indices[key] = event_indices.get(key, 0) + 1
+                            migrated = {
+                                field: old_row.get(field, "")
+                                for field in self.FIELDS
+                            }
+                            migrated["step_attempt"] = attempt or ""
+                            migrated["step_event_index"] = (
+                                event_indices.get(key, "") if attempt else "")
+                            if old_row.get("state_json"):
+                                try:
+                                    state = json.loads(old_row["state_json"])
+                                    if isinstance(state, dict):
+                                        state["step_attempt"] = attempt
+                                        state["step_event_index"] = (
+                                            event_indices.get(key, 0))
+                                        migrated["state_json"] = json.dumps(
+                                            state, ensure_ascii=False,
+                                            sort_keys=True)
+                                except (json.JSONDecodeError, TypeError):
+                                    pass
+                            writer.writerow(migrated)
+                    print(f"[StudyLog] Migrated session log; backup -> {backup}")
+            except OSError:
+                pass
+        if not fresh_run:
+            self._load_checkpoint()
+
+    def _load_checkpoint(self) -> None:
+        if not self.state_path.exists() or not self.state_path.stat().st_size:
+            self._import_legacy_csv_checkpoint()
+            return
+        try:
+            payload = json.loads(self.state_path.read_text(encoding="utf-8"))
+            if (payload.get("participant_id") != self.participant_id
+                    or payload.get("condition") != self.condition):
+                return
+            state = payload.get("state")
+            pending = payload.get("pending_events", [])
+            self._latest_state = state if isinstance(state, dict) else None
+            self._pending_rows = (
+                list(pending) if isinstance(pending, list) else [])
+        except (OSError, json.JSONDecodeError, TypeError):
+            self._latest_state = None
+            self._pending_rows = []
+
+    def _import_legacy_csv_checkpoint(self) -> None:
+        """Convert the former all-events CSV into the hybrid representation."""
+        if not self.path.exists() or not self.path.stat().st_size:
+            return
+        try:
+            with self.path.open(newline="", encoding="utf-8-sig") as handle:
+                rows = list(csv.DictReader(handle))
+            completed_attempts = {
+                (row.get("step_id", ""), row.get("step_attempt", ""))
+                for row in rows if row.get("event_type") == "graph_complete"
+                and row.get("step_attempt")
+            }
+            committed = [
+                row for row in rows
+                if (row.get("step_id", ""), row.get("step_attempt", ""))
+                in completed_attempts
+            ]
+            pending = [
+                row for row in rows
+                if row.get("step_attempt")
+                and (row.get("step_id", ""), row.get("step_attempt", ""))
+                not in completed_attempts
+            ]
+            for row in reversed(rows):
+                raw_state = row.get("state_json", "")
+                if not raw_state:
+                    continue
+                state = json.loads(raw_state)
+                if isinstance(state, dict):
+                    self._latest_state = state
+                    break
+            self._pending_rows = pending
+            if len(committed) != len(rows):
+                backup = self.path.with_name(
+                    f"{self.path.stem}_pre_hybrid_{int(time.time())}"
+                    f"{self.path.suffix}")
+                self.path.replace(backup)
+                if committed:
+                    self._commit_rows(committed)
+                print(f"[StudyLog] Converted legacy CSV; backup -> {backup}")
+            if self._latest_state is not None:
+                self._write_checkpoint()
+        except (OSError, ValueError, json.JSONDecodeError, TypeError):
+            self._latest_state = None
+            self._pending_rows = []
+
+    def _write_checkpoint(self) -> None:
+        payload = {
+            "participant_id": self.participant_id,
+            "condition": self.condition,
+            "updated_at": datetime.now().astimezone().isoformat(
+                timespec="milliseconds"),
+            "state": self._latest_state or {},
+            "pending_events": self._pending_rows,
+        }
+        temporary = self.state_path.with_suffix(self.state_path.suffix + ".tmp")
+        with temporary.open("w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2,
+                      sort_keys=True)
+            handle.flush()
+        temporary.replace(self.state_path)
+
+    def _commit_rows(self, rows: list[dict[str, object]]) -> None:
+        """Atomically store one latest completed event block per task step."""
+        if not rows:
+            return
+        replacement_steps = {
+            str(row.get("step_id", "")) for row in rows
+            if row.get("step_id")
+        }
+        retained: list[dict[str, object]] = []
+        if self.path.exists() and self.path.stat().st_size:
+            with self.path.open(newline="", encoding="utf-8-sig") as handle:
+                retained = [
+                    dict(existing) for existing in csv.DictReader(handle)
+                    if existing.get("step_id", "") not in replacement_steps
+                ]
+        temporary = self.path.with_suffix(self.path.suffix + ".tmp")
+        with temporary.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=self.FIELDS)
+            writer.writeheader()
+            writer.writerows(retained)
+            writer.writerows(rows)
+            handle.flush()
+        temporary.replace(self.path)
+
+    def append(self, **values) -> None:
+        with self._lock:
+            row = {field: values.get(field, "") for field in self.FIELDS}
+            row["timestamp"] = datetime.now().astimezone().isoformat(
+                timespec="milliseconds")
+            row["participant_id"] = self.participant_id
+            row["condition"] = self.condition
+            state = row["state_json"]
+            if isinstance(state, str):
+                try:
+                    state = json.loads(state)
+                except json.JSONDecodeError:
+                    state = {}
+            self._latest_state = state if isinstance(state, dict) else {}
+            row["state_json"] = json.dumps(
+                self._latest_state, ensure_ascii=False, sort_keys=True)
+
+            event_type = str(row["event_type"])
+            has_attempt = bool(row["step_attempt"])
+            if event_type == "step_started":
+                self._pending_rows = [row]
+            elif event_type == "step_attempt_abandoned":
+                self._pending_rows = []
+            elif has_attempt:
+                self._pending_rows.append(row)
+
+            if event_type == "graph_complete":
+                if self._pending_rows:
+                    self._commit_rows(self._pending_rows)
+                    self._pending_rows = []
+                else:
+                    self._commit_rows([row])
+            self._write_checkpoint()
+
+    def latest_state(self) -> dict[str, object] | None:
+        return dict(self._latest_state) if self._latest_state is not None else None
+
+    def max_step_attempt(self) -> int:
+        """Return the largest attempt number for this participant/condition."""
+        maximum = 0
+        if self.path.exists() and self.path.stat().st_size:
+            try:
+                with self.path.open(newline="", encoding="utf-8-sig") as handle:
+                    for row in csv.DictReader(handle):
+                        if (row.get("participant_id") == self.participant_id
+                                and row.get("condition") == self.condition):
+                            maximum = max(
+                                maximum, int(row.get("step_attempt", 0) or 0))
+            except (OSError, ValueError):
+                maximum = 0
+        if self._latest_state is not None:
+            maximum = max(
+                maximum, int(self._latest_state.get("step_attempt", 0) or 0))
+        return maximum
 
 
 class Study4Open3DScene:
@@ -202,7 +445,8 @@ class Study4Open3DScene:
     AUTO_LOCK_MAX_TILT_DEG = 45.0
     RELOCK_COOLDOWN = 2.0
 
-    def __init__(self, unity_ip: str, on_part_click=None) -> None:
+    def __init__(self, unity_ip: str, on_part_click=None,
+                 on_interaction=None) -> None:
         scene_started = time.perf_counter()
 
         def scene_startup(message: str) -> None:
@@ -223,6 +467,7 @@ class Study4Open3DScene:
             scene_runtime.o3d.utility.VerbosityLevel.Error)
         self._rt = scene_runtime
         self._on_part_click = on_part_click
+        self._on_interaction = on_interaction
         self.vis = SceneVis("Study 4 — Live Part Acquisition",
                             board_ar_asset="HalfBoard.obj",
                             load_robot_assets=False)
@@ -242,6 +487,7 @@ class Study4Open3DScene:
         }
         self._step_ids: set[int] = set()
         self._reference_colors: dict[int, list[float]] = {}
+        self._reference_colors_until = 0.0
         self.vis.set_pegboard_outline(
             offset_x=float(data["marker_offset_right_m"]),
             offset_y=float(data["marker_offset_top_m"]),
@@ -284,6 +530,11 @@ class Study4Open3DScene:
         self._world_last_relock = {mid: 0.0 for mid in self.anchor._T_world_marker}
         self._wrong_color_until: dict[int, float] = {}
         self._removed_tool_ids: set[int] = set()
+        self._acquired_tool_ids: set[int] = set()
+        self._head_motion_recording = False
+        self._head_motion_last: np.ndarray | None = None
+        self._head_translation_m = 0.0
+        self._head_rotation_rad = 0.0
         self._camera_window = "Study 4 - Quest passthrough (Enter=lock)"
         self._camera_window_ok = False
         try:
@@ -308,22 +559,56 @@ class Study4Open3DScene:
     def request_manual_lock(self) -> None:
         self._manual_lock_requested = True
 
+    def start_head_motion_summary(self) -> None:
+        """Begin accumulating head-path translation and orientation change."""
+        self._head_motion_recording = True
+        self._head_motion_last = None
+        self._head_translation_m = 0.0
+        self._head_rotation_rad = 0.0
+
+    def stop_head_motion_summary(self) -> dict[str, float]:
+        """Stop and return accumulated motion for the current timed step."""
+        self._head_motion_recording = False
+        self._head_motion_last = None
+        return {
+            "head_translation_m": self._head_translation_m,
+            "head_rotation_deg": float(np.degrees(self._head_rotation_rad)),
+        }
+
+    def head_motion_summary(self) -> dict[str, float]:
+        return {
+            "head_translation_m": self._head_translation_m,
+            "head_rotation_deg": float(np.degrees(self._head_rotation_rad)),
+        }
+
     def reset_acquisition_colors(self) -> None:
         """Restore pegboard colors when a new step-acquisition trial starts."""
+        self._acquired_tool_ids.clear()
         for tool_id in self.id_to_index:
             self.tool_interaction.set_forced_color(tool_id, None)
         self._wrong_color_until.clear()
 
+    def mark_acquired_objects(self, tool_ids: Iterable[int]) -> None:
+        """Keep found objects visible in green until their step completes."""
+        acquired = {
+            int(tool_id) for tool_id in tool_ids
+            if int(tool_id) in self.id_to_index
+        }
+        self._acquired_tool_ids.update(acquired)
+        for tool_id in acquired:
+            self.tool_interaction.set_forced_color(
+                tool_id, self._rt._ToolSelectionManager.SELECTED_COLOR)
+            self.tool_interaction.deselect(tool_id)
+        self._refresh_pegboard_colors()
+
     def remove_acquired_objects(self, tool_ids: Iterable[int]) -> None:
-        """Despawn completed-step objects from Unity and hide them in Open3D."""
+        """Remove newly acquired objects from Unity and Open3D immediately."""
         removable = {
             int(tool_id) for tool_id in tool_ids
             if int(tool_id) in self.id_to_index
-            and self.tool_defs[self.id_to_index[int(tool_id)]].get("category") == "part"
-            and not str(self.tool_defs[self.id_to_index[int(tool_id)]].get(
-                "type", "")).upper().endswith("_KIT")
         }
         self._removed_tool_ids.update(removable)
+        self._acquired_tool_ids.difference_update(removable)
         for tool_id in self._removed_tool_ids:
             self.tool_layout.mark_delivered(tool_id)
             self.tool_interaction.deselect(tool_id)
@@ -340,6 +625,7 @@ class Study4Open3DScene:
     def restore_acquired_objects(self) -> None:
         """Restock every Study 4 pegboard object after a full study reset."""
         self._removed_tool_ids.clear()
+        self._acquired_tool_ids.clear()
         self.tool_layout.reset_delivered()
         self.vis.set_tool_hidden_indices([])
         self.vis.update_tool_boxes(self.tool_layout.world_boxes(self.T_pegboard))
@@ -387,6 +673,11 @@ class Study4Open3DScene:
             for tool_id, color in self._reference_colors.items()
             if tool_id in self.id_to_index
         })
+        colors.update({
+            self.id_to_index[tool_id]: [0.1, 1.0, 0.1]
+            for tool_id in self._acquired_tool_ids
+            if tool_id in self.id_to_index
+        })
         self.vis.set_tool_highlight_colors(colors)
         for index, tool in enumerate(self.tool_defs):
             rgb = colors.get(index)
@@ -406,14 +697,15 @@ class Study4Open3DScene:
         elif name == "reference_highlight":
             color = list(event.get("color", [0.0, 1.0, 1.0]))
             referred = {int(item) for item in event.get("referred_ids", [])}
-            candidates = {int(item) for item in event.get("candidate_ids",
-                                                           event.get("ids", []))}
-            self._step_ids = candidates - referred
+            # Reference feedback is an overlay, not a replacement for the
+            # persistent Condition-3 cyan step context.
             self._reference_colors = {
                 int(item): list(event.get(
                     "referent_color", [1.0, 0.92, 0.02, 0.15]))
                 for item in referred
             }
+            self._reference_colors_until = (
+                time.monotonic() + 1.5 if referred else 0.0)
             self._refresh_pegboard_colors()
             self.vis.apply_gearbox_assembly_event({
                 "event": "assembly_reference",
@@ -432,10 +724,12 @@ class Study4Open3DScene:
             # that automatic cyan cue would disclose the answer.
             self._step_ids.clear()
             self._reference_colors.clear()
+            self._reference_colors_until = 0.0
             self._refresh_pegboard_colors()
         elif name in {"clear", "reset"}:
             self._step_ids.clear()
             self._reference_colors.clear()
+            self._reference_colors_until = 0.0
             self.tool_interaction._apply_highlight_clear(
                 clear_step_context=True)
             self._refresh_pegboard_colors()
@@ -447,6 +741,9 @@ class Study4Open3DScene:
         self.tool_interaction.poll(timeout_ms=0)
         for interaction in self.tool_interaction.pop_interaction_events():
             tool_id = int(interaction["tool_id"])
+            if (interaction.get("event_type") != "selected"
+                    and self._on_interaction is not None):
+                self._on_interaction(interaction)
             if (interaction.get("event_type") == "selected"
                     and tool_id in self.id_to_index
                     and self._on_part_click is not None):
@@ -465,6 +762,11 @@ class Study4Open3DScene:
             if time.monotonic() >= expires_at:
                 self.tool_interaction.set_forced_color(tool_id, None)
                 self._wrong_color_until.pop(tool_id, None)
+        if (self._reference_colors
+                and time.monotonic() >= self._reference_colors_until):
+            self._reference_colors.clear()
+            self._reference_colors_until = 0.0
+            self._refresh_pegboard_colors()
         self.tool_interaction.refresh_colors()
         self.hands.poll(timeout_ms=0)
         gearbox_states = self.gearbox_pose.poll()
@@ -570,6 +872,22 @@ class Study4Open3DScene:
         left, right = self.hands.world_joints(T_wt)
         T_world_head = (self.anchor.world_T(center_T)
                         if center_T is not None else None)
+        if self._head_motion_recording:
+            if T_world_head is None:
+                self._head_motion_last = None
+            else:
+                current_head = np.asarray(T_world_head, dtype=float)
+                if self._head_motion_last is not None:
+                    self._head_translation_m += float(np.linalg.norm(
+                        current_head[:3, 3] - self._head_motion_last[:3, 3]))
+                    relative_rotation = (
+                        self._head_motion_last[:3, :3].T
+                        @ current_head[:3, :3])
+                    cosine = float(np.clip(
+                        (np.trace(relative_rotation) - 1.0) / 2.0,
+                        -1.0, 1.0))
+                    self._head_rotation_rad += float(np.arccos(cosine))
+                self._head_motion_last = current_head.copy()
         effective_cam = self.anchor._effective_cam_T(self.cam.camera_T, center_T)
         T_world_cam = (self.anchor.world_T(effective_cam)
                        if effective_cam is not None else None)
@@ -598,7 +916,8 @@ class Study4Open3DScene:
         self.vis.close()
 
 
-def _study4_open3d_worker(unity_ip: str, commands, events, responses) -> None:
+def _study4_open3d_worker(
+        unity_ip: str, commands, events, responses, motion_summaries) -> None:
     """Own Open3D in a separate process so it cannot corrupt Dear PyGui's GL context."""
     request_id = 0
 
@@ -612,9 +931,15 @@ def _study4_open3d_worker(unity_ip: str, commands, events, responses) -> None:
             if response_id == current:
                 return bool(correct)
 
+    def forward_interaction(interaction: dict) -> None:
+        events.put(("interaction", None, interaction))
+
     scene = None
+    last_motion_publish = 0.0
     try:
-        scene = Study4Open3DScene(unity_ip, on_part_click=score_click)
+        scene = Study4Open3DScene(
+            unity_ip, on_part_click=score_click,
+            on_interaction=forward_interaction)
         events.put(("ready", None, None))
         running = True
         while running:
@@ -630,14 +955,25 @@ def _study4_open3d_worker(unity_ip: str, commands, events, responses) -> None:
                     scene.apply(payload)
                 elif operation == "manual_lock":
                     scene.request_manual_lock()
+                elif operation == "head_motion_start":
+                    scene.start_head_motion_summary()
+                elif operation == "head_motion_stop":
+                    motion_summaries.put(scene.stop_head_motion_summary())
                 elif operation == "remove":
                     scene.remove_acquired_objects(payload)
+                elif operation == "mark_acquired":
+                    scene.mark_acquired_objects(payload)
                 elif operation == "reset_colors":
                     scene.reset_acquisition_colors()
                 elif operation == "restore":
                     scene.restore_acquired_objects()
             if running:
                 scene.tick()
+                now = time.monotonic()
+                if (scene._head_motion_recording
+                        and now - last_motion_publish >= 0.05):
+                    motion_summaries.put(scene.head_motion_summary())
+                    last_motion_publish = now
                 time.sleep(0.001)
     except Exception as error:
         events.put(("error", None, repr(error)))
@@ -649,15 +985,19 @@ def _study4_open3d_worker(unity_ip: str, commands, events, responses) -> None:
 class Study4Open3DProcess:
     """Queue-backed facade exposing the Study4Open3DScene methods used by the GUI."""
 
-    def __init__(self, unity_ip: str, on_part_click) -> None:
+    def __init__(self, unity_ip: str, on_part_click,
+                 on_interaction=None) -> None:
         context = multiprocessing.get_context("spawn")
         self._commands = context.Queue()
         self._events = context.Queue()
         self._responses = context.Queue()
+        self._motion_summaries = context.Queue()
         self._on_part_click = on_part_click
+        self._on_interaction = on_interaction
         self._process = context.Process(
             target=_study4_open3d_worker,
-            args=(unity_ip, self._commands, self._events, self._responses),
+            args=(unity_ip, self._commands, self._events, self._responses,
+                  self._motion_summaries),
             name="study4-open3d",
             daemon=True,
         )
@@ -669,8 +1009,29 @@ class Study4Open3DProcess:
     def request_manual_lock(self) -> None:
         self._commands.put(("manual_lock", None))
 
+    def start_head_motion_summary(self) -> None:
+        while True:
+            try:
+                self._motion_summaries.get_nowait()
+            except queue.Empty:
+                break
+        self._commands.put(("head_motion_start", None))
+
+    def stop_head_motion_summary(self) -> dict[str, float]:
+        latest: dict[str, float] = {}
+        while True:
+            try:
+                latest = dict(self._motion_summaries.get_nowait())
+            except queue.Empty:
+                break
+        self._commands.put(("head_motion_stop", None))
+        return latest
+
     def remove_acquired_objects(self, tool_ids: Iterable[int]) -> None:
         self._commands.put(("remove", list(tool_ids)))
+
+    def mark_acquired_objects(self, tool_ids: Iterable[int]) -> None:
+        self._commands.put(("mark_acquired", list(tool_ids)))
 
     def reset_acquisition_colors(self) -> None:
         self._commands.put(("reset_colors", None))
@@ -687,6 +1048,8 @@ class Study4Open3DProcess:
             if name == "click":
                 correct = self._on_part_click(payload)
                 self._responses.put((request_id, correct))
+            elif name == "interaction" and self._on_interaction is not None:
+                self._on_interaction(payload)
             elif name == "ready":
                 print("[Study4Open3D] Child scene ready", flush=True)
             elif name == "error":
@@ -1481,7 +1844,19 @@ class DearPyGuiTaskGraphApp:
         self._assistant_logger: AssistantInteractionLogger | None = None
         self._click_logger: PartAcquisitionClickLogger | None = None
         self._step_logger: PartAcquisitionStepLogger | None = None
+        self._session_logger: Study4SessionLogger | None = None
+        self._step_attempt = 0
+        self._step_event_index = 0
+        self._trial_recording = False
+        self._trial_start_pending = False
+        self._trial_start_pending_at: float | None = None
+        self._trial_finished_elapsed_s: float | None = None
+        self._trial_head_translation_m: float | None = None
+        self._trial_head_rotation_deg: float | None = None
+        self._last_terminal_status_at = 0.0
         self._step_selected_at: float | None = None
+        self._last_acquisition_at: float | None = None
+        self._trial_required_tool_ids: set[int] = set()
         self._acquired_tool_ids: set[int] = set()
         self._acquisition_complete = False
         self._removed_tool_ids: set[int] = set()
@@ -1492,6 +1867,8 @@ class DearPyGuiTaskGraphApp:
         # referent is yellow and can rotate on alternative_to_previous.
         self._vlm_candidate_ids: list[int] = []
         self._vlm_referent_id: int | None = None
+        self._last_hover_spoken_id: int | None = None
+        self._last_hover_spoken_at = 0.0
         self._study4_scene: Study4Open3DProcess | None = None
         self._tool_index = gearbox_control.load_tool_index(
             gearbox_control._DEFAULT_TOOL_JSON)
@@ -1602,6 +1979,7 @@ class DearPyGuiTaskGraphApp:
 
     def run(self, live_port: int | None = None,
             voice_device: str | None = None,
+            asr_device: str = "cuda",
             wake_word: str | None = None,
             vlm_model: str | None = None,
             task_description_path: str | None = None,
@@ -1612,6 +1990,8 @@ class DearPyGuiTaskGraphApp:
             assistant_log_path: str | Path | None = None,
             click_log_path: str | Path | None = None,
             step_log_path: str | Path | None = None,
+            session_log_path: str | Path | None = None,
+            resume_session: bool = True,
             participant_id: str = "anonymous",
             open3d_scene: bool = True,
             unity_ip: str = gearbox_control._DEFAULT_IP) -> None:
@@ -1634,19 +2014,38 @@ class DearPyGuiTaskGraphApp:
         else:
             startup("Skipping transformers (voice and VLM disabled)")
 
+        # Load ASR before the much larger VLM. Recognition readiness is
+        # independent of trial routing: transcripts remain gated until the
+        # participant selects a step and presses Enter.
+        if voice_device is not None:
+            startup(
+                f"Loading speech recognizer first on {asr_device}: "
+                f"{voice_device}")
+            try:
+                self._speech = SpeechListener(
+                    device=voice_device, wake_word=wake_word,
+                    compute_device=asr_device)
+                # Load without accumulating startup-room audio while Qwen and
+                # the visual interfaces are still being initialized.
+                self._speech.set_input_enabled(False)
+                self._speech.start()
+                if self._speech.wait_until_model_ready(timeout=300.0):
+                    startup("Speech recognizer ready; continuing with VLM startup")
+                else:
+                    startup(
+                        "Speech recognizer did not become ready; continuing so "
+                        "its detailed error can be shown in the GUI")
+            except Exception as error:
+                self._speech = None
+                print(f"[Voice] Failed to start: {error}")
+
         # Create the VLM assistant only when the caller supplies a model.
         if vlm_model is not None:
             startup(f"Creating VLM assistant: {vlm_model}")
-            # TEMPORARY STUDY COMPARISON: give both language conditions the
-            # simplified Study 4 domain description.  The language condition
-            # still receives no focused-step/task-state context; only the
-            # background description is shared.
-            default_description = (
-                "study4_condition3_task_description.md"
-                if self.study4_condition in {"language", "task_aware"}
-                else "task_description.md")
+            # Use the canonical gearbox task description for every Study 4
+            # condition.  Callers may still provide an explicit override.
             desc_path = task_description_path or str(
-                Path(__file__).parent / default_description)
+                Path(__file__).parent / "task_description.md")
             # Construct the assistant before build() so its panel can be created.
             self._vlm = VLMAssistant(
                 self.dpg,
@@ -1677,6 +2076,12 @@ class DearPyGuiTaskGraphApp:
             self._step_logger = PartAcquisitionStepLogger(
                 step_log_path, participant_id)
             print(f"[StudyLog] Per-step acquisition summary -> {step_log_path}")
+        if session_log_path is not None:
+            self._session_logger = Study4SessionLogger(
+                session_log_path, participant_id,
+                self.study4_condition or "", fresh_run=not resume_session)
+            self._step_attempt = self._session_logger.max_step_attempt()
+            print(f"[StudyLog] Unified resumable session -> {session_log_path}")
         # Open3D and Dear PyGui both use GLFW/OpenGL and crash or black out when
         # they own windows in one process on this Linux setup.  Spawn the scene
         # renderer; its queue-backed facade preserves click scoring and updates.
@@ -1684,7 +2089,8 @@ class DearPyGuiTaskGraphApp:
             startup("Starting camera/marker/Open3D scene process...")
             try:
                 self._study4_scene = Study4Open3DProcess(
-                    unity_ip, on_part_click=self._score_part_click)
+                    unity_ip, on_part_click=self._score_part_click,
+                    on_interaction=self._handle_pegboard_interaction)
                 startup("Open3D scene process launched")
             except Exception as error:
                 print(f"[Study4Open3D] Disabled: {error}", flush=True)
@@ -1703,17 +2109,9 @@ class DearPyGuiTaskGraphApp:
         if select_port is not None:
             startup(f"Starting step-selection publisher on port {select_port}")
             self.start_select_publisher(select_port)
-        # Start speech recognition only when an audio device was supplied.
-        if voice_device is not None:
-            startup(f"Starting speech listener for {voice_device}...")
-            try:
-                # Create and launch the background speech listener.
-                self._speech = SpeechListener(device=voice_device, wake_word=wake_word)
-                self._speech.start()
-                self.log(f"[Voice] Started on device: {voice_device}")
-            except Exception as e:
-                # Keep the rest of the GUI usable if voice startup fails.
-                self.log(f"[Voice] Failed to start: {e}")
+        if self._speech is not None:
+            self._speech.set_input_enabled(True)
+            self.log(f"[Voice] Started on device: {voice_device}")
         # Enable drag-and-drop images only when the VLM assistant exists.
         if self._vlm is not None:
             try:
@@ -1722,12 +2120,25 @@ class DearPyGuiTaskGraphApp:
             except Exception:
                 pass  # older DPG versions may not support this
 
+        if resume_session:
+            self._resume_session()
+        else:
+            self._log_session_event("session_start")
+
         startup("Startup complete; entering GUI/Open3D render loop")
 
         # Use a local reference in the high-frequency render loop.
         dpg = self.dpg
         # Process background events and render until the window closes.
         while dpg.is_dearpygui_running():
+            # Apply the Enter transition before polling speech so a transcript
+            # arriving on the same frame sees RUNNING rather than stale READY.
+            enter_pressed = dpg.is_key_pressed(dpg.mvKey_Return)
+            shift_down = (dpg.is_key_down(dpg.mvKey_LShift)
+                          or dpg.is_key_down(dpg.mvKey_RShift))
+            enter_used = (self._handle_trial_enter()
+                          if enter_pressed and not shift_down else False)
+            self._finalize_pending_trial_start()
             # Apply queued controller messages on the main GUI thread.
             self._drain_live_queue()
             self._request_robot_state_sync_if_due()
@@ -1740,14 +2151,15 @@ class DearPyGuiTaskGraphApp:
                 self._poll_vlm_answers()
             self._poll_tts()
             if self._study4_scene is not None:
-                # Keep marker locking in this standalone window: Enter has the
-                # same meaning as in main_with_robot (manual lock/relock and,
-                # when visible, capture marker 101 as the pegboard pose).
-                if dpg.is_key_pressed(dpg.mvKey_Return):
+                # Shift+Enter always retains manual marker relocking; plain
+                # Enter does so only when no prepared trial consumes it.
+                if enter_pressed and (shift_down or not enter_used):
                     self._study4_scene.request_manual_lock()
                 self._study4_scene.tick()
+            self._update_terminal_trial_status()
             # Draw one frame and process Dear PyGui interaction.
             dpg.render_dearpygui_frame()
+        print("\r\033[2K", end="", flush=True)
         # Tell the live listener thread to stop polling.
         self._live_running = False
         # Release audio resources if speech recognition was active.
@@ -2019,6 +2431,8 @@ class DearPyGuiTaskGraphApp:
         # Ignore external event types this application does not recognize.
         else:
             return
+        if event in {"complete", "uncomplete", "reset"}:
+            self._log_session_event(f"graph_{event}")
         # Redraw nodes and panels after applying the controller event.
         self.refresh()
 
@@ -2502,8 +2916,11 @@ class DearPyGuiTaskGraphApp:
             dpg.set_value("voice_transcripts", "\n".join(f"› {t}" for t in history))
 
         # Log notable events to the terminal; optionally route transcripts to the VLM.
-        route_to_vlm = (self._vlm is not None
-                        and dpg.get_value("voice_to_vlm"))
+        route_to_vlm = (
+            self._vlm is not None
+            and dpg.get_value("voice_to_vlm")
+            and self.selected_id is not None
+            and self._trial_recording)
         for kind, payload in events:
             if kind == "wake_word":
                 self.log("[Voice] Wake word detected — listening.")
@@ -2515,14 +2932,25 @@ class DearPyGuiTaskGraphApp:
                 if route_to_vlm:
                     if not self._vlm.submit_question(payload):
                         self.log("[Voice] VLM busy — transcript skipped.")
+                    else:
+                        self.log("[Voice] Transcript routed to VLM.")
+                elif self._vlm is not None and dpg.get_value("voice_to_vlm"):
+                    self.log(
+                        "[Voice] Transcript not routed to VLM — select a step "
+                        "and press ENTER to start the trial.")
             elif kind == "timeout":
                 self.log("[Voice] Timed out — back to idle.")
             elif kind == "error":
                 self.log(f"[Voice error] {payload}")
 
-    def _speak(self, text: str, warning: bool = False) -> None:
+    def _speak(self, text: str, warning: bool = False,
+               allow_before_start: bool = False) -> None:
         """Queue concise guidance without blocking the Dear PyGui frame loop."""
         if self._tts is None:
+            return
+        if (self.selected_id and not self._trial_recording
+                and not self._acquisition_complete
+                and not allow_before_start):
             return
         self.log(f"[TTS] {text}")
         self._tts.speak(text, replace=warning)
@@ -2546,6 +2974,12 @@ class DearPyGuiTaskGraphApp:
             return
         for result in self._vlm.poll_answers():
             answer = result.get("answer", "").strip()
+            self._log_session_event(
+                "vlm_answer", modality="language",
+                transcript=result.get("text", ""),
+                vlm_raw=result.get("raw", ""),
+                graph_decision=result.get("intent", ""),
+                spoken_response=answer)
             if answer:
                 self._speak(
                     answer,
@@ -2602,13 +3036,19 @@ class DearPyGuiTaskGraphApp:
         return parts
 
     def _publish_selected_step_board_highlight(self) -> None:
-        """Clear semantic selection colors from BoardAR and the pegboard.
+        """Publish recommendation color or clear ordinary selection colors.
 
         The physical pegboard is the search space being measured in Study 4;
         automatically coloring its required objects would give every condition
         an unintended visual hint. BoardAR also retains only its normal
-        animation/progression appearance, rather than a cyan selection overlay.
+        animation/progression appearance for ordinary selections. In Condition
+        3, selecting any step highlights its required physical pegboard objects
+        cyan in both Unity and embedded Open3D.
         """
+        if (self.study4_condition == "task_aware"
+                and self.selected_id):
+            self._publish_selected_step_pegboard_highlight()
+            return
         self._send_select({
             "event": "step_context_highlight",
             "step_ids": [],
@@ -2620,6 +3060,29 @@ class DearPyGuiTaskGraphApp:
         })
         if self.controller is not None:
             self.controller.send({"command": "reference_clear"})
+
+    def _publish_selected_step_pegboard_highlight(
+            self, *, announce: bool = False) -> None:
+        """Highlight Condition-3 selected-step objects in both 3D views."""
+        ids = self._selected_step_pegboard_ids()
+        # step_context_highlight is mirrored by Study4Scene to its Open3D tool
+        # boxes and to Unity's ToolColorReceiver for the physical pegboard.
+        self._send_select({
+            "event": "step_context_highlight",
+            "step_ids": ids,
+        })
+        # Keep the assembled AR board free of semantic recommendation color.
+        self._send_select({
+            "event": "board_step_highlight",
+            "assembly_parts": [],
+            "assembly_color": [0.0, 1.0, 1.0, 0.0],
+        })
+        if self.controller is not None:
+            self.controller.send({"command": "reference_clear"})
+        if announce:
+            self.log(
+                f"[Step] Cyan highlight → {len(ids)} pegboard object(s) "
+                "in Unity and Open3D")
 
     def _selected_step_pegboard_ids(self) -> list[int]:
         """Return pegboard objects entering the currently selected stage."""
@@ -2637,22 +3100,55 @@ class DearPyGuiTaskGraphApp:
                 if tool_id not in ids:
                     ids.append(tool_id)
         return [tool_id for tool_id in ids
-                if tool_id not in self._removed_tool_ids]
+                if tool_id not in self._removed_tool_ids
+                and tool_id not in self._acquired_tool_ids]
 
     def _removable_consumable_ids(self, tool_ids: Iterable[int]) -> set[int]:
-        """Standalone parts are consumed; kits and reusable tools remain."""
-        removable: set[int] = set()
-        for tool_id in tool_ids:
-            definition = self._tool_defs_by_id.get(int(tool_id), {})
-            if (definition.get("category") == "part"
-                    and not str(definition.get("type", "")).upper().endswith("_KIT")):
-                removable.add(int(tool_id))
-        return removable
+        """Every acquired pegboard object leaves the remaining search space."""
+        return {int(tool_id) for tool_id in tool_ids
+                if int(tool_id) in self._tool_defs_by_id}
+
+    def _handle_pegboard_interaction(self, interaction: dict) -> None:
+        """Speak hover names immediately without building a stale TTS queue."""
+        if interaction.get("event_type") != "hover_enter":
+            return
+        tool_id = int(interaction["tool_id"])
+        now = time.monotonic()
+        if (tool_id == self._last_hover_spoken_id
+                and now - self._last_hover_spoken_at < 0.75):
+            return
+        self._last_hover_spoken_id = tool_id
+        self._last_hover_spoken_at = now
+        tool_name = next(
+            (name for name, indexed_id in self._tool_index.items()
+             if int(indexed_id) == tool_id),
+            f"object {tool_id}",
+        )
+        friendly = self._friendly_reference_label(
+            tool_name, self.graph.parts_for_layout_object(tool_name))
+        self.log(f"[Hover] {friendly} (id={tool_id})")
+        self._log_session_event(
+            "hover", modality="hover", tool_id=tool_id,
+            tool_name=tool_name)
+        if self._tts is not None and self._trial_recording:
+            # Hover feedback is ephemeral: interrupt any old hover/name message
+            # and clear queued speech so it cannot lag behind the participant.
+            self._tts.speak(friendly, replace=True)
 
     def _score_part_click(self, interaction: dict) -> bool:
         """Score a click against graph truth without exposing truth visually."""
         tool_id = int(interaction["tool_id"])
-        expected = sorted(set(self._selected_step_pegboard_ids()))
+        modality = str(interaction.get("modality", "click"))
+        if not self._trial_recording:
+            if self._acquisition_complete:
+                self._speak("This step is already complete.", warning=True)
+            else:
+                self._speak("Press Enter to start this trial.", warning=True)
+                self._log_session_event(
+                    "selection_before_start", modality=modality,
+                    tool_id=tool_id)
+            return False
+        expected = sorted(self._trial_required_tool_ids)
         correct = bool(self.selected_id and tool_id in expected)
         newly_acquired = correct and tool_id not in self._acquired_tool_ids
         self._trial_total_clicks += 1
@@ -2675,10 +3171,17 @@ class DearPyGuiTaskGraphApp:
         )
         step = (self.graph.by_id.get(self.selected_id)
                 if self.selected_id else None)
+        now = time.monotonic()
+        part_elapsed = (
+            now - (self._last_acquisition_at or self._step_selected_at or now))
+        step_elapsed = (
+            0.0 if self._step_selected_at is None
+            else now - self._step_selected_at)
         if self._click_logger is not None:
             self._click_logger.append(
                 condition=self.study4_condition or "",
-                event_type="click",
+                event_type=("language_selection"
+                            if modality == "language" else "click"),
                 selected_step=self.selected_id or "",
                 selected_step_state=(self.graph.state(step) if step else "none"),
                 step_selected_at=("" if self._step_selected_at is None
@@ -2695,13 +3198,39 @@ class DearPyGuiTaskGraphApp:
                 newly_acquired=int(newly_acquired),
                 hand=interaction.get("hand", "unknown"),
             )
-        self.log(f"[Acquisition] {'CORRECT' if correct else 'WRONG'} click "
-                 f"{tool_name} (id={tool_id}); expected={expected}")
+        self.log(f"[Acquisition] {'CORRECT' if correct else 'WRONG'} "
+                 f"{modality} selection {tool_name} (id={tool_id}); "
+                 f"expected={expected}")
+        self._log_session_event(
+            "part_selection", modality=modality, tool_id=tool_id,
+            tool_name=tool_name, part_elapsed_s=f"{part_elapsed:.6f}",
+            step_elapsed_s=f"{step_elapsed:.6f}", correct=int(correct))
+        if newly_acquired:
+            self._last_acquisition_at = now
+            if self._study4_scene is not None:
+                self._study4_scene.mark_acquired_objects([tool_id])
+            self._log_session_event(
+                "object_acquired", modality=modality, tool_id=tool_id,
+                tool_name=tool_name, part_elapsed_s=f"{part_elapsed:.6f}",
+                step_elapsed_s=f"{step_elapsed:.6f}", correct=1)
         if (expected and not self._acquisition_complete
                 and self._acquired_tool_ids == set(expected)):
             self._acquisition_complete = True
             elapsed = (time.monotonic() - self._step_selected_at
                        if self._step_selected_at is not None else None)
+            self._trial_finished_elapsed_s = elapsed
+            self._trial_recording = False
+            head_motion = (
+                self._study4_scene.stop_head_motion_summary()
+                if self._study4_scene is not None else {})
+            self._trial_head_translation_m = head_motion.get(
+                "head_translation_m")
+            self._trial_head_rotation_deg = head_motion.get(
+                "head_rotation_deg")
+            removed = self._removable_consumable_ids(self._acquired_tool_ids)
+            self._removed_tool_ids.update(removed)
+            if self._study4_scene is not None:
+                self._study4_scene.remove_acquired_objects(removed)
             if self._click_logger is not None:
                 self._click_logger.append(
                     condition=self.study4_condition or "",
@@ -2741,12 +3270,17 @@ class DearPyGuiTaskGraphApp:
                      f"{len(expected)}/{len(expected)} objects in "
                      f"{elapsed:.3f}s" if elapsed is not None else
                      f"[Acquisition] STEP COMPLETE {self.selected_id}")
-            self._speak("Step completed.", warning=True)
             self._print_step_result(elapsed, len(expected))
-            removable = self._removable_consumable_ids(expected)
-            self._removed_tool_ids.update(removable)
-            if self._study4_scene is not None:
-                self._study4_scene.remove_acquired_objects(removable)
+            self._log_session_event(
+                "step_acquisition_complete", modality=modality,
+                step_elapsed_s=("" if elapsed is None else f"{elapsed:.6f}"),
+                head_translation_m=(
+                    "" if self._trial_head_translation_m is None
+                    else f"{self._trial_head_translation_m:.6f}"),
+                head_rotation_deg=(
+                    "" if self._trial_head_rotation_deg is None
+                    else f"{self._trial_head_rotation_deg:.6f}"))
+            self._auto_complete_acquired_step()
         elif correct:
             remaining = len(set(expected) - self._acquired_tool_ids)
             noun = "part" if remaining == 1 else "parts"
@@ -2754,10 +3288,27 @@ class DearPyGuiTaskGraphApp:
         return correct
 
     def _start_acquisition_trial(self) -> None:
-        # Each selection starts a fresh timer/click set, but physical inventory
-        # persists: consumed standalone parts remain absent. Shared row kits and
-        # reusable tools are never removed and remain available in every trial.
-        self._step_selected_at = time.monotonic()
+        # Selecting a step prepares it, but the participant controls the timer
+        # explicitly with Enter after they have understood the task.
+        # Physical inventory persists: every previously acquired pegboard
+        # object remains with the participant and outside later search spaces.
+        self._step_event_index = 0
+        self._step_selected_at = None
+        self._last_acquisition_at = None
+        self._trial_recording = False
+        self._trial_start_pending = False
+        self._trial_start_pending_at = None
+        self._trial_finished_elapsed_s = None
+        self._trial_head_translation_m = None
+        self._trial_head_rotation_deg = None
+        if self._speech is not None and not self._speech.input_enabled:
+            self._speech.set_input_enabled(True)
+        if self._tts is not None:
+            # Do not let guidance queued for the prior state disclose object
+            # names while the participant is studying the new READY step.
+            self._tts.clear()
+        self._trial_required_tool_ids = set(
+            self._selected_step_pegboard_ids())
         self._acquired_tool_ids.clear()
         self._acquisition_complete = False
         self._trial_total_clicks = 0
@@ -2768,6 +3319,87 @@ class DearPyGuiTaskGraphApp:
         if self._study4_scene is not None:
             self._study4_scene.reset_acquisition_colors()
         self._print_step_header()
+        self._log_session_event("step_prepared")
+        self.log("[Trial] READY — press ENTER when the participant is ready.")
+
+    def _handle_trial_enter(self) -> bool:
+        """Arm a prepared trial; timing starts after audio is clean."""
+        if not self.selected_id:
+            return False
+        if self._trial_recording or self._trial_start_pending:
+            return True
+        if self._acquisition_complete:
+            return True
+        self._trial_start_pending = True
+        self._trial_start_pending_at = time.monotonic()
+        if self._tts is not None:
+            self._tts.clear()
+        if self._speech is not None:
+            # This clears queued/raw audio and makes the VAD discard its active
+            # utterance before the recorded interval begins.
+            self._speech.set_input_enabled(False)
+        self.log(
+            "[Trial] STARTING — clearing TTS and microphone buffers; timer "
+            "has not started yet.")
+        return True
+
+    def _finalize_pending_trial_start(self) -> None:
+        """Enter RUNNING only after TTS stops and the audio path settles."""
+        if not self._trial_start_pending:
+            return
+        now = time.monotonic()
+        if now - (self._trial_start_pending_at or now) < 0.50:
+            return
+        if self._tts is not None and self._tts.is_speaking:
+            return
+        if self._vlm is not None and not self._vlm.is_ready:
+            return
+        if self._speech is not None and not self._speech.model_ready:
+            return
+        if self._speech is not None:
+            self._speech.set_input_enabled(True)
+        self._trial_start_pending = False
+        self._trial_start_pending_at = None
+        self._step_attempt += 1
+        self._step_event_index = 0
+        self._step_selected_at = now
+        self._last_acquisition_at = self._step_selected_at
+        self._trial_recording = True
+        self._trial_finished_elapsed_s = None
+        self._trial_head_translation_m = None
+        self._trial_head_rotation_deg = None
+        if self._study4_scene is not None:
+            self._study4_scene.start_head_motion_summary()
+        self._log_session_event("step_started", modality="keyboard")
+        self.log(
+            f"[Trial] RUNNING attempt={self._step_attempt} — timer started; "
+            "fetch all required parts to stop it.")
+
+    def _update_terminal_trial_status(self) -> None:
+        """Keep one replace-in-place trial status line at the terminal bottom."""
+        now = time.monotonic()
+        if now - self._last_terminal_status_at < 0.10:
+            return
+        self._last_terminal_status_at = now
+        if not self.selected_id:
+            state, elapsed = "NO STEP", 0.0
+        elif self._acquisition_complete:
+            state = "COMPLETE"
+            elapsed = self._trial_finished_elapsed_s or 0.0
+        elif self._trial_start_pending:
+            state, elapsed = "STARTING — preparing audio", 0.0
+        elif self._trial_recording:
+            state = "RUNNING"
+            elapsed = now - (self._step_selected_at or now)
+        else:
+            state, elapsed = "READY — press ENTER", 0.0
+        acquired = len(self._acquired_tool_ids)
+        required = len(self._trial_required_tool_ids)
+        print(
+            f"\r\033[2K[TRIAL STATUS] {state} | "
+            f"step={self.selected_id or '-'} | time={elapsed:7.1f}s | "
+            f"parts={acquired}/{required}",
+            end="", flush=True)
 
     def _print_step_header(self) -> None:
         """Visually separate each participant acquisition trial in stdout."""
@@ -2777,7 +3409,7 @@ class DearPyGuiTaskGraphApp:
         coords = TaskGraph.control_coords_for(step.id)
         location = (f"Row {coords[0]} · Stage {coords[1]}"
                     if coords is not None else "Unnumbered step")
-        expected = self._selected_step_pegboard_ids()
+        expected = sorted(self._trial_required_tool_ids)
         names_by_id = {
             int(tool_id): name for name, tool_id in self._tool_index.items()
         }
@@ -2816,7 +3448,7 @@ class DearPyGuiTaskGraphApp:
                            if self.selected_id else None)
         if selected_coords != coords:
             return False, "selected step does not match this checkbox"
-        expected = self._selected_step_pegboard_ids()
+        expected = sorted(self._trial_required_tool_ids)
         missing_count = len(set(expected) - self._acquired_tool_ids)
         if not self._acquisition_complete:
             return False, f"{missing_count} required object(s) not clicked"
@@ -2826,7 +3458,7 @@ class DearPyGuiTaskGraphApp:
         """Complete an assembly-only trial and emit green Unity/Open3D state."""
         if self._acquisition_complete or not self.selected_id:
             return
-        expected = self._selected_step_pegboard_ids()
+        expected = sorted(self._trial_required_tool_ids)
         if expected:
             return
         step = self.graph.by_id[self.selected_id]
@@ -2897,18 +3529,22 @@ class DearPyGuiTaskGraphApp:
                         inferred_ids.append(int(mapped_id))
             proposed = list(dict.fromkeys((*inferred_ids, *candidate_ids)))
             if relation == "alternative_to_previous" and self._vlm_candidate_ids:
+                previous_referent = self._vlm_referent_id
                 pool = list(self._vlm_candidate_ids)
                 for proposed_id in proposed:
                     if proposed_id not in pool:
                         pool.append(proposed_id)
-                alternatives = [item for item in pool
-                                if item != self._vlm_referent_id]
+                alternatives = [
+                    item for item in (proposed or pool)
+                    if item != previous_referent
+                ]
                 if alternatives:
-                    preferred = next(
-                        (item for item in proposed if item in alternatives),
-                        alternatives[0])
-                    self._vlm_referent_id = preferred
-                self._vlm_candidate_ids = pool
+                    self._vlm_referent_id = (
+                        None if label == "AMBIGUOUS" and len(alternatives) > 1
+                        else alternatives[0])
+                else:
+                    self._vlm_referent_id = None
+                self._vlm_candidate_ids = alternatives
             elif proposed:
                 self._vlm_candidate_ids = proposed
                 self._vlm_referent_id = (
@@ -2920,6 +3556,22 @@ class DearPyGuiTaskGraphApp:
             candidate_ids = list(self._vlm_candidate_ids)
             referred_ids = ([] if self._vlm_referent_id is None
                             else [self._vlm_referent_id])
+            # Condition 3 uses the selected step's outstanding pegboard
+            # objects as a hard visual search-space boundary. Never allow a
+            # VLM candidate or discourse carry-over to color another object.
+            if self.selected_id:
+                allowed_ids = set(self._selected_step_pegboard_ids())
+                candidate_ids = [
+                    tool_id for tool_id in candidate_ids
+                    if tool_id in allowed_ids
+                ]
+                referred_ids = [
+                    tool_id for tool_id in referred_ids
+                    if tool_id in allowed_ids
+                ]
+                self._vlm_candidate_ids = list(candidate_ids)
+                self._vlm_referent_id = (
+                    referred_ids[0] if referred_ids else None)
         self._send_select({
             "event": "reference_highlight",
             "ids": candidate_ids,
@@ -2945,11 +3597,10 @@ class DearPyGuiTaskGraphApp:
                                    matched_parts: Iterable[str],
                                    current_assemblies: Iterable[str], ids: list[int],
                                    assembly_parts: Iterable[str], spoken: str) -> None:
-        if self._assistant_logger is None:
-            return
         step = self.graph.by_id.get(self.selected_id) if self.selected_id else None
-        try:
-            self._assistant_logger.append(
+        if self._assistant_logger is not None:
+            try:
+                self._assistant_logger.append(
                 study_condition=self.study4_condition or "",
                 transcript=result.get("text", ""),
                 vlm_prediction=result.get("label", "INVALID_OUTPUT"),
@@ -2961,10 +3612,16 @@ class DearPyGuiTaskGraphApp:
                 current_assemblies=list(current_assemblies),
                 highlight_ids=ids,
                 assembly_highlight_parts=list(assembly_parts),
-                spoken_response=spoken,
-            )
-        except OSError as error:
-            self.log(f"[StudyLog error] {error}")
+                    spoken_response=spoken,
+                )
+            except OSError as error:
+                self.log(f"[StudyLog error] {error}")
+        self._log_session_event(
+            "vlm_interaction", modality="language",
+            transcript=result.get("text", ""),
+            vlm_prediction=result.get("label", "INVALID_OUTPUT"),
+            vlm_raw=result.get("raw", ""), graph_decision=decision,
+            spoken_response=spoken)
 
     def _emit_reference_decision(
             self, result: dict[str, object], decision: str, color: list[float],
@@ -2987,6 +3644,19 @@ class DearPyGuiTaskGraphApp:
         self._record_reference_decision(
             result, decision, matched_parts, current_assemblies, ids,
             assembly_parts, spoken)
+        # A single valid yellow language referent is an acquisition, exactly
+        # like a correct Unity click. Ambiguous/cyan sets and warnings remain
+        # non-selecting visual context.
+        if (not warning and len(ids) == 1
+                and self.study4_condition in {"language", "task_aware"}
+                and self.selected_id and ids[0] in self._trial_required_tool_ids
+                and ids[0] not in self._acquired_tool_ids):
+            self._score_part_click({
+                "tool_id": ids[0],
+                "event_type": "language_selection",
+                "modality": "language",
+                "hand": "voice",
+            })
 
     @staticmethod
     def _ambiguity_question(text: str) -> str:
@@ -3455,19 +4125,63 @@ class DearPyGuiTaskGraphApp:
 
     def _handle_task_independent_reference(
             self, result: dict[str, object], label: str) -> None:
-        """Render VLM guesses without substituting graph-derived target sets.
+        """Render VLM-grounded references under the active study condition.
 
-        In C2 the VLM receives no focused-step context. In C3 it does. The
-        visualization path is otherwise identical, making context availability
-        the experimental manipulation.
+        C2 expands labels without task context. In C3, a generic category is
+        intersected with the selected step before it is mapped to physical
+        pegboard objects.
         """
         is_tool = label in gearbox_control.FASTENING_TOOL_SPECS
         parts = self.graph.parts_for_reference_label(label)
         if label == "AMBIGUOUS":
             candidate_labels = list(result.get("candidate_labels", []))
+            had_explicit_candidates = bool(candidate_labels)
             candidates = self._candidate_parts_from_vlm(candidate_labels)
             ids = self._physical_ids_for_vlm_candidates(
                 candidate_labels, candidates)
+            if self.study4_condition == "task_aware" and self.selected_id:
+                allowed_ids = set(self._selected_step_pegboard_ids())
+                ids = [tool_id for tool_id in ids if tool_id in allowed_ids]
+                candidates = [
+                    part for part in candidates
+                    if gearbox_control.tool_id_for_graph_part(
+                        self._tool_index, part) in allowed_ids
+                ]
+                candidate_labels = [
+                    candidate for candidate in candidate_labels
+                    if set(self._physical_ids_for_vlm_candidates(
+                        [candidate], self.graph.parts_for_reference_label(
+                            candidate))) & allowed_ids
+                ]
+                result = {
+                    **result,
+                    "candidate_labels": candidate_labels,
+                }
+                if (str(result.get("reference_relation", "direct"))
+                        == "alternative_to_previous"
+                        and not had_explicit_candidates):
+                    # "The other part" is defined over selectable physical
+                    # objects. Derive the alternatives from the complete
+                    # selected-step search space, even if Qwen omitted them.
+                    if self._vlm_referent_id is not None:
+                        ids = sorted(allowed_ids - {self._vlm_referent_id})
+                    elif self._vlm_candidate_ids:
+                        # After a plural response, "the other part" refers to
+                        # one member of that recently highlighted remainder.
+                        ids = sorted(
+                            allowed_ids & set(self._vlm_candidate_ids))
+                    else:
+                        ids = sorted(allowed_ids)
+                    candidate_labels = [
+                        name for name, tool_id in self._tool_index.items()
+                        if int(tool_id) in ids
+                    ]
+                    candidates = self._candidate_parts_from_vlm(
+                        candidate_labels)
+                    result = {
+                        **result,
+                        "candidate_labels": candidate_labels,
+                    }
             text = str(result.get("text", ""))
             if len(ids) == 1:
                 # Several semantic contents can occupy one selectable physical
@@ -3494,10 +4208,29 @@ class DearPyGuiTaskGraphApp:
                 spoken = f"I identified and highlighted the {category}."
                 decision = "language_plural_grounded"
                 warning = False
+            elif (len(ids) > 1
+                    and str(result.get("reference_relation", "direct"))
+                    == "alternative_to_previous"):
+                choices = []
+                for candidate_label in candidate_labels:
+                    candidate_parts = self.graph.parts_for_layout_object(
+                        candidate_label)
+                    friendly = self._friendly_reference_label(
+                        candidate_label, candidate_parts)
+                    if friendly not in choices:
+                        choices.append(friendly)
+                spoken = (
+                    "Which other object do you mean: "
+                    + ", or ".join(choices) + "?")
+                decision = "language_physical_alternative_ambiguous"
+                warning = True
             else:
                 spoken = self._candidate_ambiguity_question(text, candidates)
                 decision = "language_ambiguous"
                 warning = True
+            if (self._vlm is not None and len(ids) > 1
+                    and candidate_labels):
+                self._vlm.set_resolved_part_candidates(candidate_labels)
             self._emit_reference_decision(
                 result, decision, [0.0, 1.0, 1.0, 0.2],
                 spoken, ids=ids, matched_parts=candidates, warning=warning)
@@ -3510,6 +4243,17 @@ class DearPyGuiTaskGraphApp:
                 result, "language_unresolved", [1.0, 0.72, 0.0, 0.2],
                 spoken, matched_parts=parts, warning=True)
             return
+        if (self.study4_condition == "task_aware"
+                and self.selected_id and parts and not is_tool):
+            step = self.graph.by_id[self.selected_id]
+            step_parts = set((*step.inputs, *step.context))
+            relevant = [
+                part for part in parts
+                if (part in step_parts
+                    or self.graph.current_container(part) in step_parts)
+            ]
+            if relevant:
+                parts = relevant
         ids = (gearbox_control.tool_ids_for_reference(self._tool_index, label)
                if is_tool else [
                    tool_id for tool_id in (
@@ -3517,6 +4261,69 @@ class DearPyGuiTaskGraphApp:
                        for part in parts)
                    if tool_id is not None
                ])
+        ids = list(dict.fromkeys(ids))
+        referenced_ids = list(ids)
+        if self.study4_condition == "task_aware" and self.selected_id:
+            allowed_ids = set(self._selected_step_pegboard_ids())
+            ids = [tool_id for tool_id in ids if tool_id in allowed_ids]
+            if not ids:
+                step = self.graph.by_id[self.selected_id]
+                already_acquired = [
+                    tool_id for tool_id in referenced_ids
+                    if tool_id in self._acquired_tool_ids
+                ]
+                if already_acquired:
+                    acquired_names = [
+                        self._friendly_reference_label(
+                            physical_label,
+                            self.graph.parts_for_layout_object(physical_label))
+                        for tool_id in already_acquired
+                        for physical_label in [next(
+                            (name for name, indexed_id in self._tool_index.items()
+                             if int(indexed_id) == tool_id),
+                            f"object {tool_id}")]
+                    ]
+                    remaining_ids = self._selected_step_pegboard_ids()
+                    remaining_names = [
+                        self._friendly_reference_label(
+                            physical_label,
+                            self.graph.parts_for_layout_object(physical_label))
+                        for tool_id in remaining_ids
+                        for physical_label in [next(
+                            (name for name, indexed_id in self._tool_index.items()
+                             if int(indexed_id) == tool_id),
+                            f"object {tool_id}")]
+                    ]
+                    acquired_text = " and ".join(acquired_names)
+                    requested_text = self._friendly_reference_label(
+                        label, parts or [label])
+                    acknowledgement = (
+                        f"{requested_text.capitalize()} is already covered by "
+                        f"{acquired_text}, which you selected. ")
+                    if remaining_names:
+                        remaining_text = " and ".join(remaining_names)
+                        spoken = (
+                            acknowledgement
+                            +
+                            f"The remaining object for this step is "
+                            f"{remaining_text}.")
+                    else:
+                        spoken = (
+                            acknowledgement + "There are "
+                            "no remaining objects for this step.")
+                    self._emit_reference_decision(
+                        result, "selected_step_object_already_acquired",
+                        [0.1, 1.0, 0.1, 0.25], spoken,
+                        ids=[], matched_parts=parts or [label])
+                    return
+                spoken = (
+                    "That object is not required for the selected step. "
+                    f"This step is to {self.graph.friendly_step_action(step)}.")
+                self._emit_reference_decision(
+                    result, "outside_selected_step_search_space",
+                    [1.0, 0.0, 0.0, 0.25], spoken,
+                    ids=[], matched_parts=parts, warning=True)
+                return
         friendly = self._friendly_reference_label(label, parts)
         # Study 4 has no robot and therefore no fetch/confirmation state. A
         # request phrased as "get/fetch" is treated as an object-grounding
@@ -3526,15 +4333,118 @@ class DearPyGuiTaskGraphApp:
             result, "language_grounded", [0.0, 1.0, 1.0, 0.2], spoken,
             ids=ids, matched_parts=parts or [label])
 
+    def _handle_selected_step_object_cycle(
+            self, result: dict[str, object], *, recent_set_only: bool = False,
+            highlight_all: bool = False
+            ) -> None:
+        """Advance Condition 3 to the next required physical pegboard object."""
+        ids = list(dict.fromkeys(self._selected_step_pegboard_ids()))
+        if recent_set_only and self._vlm_candidate_ids:
+            recent_ids = set(self._vlm_candidate_ids)
+            ids = [tool_id for tool_id in ids if tool_id in recent_ids]
+        if not ids:
+            self._emit_reference_decision(
+                result, "step_cycle_empty", [1.0, 0.72, 0.0, 0.2],
+                "There are no remaining pegboard objects for this step.",
+                warning=True)
+            return
+        if highlight_all:
+            physical_labels = [
+                name for name, tool_id in self._tool_index.items()
+                if int(tool_id) in ids
+            ]
+            resolved = {
+                **result,
+                "label": "AMBIGUOUS",
+                "candidate_labels": physical_labels,
+            }
+            self._emit_reference_decision(
+                resolved, "selected_step_full_search_space",
+                [0.0, 1.0, 1.0, 0.2],
+                "I highlighted all of the objects required for this step.",
+                ids=ids,
+                matched_parts=[
+                    part
+                    for physical_label in physical_labels
+                    for part in self.graph.parts_for_layout_object(
+                        physical_label)
+                ])
+            return
+        if self._vlm_referent_id in ids:
+            next_index = (ids.index(self._vlm_referent_id) + 1) % len(ids)
+        else:
+            next_index = 0
+        next_id = ids[next_index]
+        physical_label = next(
+            (name for name, tool_id in self._tool_index.items()
+             if int(tool_id) == next_id),
+            f"object {next_id}",
+        )
+        parts = self.graph.parts_for_layout_object(physical_label)
+        friendly = self._friendly_reference_label(physical_label, parts)
+        spoken = f"I identified and highlighted the {friendly}."
+        resolved = {
+            **result,
+            "label": physical_label,
+            "candidate_labels": [physical_label],
+        }
+        self._emit_reference_decision(
+            resolved, "selected_step_physical_cycle",
+            [0.0, 1.0, 1.0, 0.2], spoken,
+            ids=[next_id], matched_parts=parts or [physical_label])
+
     def _handle_part_reference(self, result: dict[str, object]) -> None:
         """Apply deterministic task-state policy to one VLM-resolved label."""
         label = str(result.get("label", "INVALID_OUTPUT"))
+        if (label == "RECOMMEND_NEXT_STEP"
+                and self.study4_condition == "task_aware"):
+            self._activate_recommended_step(str(result.get("text", "")))
+            return
+        if (self.selected_id and not self._trial_recording
+                and not self._acquisition_complete):
+            self._emit_reference_decision(
+                result, "trial_not_started", [1.0, 0.72, 0.0, 0.2],
+                "Press Enter when you are ready to start this trial.",
+                warning=True)
+            return
         if (label == "STEP_ITEMS"
                 and self.study4_condition == "task_aware"
                 and not self.selected_id):
             self._emit_reference_decision(
                 result, "no_selected_step", [0.0, 1.0, 1.0, 0.2],
                 "Please select an assembly step first.", warning=True)
+            return
+        if (self.study4_condition == "task_aware"
+                and label == "STEP_ITEMS"
+                and str(result.get("reference_relation", "direct"))
+                == "alternative_to_previous"):
+            self._handle_selected_step_object_cycle(result)
+            return
+        if (self.study4_condition == "task_aware"
+                and label == "AMBIGUOUS"
+                and str(result.get("reference_relation", "direct"))
+                == "alternative_to_previous"
+                and not result.get("candidate_labels")):
+            self._handle_selected_step_object_cycle(result)
+            return
+        if (self.study4_condition == "task_aware"
+                and label == "AMBIGUOUS"
+                and str(result.get("reference_relation", "direct"))
+                == "member_of_recent_set"):
+            request_text = str(result.get("text", "")).casefold()
+            highlight_all = bool(re.search(
+                r"\b(all|everything|every one)\b", request_text))
+            self._handle_selected_step_object_cycle(
+                result, recent_set_only=not highlight_all,
+                highlight_all=highlight_all)
+            return
+        if (self.study4_condition == "task_aware"
+                and label == "STEP_ITEMS"):
+            item_scope = str(result.get("item_scope", "all"))
+            if item_scope in {"parts", "all"}:
+                self._handle_step_parts_request(result)
+            if item_scope in {"tools", "all"}:
+                self._handle_step_tools_request(result)
             return
         if self.study4_condition in {"language", "task_aware"}:
             self._handle_task_independent_reference(result, label)
@@ -4342,22 +5252,18 @@ class DearPyGuiTaskGraphApp:
 
     def _announce_step_selection(self, step: Step) -> None:
         state = self.graph.state(step)
-        action = self.graph.friendly_step_action(step)
         if state == "blocked":
-            missing = self._friendly_missing(self.graph.missing(step))
             self._speak(
-                f"This step is not ready. First, {missing}.",
-                warning=True)
+                f"Selected step: {step.title}. This step is not ready.",
+                warning=True, allow_before_start=True)
         elif state == "complete":
-            self._speak("This step is already complete.")
+            self._speak(
+                f"Selected step: {step.title}. This step is already complete.",
+                allow_before_start=True)
         else:
-            # In Condition 3, exact tool guidance would reveal the candidate
-            # answer before the task-aware VLM makes its prediction.
-            tool_guidance = ("" if self.study4_condition == "task_aware"
-                             else self._fastening_tool_guidance(step))
-            spoken_action = action[0].upper() + action[1:]
-            suffix = f" Use {tool_guidance}." if tool_guidance else ""
-            self._speak(f"This step is ready. {spoken_action}.{suffix}")
+            self._speak(
+                f"Selected step: {step.title}. Press Enter when you are ready.",
+                allow_before_start=True)
 
     def _focus_vlm_on_step(self, step: Step) -> None:
         """Keep GUI- and Unity-originated selections identical for the VLM."""
@@ -4457,8 +5363,12 @@ class DearPyGuiTaskGraphApp:
             return
         self.recommended_id = step.id
         self._select_step(step.id, announce=False)
+        self._announce_step_selection(step)
         if self.controller is not None:
             self._animate_unity_callback()
+        # Reapply after the stage command so Unity's normal animation colors do
+        # not win the same-frame ordering race against the recommendation cue.
+        self._publish_selected_step_pegboard_highlight(announce=True)
         action = self.graph.friendly_step_action(step)
         tool_guidance = self._fastening_tool_guidance(step)
         suffix = f" Use {tool_guidance}." if tool_guidance else ""
@@ -4568,6 +5478,8 @@ class DearPyGuiTaskGraphApp:
                 self._send_select({"event": "uncomplete" if was_complete else "complete",
                                    "row": coords[0], "stage": coords[1],
                                    "step": self.selected_id})
+            self._log_session_event(
+                "graph_uncomplete" if was_complete else "graph_complete")
         self.log(message)
         if ok and was_complete:
             self._speak(f"Undid {self.graph.friendly_step(step)}.")
@@ -4580,6 +5492,18 @@ class DearPyGuiTaskGraphApp:
                 f"That action is not available. {self._friendly_missing(self.graph.missing(step))} "
                 "must be completed first.", warning=True)
         self.refresh()
+
+    def _auto_complete_acquired_step(self) -> None:
+        """Complete and synchronize a step after its final acquisition."""
+        if not self.selected_id:
+            return
+        step = self.graph.by_id[self.selected_id]
+        if self.graph.state(step) == "complete":
+            return
+        self.log(
+            f"[Acquisition] All required objects retrieved — auto-completing "
+            f"{step.id} in the task graph and Unity.")
+        self._complete_selected()
 
     def _reset_state(self, *, clear_handovers: bool) -> None:
         """Reset progress, optionally treating the physical inventory as restocked."""
@@ -4617,6 +5541,8 @@ class DearPyGuiTaskGraphApp:
         event = ("RESET: progress and all handovers cleared"
                  if clear_handovers else "RESET: all progress cleared")
         self._notify_vlm(event)
+        self._log_session_event(
+            "session_reset_all" if clear_handovers else "graph_reset")
 
     def _reset_callback(self) -> None:
         """Reset task progress while preserving confirmed robot handovers."""
@@ -4652,7 +5578,168 @@ class DearPyGuiTaskGraphApp:
                 category = source.upper().replace(" ", "_")
         elif raw.startswith(("Live:", "COMPLETED", "UNDONE")):
             category = "STEP"
-        print(f"[{category:<6}] {payload}", flush=True)
+        print(f"\r\033[2K[{category:<6}] {payload}", flush=True)
+
+    def _session_state(self) -> dict[str, object]:
+        elapsed = (
+            self._trial_finished_elapsed_s
+            if self._trial_finished_elapsed_s is not None else
+            (0.0 if self._step_selected_at is None else
+             max(0.0, time.monotonic() - self._step_selected_at)))
+        return {
+            "selected_step": self.selected_id or "",
+            "completed_steps": list(self.graph.completed),
+            "removed_tool_ids": sorted(self._removed_tool_ids),
+            "trial_required_tool_ids": sorted(self._trial_required_tool_ids),
+            "acquired_tool_ids": sorted(self._acquired_tool_ids),
+            "acquisition_complete": self._acquisition_complete,
+            "step_elapsed_s": elapsed,
+            "step_attempt": self._step_attempt,
+            "step_event_index": self._step_event_index,
+            "trial_recording": self._trial_recording,
+            "trial_finished_elapsed_s": self._trial_finished_elapsed_s,
+            "head_translation_m": self._trial_head_translation_m,
+            "head_rotation_deg": self._trial_head_rotation_deg,
+        }
+
+    def _log_session_event(self, event_type: str, **values) -> None:
+        if self._session_logger is None:
+            return
+        grouped = bool(
+            self._step_attempt > 0
+            and (self._trial_recording or self._acquisition_complete))
+        if grouped:
+            self._step_event_index += 1
+        step = self.graph.by_id.get(self.selected_id) if self.selected_id else None
+        self._session_logger.append(
+            event_type=event_type,
+            step_id=self.selected_id or "",
+            step_title=step.title if step is not None else "",
+            step_state=self.graph.state(step) if step is not None else "none",
+            step_attempt=(self._step_attempt if grouped else ""),
+            step_event_index=(self._step_event_index if grouped else ""),
+            state_json=self._session_state(),
+            **values)
+
+    def _resume_session(self) -> None:
+        """Restore the latest participant-condition checkpoint, if present."""
+        if self._session_logger is None:
+            return
+        state = self._session_logger.latest_state()
+        if not state:
+            self._log_session_event("session_start")
+            return
+        self.graph.reset()
+        restored = 0
+        for step_id in state.get("completed_steps", []):
+            step = self.graph.by_id.get(str(step_id))
+            if step is None:
+                continue
+            ok, _message = self.graph.complete(step)
+            restored += int(ok)
+        self._removed_tool_ids = {
+            int(value) for value in state.get("removed_tool_ids", [])}
+        self._trial_required_tool_ids = {
+            int(value) for value in state.get("trial_required_tool_ids", [])}
+        self._acquired_tool_ids = {
+            int(value) for value in state.get("acquired_tool_ids", [])}
+        self._acquisition_complete = bool(
+            state.get("acquisition_complete", False))
+        self._step_attempt = int(
+            state.get("step_attempt", self._step_attempt) or self._step_attempt)
+        self._step_event_index = int(state.get("step_event_index", 0) or 0)
+        selected = str(state.get("selected_step", ""))
+        self.selected_id = selected if selected in self.graph.by_id else None
+        resume_existing_attempt = bool(
+            self.selected_id
+            and self.graph.state(self.graph.by_id[self.selected_id])
+            != "complete")
+        if resume_existing_attempt:
+            # Resume restores completed work, but an interrupted current step
+            # always restarts from zero. Preserve its old rows for audit while
+            # explicitly excluding that attempt from analysis.
+            had_active_attempt = bool(
+                state.get("trial_recording", False)
+                or self._acquired_tool_ids
+                or self._acquisition_complete)
+            if had_active_attempt and self._session_logger is not None:
+                self._step_event_index += 1
+                abandoned_state = dict(state)
+                abandoned_state.update({
+                    "attempt_status": "abandoned",
+                    "trial_recording": False,
+                })
+                step = self.graph.by_id[self.selected_id]
+                self._session_logger.append(
+                    event_type="step_attempt_abandoned",
+                    modality="resume_restart",
+                    step_id=self.selected_id,
+                    step_title=step.title,
+                    step_state=self.graph.state(step),
+                    step_attempt=(self._step_attempt or ""),
+                    step_event_index=(self._step_event_index
+                                      if self._step_attempt else ""),
+                    state_json=abandoned_state,
+                )
+            # Only objects acquired during the interrupted step are restocked;
+            # objects consumed by earlier completed steps stay removed.
+            self._removed_tool_ids.difference_update(self._acquired_tool_ids)
+            self._acquired_tool_ids.clear()
+            self._acquisition_complete = False
+            self._start_acquisition_trial()
+            self.log(
+                f"[StudyLog] Restarted unfinished step {self.selected_id} "
+                "from zero; press ENTER to begin.")
+        else:
+            # A completed saved selection is not the resume target. Select the
+            # first graph-ready unfinished step and give it a new attempt block.
+            next_step = self.graph.recommend_next_step()
+            self.selected_id = next_step.id if next_step is not None else None
+            self._step_selected_at = None
+            self._last_acquisition_at = None
+            self._trial_recording = False
+            self._trial_finished_elapsed_s = None
+            if self.selected_id:
+                self._start_acquisition_trial()
+        if self._study4_scene is not None and self._removed_tool_ids:
+            self._study4_scene.remove_acquired_objects(self._removed_tool_ids)
+        self._sync_sm_from_graph()
+        if self.controller is not None:
+            for row in range(1, 5):
+                self.controller.send({
+                    "command": "recolor", "row": row,
+                    "done_stages": self.controller.sm._completed_stages(row),
+                })
+        for step_id in self.graph.completed:
+            step = self.graph.by_id[step_id]
+            coords = TaskGraph.control_coords_for(step_id)
+            if coords is not None:
+                self._send_select({
+                    "event": "complete", "row": coords[0],
+                    "stage": coords[1], "step": step_id,
+                    "output": step.output,
+                })
+        self.refresh()
+        if self.selected_id:
+            step = self.graph.by_id[self.selected_id]
+            coords = TaskGraph.control_coords_for(self.selected_id)
+            if coords is not None:
+                row, stage = coords
+                ids = gearbox_control.appearing_ids(
+                    self._tool_index, row, stage) if row > 0 else []
+                self._send_select({
+                    "event": "select", "row": row, "stage": stage,
+                    "step": self.selected_id, "ids": ids,
+                    "blocked": self.graph.state(step) == "blocked"})
+                if self.controller is not None:
+                    self._animate_unity_callback()
+            self._publish_selected_step_board_highlight()
+            self._focus_vlm_on_step(step)
+        self._log_session_event("session_resumed")
+        self.log(
+            f"[StudyLog] Resumed {restored} completed step(s), selected="
+            f"{self.selected_id or 'none'}, acquired="
+            f"{sorted(self._acquired_tool_ids)}")
 
     # ── GUI state rendering and inventory tree ───────────────────────────────
 
@@ -4873,6 +5960,10 @@ def main() -> None:
     parser.add_argument("--no-voice", action="store_true",
                         help="Disable voice input.")
     parser.add_argument(
+        "--asr-device", choices=("cpu", "cuda", "auto"), default="cuda",
+        help=("Device for Parakeet speech recognition. Study 4 loads and "
+              "warms ASR on CUDA before loading the VLM."))
+    parser.add_argument(
         "--wake-word", default="",
         help="Optional wake word. By default speech is accepted continuously without one.")
     parser.add_argument("--vlm-model", default=None,
@@ -4889,27 +5980,32 @@ def main() -> None:
         help="Piper speaking-rate multiplier; values below 1.0 speak more slowly.")
     parser.add_argument(
         "--assistant-log",
-        default=str(Path(__file__).resolve().parent.parent / "study_logs"
-                    / "study4" / "assistant_interactions.csv"),
-        help="Append part-reference decisions to this CSV file.")
+        default=None,
+        help="Optional legacy CSV for part-reference decisions.")
     parser.add_argument("--no-assistant-log", action="store_true",
                         help="Disable part-reference study logging.")
     parser.add_argument("--participant-id", default="anonymous",
-                        help="Participant identifier written to Study 4 click logs.")
+                        help="Participant identifier written to the Study 4 session log.")
     parser.add_argument(
         "--click-log",
-        default=str(Path(__file__).resolve().parent.parent / "study_logs"
-                    / "study4" / "part_acquisition_clicks.csv"),
-        help="CSV receiving every scored physical pegboard click.")
+        default=None,
+        help="Optional legacy CSV receiving physical pegboard clicks.")
     parser.add_argument("--no-click-log", action="store_true",
                         help="Disable physical pegboard click logging.")
     parser.add_argument(
         "--step-log",
-        default=str(Path(__file__).resolve().parent.parent / "study_logs"
-                    / "study4" / "part_acquisition_steps.csv"),
-        help="CSV containing one compact row per completed acquisition step.")
+        default=None,
+        help="Optional legacy CSV containing completed-step summaries.")
     parser.add_argument("--no-step-log", action="store_true",
                         help="Disable per-step acquisition summary logging.")
+    parser.add_argument(
+        "--session-log",
+        default=None,
+        help=("Override the condition CSV path. By default logs are saved as "
+              "study_logs/study4/<participant>/<condition>.csv."))
+    parser.add_argument(
+        "--resume", action=argparse.BooleanOptionalAction, default=True,
+        help="Resume the latest matching participant/condition checkpoint.")
     parser.add_argument(
         "--condition", dest="study4_condition",
         choices=("gesture", "language", "task_aware"), required=True,
@@ -4937,8 +6033,8 @@ def main() -> None:
                              f"events from Unity (part name + event type). "
                              f"IN: Unity -> this script. (default: {gearbox_control.DEFAULT_CLICK_PORT})")
     parser.add_argument("--no-highlight", action="store_true",
-                        help=("Deprecated compatibility flag. Automatic selected-step "
-                              "pegboard hints are always disabled in Study 4."))
+                        help=("Deprecated compatibility flag; Condition 3 controls "
+                              "its selected-step cyan search space automatically."))
     args = parser.parse_args()
     if args.tts_rate <= 0.0:
         parser.error("--tts-rate must be greater than zero.")
@@ -4958,6 +6054,13 @@ def main() -> None:
     # TTS feedback unless the caller explicitly passes --no-tts.
     gesture_only = args.study4_condition == "gesture"
     voice_device = None if (args.no_voice or gesture_only) else args.voice_device
+    safe_participant_id = re.sub(
+        r"[^A-Za-z0-9_.-]+", "_", args.participant_id.strip()).strip("._")
+    if not safe_participant_id:
+        safe_participant_id = "anonymous"
+    session_log_path = args.session_log or str(
+        Path(__file__).resolve().parent.parent / "study_logs" / "study4"
+        / safe_participant_id / f"{args.study4_condition}.csv")
 
     # Optionally co-launch gearbox_control.py in-process. DearPyGui owns the main thread, so the
     # controller's click listener (+ optional REPL) run on daemon threads behind it; the two keep
@@ -4993,6 +6096,7 @@ def main() -> None:
         app.run(
             live_port,
             voice_device=voice_device,
+            asr_device=args.asr_device,
             wake_word=args.wake_word,
             vlm_model=args.vlm_model,
             select_port=select_port,
@@ -5003,6 +6107,8 @@ def main() -> None:
                                 else args.assistant_log),
             click_log_path=(None if args.no_click_log else args.click_log),
             step_log_path=(None if args.no_step_log else args.step_log),
+            session_log_path=session_log_path,
+            resume_session=args.resume,
             participant_id=args.participant_id,
             open3d_scene=args.open3d_scene,
             unity_ip=args.unity_ip,

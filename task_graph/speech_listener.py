@@ -87,6 +87,7 @@ class SpeechListener:
         model_name:       str   = "nvidia/parakeet-tdt-0.6b-v2",
         max_transcripts:  int   = 8,
         backend:          str | None = None,
+        compute_device:   str = "auto",
     ) -> None:
         self._backend         = _resolve_backend(backend)
         self._device          = self._resolve_device(device)
@@ -99,6 +100,10 @@ class SpeechListener:
         self._max_utterance   = max_utterance
         self._pre_roll        = pre_roll
         self._model_name      = model_name
+        if compute_device not in {"auto", "cpu", "cuda"}:
+            raise ValueError(
+                "compute_device must be 'auto', 'cpu', or 'cuda'")
+        self._compute_device = compute_device
 
         self._audio_queue = queue.Queue(maxsize=3)
         self._event_queue: "queue.Queue[tuple[str, object]]" = queue.Queue()
@@ -107,6 +112,7 @@ class SpeechListener:
         # stdout pipe directly, so both backends share the same downstream path).
         self._raw_queue: "queue.Queue[np.ndarray]" = queue.Queue(maxsize=64)
         self._model_ready = threading.Event()
+        self._model_load_finished = threading.Event()
         self._input_enabled = threading.Event()
         self._input_enabled.set()
         self._running     = False
@@ -160,9 +166,18 @@ class SpeechListener:
             self._process.wait()
             self._process = None
 
+    def wait_until_model_ready(self, timeout: float | None = None) -> bool:
+        """Wait for ASR loading to finish and report whether it succeeded."""
+        self._model_load_finished.wait(timeout=timeout)
+        return self._model_ready.is_set()
+
     @property
     def input_enabled(self) -> bool:
         return self._input_enabled.is_set()
+
+    @property
+    def model_ready(self) -> bool:
+        return self._model_ready.is_set()
 
     def set_input_enabled(self, enabled: bool) -> None:
         """Pause/resume recognition without unloading the ASR model."""
@@ -313,22 +328,42 @@ class SpeechListener:
             import nemo.collections.asr as nemo_asr
         except Exception as e:
             self._event_queue.put(("error", f"NeMo import failed: {e}"))
+            self._model_load_finished.set()
             return
 
         self._event_queue.put(("_status", self.STATUS_LOADING))
         try:
             import torch
+            target_device = self._compute_device
+            if target_device == "auto":
+                target_device = "cuda" if torch.cuda.is_available() else "cpu"
+            if target_device == "cuda" and not torch.cuda.is_available():
+                raise RuntimeError("ASR compute device is CUDA, but CUDA is unavailable")
+            print(f"[SpeechListener] ASR compute device: {target_device}")
             with GPU_INFERENCE_LOCK:
-                model = nemo_asr.models.ASRModel.from_pretrained(self._model_name)
-                # Place on GPU when available rather than trusting NeMo's default.
-                if torch.cuda.is_available():
-                    model = model.to("cuda")
+                # map_location prevents NeMo from first materializing this
+                # large checkpoint on an already-full CUDA device.
+                model = nemo_asr.models.ASRModel.from_pretrained(
+                    self._model_name, map_location=torch.device(target_device))
+                model = model.to(target_device)
                 model.eval()
+                # Exercise the first transcription path before a participant
+                # speaks; otherwise framework/kernel initialization is charged
+                # to their first recorded utterance.
+                try:
+                    model.transcribe(
+                        [np.zeros(self.RATE, dtype=np.float32)],
+                        batch_size=1, verbose=False)
+                    print("[SpeechListener] ASR warm-up complete")
+                except Exception as warmup_error:
+                    print(f"[SpeechListener] ASR warm-up warning: {warmup_error}")
         except Exception as e:
             self._event_queue.put(("error", f"Model load failed: {e}"))
+            self._model_load_finished.set()
             return
 
         self._model_ready.set()
+        self._model_load_finished.set()
         self._event_queue.put(("_status", self.STATUS_IDLE))
 
         while self._running:

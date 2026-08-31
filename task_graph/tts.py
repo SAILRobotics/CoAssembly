@@ -184,6 +184,17 @@ class TTSService:
             except queue.Empty:
                 return events
 
+    def clear(self) -> None:
+        """Discard queued speech and interrupt the current playback."""
+        while True:
+            try:
+                self._jobs.get_nowait()
+            except queue.Empty:
+                break
+        with self._player_lock:
+            if self._player is not None and self._player.poll() is None:
+                self._player.terminate()
+
     def close(self) -> None:
         self._running = False
         with self._player_lock:

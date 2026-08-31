@@ -269,6 +269,8 @@ class RobotClient:
         })
 
     def move_to_joints(self, joints, *, degrees: bool = False,
+                       board_move: bool = False,
+                       blocking: bool = False,
                        speed_multiplier: float = 1.0,
                        on_complete: "Callable[[bool], None] | None" = None) -> None:
         """Move directly to a six-axis joint configuration."""
@@ -281,6 +283,8 @@ class RobotClient:
             self._next_request_id += 1
             self._callbacks[rid] = lambda msg: on_complete(bool(msg.get("ok", False)))
         self._send({"cmd": "move_to_joints", "joints": q.tolist(),
+                    "board_move": bool(board_move),
+                    "blocking": bool(blocking),
                     "speed_multiplier": float(speed_multiplier),
                     "request_id": rid})
 
