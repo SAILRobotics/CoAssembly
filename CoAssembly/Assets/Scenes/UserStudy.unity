@@ -19818,7 +19818,7 @@ MonoBehaviour:
   port: 5006
   templateMaterial: {fileID: 0}
   applyScale: 1
-  skipAutoVisualIds: 00000000
+  skipAutoVisualIds: 0000000001000000
   deactivateTimeout: 0.5
 --- !u!21 &1709414467
 Material:
