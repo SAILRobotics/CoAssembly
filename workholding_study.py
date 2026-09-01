@@ -456,6 +456,10 @@ class WorkholdingStudy:
     _STUDY_MOVE_STOP_DWELL_S   = 0.40    # stationary time required to end segment
     _AR_FOLLOW_POS_DEADBAND_M  = 0.005   # suppress hand-tracking position jitter
     _AR_FOLLOW_ANGLE_DEADBAND_DEG = 2.0  # suppress hand-tracking rotation jitter
+    # TouchGrab deliberately trails the held virtual board. This prevents the
+    # robot from aggressively snapping under the participant's hand; release
+    # still commands the exact final board pose.
+    _TOUCHGRAB_HELD_FOLLOW_GAIN = 0.30
     _TCP_TOOL_ID = _ToolSelectionManager.TCP_TOOL_ID
     # Live robot-gripper mode indicator. These are forced colors so hover and
     # selection feedback cannot obscure the current control mode.
@@ -1997,18 +2001,42 @@ class WorkholdingStudy:
                         reason="trial_not_started")
                 return
             post_stop = self._phase == "await_snap_confirmation"
-            tcp_pos  = (T_box_target[:3, 3]
-                       - cfg.BOX_FORWARD_OFFSET * T_box_target[:3, 2])
-            tcp_quat = ScipyR.from_matrix(T_box_target[:3, :3]).as_quat()
+            T_box_command = T_box_target
+            if (self.mode == "touchgrab"
+                    and manipulation_state != "released"
+                    and T_tcp is not None):
+                # Follow only partway toward the held board. Recompute from
+                # the live robot pose so a stationary hand is approached
+                # smoothly rather than receiving an instantaneous snap.
+                T_live_board = self._board_pose_from_tcp(T_tcp)
+                T_box_command = T_live_board.copy()
+                position_delta = (
+                    T_box_target[:3, 3] - T_live_board[:3, 3])
+                position_step = (
+                    self._TOUCHGRAB_HELD_FOLLOW_GAIN * position_delta)
+                T_box_command[:3, 3] += position_step
+
+                relative_rotation = ScipyR.from_matrix(
+                    T_live_board[:3, :3].T @ T_box_target[:3, :3])
+                rotation_step = (
+                    self._TOUCHGRAB_HELD_FOLLOW_GAIN
+                    * relative_rotation.as_rotvec())
+                T_box_command[:3, :3] = (
+                    T_live_board[:3, :3]
+                    @ ScipyR.from_rotvec(rotation_step).as_matrix())
+
+            tcp_pos  = (T_box_command[:3, 3]
+                       - cfg.BOX_FORWARD_OFFSET * T_box_command[:3, 2])
+            tcp_quat = ScipyR.from_matrix(T_box_command[:3, :3]).as_quat()
             should_retarget = True
             if self._ar_follow_last_board_T is not None:
                 follow_pos_delta, follow_angle_delta = self._pose_error(
-                    T_box_target, self._ar_follow_last_board_T)
+                    T_box_command, self._ar_follow_last_board_T)
                 should_retarget = bool(
                     follow_pos_delta >= self._AR_FOLLOW_POS_DEADBAND_M
                     or follow_angle_delta >= self._AR_FOLLOW_ANGLE_DEADBAND_DEG)
             if should_retarget or manipulation_state == "released":
-                self._ar_follow_last_board_T = T_box_target.copy()
+                self._ar_follow_last_board_T = T_box_command.copy()
                 if self._auto_move_pending or board_state == "moving_board":
                     self.robot.update_move_target(tcp_pos, tcp_quat)
                 else:
