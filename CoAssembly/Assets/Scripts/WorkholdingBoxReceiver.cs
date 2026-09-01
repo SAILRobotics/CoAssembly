@@ -98,7 +98,22 @@ public class WorkholdingBoxReceiver : MonoBehaviour
             Transform parent = worldRoot != null ? worldRoot : arBox.transform.parent;
             arBox = Instantiate(arBox, parent, false);
             arBox.name = "TargetHalfBoard";
+            // The source board is also controlled by GripStateReceiver and
+            // may be inactive while its AR affordance is hidden. The target
+            // must be an always-active, visual-only clone in every condition.
             arBox.SetActive(true);
+            foreach (MonoBehaviour behaviour in
+                     arBox.GetComponentsInChildren<MonoBehaviour>(true))
+                behaviour.enabled = false;
+            foreach (Collider collider in
+                     arBox.GetComponentsInChildren<Collider>(true))
+                collider.enabled = false;
+            foreach (Rigidbody body in
+                     arBox.GetComponentsInChildren<Rigidbody>(true))
+            {
+                body.isKinematic = true;
+                body.detectCollisions = false;
+            }
         }
 
         // Hide until the first pose arrives by toggling the RENDERER(s), not the GameObject:
@@ -117,6 +132,7 @@ public class WorkholdingBoxReceiver : MonoBehaviour
                 ? worldRoot : targetGripper.transform.parent;
             _targetGripperVisual = Instantiate(targetGripper, parent, false);
             _targetGripperVisual.name = "TargetGripperGhost";
+            _targetGripperVisual.SetActive(true);
 
             // The target is a visual guide only. In particular, cloned tool-id 200
             // publishers must not be able to toggle Hybrid freedrive.
@@ -209,6 +225,11 @@ public class WorkholdingBoxReceiver : MonoBehaviour
         while (_queue.TryDequeue(out var d)) latest = d;
         if (latest == null || arBox == null) return;
 
+        // Do not allow the movable-board receiver or a prefab's inherited
+        // inactive state to suppress the independent target visualization.
+        if (!arBox.activeSelf)
+            arBox.SetActive(true);
+
         // The pose arrives in world coordinates; WorldRoot IS the world origin in Unity, so apply
         // it as a local pose under worldRoot (same convention as GripStateReceiver / ToolSpawner).
         if (worldRoot != null && arBox.transform.parent != worldRoot)
@@ -227,6 +248,8 @@ public class WorkholdingBoxReceiver : MonoBehaviour
 
         if (showTargetGripper && _targetGripperVisual != null)
         {
+            if (!_targetGripperVisual.activeSelf)
+                _targetGripperVisual.SetActive(true);
             if (worldRoot != null && _targetGripperVisual.transform.parent != worldRoot)
                 _targetGripperVisual.transform.SetParent(worldRoot, false);
 
