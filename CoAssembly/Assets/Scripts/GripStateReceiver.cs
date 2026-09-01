@@ -268,6 +268,12 @@ public class GripStateReceiver : MonoBehaviour
             interactiveRobotGripper.transform.localRotation = latest.boxRot;
         }
 
+        // A pose-only heartbeat keeps the clickable robot gripper attached to
+        // the physical TCP during setup, freedrive, resets, and transitions.
+        // It must not alter AR-board/handle visibility or manipulation state.
+        if (latest.gripState == "pose_only")
+            return;
+
         bool handleActive = latest.gripState == "grabbed" || latest.gripState == "moving";
         bool grabbed      = manipulationHandle != null && manipulationHandle.IsGrabbed;
         bool moveComplete = latest.gripState == "grabbed" && _prevGripState == "moving";
