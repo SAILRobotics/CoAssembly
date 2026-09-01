@@ -537,7 +537,7 @@ class WorkholdingStudy:
         self.ghost_bridge = _GripPoseBridge(quest_ip, grip_state_port=cfg.WORKHOLDING_BOX_PORT)
         # Interactive AR handle (grab/drag/release) — same port pair main_with_robot.py
         # uses for its board-AR flow. Only driven when self._ar_enabled.
-        self.ar_bridge = _GripPoseBridge(quest_ip)
+        self.ar_bridge = _GripPoseBridge(quest_ip, interaction_mode=mode)
 
         # ── Robot control client (talks to robot_control_server.py) ──────────
         try:

@@ -1544,7 +1544,11 @@ class MainScene:
                         if self.robot is not None:
                             self.robot.set_scene_origin(np.eye(4))
                         print("[Study3] Marker 100 locked/relocked")
-                    if (T_cam_pegboard is not None and self.cam.camera_T is not None
+                    if self.anchor.locked and self._load_pegboard_from_file:
+                        if self._try_load_pegboard_from_file():
+                            print("[Study3] Pegboard loaded from saved marker-101 pose")
+                    elif (T_cam_pegboard is not None
+                            and self.cam.camera_T is not None
                             and self.anchor.locked):
                         self.anchor.update_pegboard_from_tracking(
                             self.cam.camera_T, T_cam_pegboard)

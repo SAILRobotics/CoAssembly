@@ -1321,7 +1321,8 @@ class _GripPoseBridge:
 
     def __init__(self, quest_ip: str,
                  grip_state_port: int = cfg.GRIP_STATE_PORT,
-                 target_pose_port: int = cfg.TARGET_POSE_PORT):
+                 target_pose_port: int = cfg.TARGET_POSE_PORT,
+                 interaction_mode: "str | None" = None):
         ctx = zmq.Context.instance()
         self._pub = ctx.socket(zmq.PUB)
         self._pub.connect(f"tcp://{quest_ip}:{grip_state_port}")
@@ -1329,6 +1330,7 @@ class _GripPoseBridge:
         self._sub.connect(f"tcp://{quest_ip}:{target_pose_port}")
         self._sub.setsockopt_string(zmq.SUBSCRIBE, "")
         self._sub.setsockopt(zmq.RCVTIMEO, 0)
+        self._interaction_mode = interaction_mode
 
     def publish(self, grip_state: str, T_tcp_world: np.ndarray,
                 box_color: "list[float] | None" = None,
@@ -1351,6 +1353,8 @@ class _GripPoseBridge:
                                float(q_u[3]), float(q_u[0])],
             "box_size":      sz_u.tolist(),
         }
+        if self._interaction_mode:
+            msg["interaction_mode"] = self._interaction_mode
         if box_color is not None:
             msg["box_color"] = [float(c) for c in box_color]
         if gripper_color is not None:

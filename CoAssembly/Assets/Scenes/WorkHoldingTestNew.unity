@@ -27672,6 +27672,7 @@ MonoBehaviour:
   applyIncomingBoxSize: 0
   arHandle: {fileID: 0}
   manipulationHandle: {fileID: 0}
+  touchGrab: {fileID: 219046391}
   carriedGripperTemplate: {fileID: 1393319197}
   interactiveRobotGripper: {fileID: 1393319197}
   showCarriedGripper: 1

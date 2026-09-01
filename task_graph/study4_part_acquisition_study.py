@@ -55,13 +55,9 @@ except Exception:
 
 
 def _study4_tool_layout(condition: str | None) -> Path:
-    """Return the condition-specific layout for the Study 4 manipulation."""
-    filename = {
-        "gesture": "tool_layout1.json",
-        "language": "tool_layout_condition2.json",
-        "task_aware": "tool_layout_condition3.json",
-    }.get(condition, "tool_layout1.json")
-    return Path(__file__).resolve().parent.parent / "scene_layout" / filename
+    """Return the shared physical layout used by every Study 4 condition."""
+    return (Path(__file__).resolve().parent.parent
+            / "scene_layout" / "tool_layout1.json")
 
 
 @dataclass(frozen=True)
@@ -3119,7 +3115,7 @@ class DearPyGuiTaskGraphApp:
                     == "part")}
 
     def _handle_pegboard_interaction(self, interaction: dict) -> None:
-        """Log pegboard hover events without revealing names through TTS."""
+        """Log hovers and speak the hovered part during an active trial."""
         if interaction.get("event_type") != "hover_enter":
             return
         tool_id = int(interaction["tool_id"])
@@ -3140,10 +3136,10 @@ class DearPyGuiTaskGraphApp:
         self._log_session_event(
             "hover", modality="hover", tool_id=tool_id,
             tool_name=tool_name)
-        if (self.study4_condition == "gesture"
-                and self._tts is not None and self._trial_recording):
-            # Temporary Condition-1 aid: speak the latest hovered object name
-            # immediately and replace any stale hover utterance.
+        if self._tts is not None and self._trial_recording:
+            # Every Study 4 condition receives the same hover-name feedback
+            # after ENTER starts the trial. Replace stale hover speech so the
+            # audio always describes the participant's current focus.
             self._tts.speak(friendly, replace=True)
 
     def _score_part_click(self, interaction: dict) -> bool:
