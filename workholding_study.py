@@ -9,9 +9,9 @@ tests:
     freedrive  — physically drag the arm+board by hand. No AR handle.
     ar         — grab and drag the AR box handle in the headset; the robot
                  continuously follows it. No freedrive.
-    hybrid     — both channels begin live; inside 15 cm of the study target,
-                 the AR interface is hidden and only freedrive remains. Moving
-                 outside 15 cm re-enables AR.
+    hybrid     — starts with continuous AR following and freedrive locked out.
+                 Clicking the stationary robot gripper (tool id 200) toggles
+                 between AR following and freedrive-only control.
 
 Run the script once per mode (e.g. three separate invocations, one per
 condition) to cover all three.
@@ -447,11 +447,17 @@ class WorkholdingStudy:
     _STUDY_MOVE_STOP_DWELL_S   = 0.40    # stationary time required to end segment
     _AR_FOLLOW_POS_DEADBAND_M  = 0.005   # suppress hand-tracking position jitter
     _AR_FOLLOW_ANGLE_DEADBAND_DEG = 2.0  # suppress hand-tracking rotation jitter
-    _HYBRID_AR_CUTOFF_DISTANCE_M = 0.15  # reversible AR/freedrive boundary
-    _HYBRID_FREEDRIVE_GRIPPER_RGBA = [0.10, 0.75, 1.00, 0.90]
+    _TCP_TOOL_ID = _ToolSelectionManager.TCP_TOOL_ID
+    # Live robot-gripper mode indicator. These are forced colors so hover and
+    # selection feedback cannot obscure the current control mode.
+    _AR_GRIPPER_RGBA = [0.0, 0.0, 0.0, 1.0]
+    _FREEDRIVE_GRIPPER_RGBA = [1.0, 0.0, 0.0, 1.0]
+    # The participant-controlled AR assembly is cyan in every AR-capable
+    # condition; target/proximity colors are published on the separate ghost
+    # channel and remain independent.
     _AR_ASSEMBLY_RGBA = {
-        "ar": [0.10, 0.90, 0.20, 0.70],
-        "hybrid": [0.10, 0.75, 1.00, 0.70],
+        "ar": [0.0, 1.0, 1.0, 0.70],
+        "hybrid": [0.0, 1.0, 1.0, 0.70],
     }
     _PALM_CBF_RADIUS_M = 0.03       # 6 cm diameter hand obstacle
     _PALM_CBF_CLEARANCE_M = 0.02
@@ -1277,9 +1283,7 @@ class WorkholdingStudy:
         if self._teach_mode:
             mode_state = "freedrive"
         elif self.mode == "hybrid":
-            mode_state = ("ar" if (self._auto_move_pending
-                                    or self.robot.board_state == "moving_board")
-                          else "freedrive")
+            mode_state = ("freedrive" if self._hybrid_freedrive_only else "ar")
         else:
             mode_state = self.mode
         self.vis.update_mode_indicator(T_tcp, mode_state)
@@ -1424,6 +1428,14 @@ class WorkholdingStudy:
         self._post_stop_freedrive_start_errors = None
         self._ar_follow_last_board_T = None
         self._hybrid_freedrive_only = False
+        if self.mode == "hybrid":
+            # Hybrid starts each trial in AR-follow mode. The explicit TCP
+            # click is the only way to enable freedrive.
+            self.robot.set_board_freedrive(False)
+        gripper_color = (self._FREEDRIVE_GRIPPER_RGBA
+                         if self.mode == "freedrive"
+                         else self._AR_GRIPPER_RGBA)
+        self.tools.set_forced_color(self._TCP_TOOL_ID, gripper_color)
         self._trial_tcp_path_length_m = 0.0
         self._trial_tcp_angular_path_length_deg = 0.0
         self._trial_recording_start_source = ""
@@ -1466,59 +1478,57 @@ class WorkholdingStudy:
                            start_policy=self._trial_start_policy,
                            target_board_world_T=self._trial_target_T)
 
-    def _update_hybrid_control_zone(self) -> None:
-        """Switch Hybrid between AR+freedrive and freedrive-only at 15 cm."""
-        active = (self._trial_timer_running
-                  or self._phase == "await_snap_confirmation")
-        if (self.mode != "hybrid" or not active
-                or self._trial_target_T is None):
+    def _handle_hybrid_gripper_click(self, event: dict) -> None:
+        """Toggle stationary Hybrid trials between AR and freedrive control."""
+        if (self.mode != "hybrid"
+                or event.get("event_type") != "selected"
+                or int(event.get("tool_id", -1)) != self._TCP_TOOL_ID):
+            return
+        self.tools.deselect(self._TCP_TOOL_ID)
+        active_phase = (
+            (self._phase == "trial_running" and self._trial_timer_running)
+            or self._phase == "await_snap_confirmation")
+        if not active_phase:
+            print("[Hybrid] Gripper toggle ignored — start the trial first.")
             return
         T_tcp = self.robot.tcp_pose
         if T_tcp is None:
+            print("[Hybrid] Gripper toggle ignored — no TCP pose.")
             return
-        T_board = self._board_pose_from_tcp(T_tcp)
-        distance_m = float(np.linalg.norm(
-            T_board[:3, 3] - self._trial_target_T[:3, 3]))
-        should_be_freedrive_only = (
-            distance_m <= self._HYBRID_AR_CUTOFF_DISTANCE_M)
-        if should_be_freedrive_only == self._hybrid_freedrive_only:
+        robot_stopped = bool(
+            not self._auto_move_pending
+            and not self.robot.move_running
+            and self.robot.board_state == "holding_board")
+        if not robot_stopped:
+            print("[Hybrid] Gripper toggle ignored — wait until the robot "
+                  "is fully stopped.")
             return
 
-        self._hybrid_freedrive_only = should_be_freedrive_only
-        if should_be_freedrive_only:
-            # GripStateReceiver's idle state hides the interactive AR board,
-            # handle, and its carried-gripper visualization. The independent
-            # study target ghost remains visible.
+        self._hybrid_freedrive_only = not self._hybrid_freedrive_only
+        if self._hybrid_freedrive_only:
             self.ar_bridge.publish("idle", T_tcp)
-            if (self._auto_move_pending
-                    or self.robot.board_state == "moving_board"):
-                self.robot.cancel_move()
             self.robot.set_board_freedrive(True)
+            color = self._FREEDRIVE_GRIPPER_RGBA
+            mode_label = "FREEDRIVE"
         else:
-            # The physical freedrive motion carried the board back outside the
-            # zone. Restore the AR board/handle/gripper at the live robot pose;
-            # a new AR grab can then resume continuous following.
             self._ar_follow_last_board_T = None
             self.ar_bridge.publish("grabbed", T_tcp)
-            self.robot.set_board_freedrive(True)
+            self.robot.set_board_freedrive(False)
+            color = self._AR_GRIPPER_RGBA
+            mode_label = "AR FOLLOW"
+        self.tools.set_forced_color(self._TCP_TOOL_ID, color)
         self._prev_tcp_pos_for_speed = None
         self._prev_tcp_rot_for_speed = None
         self._prev_tcp_t_for_speed = None
         self._was_moving_freedrive = False
         self._freedrive_stationary_since = None
         self._close_status_line()
-        if should_be_freedrive_only:
-            print(f"[Hybrid] Within {distance_m * 100:.1f} cm of target — "
-                  "AR board/handle/gripper hidden; freedrive only.")
-            event = "hybrid_ar_disabled_near_target"
-        else:
-            print(f"[Hybrid] Outside target zone at {distance_m * 100:.1f} cm "
-                  "— AR board/handle/gripper re-enabled.")
-            event = "hybrid_ar_reenabled_outside_target_zone"
+        print(f"[Hybrid] Gripper clicked → {mode_label}")
         self._replay_event(
-            event, distance_to_target_m=distance_m,
-            cutoff_distance_m=self._HYBRID_AR_CUTOFF_DISTANCE_M,
-            board_world_T=T_board)
+            "hybrid_control_mode_toggled",
+            control_mode=("freedrive" if self._hybrid_freedrive_only else "ar"),
+            clicking_hand=event.get("hand", "unknown"),
+            tcp_world_T=T_tcp)
 
     def _trial_elapsed(self, now: "float | None" = None) -> float:
         if now is None:
@@ -2170,9 +2180,10 @@ class WorkholdingStudy:
             recording = self._trial_timer_running
             if recording:
                 self._update_path_length_accumulators(now)
-                self._update_hybrid_control_zone()
             if recording:
-                if self._freedrive_enabled:
+                if (self._freedrive_enabled
+                        and (self.mode != "hybrid"
+                             or self._hybrid_freedrive_only)):
                     self._tick_freedrive_channel(now)
             if self._ar_enabled and not self._hybrid_freedrive_only:
                 self._tick_ar_channel(
@@ -2201,10 +2212,11 @@ class WorkholdingStudy:
             # deliberately excluding these moves from timed interaction and
             # path metrics.  ENTER captures the resulting placement as the
             # enter-confirmation error before the deterministic exact snap.
-            self._update_hybrid_control_zone()
             if self._ar_enabled and not self._hybrid_freedrive_only:
                 self._tick_ar_channel(now, recording=False)
-            if self._freedrive_enabled:
+            if (self._freedrive_enabled
+                    and (self.mode != "hybrid"
+                         or self._hybrid_freedrive_only)):
                 self._tick_post_stop_freedrive_channel(now)
 
         elif self._phase == "snap_to_target":
@@ -2257,6 +2269,14 @@ class WorkholdingStudy:
                 self.anchor.set_offset(pos_off, yaw_off)
 
                 _now = time.time()
+                # Keep the Unity ID-200 robot gripper on the live physical TCP
+                # in every phase and mode. GripStateReceiver treats pose_only
+                # as transform data and leaves the AR UI state unchanged.
+                _live_tcp = self.robot.tcp_pose
+                if _live_tcp is not None:
+                    self.ar_bridge.publish("pose_only", _live_tcp)
+                for interaction_event in self.tools.pop_interaction_events():
+                    self._handle_hybrid_gripper_click(interaction_event)
 
                 # Keep the Quest target board visible before marker 100 is
                 # locked, matching the always-available Open3D preview.  Once
@@ -2287,9 +2307,7 @@ class WorkholdingStudy:
                     self.ghost_bridge.publish(
                         quest_proximity_state, T_fake_tcp,
                         box_color=target_color,
-                        gripper_color=(
-                            self._HYBRID_FREEDRIVE_GRIPPER_RGBA
-                            if self._hybrid_freedrive_only else target_color))
+                        gripper_color=target_color)
 
                 if self.anchor.locked and not self._study_started:
                     self._study_started = True
@@ -2489,6 +2507,7 @@ class WorkholdingStudy:
             self._save_taught_targets()
             print(f"[Teach] Saved {len(self._taught_poses)} target(s) → "
                   f"{self._teach_targets_path}")
+        self.tools.set_forced_color(self._TCP_TOOL_ID, None)
         for obj in (self.anchor, self.relock_cubes, self.ghost_bridge, self.ar_bridge,
                     self.workspace_bound_pub, self.hands, self.cam, self.tools, self.robot):
             try:
