@@ -96,6 +96,7 @@ public class GripStateReceiver : MonoBehaviour
     private Renderer[] _handleRenderers;
     private bool _loggedCarriedGripperVisible;
     private bool _touchMode;
+    private string _interactionMode = "";
 
     private static readonly Quaternion BoardMeshCorrection =
         Quaternion.AngleAxis(90f, Vector3.forward)
@@ -262,12 +263,16 @@ public class GripStateReceiver : MonoBehaviour
 
         if (!string.IsNullOrEmpty(latest.interactionMode))
         {
+            _interactionMode = latest.interactionMode;
             bool touchMode = latest.interactionMode == "touchgrab";
             if (touchMode != _touchMode)
             {
                 _touchMode = touchMode;
                 if (touchGrab != null)
                     touchGrab.SetInteractionEnabled(_touchMode);
+                if ((_touchMode || latest.interactionMode == "freedrive")
+                        && arHandle != null)
+                    arHandle.SetActive(false);
                 Debug.Log($"[GripStateReceiver] Interaction mode: "
                     + $"{latest.interactionMode}");
             }
@@ -306,6 +311,25 @@ public class GripStateReceiver : MonoBehaviour
                     arBox.transform.localScale = latest.boxSize;
                 arBox.SetActive(true);
                 SetRenderersVisible(_boardRenderers, true);
+            }
+            else if ((_interactionMode == "ar" || _interactionMode == "hybrid")
+                    && _prevGripState != "idle" && arHandle != null
+                    && arBox != null)
+            {
+                // Before marker lock / trial start, pose_only may be the only
+                // stream available. The handle is the AR affordance, so place
+                // and expose it from that heartbeat rather than waiting for a
+                // later full board-state packet.
+                arBox.transform.SetParent(worldRoot, false);
+                arBox.transform.localPosition = latest.boxPos;
+                arBox.transform.localRotation = latest.boxRot;
+                arHandle.SetActive(true);
+                arHandle.transform.SetParent(worldRoot, false);
+                arHandle.transform.position = arBox.transform.position
+                    - arBox.transform.rotation * Vector3.right * 0.0075f
+                    - arBox.transform.rotation * Vector3.forward * 0.2000f;
+                arHandle.transform.rotation = arBox.transform.rotation
+                    * Quaternion.AngleAxis(180f, Vector3.right);
             }
             return;
         }
