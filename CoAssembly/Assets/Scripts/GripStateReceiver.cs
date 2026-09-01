@@ -290,9 +290,25 @@ public class GripStateReceiver : MonoBehaviour
 
         // A pose-only heartbeat keeps the clickable robot gripper attached to
         // the physical TCP during setup, freedrive, resets, and transitions.
-        // It must not alter AR-board/handle visibility or manipulation state.
+        // TouchGrab is different from handle-based AR: the board itself is
+        // the affordance, so the first heartbeat must expose and position it.
+        // An explicit idle state is remembered and remains authoritative when
+        // the participant switches TouchGrab/Hybrid into freedrive.
         if (latest.gripState == "pose_only")
+        {
+            if (_touchMode && _prevGripState != "idle" && arBox != null
+                    && !_boxFrozen && !_resultVisible)
+            {
+                arBox.transform.SetParent(worldRoot, false);
+                arBox.transform.localPosition = latest.boxPos;
+                arBox.transform.localRotation = latest.boxRot;
+                if (applyIncomingBoxSize)
+                    arBox.transform.localScale = latest.boxSize;
+                arBox.SetActive(true);
+                SetRenderersVisible(_boardRenderers, true);
+            }
             return;
+        }
 
         bool handleActive = latest.gripState == "grabbed" || latest.gripState == "moving";
         bool grabbed      = (manipulationHandle != null && manipulationHandle.IsGrabbed)
@@ -343,7 +359,9 @@ public class GripStateReceiver : MonoBehaviour
                 manipulationHandle.CancelManipulation();
             if (arBox    != null) arBox.SetActive(false);
             if (arHandle != null) arHandle.SetActive(false);
-            _prevGripState = "";
+            // Remember explicit idle in TouchGrab so subsequent pose-only
+            // heartbeats do not resurrect the board during freedrive.
+            _prevGripState = _touchMode ? "idle" : "";
             _prevIsGrabbed = false;
             _resultVisible = false;
             _targetReachedForCurrentMove = false;
