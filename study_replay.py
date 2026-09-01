@@ -73,7 +73,7 @@ def main() -> None:
         description="Replay Study 2 or Study 3 JSONL (schema auto-detected)")
     parser.add_argument("log", type=Path)
     parser.add_argument("--session-id")
-    parser.add_argument("--mode", choices=("freedrive", "ar", "hybrid"),
+    parser.add_argument("--mode", choices=("freedrive", "ar", "hybrid", "touchgrab"),
                         help="For Study 2, replay only this condition")
     parser.add_argument("--speed", type=float, default=1.0)
     args = parser.parse_args()
