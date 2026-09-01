@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """workholding_study.py — Freedrive vs AR vs AR+Freedrive board-placement study.
 
+Conditions: freedrive, ar, hybrid, touchgrab.
+
 A board is clamped in the robot's gripper for one independent session: grasp,
 10 trials, release. The robot returns to its configured default pose before
 every trial. --mode picks which interaction condition this session
@@ -12,13 +14,16 @@ tests:
     hybrid     — starts with continuous AR following and freedrive locked out.
                  Clicking the stationary robot gripper (tool id 200) toggles
                  between AR following and freedrive-only control.
+    touchgrab  — identical channels and gripper-click toggle to hybrid, but the
+                 AR box is grabbed with ISDK Touch Hand Grab (run the
+                 WorkHoldingTestNew Unity build). Same 5012/5013 data path.
 
-Run the script once per mode (e.g. three separate invocations, one per
-condition) to cover all three.
+Run the script once per mode (e.g. four separate invocations, one per
+condition) to cover all four.
 
 The manipulated variable is which control channel(s) are available — a
-translucent "ghost" box at the current trial's target pose is shown in ALL
-THREE modes, on cfg.WORKHOLDING_BOX_PORT via WorkholdingBoxReceiver.cs (same
+translucent "ghost" box at the current trial's target pose is shown in every
+mode, on cfg.WORKHOLDING_BOX_PORT via WorkholdingBoxReceiver.cs (same
 mechanism workholding_testing.py already uses to park a static box).
 
 The experimenter presses ENTER once to start recording. Recording ends
@@ -43,6 +48,7 @@ Usage
     python workholding_study.py --session-name P01 --mode ar
     python workholding_study.py --session-name P01 --mode freedrive
     python workholding_study.py --session-name P01 --mode hybrid
+    python workholding_study.py --session-name P01 --mode touchgrab
     python workholding_study.py --session-name setup --mode freedrive \
         --teach-targets workholding_targets.json
     python workholding_study.py --session-name P01 --mode ar \
@@ -87,13 +93,17 @@ _FILE_DIR = Path(__file__).resolve().parent
 _STUDY_LOG_ROOT = _FILE_DIR / "study_logs"
 _DEFAULT_LOG_DIR = _STUDY_LOG_ROOT / "study2"
 
-_MODES = ("freedrive", "ar", "hybrid")
+_MODES = ("freedrive", "ar", "hybrid", "touchgrab")
 # The manipulated variable: which control channel(s) the participant has.
 # The AR ghost target box is shown in every mode regardless.
 _CHANNELS = {
     "freedrive": {"freedrive": True,  "ar": False},
     "ar":        {"freedrive": False, "ar": True},
     "hybrid":    {"freedrive": True,  "ar": True},
+    # Same channels as hybrid; the AR box is grabbed with ISDK Touch Hand Grab
+    # (WorkHoldingTestNew scene) instead of the ARManipulationHandle. Data path
+    # is identical (5012 out / 5013 in), so it is treated like "hybrid" below.
+    "touchgrab": {"freedrive": True,  "ar": True},
 }
 
 _TRIAL_CSV_HEADER = [
@@ -157,6 +167,7 @@ class _WorkholdingSceneVis(_SceneVis):
         "ar": [0.10, 0.90, 0.20],
         "freedrive": [1.00, 0.48, 0.05],
         "hybrid": [0.10, 0.75, 1.00],
+        "touchgrab": [0.75, 0.20, 0.95],
     }
 
     def __init__(self, title: str):
@@ -458,6 +469,7 @@ class WorkholdingStudy:
     _AR_ASSEMBLY_RGBA = {
         "ar": [0.0, 1.0, 1.0, 0.70],
         "hybrid": [0.0, 1.0, 1.0, 0.70],
+        "touchgrab": [0.0, 1.0, 1.0, 0.70],
     }
     _PALM_CBF_RADIUS_M = 0.03       # 6 cm diameter hand obstacle
     _PALM_CBF_CLEARANCE_M = 0.02
@@ -1282,7 +1294,7 @@ class WorkholdingStudy:
 
         if self._teach_mode:
             mode_state = "freedrive"
-        elif self.mode == "hybrid":
+        elif self.mode in ("hybrid", "touchgrab"):
             mode_state = ("freedrive" if self._hybrid_freedrive_only else "ar")
         else:
             mode_state = self.mode
@@ -1428,9 +1440,9 @@ class WorkholdingStudy:
         self._post_stop_freedrive_start_errors = None
         self._ar_follow_last_board_T = None
         self._hybrid_freedrive_only = False
-        if self.mode == "hybrid":
-            # Hybrid starts each trial in AR-follow mode. The explicit TCP
-            # click is the only way to enable freedrive.
+        if self.mode in ("hybrid", "touchgrab"):
+            # Hybrid/touchgrab start each trial in AR-follow mode. The explicit
+            # TCP click is the only way to enable freedrive.
             self.robot.set_board_freedrive(False)
         gripper_color = (self._FREEDRIVE_GRIPPER_RGBA
                          if self.mode == "freedrive"
@@ -1480,7 +1492,7 @@ class WorkholdingStudy:
 
     def _handle_hybrid_gripper_click(self, event: dict) -> None:
         """Toggle stationary Hybrid trials between AR and freedrive control."""
-        if (self.mode != "hybrid"
+        if (self.mode not in ("hybrid", "touchgrab")
                 or event.get("event_type") != "selected"
                 or int(event.get("tool_id", -1)) != self._TCP_TOOL_ID):
             return
@@ -2182,7 +2194,7 @@ class WorkholdingStudy:
                 self._update_path_length_accumulators(now)
             if recording:
                 if (self._freedrive_enabled
-                        and (self.mode != "hybrid"
+                        and (self.mode not in ("hybrid", "touchgrab")
                              or self._hybrid_freedrive_only)):
                     self._tick_freedrive_channel(now)
             if self._ar_enabled and not self._hybrid_freedrive_only:
@@ -2215,7 +2227,7 @@ class WorkholdingStudy:
             if self._ar_enabled and not self._hybrid_freedrive_only:
                 self._tick_ar_channel(now, recording=False)
             if (self._freedrive_enabled
-                    and (self.mode != "hybrid"
+                    and (self.mode not in ("hybrid", "touchgrab")
                          or self._hybrid_freedrive_only)):
                 self._tick_post_stop_freedrive_channel(now)
 
@@ -2529,7 +2541,7 @@ def main() -> None:
                          "last completed trial and leaves other modes intact.")
     ap.add_argument("--mode", required=True, choices=_MODES,
                     help="Which interaction condition this session tests. Run the "
-                         "script once per mode to cover all three.")
+                         "script once per mode to cover all four.")
     ap.add_argument("--quest-ip",             default=cfg.UNITY_IP)
     ap.add_argument("--anchor-marker",        type=int,   default=cfg.ANCHOR_MARKER_ID)
     ap.add_argument("--pegboard-marker",      type=int,   default=cfg.PEGBOARD_MARKER_ID)
