@@ -8,7 +8,7 @@ are shared by both conditions.
 
 Workflow
 --------
-  1. Hold marker 100 visible within 0.5m — the world frame locks
+  1. Hold marker 100 visible within 1.0m — the world frame locks
      automatically the first time it's seen that close (no ENTER needed),
      or press ENTER while it's visible from any distance.
      PyBullet scene is placed at the locked pose immediately.
@@ -29,6 +29,7 @@ Usage
 """
 
 import argparse
+import json
 import struct
 import sys
 import threading
@@ -804,7 +805,10 @@ class MainScene:
     _PALM_CBF_CLEARANCE_M = 0.01
     _PALM_CBF_PUBLISH_INTERVAL_S = 1.0 / 30.0
     _SYNTH_INTERVAL = 0.10
-    _AUTO_LOCK_MAX_DIST = 0.50
+    # Match main_with_robot.py: first sight of marker 100 within normal Quest
+    # working range locks the world automatically. Subsequent relocks remain
+    # explicit (ENTER or the Unity marker interaction).
+    _AUTO_LOCK_MAX_DIST = 1.0
     _RELOCK_MAX_DIST_M = 1.0
     _RELOCK_COOLDOWN_S = 2.0
     # 2x2 design: ghost gripper preview (shown/hidden) x color coding
@@ -826,12 +830,14 @@ class MainScene:
         "waiting_for_pull"})
     _PROXIMITY_FAR_M = 0.6
     _PROXIMITY_NEAR_M = 0.03
-    _HANDOVER_STAGE_JOINT_DEG = np.array(
-        [-131.77, -123.43, -101.97, -131.33, -135.75, 182.50],
-        dtype=float)
-    _HANDOVER_STAGE_SPEED_MULTIPLIER = 2.0
     WORKSPACE_LO = np.asarray(cfg.WORKSPACE_LO, dtype=float)
     WORKSPACE_HI = np.asarray(cfg.WORKSPACE_HI, dtype=float)
+    # Match the robot server's inset workspace exactly. A Study 3 hand target
+    # must already lie inside this region; it is never projected to a boundary.
+    _TARGET_WORKSPACE_LO = (
+        WORKSPACE_LO + float(cfg.ROBOT_TARGET_WORKSPACE_MARGIN_M))
+    _TARGET_WORKSPACE_HI = (
+        WORKSPACE_HI - float(cfg.ROBOT_TARGET_WORKSPACE_MARGIN_M))
     # Four right-side gear stands followed by all six gears. Keeping a fixed
     # list makes every participant receive the same ten physical trials.
     STUDY_OBJECT_IDS = (19, 21, 23, 25, 26, 27, 28, 29, 30, 31)
@@ -1006,10 +1012,10 @@ class MainScene:
         raw_position = (
             centroid - ScipyR.from_quat(quaternion).apply([0., 0., 1.])
             * self._PALM_TCP_STANDOFF_M)
-        inside_workspace = bool(np.all(raw_position >= self.WORKSPACE_LO)
-                                and np.all(raw_position <= self.WORKSPACE_HI))
-        command_position = np.asarray(cfg.project_robot_target_position(
-            raw_position, self._T_world_tcp[:3, 3]), float)
+        inside_workspace = bool(
+            np.all(raw_position >= self._TARGET_WORKSPACE_LO)
+            and np.all(raw_position <= self._TARGET_WORKSPACE_HI))
+        command_position = raw_position.copy()
         rotation = ScipyR.from_quat(quaternion).as_matrix()
         command_T = np.eye(4)
         command_T[:3, :3] = rotation
@@ -1069,15 +1075,13 @@ class MainScene:
         self._handover_tool_id = tool_id
         self.colors.publish(tool_id, _ObjectColorPublisher.GRASPED)
         self._log("grasp_complete", success=1)
-        # The grasp state machine has completed its retract/lift. Move through
-        # the fixed handover staging configuration before starting any
-        # condition-specific Cartesian handover controller.
-        self._robot_state = "staging"
-        self._log("handover_staging_started")
-        self.robot.move_to_joints(
-            self._HANDOVER_STAGE_JOINT_DEG, degrees=True,
-            speed_multiplier=self._HANDOVER_STAGE_SPEED_MULTIPLIER,
-            on_complete=self._on_handover_staging_complete)
+        # robot_control_server.execute_grasp() already finishes its retract at
+        # the single canonical handover staging configuration. Starting a
+        # second, different moveJ here caused an extra waypoint and could race
+        # the asynchronous grasp program ("another thread is controlling the
+        # robot"). Begin live hand-target tracking directly.
+        self._log("handover_staging_complete", success=1)
+        self._pending_handover = True
 
     def _on_grasp_phase(self, phase: str) -> None:
         self._robot_state = phase
@@ -1093,16 +1097,6 @@ class MainScene:
         self._set_ghost_validity(None if inside else "outside_workspace")
         self._log("handover_preview_shown_after_grasp")
 
-    def _on_handover_staging_complete(self, ok: bool) -> None:
-        self._log("handover_staging_complete", success=int(bool(ok)))
-        if not ok:
-            self._robot_state = None
-            self._set_ghost_validity("staging_move_failed")
-            print("[Study3] Handover staging move failed; handover not started")
-            return
-        self._robot_state = None
-        self._pending_handover = True
-
     def _start_handover(self, hand_pts) -> bool:
         if self.robot is None:
             return False
@@ -1113,8 +1107,9 @@ class MainScene:
         self._ghost_target_T = ghost_T
         if not inside_workspace:
             self._set_ghost_validity("outside_workspace")
-        else:
-            self._set_ghost_validity(None)
+            self._tcp_target_T = None
+            return False
+        self._set_ghost_validity(None)
         self._trial_started_at = time.perf_counter()
         self._tcp_target_T = target_T
         self._robot_state = "approaching_hand"
@@ -1160,10 +1155,10 @@ class MainScene:
             self.robot.wait_for_handover_pull(on_complete=self._on_release)
         elif self._handover_tool_id is not None:
             # A failed move includes an unreachable pose or stalled IK on the
-            # robot server. Keep the failed preview red long enough to be seen,
-            # then retry from the participant's current hand pose.
+            # robot server. Immediately retry from the latest live hand pose;
+            # invalid/out-of-workspace poses remain pending and uncommanded.
             self._set_ghost_validity("ik_or_motion_failure")
-            self._retry_handover_after = time.perf_counter() + 2.0
+            self._retry_handover_after = time.perf_counter()
             self._pending_handover = True
 
     def _on_release(self, ok: bool) -> None:
@@ -1492,11 +1487,15 @@ class MainScene:
                         if inside_workspace:
                             self._set_ghost_validity(None)
                         else:
-                            # Show the raw invalid preview in red while the
-                            # controller follows the safely projected target,
-                            # matching main_with_robot.py.
+                            # Never replace the participant's target with a
+                            # projected pose. Stop pursuit of the last target;
+                            # the pending loop resumes as soon as the current
+                            # live hand pose enters the valid inset workspace.
                             self._set_ghost_validity("outside_workspace")
-                        if self._robot_state == "approaching_hand":
+                            if self._robot_state == "approaching_hand":
+                                self.robot.cancel_move()
+                        if (inside_workspace
+                                and self._robot_state == "approaching_hand"):
                             self._tcp_target_T = command_T
                             self.robot.update_move_target(
                                 position, quaternion.tolist())

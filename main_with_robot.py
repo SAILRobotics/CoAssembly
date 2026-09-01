@@ -1358,7 +1358,12 @@ class _GripPoseBridge:
             pass
 
     def poll(self) -> "np.ndarray | None":
-        """Return the latest released 4×4 box pose, or None if none arrived."""
+        """Backward-compatible pose-only view of the latest AR board event."""
+        event = self.poll_event(released_only=True)
+        return event[1] if event is not None else None
+
+    def poll_event(self, released_only: bool = False) -> "tuple[str, np.ndarray] | None":
+        """Return the latest manipulation state and 4×4 board pose."""
         latest = None
         while True:
             try:
@@ -1375,9 +1380,12 @@ class _GripPoseBridge:
                     [q_u[3], q_u[0], q_u[1], q_u[2]])
                 R_w = ScipyR.from_quat(
                     [q_o3d[1], q_o3d[2], q_o3d[3], q_o3d[0]]).as_matrix()
-                latest = np.eye(4, dtype=np.float64)
-                latest[:3, :3] = R_w
-                latest[:3, 3] = pos_w
+                pose = np.eye(4, dtype=np.float64)
+                pose[:3, :3] = R_w
+                pose[:3, 3] = pos_w
+                state = str(data.get("manipulation_state", "released"))
+                if not released_only or state == "released":
+                    latest = (state, pose)
             except Exception:
                 continue
 

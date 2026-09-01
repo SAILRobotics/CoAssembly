@@ -2,19 +2,18 @@
 """workholding_study.py — Freedrive vs AR vs AR+Freedrive board-placement study.
 
 A board is clamped in the robot's gripper for one independent session: grasp,
-10 trials, release. --mode picks which interaction condition this session
+10 trials, release. The robot returns to its configured default pose before
+every trial. --mode picks which interaction condition this session
 tests:
 
     freedrive  — physically drag the arm+board by hand. No AR handle.
-    ar         — grab the AR box handle in the headset, drag, release; the
-                 robot then autonomously drives the board to the released
-                 pose. No freedrive.
-    hybrid     — both channels live at once: freedrive AND the AR handle.
+    ar         — grab and drag the AR box handle in the headset; the robot
+                 continuously follows it. No freedrive.
+    hybrid     — both channels live at once: freedrive AND continuous AR
+                 following.
 
 Run the script once per mode (e.g. three separate invocations, one per
-condition) to cover all three. Trials 1–5 each begin at the configured default
-pose. Trials 6–10 are continuous and begin from the preceding target pose after
-the outside-recording correction.
+condition) to cover all three.
 
 The manipulated variable is which control channel(s) are available — a
 translucent "ghost" box at the current trial's target pose is shown in ALL
@@ -126,6 +125,15 @@ _DETAILED_TRIAL_CSV_HEADER = [
     "start_board_pos_x_m", "start_board_pos_y_m", "start_board_pos_z_m",
     "start_board_euler_x_deg", "start_board_euler_y_deg", "start_board_euler_z_deg",
     "start_pos_error_m", "start_angle_error_deg",
+    "first_reach_time", "first_reach_elapsed_s",
+    "first_reach_pos_error_m", "first_reach_angle_error_deg",
+    "auto_stop_pos_error_m", "auto_stop_angle_error_deg",
+    "enter_confirmation_time",
+    "enter_confirmation_pos_error_m", "enter_confirmation_angle_error_deg",
+    "post_stop_ar_interactions",
+    "post_stop_freedrive_interactions", "post_stop_interactions",
+    "post_stop_pos_error_improvement_m",
+    "post_stop_angle_error_improvement_deg",
     "freedrive_interactions", "ar_interactions",
     "tcp_path_length_m", "tcp_angular_path_length_deg",
     "recording_start_source", "start_policy",
@@ -436,8 +444,9 @@ class WorkholdingStudy:
     _STUDY_ROT_START_DEGPS     = 5.0     # rotation can also begin a segment
     _STUDY_ROT_STOP_DEGPS      = 2.0     # angular-speed hysteresis threshold
     _STUDY_MOVE_STOP_DWELL_S   = 0.40    # stationary time required to end segment
+    _AR_FOLLOW_POS_DEADBAND_M  = 0.005   # suppress hand-tracking position jitter
+    _AR_FOLLOW_ANGLE_DEADBAND_DEG = 2.0  # suppress hand-tracking rotation jitter
     _STUDY_TRAJ_SAMPLE_HZ     = 10.0
-    _DEFAULT_START_TRIAL_COUNT = 5
     _REPLAY_SAMPLE_HZ         = 30.0
 
     # Robustness against robot_control_server.py not being up yet (or dropping a
@@ -588,9 +597,21 @@ class WorkholdingStudy:
         self._trial_active_elapsed_s = 0.0
         self._trial_timer_last_t: "float | None" = None
         self._trial_reach_dwell_start: "float | None" = None
+        self._trial_first_reach_time: "float | None" = None
+        self._trial_first_reach_elapsed_s = float("nan")
+        self._trial_first_reach_pos_error_m = float("nan")
+        self._trial_first_reach_angle_error_deg = float("nan")
         self._trial_interactions = 0
         self._trial_freedrive_interactions = 0
         self._trial_ar_interactions = 0
+        self._post_stop_ar_interactions = 0
+        self._post_stop_freedrive_interactions = 0
+        self._post_stop_interactions = 0
+        self._post_stop_baseline_pos_error_m = float("nan")
+        self._post_stop_baseline_angle_error_deg = float("nan")
+        self._post_stop_freedrive_active = False
+        self._post_stop_freedrive_start_errors = None
+        self._ar_follow_last_board_T: "np.ndarray | None" = None
         self._trial_tcp_path_length_m = 0.0
         self._trial_tcp_angular_path_length_deg = 0.0
         self._trial_path_prev_tcp_pos: "np.ndarray | None" = None
@@ -629,13 +650,18 @@ class WorkholdingStudy:
         self._trial_cursor = self._prepare_mode_replay(
             self._replay_path, mode,
             resume=bool(resume and not self._teach_mode))
-        self._target_preview_cursor = self._trial_cursor
+        self._target_preview_cursor = (
+            0 if self._trial_cursor >= len(self._pose_order)
+            else self._trial_cursor)
         self._replay = ReplayRecorder(
             self._replay_path, "workholding_replay_v1", self._session_id,
             session_name=self.session_name, mode=self.mode)
         print("[Study] Logs are shared across modes for this participant "
               "— each record is distinguished by its 'mode' field.")
-        if self._trial_cursor:
+        if self._trial_cursor >= len(self._pose_order):
+            print(f"[Study] All {len(self._pose_order)} {mode} trials are "
+                  "already complete; target preview remains available.")
+        elif self._trial_cursor:
             print(f"[Study] Resuming {mode} at trial "
                   f"{self._trial_cursor + 1}/{len(self._pose_order)}; "
                   "unfinished-trial records were removed.")
@@ -757,6 +783,10 @@ class WorkholdingStudy:
             interaction_count=self._trial_interactions,
             freedrive_interaction_count=self._trial_freedrive_interactions,
             ar_interaction_count=self._trial_ar_interactions,
+            post_stop_ar_interaction_count=self._post_stop_ar_interactions,
+            post_stop_freedrive_interaction_count=
+                self._post_stop_freedrive_interactions,
+            post_stop_interaction_count=self._post_stop_interactions,
             tcp_path_length_m=self._trial_tcp_path_length_m,
             tcp_angular_path_length_deg=self._trial_tcp_angular_path_length_deg,
             recording_start_source=self._trial_recording_start_source,
@@ -1038,7 +1068,18 @@ class WorkholdingStudy:
                                     (joint_distance, candidate,
                                      candidate_pos_err, candidate_ang_err))
                         if valid_candidates:
-                            _, q_ik, _, _ = min(valid_candidates,
+                            reference_q = saved_q
+                            rescored = []
+                            for _old_distance, candidate, candidate_pos_err, candidate_ang_err in valid_candidates:
+                                shortest_delta = (
+                                    (candidate - reference_q + np.pi)
+                                    % (2.0 * np.pi) - np.pi)
+                                joint_distance = float(np.linalg.norm(
+                                    shortest_delta))
+                                rescored.append(
+                                    (joint_distance, candidate,
+                                     candidate_pos_err, candidate_ang_err))
+                            _, q_ik, _, _ = min(rescored,
                                                 key=lambda item: item[0])
                             self._target_joints[pose_idx] = q_ik.copy()
                             generated += 1
@@ -1287,16 +1328,25 @@ class WorkholdingStudy:
         self._trial_active_elapsed_s  = 0.0
         self._trial_timer_last_t      = None
         self._trial_reach_dwell_start = None
+        self._trial_first_reach_time = None
+        self._trial_first_reach_elapsed_s = float("nan")
+        self._trial_first_reach_pos_error_m = float("nan")
+        self._trial_first_reach_angle_error_deg = float("nan")
         self._trial_interactions      = 0
         self._trial_freedrive_interactions = 0
         self._trial_ar_interactions = 0
+        self._post_stop_ar_interactions = 0
+        self._post_stop_freedrive_interactions = 0
+        self._post_stop_interactions = 0
+        self._post_stop_baseline_pos_error_m = float("nan")
+        self._post_stop_baseline_angle_error_deg = float("nan")
+        self._post_stop_freedrive_active = False
+        self._post_stop_freedrive_start_errors = None
+        self._ar_follow_last_board_T = None
         self._trial_tcp_path_length_m = 0.0
         self._trial_tcp_angular_path_length_deg = 0.0
         self._trial_recording_start_source = ""
-        self._trial_start_policy = (
-            "default"
-            if self._trial_cursor < self._DEFAULT_START_TRIAL_COUNT
-            else "continuous")
+        self._trial_start_policy = "default"
         self._pending_trial_summary = None
         self._snap_started_t = None
         self._trial_last_traj_t       = 0.0
@@ -1327,6 +1377,9 @@ class WorkholdingStudy:
               f"pos={np.round(pos, 3).tolist()}  euler={euler}")
         print("[Trial] Ready — press ENTER to start. The target criterion "
               "ends recording automatically; then press ENTER to snap.")
+        if self._ar_enabled:
+            print("[Trial] AR robot commands are disabled until ENTER starts "
+                  "the timer.")
         self._phase = "trial_running"
         self._replay_event("trial_ready", pose_idx=pose_idx,
                            start_policy=self._trial_start_policy,
@@ -1346,6 +1399,49 @@ class WorkholdingStudy:
             self._start_exact_target_snap(time.time())
             return
         if self._phase == "await_snap_confirmation":
+            if (self._auto_move_pending
+                    or self.robot.board_state == "moving_board"
+                    or self._post_stop_freedrive_active):
+                print("[Study] An adjustment is still in progress — "
+                      "wait for it to finish, then press ENTER.")
+                return
+            T_tcp = self.robot.tcp_pose
+            if T_tcp is not None and self._trial_target_T is not None:
+                T_board = self._board_pose_from_tcp(T_tcp)
+                enter_pos_err, enter_ang_err = self._pose_error(
+                    T_board, self._trial_target_T)
+            else:
+                enter_pos_err = enter_ang_err = float("nan")
+            auto_pos_err = auto_ang_err = float("nan")
+            if self._pending_trial_summary is not None:
+                auto_pos_err = self._pending_trial_summary.get(
+                    "auto_stop_pos_error_m", float("nan"))
+                auto_ang_err = self._pending_trial_summary.get(
+                    "auto_stop_angle_error_deg", float("nan"))
+                self._pending_trial_summary.update({
+                    "enter_confirmation_time": time.time(),
+                    "enter_confirmation_pos_error_m": enter_pos_err,
+                    "enter_confirmation_angle_error_deg": enter_ang_err,
+                    "post_stop_ar_interactions":
+                        self._post_stop_ar_interactions,
+                    "post_stop_freedrive_interactions":
+                        self._post_stop_freedrive_interactions,
+                    "post_stop_interactions": self._post_stop_interactions,
+                    "post_stop_pos_error_improvement_m":
+                        auto_pos_err - enter_pos_err,
+                    "post_stop_angle_error_improvement_deg":
+                        auto_ang_err - enter_ang_err,
+                })
+            self._replay_event(
+                "snap_confirmation_entered",
+                enter_confirmation_pos_error_m=enter_pos_err,
+                enter_confirmation_angle_error_deg=enter_ang_err,
+                post_stop_ar_interactions=self._post_stop_ar_interactions,
+                post_stop_freedrive_interactions=
+                    self._post_stop_freedrive_interactions,
+                post_stop_interactions=self._post_stop_interactions,
+                post_stop_pos_error_improvement_m=auto_pos_err - enter_pos_err,
+                post_stop_angle_error_improvement_deg=auto_ang_err - enter_ang_err)
             print("[Study] Snap confirmed — moving to the exact target...")
             self._start_exact_target_snap(time.time())
             return
@@ -1381,8 +1477,7 @@ class WorkholdingStudy:
         if self._trial_cursor >= len(self._pose_order):
             self._phase = "release_board"
             return
-        if 0 < self._trial_cursor < min(
-                self._DEFAULT_START_TRIAL_COUNT, len(self._pose_order)):
+        if self._trial_cursor > 0:
             print(f"[Study] Preparing trial {self._trial_cursor + 1}: "
                   "returning to the default pose.")
             self._phase = "reset_to_default"
@@ -1539,6 +1634,12 @@ class WorkholdingStudy:
             target_pos_m=list(pos), target_euler_deg=list(euler),
             start_time=self._trial_start_t, end_time=now, duration_s=duration,
             final_pos_error_m=pos_err, final_angle_error_deg=ang_err,
+            auto_stop_pos_error_m=pos_err,
+            auto_stop_angle_error_deg=ang_err,
+            first_reach_time=self._trial_first_reach_time,
+            first_reach_elapsed_s=self._trial_first_reach_elapsed_s,
+            first_reach_pos_error_m=self._trial_first_reach_pos_error_m,
+            first_reach_angle_error_deg=self._trial_first_reach_angle_error_deg,
             num_interactions=self._trial_interactions, completion_reason=reason,
             start_board_pos_m=start_pos, start_board_euler_deg=start_euler,
             start_pos_error_m=self._trial_start_pos_error_m,
@@ -1559,8 +1660,22 @@ class WorkholdingStudy:
               f"interactions={self._trial_interactions}")
         self._completion_flash_state = "reached"
         self._phase = "await_snap_confirmation"
-        print("[Study] Trial is over. Robot is stationary; press ENTER to snap "
-              "to the exact target and prepare the next trial.")
+        self._post_stop_baseline_pos_error_m = pos_err
+        self._post_stop_baseline_angle_error_deg = ang_err
+        self._was_moving_freedrive = False
+        self._freedrive_stationary_since = None
+        self._prev_tcp_pos_for_speed = None
+        self._prev_tcp_rot_for_speed = None
+        self._prev_tcp_t_for_speed = None
+        if self._ar_enabled:
+            print("[Study] Trial timing is over. You may continue adjusting "
+                  "the AR board; these adjustments are not included in the "
+                  "timed trial. Press ENTER when satisfied to record the "
+                  "adjusted final error and snap to the exact target.")
+        else:
+            print("[Study] Trial is over. Press ENTER to record the final "
+                  "error, snap to the exact target, and prepare the next "
+                  "trial.")
 
     def _update_path_length_accumulators(self, now: float) -> None:
         """Accumulate TCP path length for the trial summary. Raw trajectory,
@@ -1601,6 +1716,16 @@ class WorkholdingStudy:
             return
         if self._trial_reach_dwell_start is None:
             self._trial_reach_dwell_start = now
+            if self._trial_first_reach_time is None:
+                self._trial_first_reach_time = now
+                self._trial_first_reach_elapsed_s = self._trial_elapsed(now)
+                self._trial_first_reach_pos_error_m = pos_err
+                self._trial_first_reach_angle_error_deg = ang_err
+                self._replay_event(
+                    "target_first_reached",
+                    first_reach_elapsed_s=self._trial_first_reach_elapsed_s,
+                    first_reach_pos_error_m=pos_err,
+                    first_reach_angle_error_deg=ang_err)
             return
         if now - self._trial_reach_dwell_start >= self._STUDY_REACH_DWELL_S:
             self._finish_trial("target_reached", pos_err, ang_err)
@@ -1648,7 +1773,8 @@ class WorkholdingStudy:
         self._prev_tcp_rot_for_speed = rot.copy()
         self._prev_tcp_t_for_speed   = now
 
-    def _tick_ar_channel(self, now: float, recording: bool) -> None:
+    def _tick_ar_channel(self, now: float, recording: bool,
+                         accept_commands: bool = True) -> None:
         board_state = self.robot.board_state
         move_active = board_state == "moving_board" or self._auto_move_pending
         grip_state  = "moving" if move_active else (
@@ -1657,8 +1783,6 @@ class WorkholdingStudy:
         if T_tcp is not None:
             self.ar_bridge.publish(grip_state, T_tcp)
 
-        if self._auto_move_pending:
-            return
         if self._auto_move_result is not None:
             ok = self._auto_move_result
             self._auto_move_result = None
@@ -1666,33 +1790,171 @@ class WorkholdingStudy:
                 T_board = self._board_pose_from_tcp(T_tcp)
                 pos_err, ang_err = self._pose_error(
                     T_board, self._trial_target_T)
+                if self._phase == "await_snap_confirmation":
+                    before_pos = self._post_stop_baseline_pos_error_m
+                    before_ang = self._post_stop_baseline_angle_error_deg
+                    self._replay_event(
+                        "post_stop_adjustment_completed",
+                        post_stop_interaction_idx=self._post_stop_interactions,
+                        interaction_type="ar",
+                        landed_board_world_T=T_board,
+                        before_pos_error_m=before_pos,
+                        before_angle_error_deg=before_ang,
+                        landed_pos_error_m=pos_err,
+                        landed_angle_error_deg=ang_err,
+                        pos_error_improvement_m=before_pos - pos_err,
+                        angle_error_improvement_deg=before_ang - ang_err)
+                    self._post_stop_baseline_pos_error_m = pos_err
+                    self._post_stop_baseline_angle_error_deg = ang_err
+                    # In hybrid mode, do not misclassify this commanded AR
+                    # motion as a physical freedrive interaction.
+                    self._prev_tcp_pos_for_speed = T_tcp[:3, 3].copy()
+                    self._prev_tcp_rot_for_speed = T_tcp[:3, :3].copy()
+                    self._prev_tcp_t_for_speed = now
                 self._close_status_line()
+                if self._phase == "await_snap_confirmation":
+                    next_action = "— adjust again or press ENTER when satisfied"
+                elif not recording:
+                    next_action = "— press ENTER to start recording"
+                else:
+                    next_action = "— press ENTER to finish when ready"
                 print(f"[AR] Landed {pos_err*100:.1f}cm/{ang_err:.1f}deg from target "
-                      + ("— press ENTER to start recording"
-                         if not recording else "— press ENTER to finish when ready"))
+                      + next_action)
             elif not ok:
                 self._close_status_line()
                 print("[AR] Move cancelled/failed — try again")
 
-        T_box_target = self.ar_bridge.poll()
-        if T_box_target is not None:
-            if recording:
-                self._trial_interactions += 1
-                self._trial_ar_interactions += 1
+        manipulation_event = self.ar_bridge.poll_event()
+        if manipulation_event is not None:
+            manipulation_state, T_box_target = manipulation_event
+            if not accept_commands:
+                if manipulation_state == "released":
+                    self._close_status_line()
+                    print("[AR] Manipulation ignored — press ENTER to start "
+                          "the trial before commanding the robot.")
+                    self._replay_event(
+                        "ar_handle_release_ignored_before_recording",
+                        released_board_world_T=T_box_target,
+                        reason="trial_not_started")
+                return
+            post_stop = self._phase == "await_snap_confirmation"
             tcp_pos  = (T_box_target[:3, 3]
                        - cfg.BOX_FORWARD_OFFSET * T_box_target[:3, 2])
             tcp_quat = ScipyR.from_matrix(T_box_target[:3, :3]).as_quat()
-            self._close_status_line()
-            release_label = (f"#{self._trial_interactions}"
-                             if recording else "(not recorded)")
-            print(f"[AR] Release {release_label} "
-                  f"→ TCP {np.round(tcp_pos, 3).tolist()}")
-            self._replay_event("ar_handle_released",
-                               released_board_world_T=T_box_target,
-                               commanded_tcp_position=tcp_pos,
-                               commanded_tcp_quaternion=tcp_quat,
-                               recording=bool(recording))
-            self._start_auto_move(tcp_pos, tcp_quat)
+            should_retarget = True
+            if self._ar_follow_last_board_T is not None:
+                follow_pos_delta, follow_angle_delta = self._pose_error(
+                    T_box_target, self._ar_follow_last_board_T)
+                should_retarget = bool(
+                    follow_pos_delta >= self._AR_FOLLOW_POS_DEADBAND_M
+                    or follow_angle_delta >= self._AR_FOLLOW_ANGLE_DEADBAND_DEG)
+            if should_retarget or manipulation_state == "released":
+                self._ar_follow_last_board_T = T_box_target.copy()
+                if self._auto_move_pending or board_state == "moving_board":
+                    self.robot.update_move_target(tcp_pos, tcp_quat)
+                else:
+                    self._start_auto_move(tcp_pos, tcp_quat)
+
+            if manipulation_state == "released":
+                if recording:
+                    self._trial_interactions += 1
+                    self._trial_ar_interactions += 1
+                if post_stop:
+                    self._post_stop_ar_interactions += 1
+                    self._post_stop_interactions += 1
+                if self._trial_target_T is not None:
+                    released_pos_err, released_ang_err = self._pose_error(
+                        T_box_target, self._trial_target_T)
+                else:
+                    released_pos_err = released_ang_err = float("nan")
+                self._close_status_line()
+                release_label = (f"#{self._trial_interactions}"
+                                 if recording else "(not recorded)")
+                print(f"[AR] Release {release_label}; robot following final "
+                      f"TCP {np.round(tcp_pos, 3).tolist()}")
+                self._replay_event(
+                    "ar_handle_released",
+                    released_board_world_T=T_box_target,
+                    commanded_tcp_position=tcp_pos,
+                    commanded_tcp_quaternion=tcp_quat,
+                    recording=bool(recording), post_stop=post_stop,
+                    post_stop_ar_interaction_idx=(
+                        self._post_stop_ar_interactions if post_stop else None),
+                    post_stop_interaction_idx=(
+                        self._post_stop_interactions if post_stop else None),
+                    released_pos_error_m=released_pos_err,
+                    released_angle_error_deg=released_ang_err)
+
+    def _tick_post_stop_freedrive_channel(self, now: float) -> None:
+        """Log each completed physical adjustment after timed completion."""
+        if self._auto_move_pending or self.robot.board_state == "moving_board":
+            return
+        T_tcp = self.robot.tcp_pose
+        if T_tcp is None:
+            return
+        pos, rot = T_tcp[:3, 3], T_tcp[:3, :3]
+        if (self._prev_tcp_pos_for_speed is not None
+                and self._prev_tcp_rot_for_speed is not None
+                and self._prev_tcp_t_for_speed is not None):
+            dt = now - self._prev_tcp_t_for_speed
+            if dt > 1e-3:
+                speed = float(np.linalg.norm(
+                    pos - self._prev_tcp_pos_for_speed)) / dt
+                rel_rot = self._prev_tcp_rot_for_speed.T @ rot
+                angular_speed = float(np.degrees(
+                    ScipyR.from_matrix(rel_rot).magnitude())) / dt
+                moving = (speed > self._STUDY_MOVE_START_MPS
+                          or angular_speed > self._STUDY_ROT_START_DEGPS)
+                still = (speed < self._STUDY_MOVE_STOP_MPS
+                         and angular_speed < self._STUDY_ROT_STOP_DEGPS)
+                if moving:
+                    if not self._post_stop_freedrive_active:
+                        self._post_stop_freedrive_active = True
+                        self._post_stop_freedrive_interactions += 1
+                        self._post_stop_interactions += 1
+                        self._post_stop_freedrive_start_errors = (
+                            self._post_stop_baseline_pos_error_m,
+                            self._post_stop_baseline_angle_error_deg)
+                        self._replay_event(
+                            "post_stop_adjustment_started",
+                            post_stop_interaction_idx=
+                                self._post_stop_interactions,
+                            interaction_type="freedrive",
+                            before_pos_error_m=
+                                self._post_stop_baseline_pos_error_m,
+                            before_angle_error_deg=
+                                self._post_stop_baseline_angle_error_deg)
+                    self._freedrive_stationary_since = None
+                elif self._post_stop_freedrive_active and still:
+                    if self._freedrive_stationary_since is None:
+                        self._freedrive_stationary_since = now
+                    elif (now - self._freedrive_stationary_since
+                          >= self._STUDY_MOVE_STOP_DWELL_S):
+                        T_board = self._board_pose_from_tcp(T_tcp)
+                        after_pos, after_ang = self._pose_error(
+                            T_board, self._trial_target_T)
+                        before_pos, before_ang = (
+                            self._post_stop_freedrive_start_errors)
+                        self._replay_event(
+                            "post_stop_adjustment_completed",
+                            post_stop_interaction_idx=
+                                self._post_stop_interactions,
+                            interaction_type="freedrive",
+                            landed_board_world_T=T_board,
+                            before_pos_error_m=before_pos,
+                            before_angle_error_deg=before_ang,
+                            landed_pos_error_m=after_pos,
+                            landed_angle_error_deg=after_ang,
+                            pos_error_improvement_m=before_pos - after_pos,
+                            angle_error_improvement_deg=before_ang - after_ang)
+                        self._post_stop_baseline_pos_error_m = after_pos
+                        self._post_stop_baseline_angle_error_deg = after_ang
+                        self._post_stop_freedrive_active = False
+                        self._post_stop_freedrive_start_errors = None
+                        self._freedrive_stationary_since = None
+        self._prev_tcp_pos_for_speed = pos.copy()
+        self._prev_tcp_rot_for_speed = rot.copy()
+        self._prev_tcp_t_for_speed = now
 
     def _tick_study(self, now: float) -> None:
         entering = self._phase != self._last_phase
@@ -1729,12 +1991,9 @@ class WorkholdingStudy:
                 elif self._trial_cursor >= len(self._pose_order):
                     print("[Study] All trials for this mode are already complete.")
                     self._phase = "release_board"
-                elif self._trial_cursor >= self._DEFAULT_START_TRIAL_COUNT:
-                    print("[Study] Board grasped — restoring the previous "
-                          "completed target for continuous-trial resume")
-                    self._phase = "restore_resume_start"
                 else:
-                    print("[Study] Board grasped — beginning trials")
+                    print("[Study] Board grasped — returning to the default "
+                          "pose before the next trial")
                     self._phase = "reset_to_default"
             elif (self.robot.board_state == "inactive"
                   and now - self._grasp_request_t >= self._GRASP_RETRY_INTERVAL_S):
@@ -1764,25 +2023,6 @@ class WorkholdingStudy:
                           "constraint.")
                     self._phase = "reset_failed"
 
-        elif self._phase == "restore_resume_start":
-            if not self._auto_move_pending and self._auto_move_result is None:
-                previous_pose_idx = self._pose_order[self._trial_cursor - 1]
-                T_board = self._poses_T[previous_pose_idx]
-                T_tcp = np.array(T_board, dtype=np.float64, copy=True)
-                T_tcp[:3, 3] -= cfg.BOX_FORWARD_OFFSET * T_tcp[:3, 2]
-                tcp_quat = ScipyR.from_matrix(T_tcp[:3, :3]).as_quat()
-                self._start_auto_move(T_tcp[:3, 3], tcp_quat,
-                                      board_move=True)
-            elif self._auto_move_result is not None:
-                ok = self._auto_move_result
-                self._auto_move_result = None
-                if ok:
-                    self._begin_trial()
-                else:
-                    print("[Study] Resume-start restoration failed — stopped. "
-                          "Correct the motion issue and restart to retry.")
-                    self._phase = "reset_failed"
-
         elif self._phase == "reset_failed":
             # Do not automatically resend an identical failed motion every
             # render tick. The robot remains holding the board in its safe
@@ -1797,7 +2037,9 @@ class WorkholdingStudy:
                 if self._freedrive_enabled:
                     self._tick_freedrive_channel(now)
             if self._ar_enabled:
-                self._tick_ar_channel(now, recording=recording)
+                self._tick_ar_channel(
+                    now, recording=recording,
+                    accept_commands=recording)
                 if self._phase != "trial_running":
                     return
             if recording:
@@ -1814,6 +2056,17 @@ class WorkholdingStudy:
                 else:
                     pos_err, ang_err = float('nan'), float('nan')
                 self._finish_trial("forced", pos_err, ang_err)
+
+        elif self._phase == "await_snap_confirmation":
+            # The timed trial has ended, but AR participants may keep refining
+            # the board placement.  Continue servicing release commands while
+            # deliberately excluding these moves from timed interaction and
+            # path metrics.  ENTER captures the resulting placement as the
+            # enter-confirmation error before the deterministic exact snap.
+            if self._ar_enabled:
+                self._tick_ar_channel(now, recording=False)
+            if self._freedrive_enabled:
+                self._tick_post_stop_freedrive_channel(now)
 
         elif self._phase == "snap_to_target":
             if self._auto_move_result is None:

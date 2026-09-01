@@ -18,7 +18,8 @@ def _array(value, matrix=False):
     return result.reshape(4, 4) if matrix else result
 
 
-def _load(path: Path, requested_session: str | None):
+def _load(path: Path, requested_session: str | None,
+          requested_mode: str | None = None):
     records = []
     with path.open("r", encoding="utf-8") as handle:
         for line_number, line in enumerate(handle, 1):
@@ -30,11 +31,22 @@ def _load(path: Path, requested_session: str | None):
             if record.get("schema") == "workholding_replay_v1":
                 records.append(record)
     sessions = list(dict.fromkeys(record.get("session_id") for record in records))
-    session_id = requested_session or (sessions[-1] if sessions else None)
+    eligible_sessions = list(dict.fromkeys(
+        record.get("session_id") for record in records
+        if requested_mode is None or record.get("mode") == requested_mode))
+    session_id = requested_session or (
+        eligible_sessions[-1] if eligible_sessions else None)
     selected = [record for record in records
-                if record.get("session_id") == session_id]
+                if (record.get("session_id") == session_id
+                    and (requested_mode is None
+                         or record.get("mode") == requested_mode))]
     if not selected:
-        raise SystemExit(f"No matching workholding replay; sessions={sessions}")
+        available_modes = list(dict.fromkeys(
+            record.get("mode") for record in records
+            if record.get("session_id") == session_id))
+        raise SystemExit(
+            "No matching workholding replay; "
+            f"sessions={sessions}, modes={available_modes}")
     return session_id, selected
 
 
@@ -42,14 +54,18 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Replay a workholding JSONL log")
     parser.add_argument("log", type=Path)
     parser.add_argument("--session-id")
+    parser.add_argument("--mode", choices=("freedrive", "ar", "hybrid"),
+                        help="Replay only this study condition")
     parser.add_argument("--speed", type=float, default=1.0)
     args = parser.parse_args()
     if args.speed <= 0:
         parser.error("--speed must be positive")
 
-    session_id, records = _load(args.log, args.session_id)
+    session_id, records = _load(args.log, args.session_id, args.mode)
     metadata = next((r for r in records if r.get("event") == "session_start"), {})
-    vis = _WorkholdingSceneVis(f"Workholding Replay — {session_id}")
+    mode_label = f" — {args.mode}" if args.mode else ""
+    vis = _WorkholdingSceneVis(
+        f"Workholding Replay — {session_id}{mode_label}")
     targets = [_array(T, matrix=True) for T in metadata.get("target_poses", [])]
     if targets:
         vis.configure_target_ghosts(targets)

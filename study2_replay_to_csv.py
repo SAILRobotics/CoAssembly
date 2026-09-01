@@ -1,200 +1,231 @@
-"""Derive Study 2 (workholding) trial/trajectory CSVs from a replay JSONL.
+"""Read-only Study 2 group analysis from replay JSONL files.
 
-workholding_study.py logs only one file per participant now —
-{session_name}_replay.jsonl, shared across all modes. This script
-reconstructs the tabular CSVs analysts actually want to open in
-Excel/pandas (trial summaries and the raw trajectory/hand/head time
-series) from that single source of truth.
-
-Usage
------
-    python3 study2_replay_to_csv.py study_logs/study2/P01_replay.jsonl
-    python3 study2_replay_to_csv.py study_logs/study2/P01_replay.jsonl --out-dir out/
+Despite the historical filename, this script creates no files. Trials are
+averaged within participant/mode first, then group mean and sample SD are
+calculated across participants so every participant has equal weight.
 """
 
+from __future__ import annotations
+
 import argparse
-import csv
 import json
+import math
+from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
-from scipy.spatial.transform import Rotation as ScipyR
 
-_TRIAL_CSV_HEADER = [
-    "session_name", "mode", "trial_idx", "pose_idx",
-    "target_pos_x_m", "target_pos_y_m", "target_pos_z_m",
-    "target_euler_x_deg", "target_euler_y_deg", "target_euler_z_deg",
-    "start_time", "end_time", "duration_s",
-    "final_pos_error_m", "final_angle_error_deg",
-    "num_interactions", "completion_reason",
-]
-_TRAJ_CSV_HEADER = [
-    "session_name", "mode", "trial_idx", "t_rel_s",
-    "tcp_pos_x_m", "tcp_pos_y_m", "tcp_pos_z_m",
-    "tcp_quat_x", "tcp_quat_y", "tcp_quat_z", "tcp_quat_w",
-    "joint1_deg", "joint2_deg", "joint3_deg", "joint4_deg", "joint5_deg", "joint6_deg",
-]
-_HAND_TRAJ_CSV_HEADER = [
-    "session_name", "mode", "trial_idx", "pose_idx", "t_rel_s",
-    "sample_idx", "tracked", "joint_idx",
-    "joint_pos_x_m", "joint_pos_y_m", "joint_pos_z_m",
-]
-_HEAD_TRAJ_CSV_HEADER = [
-    "session_name", "mode", "trial_idx", "pose_idx", "t_rel_s",
-    "sample_idx", "tracked",
-    "head_pos_x_m", "head_pos_y_m", "head_pos_z_m",
-    "head_quat_x", "head_quat_y", "head_quat_z", "head_quat_w",
-]
-_DETAILED_TRIAL_CSV_HEADER = [
-    *_TRIAL_CSV_HEADER,
-    "start_board_pos_x_m", "start_board_pos_y_m", "start_board_pos_z_m",
-    "start_board_euler_x_deg", "start_board_euler_y_deg", "start_board_euler_z_deg",
-    "start_pos_error_m", "start_angle_error_deg",
-    "freedrive_interactions", "ar_interactions",
-    "tcp_path_length_m", "tcp_angular_path_length_deg",
-    "recording_start_source", "start_policy",
-    "snap_success", "snap_duration_s",
-    "post_snap_pos_error_m", "post_snap_angle_error_deg",
-    "target_poses_file",
-]
+_MODES = ("freedrive", "ar", "hybrid")
+
+# Display label, replay field, unit scale. Position errors are shown in cm.
+_METRICS = (
+    ("Completion time (s)", "duration_s", 1.0),
+    ("Timed interactions (#)", "num_interactions", 1.0),
+    ("Timed freedrive interactions (#)", "freedrive_interactions", 1.0),
+    ("Timed AR interactions (#)", "ar_interactions", 1.0),
+    ("Robot translation during task (m)", "tcp_path_length_m", 1.0),
+    ("Robot rotation during task (deg)", "tcp_angular_path_length_deg", 1.0),
+    ("Start position error (cm)", "start_pos_error_m", 100.0),
+    ("Start angle error (deg)", "start_angle_error_deg", 1.0),
+    ("First-reach time (s)", "first_reach_elapsed_s", 1.0),
+    ("First-reach position error (cm)", "first_reach_pos_error_m", 100.0),
+    ("First-reach angle error (deg)", "first_reach_angle_error_deg", 1.0),
+    ("Trials with qualifying AR command (%)",
+     "qualifying_ar_command_found", 100.0),
+    ("Time to qualifying AR command (s)",
+     "qualifying_ar_command_elapsed_s", 1.0),
+    ("Qualifying AR command number (#)",
+     "qualifying_ar_command_idx", 1.0),
+    ("Qualifying command position error (cm)",
+     "qualifying_ar_command_pos_error_m", 100.0),
+    ("Qualifying command angle error (deg)",
+     "qualifying_ar_command_angle_error_deg", 1.0),
+    ("Qualifying command → first reach (s)",
+     "qualifying_ar_command_to_first_reach_s", 1.0),
+    ("Qualifying command → auto-stop (s)",
+     "qualifying_ar_command_to_auto_stop_s", 1.0),
+    ("Auto-stop position error (cm)", "auto_stop_pos_error_m", 100.0),
+    ("Auto-stop angle error (deg)", "auto_stop_angle_error_deg", 1.0),
+    ("Post-stop interactions (#)", "post_stop_interactions", 1.0),
+    ("Post-stop freedrive interactions (#)",
+     "post_stop_freedrive_interactions", 1.0),
+    ("Post-stop AR interactions (#)", "post_stop_ar_interactions", 1.0),
+    ("Post-stop position improvement (cm)",
+     "post_stop_pos_error_improvement_m", 100.0),
+    ("Post-stop angle improvement (deg)",
+     "post_stop_angle_error_improvement_deg", 1.0),
+    ("Enter position error (cm)", "enter_confirmation_pos_error_m", 100.0),
+    ("Enter angle error (deg)", "enter_confirmation_angle_error_deg", 1.0),
+    ("Exact-snap duration (s)", "snap_duration_s", 1.0),
+    ("Post-snap position error (cm)", "post_snap_pos_error_m", 100.0),
+    ("Post-snap angle error (deg)", "post_snap_angle_error_deg", 1.0),
+)
 
 
-def _load_records(path: Path) -> list:
-    records = []
-    with path.open("r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
+def _participant_name(path: Path, record: dict) -> str:
+    if record.get("session_name"):
+        return str(record["session_name"])
+    stem = path.stem
+    return stem[:-7] if stem.endswith("_replay") else stem
+
+
+def _load_trial_summaries(paths: list[Path]) -> list[dict]:
+    summaries = []
+    participant_paths: dict[str, Path] = {}
+    for path in paths:
+        if not path.is_file():
+            raise SystemExit(f"Replay log not found: {path}")
+        records = []
+        with path.open("r", encoding="utf-8") as handle:
+            for line_number, line in enumerate(handle, 1):
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError as error:
+                    print(f"Warning: {path}:{line_number}: {error}")
+                    continue
+                records.append(record)
+        releases: dict[tuple, list[dict]] = defaultdict(list)
+        for record in records:
+            if (record.get("event") == "ar_handle_released"
+                    and record.get("recording")):
+                key = (record.get("session_id"), record.get("mode"),
+                       record.get("trial_idx"))
+                releases[key].append(record)
+        for commands in releases.values():
+            commands.sort(key=lambda record: record.get("time_unix_s", 0.0))
+
+        for record in records:
+            if (record.get("event") != "trial_summary"
+                    and record.get("type") != "trial_summary"):
                 continue
-            records.append(json.loads(line))
-    return records
+            participant = _participant_name(path, record)
+            resolved = path.resolve()
+            previous = participant_paths.setdefault(participant, resolved)
+            if previous != resolved:
+                raise SystemExit(
+                    f"Participant {participant!r} occurs in both {previous} "
+                    f"and {path}; pass each participant only once.")
+            enriched = {**record, "_participant": participant}
+            mode = record.get("mode")
+            if mode in {"ar", "hybrid"}:
+                enriched["qualifying_ar_command_found"] = 0.0
+                key = (record.get("session_id"), mode,
+                       record.get("trial_idx"))
+                for command_idx, command in enumerate(
+                        releases.get(key, []), 1):
+                    pos_error = _number(command.get("released_pos_error_m"))
+                    angle_error = _number(command.get(
+                        "released_angle_error_deg"))
+                    if pos_error < 0.05 and angle_error < 15.0:
+                        command_time = _number(command.get("time_unix_s"))
+                        enriched.update({
+                            "qualifying_ar_command_found": 1.0,
+                            "qualifying_ar_command_elapsed_s":
+                                command_time - _number(record.get("start_time")),
+                            "qualifying_ar_command_idx": command_idx,
+                            "qualifying_ar_command_pos_error_m": pos_error,
+                            "qualifying_ar_command_angle_error_deg": angle_error,
+                            "qualifying_ar_command_to_first_reach_s":
+                                _number(record.get("first_reach_time"))
+                                - command_time,
+                            "qualifying_ar_command_to_auto_stop_s":
+                                _number(record.get("end_time")) - command_time,
+                        })
+                        break
+            summaries.append(enriched)
+    if not summaries:
+        raise SystemExit("No completed Study 2 trial_summary records found.")
+    return summaries
 
 
-def _T_to_pos_quat(T) -> "tuple | None":
-    if T is None:
-        return None
-    T = np.asarray(T, dtype=float)
-    pos = T[:3, 3]
-    quat = ScipyR.from_matrix(T[:3, :3]).as_quat()
-    return pos, quat
+def _number(value) -> float:
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return float("nan")
+    return value if math.isfinite(value) else float("nan")
 
 
-def _trial_base_row(rec: dict) -> list:
-    pos = rec.get("target_pos_m") or [float("nan")] * 3
-    euler = rec.get("target_euler_deg") or [float("nan")] * 3
-    return [
-        rec.get("session_name", ""), rec.get("mode", ""),
-        rec.get("trial_idx", ""), rec.get("pose_idx", ""),
-        *pos, *euler,
-        rec.get("start_time", ""), rec.get("end_time", ""),
-        rec.get("duration_s", ""),
-        rec.get("final_pos_error_m", ""), rec.get("final_angle_error_deg", ""),
-        rec.get("num_interactions", ""), rec.get("completion_reason", ""),
-    ]
+def _analyze(summaries: list[dict], modes: list[str], title: str) -> None:
+    selected = [record for record in summaries if record.get("mode") in modes]
+    if not selected:
+        available = sorted({record.get("mode") for record in summaries})
+        raise SystemExit(f"No trials for requested modes; available={available}")
 
+    grouped: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    for record in selected:
+        grouped[(record["_participant"], record["mode"])].append(record)
 
-def _trial_detailed_row(rec: dict) -> list:
-    start_pos = rec.get("start_board_pos_m") or [float("nan")] * 3
-    start_euler = rec.get("start_board_euler_deg") or [float("nan")] * 3
-    return [
-        *_trial_base_row(rec),
-        *start_pos, *start_euler,
-        rec.get("start_pos_error_m", ""), rec.get("start_angle_error_deg", ""),
-        rec.get("freedrive_interactions", ""), rec.get("ar_interactions", ""),
-        rec.get("tcp_path_length_m", ""), rec.get("tcp_angular_path_length_deg", ""),
-        rec.get("recording_start_source", ""), rec.get("start_policy", ""),
-        rec.get("snap_success", ""), rec.get("snap_duration_s", ""),
-        rec.get("post_snap_pos_error_m", ""), rec.get("post_snap_angle_error_deg", ""),
-        rec.get("target_poses_file", ""),
-    ]
+    participants = {
+        mode: sorted({person for person, item_mode in grouped
+                      if item_mode == mode}) for mode in modes
+    }
+    trial_counts = {
+        mode: sum(len(rows) for (person, item_mode), rows in grouped.items()
+                  if item_mode == mode) for mode in modes
+    }
 
+    cells = {}
+    for label, field, scale in _METRICS:
+        for mode in modes:
+            participant_means = []
+            for person in participants[mode]:
+                values = np.asarray([
+                    _number(record.get(field)) * scale
+                    for record in grouped[(person, mode)]
+                ])
+                values = values[np.isfinite(values)]
+                if values.size:
+                    participant_means.append(float(np.mean(values)))
+            if not participant_means:
+                cells[(label, mode)] = "—"
+                continue
+            mean = float(np.mean(participant_means))
+            sd = (float(np.std(participant_means, ddof=1))
+                  if len(participant_means) > 1 else float("nan"))
+            cells[(label, mode)] = (f"{mean:.3f} ± {sd:.3f}"
+                                    if math.isfinite(sd)
+                                    else f"{mean:.3f} ± n/a")
 
-def convert(replay_path: Path, out_dir: Path) -> None:
-    records = _load_records(replay_path)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    stem = replay_path.stem
-    if stem.endswith("_replay"):
-        stem = stem[: -len("_replay")]
+    headers = ["Metric", *[
+        f"{mode} (P={len(participants[mode])}, T={trial_counts[mode]})"
+        for mode in modes
+    ]]
+    rows = [[label, *[cells[(label, mode)] for mode in modes]]
+            for label, _, _ in _METRICS]
+    widths = [len(header) for header in headers]
+    for row in rows:
+        widths = [max(width, len(value)) for width, value in zip(widths, row)]
 
-    trials_rows, detailed_rows = [], []
-    traj_rows, left_hand_rows, right_hand_rows, head_rows = [], [], [], []
-    sample_idx_by_trial: dict = {}
-
-    for rec in records:
-        rtype = rec.get("type")
-        if rtype == "trial_base_summary":
-            trials_rows.append(_trial_base_row(rec))
-            continue
-        if rtype == "trial_summary":
-            detailed_rows.append(_trial_detailed_row(rec))
-            continue
-        if rtype != "frame":
-            continue
-
-        session_name, mode = rec.get("session_name", ""), rec.get("mode", "")
-        trial_idx, pose_idx = rec.get("trial_idx", ""), rec.get("pose_idx", "")
-        t_rel = rec.get("trial_elapsed_s", "")
-        key = (mode, trial_idx)
-        sample_idx = sample_idx_by_trial.get(key, 0)
-        sample_idx_by_trial[key] = sample_idx + 1
-
-        tcp = _T_to_pos_quat(rec.get("tcp_world_T"))
-        q = rec.get("robot_q_rad")
-        if tcp is not None and q is not None:
-            pos, quat = tcp
-            traj_rows.append([
-                session_name, mode, trial_idx, t_rel,
-                *pos.tolist(), *quat.tolist(),
-                *np.degrees(np.asarray(q, dtype=float)).tolist(),
-            ])
-
-        def _hand_rows(points) -> list:
-            prefix = [session_name, mode, trial_idx, pose_idx, t_rel, sample_idx]
-            if not points:
-                return [[*prefix, False, "", "", "", ""]]
-            return [
-                [*prefix, True, j, *[float(v) for v in pt]]
-                for j, pt in enumerate(points)
-            ]
-
-        left_hand_rows.extend(_hand_rows(rec.get("left_hand_world")))
-        right_hand_rows.extend(_hand_rows(rec.get("right_hand_world")))
-
-        head = _T_to_pos_quat(rec.get("head_world_T"))
-        head_prefix = [session_name, mode, trial_idx, pose_idx, t_rel, sample_idx]
-        if head is None:
-            head_rows.append([*head_prefix, False, "", "", "", "", "", "", ""])
-        else:
-            pos, quat = head
-            head_rows.append([*head_prefix, True, *pos.tolist(), *quat.tolist()])
-
-    def _write(name: str, header: list, rows: list) -> None:
-        path = out_dir / f"{stem}_{name}.csv"
-        with path.open("w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(header)
-            writer.writerows(rows)
-        print(f"[study2_replay_to_csv] {path} ({len(rows)} rows)")
-
-    _write("trials", _TRIAL_CSV_HEADER, trials_rows)
-    _write("trials_detailed", _DETAILED_TRIAL_CSV_HEADER, detailed_rows)
-    _write("trajectory", _TRAJ_CSV_HEADER, traj_rows)
-    _write("left_hand_trajectory", _HAND_TRAJ_CSV_HEADER, left_hand_rows)
-    _write("right_hand_trajectory", _HAND_TRAJ_CSV_HEADER, right_hand_rows)
-    _write("head_trajectory", _HEAD_TRAJ_CSV_HEADER, head_rows)
+    print(f"\n{title}")
+    print("Study 2 mode comparison (participant means; group mean ± sample SD)")
+    print("P = participants, T = completed trials; — = not logged")
+    print("  ".join(value.ljust(width)
+                    for value, width in zip(headers, widths)))
+    print("  ".join("-" * width for width in widths))
+    for row in rows:
+        print("  ".join(
+            value.ljust(width) if i == 0 else value.rjust(width)
+            for i, (value, width) in enumerate(zip(row, widths))))
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(
-        description="Derive Study 2 trial/trajectory CSVs from a merged "
-                     "workholding replay JSONL.")
-    ap.add_argument("replay_log", type=Path,
-                    help="Path to {session_name}_replay.jsonl")
-    ap.add_argument("--out-dir", type=Path, default=None,
-                    help="Defaults to the replay log's own directory.")
-    args = ap.parse_args()
-    out_dir = args.out_dir or args.replay_log.parent
-    convert(args.replay_log, out_dir)
+    parser = argparse.ArgumentParser(
+        description="Read-only Study 2 comparison across participants/modes.")
+    parser.add_argument("replay_logs", type=Path, nargs="+",
+                        help="One or more participant *_replay.jsonl files")
+    parser.add_argument("--mode", nargs="+", choices=_MODES,
+                        default=list(_MODES),
+                        help="Modes included in the printed comparison")
+    args = parser.parse_args()
+    summaries = _load_trial_summaries(args.replay_logs)
+    _analyze(summaries, args.mode, "ALL TRIALS (T1–T10)")
+    far = [record for record in summaries
+           if 0 <= int(record.get("trial_idx", -1)) < 5]
+    close = [record for record in summaries
+             if 5 <= int(record.get("trial_idx", -1)) < 10]
+    _analyze(far, args.mode, "ORIGINAL TARGETS / DEFAULT START (T1–T5)")
+    _analyze(close, args.mode, "DISPERSED DUPLICATES / DEFAULT START (T6–T10)")
 
 
 if __name__ == "__main__":
