@@ -8078,7 +8078,7 @@ MonoBehaviour:
   _scoringModifier:
     _positionRotationWeight: 0.8
   _slippiness: 0
-  _supportedGrabTypes: 2
+  _supportedGrabTypes: 3
   _pinchGrabRules:
     _thumbRequirement: 1
     _indexRequirement: 1
@@ -8127,7 +8127,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 5855890103141667583, guid: f60e6d425881d33409ef73564f7b859f, type: 3}
       propertyPath: m_LocalPosition.x
-      value: 0
+      value: 0.025
       objectReference: {fileID: 0}
     - target: {fileID: 5855890103141667583, guid: f60e6d425881d33409ef73564f7b859f, type: 3}
       propertyPath: m_LocalPosition.y
@@ -8801,7 +8801,7 @@ MonoBehaviour:
   _scoringModifier:
     _positionRotationWeight: 0.8
   _slippiness: 0
-  _supportedGrabTypes: 2
+  _supportedGrabTypes: 3
   _pinchGrabRules:
     _thumbRequirement: 1
     _indexRequirement: 1
