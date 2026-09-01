@@ -9,8 +9,9 @@ tests:
     freedrive  — physically drag the arm+board by hand. No AR handle.
     ar         — grab and drag the AR box handle in the headset; the robot
                  continuously follows it. No freedrive.
-    hybrid     — both channels begin live; inside 30 cm of the study target,
-                 AR is disabled and only freedrive remains.
+    hybrid     — both channels begin live; inside 15 cm of the study target,
+                 the AR interface is hidden and only freedrive remains. Moving
+                 outside 15 cm re-enables AR.
 
 Run the script once per mode (e.g. three separate invocations, one per
 condition) to cover all three.
@@ -446,9 +447,9 @@ class WorkholdingStudy:
     _STUDY_MOVE_STOP_DWELL_S   = 0.40    # stationary time required to end segment
     _AR_FOLLOW_POS_DEADBAND_M  = 0.005   # suppress hand-tracking position jitter
     _AR_FOLLOW_ANGLE_DEADBAND_DEG = 2.0  # suppress hand-tracking rotation jitter
-    _HYBRID_AR_CUTOFF_DISTANCE_M = 0.30  # switch permanently to freedrive
+    _HYBRID_AR_CUTOFF_DISTANCE_M = 0.15  # reversible AR/freedrive boundary
     _HYBRID_FREEDRIVE_GRIPPER_RGBA = [0.10, 0.75, 1.00, 0.90]
-    _PALM_CBF_RADIUS_M = 0.10       # 20 cm diameter hand obstacle
+    _PALM_CBF_RADIUS_M = 0.03       # 6 cm diameter hand obstacle
     _PALM_CBF_CLEARANCE_M = 0.02
     _PALM_CBF_PUBLISH_INTERVAL_S = 1.0 / 30.0
     _STUDY_TRAJ_SAMPLE_HZ     = 10.0
@@ -1285,6 +1286,7 @@ class WorkholdingStudy:
         following_ar = bool(
             self._ar_enabled
             and not self._hybrid_freedrive_only
+            and self._phase in ("trial_running", "await_snap_confirmation")
             and (self._auto_move_pending
                  or self.robot.board_state == "moving_board"))
         if not following_ar or not self.anchor.locked:
@@ -1372,6 +1374,24 @@ class WorkholdingStudy:
                                 motion_profile="workholding",
                                 on_complete=self._on_auto_move_complete)
 
+    def _start_default_joint_reset(self) -> None:
+        """Return to the known default configuration without Cartesian IK."""
+        self._auto_move_pending = True
+        self._auto_move_result = None
+        self._replay_event(
+            "default_reset_started",
+            target_joints_deg=list(cfg.ROBOT_DEFAULT_JOINT_DEG))
+
+        def _completed(ok: bool) -> None:
+            self._auto_move_pending = False
+            self._auto_move_result = bool(ok)
+            self._replay_event("default_reset_complete", success=bool(ok))
+
+        self.robot.move_to_joints(
+            cfg.ROBOT_DEFAULT_JOINT_DEG, degrees=True,
+            board_move=True, speed_multiplier=0.6,
+            on_complete=_completed)
+
     def _begin_trial(self) -> None:
         pose_idx = self._pose_order[self._trial_cursor]
         self._target_preview_cursor = self._trial_cursor
@@ -1442,10 +1462,11 @@ class WorkholdingStudy:
                            start_policy=self._trial_start_policy,
                            target_board_world_T=self._trial_target_T)
 
-    def _maybe_lock_hybrid_to_freedrive(self) -> None:
-        """Disable AR for the rest of a Hybrid trial inside the 30 cm zone."""
-        if (self.mode != "hybrid" or self._hybrid_freedrive_only
-                or not self._trial_timer_running
+    def _update_hybrid_control_zone(self) -> None:
+        """Switch Hybrid between AR+freedrive and freedrive-only at 15 cm."""
+        active = (self._trial_timer_running
+                  or self._phase == "await_snap_confirmation")
+        if (self.mode != "hybrid" or not active
                 or self._trial_target_T is None):
             return
         T_tcp = self.robot.tcp_pose
@@ -1454,27 +1475,44 @@ class WorkholdingStudy:
         T_board = self._board_pose_from_tcp(T_tcp)
         distance_m = float(np.linalg.norm(
             T_board[:3, 3] - self._trial_target_T[:3, 3]))
-        if distance_m > self._HYBRID_AR_CUTOFF_DISTANCE_M:
+        should_be_freedrive_only = (
+            distance_m <= self._HYBRID_AR_CUTOFF_DISTANCE_M)
+        if should_be_freedrive_only == self._hybrid_freedrive_only:
             return
 
-        self._hybrid_freedrive_only = True
-        # Hide and disable the interactive AR board/handle immediately. The
-        # separate Study 2 target ghost remains visible on its own port.
-        self.ar_bridge.publish("idle", T_tcp)
-        if self._auto_move_pending or self.robot.board_state == "moving_board":
-            self.robot.cancel_move()
-        self.robot.set_board_freedrive(True)
+        self._hybrid_freedrive_only = should_be_freedrive_only
+        if should_be_freedrive_only:
+            # GripStateReceiver's idle state hides the interactive AR board,
+            # handle, and its carried-gripper visualization. The independent
+            # study target ghost remains visible.
+            self.ar_bridge.publish("idle", T_tcp)
+            if (self._auto_move_pending
+                    or self.robot.board_state == "moving_board"):
+                self.robot.cancel_move()
+            self.robot.set_board_freedrive(True)
+        else:
+            # The physical freedrive motion carried the board back outside the
+            # zone. Restore the AR board/handle/gripper at the live robot pose;
+            # a new AR grab can then resume continuous following.
+            self._ar_follow_last_board_T = None
+            self.ar_bridge.publish("grabbed", T_tcp)
+            self.robot.set_board_freedrive(True)
         self._prev_tcp_pos_for_speed = None
         self._prev_tcp_rot_for_speed = None
         self._prev_tcp_t_for_speed = None
         self._was_moving_freedrive = False
         self._freedrive_stationary_since = None
         self._close_status_line()
-        print(f"[Hybrid] Within {distance_m * 100:.1f} cm of target — "
-              "AR disabled; freedrive only for the rest of this trial.")
+        if should_be_freedrive_only:
+            print(f"[Hybrid] Within {distance_m * 100:.1f} cm of target — "
+                  "AR board/handle/gripper hidden; freedrive only.")
+            event = "hybrid_ar_disabled_near_target"
+        else:
+            print(f"[Hybrid] Outside target zone at {distance_m * 100:.1f} cm "
+                  "— AR board/handle/gripper re-enabled.")
+            event = "hybrid_ar_reenabled_outside_target_zone"
         self._replay_event(
-            "hybrid_ar_disabled_near_target",
-            distance_to_target_m=distance_m,
+            event, distance_to_target_m=distance_m,
             cutoff_distance_m=self._HYBRID_AR_CUTOFF_DISTANCE_M,
             board_world_T=T_board)
 
@@ -2101,7 +2139,7 @@ class WorkholdingStudy:
 
         elif self._phase == "reset_to_default":
             if not self._auto_move_pending and self._auto_move_result is None:
-                self._start_auto_move(self._default_tcp_pos, self._default_tcp_quat)
+                self._start_default_joint_reset()
             elif self._auto_move_result is not None:
                 ok = self._auto_move_result
                 self._auto_move_result = None
@@ -2126,7 +2164,7 @@ class WorkholdingStudy:
             recording = self._trial_timer_running
             if recording:
                 self._update_path_length_accumulators(now)
-                self._maybe_lock_hybrid_to_freedrive()
+                self._update_hybrid_control_zone()
             if recording:
                 if self._freedrive_enabled:
                     self._tick_freedrive_channel(now)
@@ -2157,6 +2195,7 @@ class WorkholdingStudy:
             # deliberately excluding these moves from timed interaction and
             # path metrics.  ENTER captures the resulting placement as the
             # enter-confirmation error before the deterministic exact snap.
+            self._update_hybrid_control_zone()
             if self._ar_enabled and not self._hybrid_freedrive_only:
                 self._tick_ar_channel(now, recording=False)
             if self._freedrive_enabled:
