@@ -40,6 +40,7 @@ public class WorkholdingBoxReceiver : MonoBehaviour
     public Color blackColor = Color.black;
 
     [Header("Target gripper")]
+    [Tooltip("Visual template only. A non-interactive ghost clone is created at runtime; this object is never moved, hidden, or recolored.")]
     public GameObject targetGripper;
     public bool showTargetGripper = true;
     public float targetGripperForwardOffset = 0.23215f;
@@ -81,6 +82,7 @@ public class WorkholdingBoxReceiver : MonoBehaviour
     private Renderer[]       _renderers;
     private Material         _boardMaterial;
     private Renderer[]       _targetGripperRenderers;
+    private GameObject       _targetGripperVisual;
     private Material         _targetGripperMaterial;
     private MaterialPropertyBlock _targetGripperColorBlock;
     private bool             _loggedShow;
@@ -111,7 +113,28 @@ public class WorkholdingBoxReceiver : MonoBehaviour
 
         if (targetGripper != null)
         {
-            _targetGripperRenderers = targetGripper.GetComponentsInChildren<Renderer>(true);
+            Transform parent = worldRoot != null
+                ? worldRoot : targetGripper.transform.parent;
+            _targetGripperVisual = Instantiate(targetGripper, parent, false);
+            _targetGripperVisual.name = "TargetGripperGhost";
+
+            // The target is a visual guide only. In particular, cloned tool-id 200
+            // publishers must not be able to toggle Hybrid freedrive.
+            foreach (MonoBehaviour behaviour in
+                     _targetGripperVisual.GetComponentsInChildren<MonoBehaviour>(true))
+                behaviour.enabled = false;
+            foreach (Collider collider in
+                     _targetGripperVisual.GetComponentsInChildren<Collider>(true))
+                collider.enabled = false;
+            foreach (Rigidbody body in
+                     _targetGripperVisual.GetComponentsInChildren<Rigidbody>(true))
+            {
+                body.isKinematic = true;
+                body.detectCollisions = false;
+            }
+
+            _targetGripperRenderers =
+                _targetGripperVisual.GetComponentsInChildren<Renderer>(true);
             _targetGripperColorBlock = new MaterialPropertyBlock();
             ApplyTargetGripperMaterial();
             SetRenderersVisible(_targetGripperRenderers, false);
@@ -202,17 +225,17 @@ public class WorkholdingBoxReceiver : MonoBehaviour
             ApplyProximityColor(latest.proximityState);
         SetRenderersVisible(_renderers, true);
 
-        if (showTargetGripper && targetGripper != null)
+        if (showTargetGripper && _targetGripperVisual != null)
         {
-            if (worldRoot != null && targetGripper.transform.parent != worldRoot)
-                targetGripper.transform.SetParent(worldRoot, false);
+            if (worldRoot != null && _targetGripperVisual.transform.parent != worldRoot)
+                _targetGripperVisual.transform.SetParent(worldRoot, false);
 
             // Python defines the board offset along Open3D/TCP-local +Z.
             // The project conversion maps Open3D (x,y,z) to Unity (x,z,y),
             // therefore that local offset axis is Unity-local +Y, not +Z.
             Vector3 gripperOffsetAxis = latest.rot * Vector3.up;
-            targetGripper.transform.localPosition = latest.pos - targetGripperForwardOffset * gripperOffsetAxis;
-            targetGripper.transform.localRotation = latest.rot;
+            _targetGripperVisual.transform.localPosition = latest.pos - targetGripperForwardOffset * gripperOffsetAxis;
+            _targetGripperVisual.transform.localRotation = latest.rot;
             if (latest.gripperColor.HasValue)
                 ApplyTargetGripperColor(latest.gripperColor.Value);
             SetRenderersVisible(_targetGripperRenderers, true);
@@ -224,7 +247,7 @@ public class WorkholdingBoxReceiver : MonoBehaviour
             Debug.Log($"[WorkholdingBoxReceiver] First box pose applied — localPos="
                       + $"{arBox.transform.localPosition}  scale={latest.size}  "
                       + $"renderers={( _renderers != null ? _renderers.Length : 0)}  "
-                      + $"targetGripper={(targetGripper != null ? targetGripper.name : "<none>")}");
+                      + $"targetGripper={(_targetGripperVisual != null ? _targetGripperVisual.name : "<none>")}");
         }
     }
 
@@ -364,6 +387,8 @@ public class WorkholdingBoxReceiver : MonoBehaviour
             Destroy(_boardMaterial);
         if (_targetGripperMaterial != null)
             Destroy(_targetGripperMaterial);
+        if (_targetGripperVisual != null)
+            Destroy(_targetGripperVisual);
         NetMQManager.UnregisterReceiver();
     }
 }
