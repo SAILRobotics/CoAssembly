@@ -38,10 +38,7 @@ python3 robot_control_server.py --simulation
 
 Use the Unity `WorkholdingTesting` scene. Confirm that
 `WorkholdingBoxReceiver` is listening on port `5026`. The target file contains
-the ten board poses shared by all three conditions. On first load of a
-pose-only target file, the startup reachability pass generates, validates, and
-stores fixed joint angles in that same JSON. Preview and exact snapping then
-reuse those angles without solving IK again.
+the ten board poses shared by all three conditions.
 
 ### Teach target poses
 
@@ -49,13 +46,10 @@ reuse those angles without solving IK again.
 python3 workholding_study.py \
   --session-name setup \
   --mode freedrive \
-  --teach-targets study_logs/study2/workholding_targets.json \
-  --no-resume
+  --teach-targets study_logs/study2/workholding_targets.json
 ```
 
-With `--no-resume`, teaching replaces the shared target file. Each marked
-target stores both its board pose and the robot's six joint angles, allowing
-deterministic exact-target `moveJ` snaps. Skip this step during normal
+Teaching overwrites the shared target-pose file. Skip this step during normal
 participant sessions unless the targets need to be recalibrated.
 
 ### Condition 1 — Freedrive
@@ -70,7 +64,8 @@ python3 workholding_study.py \
 python3 workholding_study.py \
   --session-name P01 \
   --mode freedrive \
-  --target-poses-file study_logs/study2/workholding_targets.json
+  --target-poses-file study_logs/study2/workholding_targets.json \
+  --no-resume
 
 ### Condition 2 — AR handle
 
@@ -120,14 +115,14 @@ python3 study3_handover_study.py \
   --condition ghost_no_color
 ```
 
-### Condition 3 — No ghost, robot color
+<!-- ### Condition 3 — No ghost, robot color
 
 ```bash
 python3 study3_handover_study.py \
   --no-simulation \
   --participant-id P01 \
   --condition no_ghost_robot_color
-```
+``` -->
 
 ### Condition 4 — Ghost and color
 
@@ -146,7 +141,7 @@ Run each condition with the same participant ID.
 
 ```bash
 python3 task_graph/study4_part_acquisition_study.py \
-  --participant-id P01 \
+  --participant-id mahya \
   --condition gesture \
   --no-voice
 ```
@@ -155,7 +150,7 @@ python3 task_graph/study4_part_acquisition_study.py \
 
 ```bash
 python3 task_graph/study4_part_acquisition_study.py \
-  --participant-id P01 \
+  --participant-id mahya \
   --condition language \
   --vlm-model Qwen/Qwen3-VL-8B-Instruct
 ```
@@ -169,7 +164,7 @@ when intentionally starting that participant and condition from scratch.
 
 ```bash
 python3 task_graph/study4_part_acquisition_study.py \
-  --participant-id P01 \
+  --participant-id mahya \
   --condition task_aware \
   --vlm-model Qwen/Qwen3-VL-8B-Instruct
 ```
@@ -183,3 +178,30 @@ python3 task_graph/study4_part_acquisition_study.py \
   --vlm-model Qwen/Qwen3-VL-8B-Instruct \
   --no-resume
 ```
+
+
+
+
+ID	Internal name	Friendly name
+14	GEAR_ROD_ROW1	Row 1 gear rod
+15	GEAR_ROD_ROW2	Row 2 gear rod
+16	GEAR_ROD_ROW3	Row 3 gear rod
+17	GEAR_ROD_ROW4	Row 4 gear rod
+18	GEAR_STAND_ROW1_LEFT	Row 1 left gear stand
+19	GEAR_STAND_ROW1_RIGHT	Row 1 right gear stand
+20	GEAR_STAND_ROW2_LEFT	Row 2 left gear stand
+21	GEAR_STAND_ROW2_RIGHT	Row 2 right gear stand
+22	GEAR_STAND_ROW3_LEFT	Row 3 left gear stand
+23	GEAR_STAND_ROW3_RIGHT	Row 3 right gear stand
+24	GEAR_STAND_ROW4_LEFT	Row 4 left gear stand
+25	GEAR_STAND_ROW4_RIGHT	Row 4 right gear stand
+26	GEAR_ROW1_LEFT	Row 1 gear
+27	GEAR_ROW2_LEFT	Row 2 left gear
+28	GEAR_ROW2_RIGHT	Row 2 right gear
+29	GEAR_ROW3_LEFT	Row 3 left gear
+30	GEAR_ROW3_RIGHT	Row 3 right gear
+31	GEAR_ROW4_LEFT	Row 4 gear
+32	ROW3_KIT	Row 3 component kit
+33	ROW4_KIT	Row 4 component kit
+34	ROW2_KIT	Row 2 component kit
+35	ROW1_KIT	Row 1 component kit
