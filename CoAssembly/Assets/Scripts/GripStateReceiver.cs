@@ -261,13 +261,6 @@ public class GripStateReceiver : MonoBehaviour
             arBox.SetActive(true);
             SetRenderersVisible(_boardRenderers, true);
         }
-        else if (handleActive && arBox != null)
-        {
-            // Re-enable the complete AR manipulation visualization after a
-            // Hybrid freedrive-only zone published idle and hid it.
-            arBox.SetActive(true);
-            SetRenderersVisible(_boardRenderers, true);
-        }
 
         // Freeze the box the instant the user releases — before Python even transitions to 'moving'
         if (grabbed && !_prevIsGrabbed)
@@ -333,6 +326,14 @@ public class GripStateReceiver : MonoBehaviour
         }
         if (moveComplete)
             _targetReachedForCurrentMove = false;
+
+        // While AR control is available but no manipulation/move result is
+        // active, expose only the selectable handle. The board and cloned
+        // carried gripper appear when OnGrabbed activates arBox. In the
+        // Hybrid freedrive-only zone, idle hides the handle as well.
+        if (arBox != null && handleActive && !grabbed
+                && !_boxFrozen && !_resultVisible)
+            arBox.SetActive(false);
 
         // Update box transform to follow claw only while idle and not frozen at a target
         if (arBox != null && !grabbed && !_boxFrozen && !_resultVisible)
