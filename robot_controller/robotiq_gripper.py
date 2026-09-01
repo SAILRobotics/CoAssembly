@@ -301,8 +301,24 @@ class RobotiqGripper:
         while self._get_var(self.PRE) != cmd_pos:
             time.sleep(0.001)
 
-        # wait until not moving
+        # OBJ may still contain the terminal status from the previous command
+        # for a short time after PRE acknowledges the new request. Do not
+        # mistake that stale STOPPED_* value for the result of this move.
+        # Wait for motion or confirmed arrival before interpreting a stopped
+        # status; retain a timeout for a genuinely blocked command.
+        start_deadline = time.monotonic() + 1.0
         cur_obj = self._get_var(self.OBJ)
+        while RobotiqGripper.ObjectStatus(cur_obj) != RobotiqGripper.ObjectStatus.MOVING:
+            current_pos = self._get_var(self.POS)
+            current_status = RobotiqGripper.ObjectStatus(cur_obj)
+            if (current_status == RobotiqGripper.ObjectStatus.AT_DEST
+                    or current_pos == cmd_pos
+                    or time.monotonic() >= start_deadline):
+                break
+            time.sleep(0.02)
+            cur_obj = self._get_var(self.OBJ)
+
+        # Once the new command is moving, wait for its terminal status.
         while RobotiqGripper.ObjectStatus(cur_obj) == RobotiqGripper.ObjectStatus.MOVING:
             time.sleep(0.02)
             cur_obj = self._get_var(self.OBJ)

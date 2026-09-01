@@ -104,21 +104,42 @@ labels such as `BEARING_ROW1_RIGHT`, filenames, or interface numbering such as
 
 
 def _load_part_label_names() -> list[str]:
-    """Load dataset parts plus the task's fastening-tool ontology."""
+    """Load the canonical ontology without depending on a study-output CSV."""
+    labels = set(FASTENING_TOOL_LABELS)
+    labels.update(ROW_KIT_LABELS)
+    labels.update(ROW_GROUP_LABELS)
+    labels.update(ASSEMBLY_LABELS)
+
+    # The physical layout is the authoritative source for fetchable objects.
+    # It is checked into the repository, unlike referring-expression response
+    # exports, which may legitimately be absent on a study machine.
     try:
-        path = Path(__file__).resolve().parent / "referring_expression_responses.csv"
-        with path.open(newline="", encoding="utf-8-sig") as handle:
-            rows = csv.DictReader(handle)
-            labels = {row.get("target_name", "").strip() for row in rows
-                      if row.get("target_name", "").strip()
-                      and row.get("Verified", "o").strip().casefold() == "o"}
-            labels.update(FASTENING_TOOL_LABELS)
-            labels.update(ROW_KIT_LABELS)
-            labels.update(ROW_GROUP_LABELS)
-            labels.update(ASSEMBLY_LABELS)
-            return sorted(labels)
-    except Exception:
-        return []
+        layout_path = (Path(__file__).resolve().parent.parent
+                       / "scene_layout" / "tool_layout1.json")
+        entries = json.loads(layout_path.read_text(encoding="utf-8")).get(
+            "tools", [])
+        labels.update(
+            _layout_type_to_allowed_label(entry.get("type", ""))
+            for entry in entries if entry.get("type"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        pass
+
+    # Optional historical dataset labels may extend the ontology, but their
+    # absence must never invalidate canonical graph/layout identifiers.
+    response_path = (Path(__file__).resolve().parent
+                     / "referring_expression_responses.csv")
+    if response_path.exists():
+        try:
+            with response_path.open(newline="", encoding="utf-8-sig") as handle:
+                rows = csv.DictReader(handle)
+                labels.update(
+                    row.get("target_name", "").strip() for row in rows
+                    if row.get("target_name", "").strip()
+                    and row.get("Verified", "o").strip().casefold() == "o")
+        except OSError:
+            pass
+    labels.discard("")
+    return sorted(labels)
 
 
 def _load_part_labels() -> str:
@@ -1420,6 +1441,11 @@ Return only independently selectable physical objects on the pegboard:
                     self._part_events.put({
                         "text": question,
                         "label": label,
+                        # This event is the candidate-resolution continuation
+                        # of a validated step_items_request. Preserve that
+                        # origin so task policy does not mistake the predicted
+                        # AMBIGUOUS label for an ordinary part reference.
+                        "origin_intent": "step_items_request",
                         "part_action": part_action,
                         # Preserve discourse semantics from the user's original
                         # request. The second pass predicts objects only and is

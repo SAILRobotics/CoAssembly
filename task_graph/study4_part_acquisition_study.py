@@ -54,6 +54,16 @@ except Exception:
     _DEFAULT_STEP_OUT_PORT = 5025   # OUT — this viewer -> gearbox_control.py --open-3d (selected step)
 
 
+def _study4_tool_layout(condition: str | None) -> Path:
+    """Return the condition-specific layout for the Study 4 manipulation."""
+    filename = {
+        "gesture": "tool_layout1.json",
+        "language": "tool_layout_condition2.json",
+        "task_aware": "tool_layout_condition3.json",
+    }.get(condition, "tool_layout1.json")
+    return Path(__file__).resolve().parent.parent / "scene_layout" / filename
+
+
 @dataclass(frozen=True)
 class Step:
     id: str                    # e.g. "r2_bearing_left"
@@ -445,8 +455,8 @@ class Study4Open3DScene:
     AUTO_LOCK_MAX_TILT_DEG = 45.0
     RELOCK_COOLDOWN = 2.0
 
-    def __init__(self, unity_ip: str, on_part_click=None,
-                 on_interaction=None) -> None:
+    def __init__(self, unity_ip: str, layout_path: str | Path,
+                 on_part_click=None, on_interaction=None) -> None:
         scene_started = time.perf_counter()
 
         def scene_startup(message: str) -> None:
@@ -476,7 +486,7 @@ class Study4Open3DScene:
         self._color_pub.connect(
             f"tcp://{unity_ip}:{main_setting.TOOL_COLOR_PORT}")
         scene_layout_dir = Path(__file__).resolve().parent.parent / "scene_layout"
-        layout_path = scene_layout_dir / "tool_layout1.json"
+        layout_path = Path(layout_path)
         pose_path = scene_layout_dir / "T_world10_pegboard101.npz"
         layout = json.loads(layout_path.read_text())
         self.tool_defs = list(layout.get("tools", []))
@@ -917,7 +927,8 @@ class Study4Open3DScene:
 
 
 def _study4_open3d_worker(
-        unity_ip: str, commands, events, responses, motion_summaries) -> None:
+        unity_ip: str, layout_path: str, commands, events, responses,
+        motion_summaries) -> None:
     """Own Open3D in a separate process so it cannot corrupt Dear PyGui's GL context."""
     request_id = 0
 
@@ -938,7 +949,7 @@ def _study4_open3d_worker(
     last_motion_publish = 0.0
     try:
         scene = Study4Open3DScene(
-            unity_ip, on_part_click=score_click,
+            unity_ip, layout_path, on_part_click=score_click,
             on_interaction=forward_interaction)
         events.put(("ready", None, None))
         running = True
@@ -985,7 +996,7 @@ def _study4_open3d_worker(
 class Study4Open3DProcess:
     """Queue-backed facade exposing the Study4Open3DScene methods used by the GUI."""
 
-    def __init__(self, unity_ip: str, on_part_click,
+    def __init__(self, unity_ip: str, layout_path: str | Path, on_part_click,
                  on_interaction=None) -> None:
         context = multiprocessing.get_context("spawn")
         self._commands = context.Queue()
@@ -996,8 +1007,8 @@ class Study4Open3DProcess:
         self._on_interaction = on_interaction
         self._process = context.Process(
             target=_study4_open3d_worker,
-            args=(unity_ip, self._commands, self._events, self._responses,
-                  self._motion_summaries),
+            args=(unity_ip, str(layout_path), self._commands, self._events,
+                  self._responses, self._motion_summaries),
             name="study4-open3d",
             daemon=True,
         )
@@ -1804,6 +1815,7 @@ class DearPyGuiTaskGraphApp:
         if study4_condition not in (None, "gesture", "language", "task_aware"):
             raise ValueError("invalid Study 4 condition")
         self.study4_condition = study4_condition
+        self._tool_layout_path = _study4_tool_layout(study4_condition)
         # Store the currently selected task-step ID, or None when unselected.
         self.selected_id: str | None = None
         # Map task-step IDs to their Dear PyGui node tags.
@@ -1871,9 +1883,9 @@ class DearPyGuiTaskGraphApp:
         self._last_hover_spoken_at = 0.0
         self._study4_scene: Study4Open3DProcess | None = None
         self._tool_index = gearbox_control.load_tool_index(
-            gearbox_control._DEFAULT_TOOL_JSON)
+            self._tool_layout_path)
         try:
-            layout = json.loads(Path(gearbox_control._DEFAULT_TOOL_JSON).read_text())
+            layout = json.loads(self._tool_layout_path.read_text())
             self._tool_defs_by_id = {
                 int(item["id"]): item for item in layout.get("tools", [])
             }
@@ -2089,7 +2101,8 @@ class DearPyGuiTaskGraphApp:
             startup("Starting camera/marker/Open3D scene process...")
             try:
                 self._study4_scene = Study4Open3DProcess(
-                    unity_ip, on_part_click=self._score_part_click,
+                    unity_ip, self._tool_layout_path,
+                    on_part_click=self._score_part_click,
                     on_interaction=self._handle_pegboard_interaction)
                 startup("Open3D scene process launched")
             except Exception as error:
@@ -3036,19 +3049,15 @@ class DearPyGuiTaskGraphApp:
         return parts
 
     def _publish_selected_step_board_highlight(self) -> None:
-        """Publish recommendation color or clear ordinary selection colors.
+        """Clear semantic highlights after an ordinary step selection.
 
         The physical pegboard is the search space being measured in Study 4;
         automatically coloring its required objects would give every condition
         an unintended visual hint. BoardAR also retains only its normal
-        animation/progression appearance for ordinary selections. In Condition
-        3, selecting any step highlights its required physical pegboard objects
-        cyan in both Unity and embedded Open3D.
+        animation/progression appearance for ordinary selections. Condition 3
+        reveals the selected step's cyan pegboard cue only after the user asks
+        what is needed through the STEP_ITEMS language-request path.
         """
-        if (self.study4_condition == "task_aware"
-                and self.selected_id):
-            self._publish_selected_step_pegboard_highlight()
-            return
         self._send_select({
             "event": "step_context_highlight",
             "step_ids": [],
@@ -3091,8 +3100,7 @@ class DearPyGuiTaskGraphApp:
         coords = TaskGraph.control_coords_for(self.selected_id)
         if coords is None or coords[0] <= 0:
             return []
-        index = gearbox_control.load_tool_index(
-            gearbox_control._DEFAULT_TOOL_JSON)
+        index = gearbox_control.load_tool_index(self._tool_layout_path)
         row, stage = coords
         ids = list(gearbox_control.appearing_ids(index, row, stage))
         if row > 0 and stage in (4, 6):
@@ -3104,12 +3112,14 @@ class DearPyGuiTaskGraphApp:
                 and tool_id not in self._acquired_tool_ids]
 
     def _removable_consumable_ids(self, tool_ids: Iterable[int]) -> set[int]:
-        """Every acquired pegboard object leaves the remaining search space."""
+        """Consume parts while keeping reusable tools available for later rows."""
         return {int(tool_id) for tool_id in tool_ids
-                if int(tool_id) in self._tool_defs_by_id}
+                if (int(tool_id) in self._tool_defs_by_id
+                    and self._tool_defs_by_id[int(tool_id)].get("category")
+                    == "part")}
 
     def _handle_pegboard_interaction(self, interaction: dict) -> None:
-        """Speak hover names immediately without building a stale TTS queue."""
+        """Log pegboard hover events without revealing names through TTS."""
         if interaction.get("event_type") != "hover_enter":
             return
         tool_id = int(interaction["tool_id"])
@@ -3130,9 +3140,10 @@ class DearPyGuiTaskGraphApp:
         self._log_session_event(
             "hover", modality="hover", tool_id=tool_id,
             tool_name=tool_name)
-        if self._tts is not None and self._trial_recording:
-            # Hover feedback is ephemeral: interrupt any old hover/name message
-            # and clear queued speech so it cannot lag behind the participant.
+        if (self.study4_condition == "gesture"
+                and self._tts is not None and self._trial_recording):
+            # Temporary Condition-1 aid: speak the latest hovered object name
+            # immediately and replace any stale hover utterance.
             self._tts.speak(friendly, replace=True)
 
     def _score_part_click(self, interaction: dict) -> bool:
@@ -3640,7 +3651,9 @@ class DearPyGuiTaskGraphApp:
                 result.get("label", "INVALID_OUTPUT"),
                 spoken,
             )
-        self._speak(spoken, warning=warning)
+        # Study 4 part/tool referral feedback is visual and logged only. Do
+        # not reveal or reinforce referred objects through spoken responses in
+        # any condition.
         self._record_reference_decision(
             result, decision, matched_parts, current_assemblies, ids,
             assembly_parts, spoken)
@@ -4415,6 +4428,37 @@ class DearPyGuiTaskGraphApp:
                 "Please select an assembly step first.", warning=True)
             return
         if (self.study4_condition == "task_aware"
+                and result.get("origin_intent") == "step_items_request"
+                and str(result.get("reference_relation", "direct"))
+                != "alternative_to_previous"):
+            # The assistant performs a second, model-based candidate pass for
+            # evaluation, whose output can legitimately be AMBIGUOUS. The
+            # user's validated needs request—not that predicted label—is the
+            # Condition-3 unlock signal. Use graph-backed physical IDs so an
+            # invented or non-physical candidate cannot erase the cyan cue.
+            ids = self._selected_step_pegboard_ids()
+            physical_labels = [
+                name for name, tool_id in self._tool_index.items()
+                if int(tool_id) in ids
+            ]
+            # reference_highlight intentionally renders only one resolved
+            # referent, so a multi-object needs response must first populate
+            # the persistent cyan step-context layer used by both views.
+            self._publish_selected_step_pegboard_highlight(announce=True)
+            self._emit_reference_decision(
+                result, "selected_step_needs_highlight",
+                [0.0, 1.0, 1.0, 0.2],
+                "I identified and highlighted the parts.",
+                ids=ids,
+                matched_parts=[
+                    part
+                    for physical_label in physical_labels
+                    for part in self.graph.parts_for_layout_object(
+                        physical_label)
+                ],
+            )
+            return
+        if (self.study4_condition == "task_aware"
                 and label == "STEP_ITEMS"
                 and str(result.get("reference_relation", "direct"))
                 == "alternative_to_previous"):
@@ -4440,6 +4484,11 @@ class DearPyGuiTaskGraphApp:
             return
         if (self.study4_condition == "task_aware"
                 and label == "STEP_ITEMS"):
+            # In Condition 3 this explicit needs question is what unlocks the
+            # cyan task-context cue. Selecting (or recommending) a step alone
+            # must not reveal its required pegboard objects.
+            if str(result.get("step_scope", "selected_step")) == "selected_step":
+                self._publish_selected_step_pegboard_highlight(announce=True)
             item_scope = str(result.get("item_scope", "all"))
             if item_scope in {"parts", "all"}:
                 self._handle_step_parts_request(result)
@@ -5366,9 +5415,6 @@ class DearPyGuiTaskGraphApp:
         self._announce_step_selection(step)
         if self.controller is not None:
             self._animate_unity_callback()
-        # Reapply after the stage command so Unity's normal animation colors do
-        # not win the same-frame ordering race against the recommendation cue.
-        self._publish_selected_step_pegboard_highlight(announce=True)
         action = self.graph.friendly_step_action(step)
         tool_guidance = self._fastening_tool_guidance(step)
         suffix = f" Use {tool_guidance}." if tool_guidance else ""
@@ -5427,7 +5473,7 @@ class DearPyGuiTaskGraphApp:
         coords = TaskGraph.control_coords_for(step_id)
         if coords is not None:
             row, stage = coords
-            index = gearbox_control.load_tool_index(gearbox_control._DEFAULT_TOOL_JSON)
+            index = gearbox_control.load_tool_index(self._tool_layout_path)
             ids = (gearbox_control.appearing_ids(index, row, stage)
                    if row > 0 else [])
             self._send_select({"event": "select", "row": row, "stage": stage,
@@ -5637,8 +5683,11 @@ class DearPyGuiTaskGraphApp:
                 continue
             ok, _message = self.graph.complete(step)
             restored += int(ok)
-        self._removed_tool_ids = {
-            int(value) for value in state.get("removed_tool_ids", [])}
+        # Older checkpoints may have incorrectly removed reusable screwdrivers,
+        # bits, or holders. Reconcile them through the current consumable rule
+        # so they reappear and can be acquired again in later rows.
+        self._removed_tool_ids = self._removable_consumable_ids(
+            int(value) for value in state.get("removed_tool_ids", []))
         self._trial_required_tool_ids = {
             int(value) for value in state.get("trial_required_tool_ids", [])}
         self._acquired_tool_ids = {
@@ -6077,7 +6126,7 @@ def main() -> None:
             # Automatic step->pegboard highlighting discloses the target and
             # is therefore disabled for every Study 4 condition. Explicit
             # language-reference feedback still uses the color channel above.
-            no_highlight=True)
+            no_highlight=True, tool_json=app._tool_layout_path)
         app.controller = controller
         controller.sm.completion_guard = app._completion_guard
         controller_click_thread = threading.Thread(

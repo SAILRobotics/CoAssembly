@@ -73,6 +73,8 @@ def main() -> None:
         description="Replay Study 2 or Study 3 JSONL (schema auto-detected)")
     parser.add_argument("log", type=Path)
     parser.add_argument("--session-id")
+    parser.add_argument("--mode", choices=("freedrive", "ar", "hybrid"),
+                        help="For Study 2, replay only this condition")
     parser.add_argument("--speed", type=float, default=1.0)
     args = parser.parse_args()
     schema = _detect_schema(args.log)
@@ -83,6 +85,9 @@ def main() -> None:
     if schema == "study3_replay_v1":
         from study3_replay import main as replay_main
     else:
+        if args.mode:
+            forwarded += ["--mode", args.mode]
+            sys.argv = [sys.argv[0], *forwarded]
         from workholding_replay import main as replay_main
     replay_main()
 

@@ -28,6 +28,8 @@ public class ARManipulationHandle : MonoBehaviour
     public float               boardThickness = 0.015f;
     [Tooltip("Full Handle.gltf depth along its local X axis, in metres.")]
     public float               handleDepth = 0.0210058f;
+    [Tooltip("Pose stream rate while the AR board is being dragged.")]
+    [Range(5f, 60f)] public float poseStreamHz = 20f;
     public bool IsGrabbed => _isGrabbed;
     public float HandleHalfDepth => handleDepth * 0.5f;
 
@@ -39,6 +41,15 @@ public class ARManipulationHandle : MonoBehaviour
     private Quaternion _grabHandRot;   // interactor world rot at grab time
     private Vector3    _grabBoxPos;    // box world pos at grab time
     private Quaternion _grabBoxRot;    // box world rot at grab time
+    private float       _nextPoseSendTime;
+
+    private void PublishPose(string manipulationState)
+    {
+        if (targetPublisher == null || worldRoot == null || arBox == null) return;
+        Vector3 localPos = worldRoot.InverseTransformPoint(arBox.transform.position);
+        Quaternion localRot = Quaternion.Inverse(worldRoot.rotation) * arBox.transform.rotation;
+        targetPublisher.SendPose(localPos, localRot, manipulationState);
+    }
 
     private void Awake()
     {
@@ -89,6 +100,8 @@ public class ARManipulationHandle : MonoBehaviour
         _grabBoxRot  = arBox.transform.rotation;
 
         arBox.SetActive(true);
+        _nextPoseSendTime = Time.unscaledTime;
+        PublishPose("grabbed");
         Debug.Log($"[ARManipulationHandle] Grabbed — hand at {handPose.position}");
     }
 
@@ -101,12 +114,7 @@ public class ARManipulationHandle : MonoBehaviour
         // visible until GripStateReceiver confirms the live board reached it.
         arBox.SetActive(true);
 
-        if (targetPublisher != null && worldRoot != null)
-        {
-            Vector3    localPos = worldRoot.InverseTransformPoint(arBox.transform.position);
-            Quaternion localRot = Quaternion.Inverse(worldRoot.rotation) * arBox.transform.rotation;
-            targetPublisher.SendPose(localPos, localRot);
-        }
+        PublishPose("released");
 
         Debug.Log("[ARManipulationHandle] Released — target pose sent");
     }
@@ -120,6 +128,12 @@ public class ARManipulationHandle : MonoBehaviour
         Quaternion deltaRot = currentHand.rotation * Quaternion.Inverse(_grabHandRot);
         arBox.transform.position = currentHand.position + deltaRot * (_grabBoxPos - _grabHandPos);
         arBox.transform.rotation = deltaRot * _grabBoxRot;
+
+        if (Time.unscaledTime >= _nextPoseSendTime)
+        {
+            _nextPoseSendTime = Time.unscaledTime + 1f / Mathf.Max(1f, poseStreamHz);
+            PublishPose("dragging");
+        }
 
         // Keep the Unity handle at the board-local offset and rotate it
         // 180 degrees about its own local X axis.

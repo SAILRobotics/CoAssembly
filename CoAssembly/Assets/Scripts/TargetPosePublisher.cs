@@ -5,8 +5,7 @@ using Newtonsoft.Json;
 using System;
 
 /// <summary>
-/// Sends the manipulated TCP target pose back to Python (port 5013).
-/// Call SendPose() from ARManipulationHandle when the user releases the handle.
+/// Streams the manipulated board pose back to Python (port 5013).
 /// </summary>
 public class TargetPosePublisher : MonoBehaviour
 {
@@ -21,6 +20,7 @@ public class TargetPosePublisher : MonoBehaviour
     {
         public float[] tcp_pos;
         public float[] tcp_rot_xyzw;
+        public string manipulation_state;
     }
 
     private void Start()
@@ -39,22 +39,25 @@ public class TargetPosePublisher : MonoBehaviour
     }
 
     /// <summary>
-    /// Send the final TCP pose (in WorldRoot-local space) to Python.
-    /// Pass the box transform — Python will back-calculate TCP from the box.
+    /// Send the board pose (in WorldRoot-local space) and manipulation state.
+    /// Python back-calculates the corresponding TCP target from the board.
     /// </summary>
-    public void SendPose(Vector3 localPos, Quaternion localRot)
+    public void SendPose(Vector3 localPos, Quaternion localRot,
+                         string manipulationState = "released")
     {
         var msg = new PoseMessage
         {
             tcp_pos      = new[] { localPos.x, localPos.y, localPos.z },
             tcp_rot_xyzw = new[] { localRot.x, localRot.y, localRot.z, localRot.w },
+            manipulation_state = manipulationState,
         };
         lock (_lock)
         {
             try { _socket?.SendFrame(JsonConvert.SerializeObject(msg)); }
             catch (Exception e) { Debug.LogWarning("[TargetPosePublisher] " + e.Message); }
         }
-        Debug.Log($"[TargetPosePublisher] Sent target pose {localPos}");
+        if (manipulationState != "dragging")
+            Debug.Log($"[TargetPosePublisher] Sent {manipulationState} pose {localPos}");
     }
 
     private void OnDestroy()

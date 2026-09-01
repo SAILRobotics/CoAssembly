@@ -1887,7 +1887,15 @@ class RobotControlServer:
 
     def open_gripper(self, speed: int = 255, force: int = 10) -> None:
         g = self._gripper_conn()
-        g.move_and_wait_for_pos(g.get_open_position(), speed, force)
+        requested = g.get_open_position()
+        position, status = g.move_and_wait_for_pos(requested, speed, force)
+        # OBJ can briefly retain STOPPED_OUTER_OBJECT from a preceding grasp.
+        # Trust the measured position when it is already fully open, but never
+        # enable arm startup if the fingers remain materially closed.
+        if abs(int(position) - int(requested)) > 3:
+            raise RuntimeError(
+                f"Gripper did not open (position={position}, "
+                f"requested={requested}, status={status})")
 
     def close_gripper(self, speed: int = 255, force: int = 100) -> bool:
         """Close gripper and return True if an object was detected."""
@@ -1956,7 +1964,12 @@ class RobotControlServer:
             g = RobotiqGripper()
             try:
                 g.connect(self._robot_ip, 63352)
-                g.activate()
+                # Startup owns the initial motion: activate without the
+                # library's open-close-open auto-calibration cycle, then let
+                # _tick_startup_pose call open_gripper() explicitly before
+                # any arm movement. This also avoids calibration failing on a
+                # stale STOPPED_OUTER_OBJECT status before the direct open.
+                g.activate(auto_calibrate=False)
             except Exception as e:
                 try:
                     g.disconnect()
