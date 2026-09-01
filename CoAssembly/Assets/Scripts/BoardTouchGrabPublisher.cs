@@ -35,6 +35,15 @@ public class BoardTouchGrabPublisher : MonoBehaviour
     private int   _selectCount;
     private float _nextPoseSendTime;
 
+    public void SetInteractionEnabled(bool interactionEnabled)
+    {
+        if (!interactionEnabled)
+            _selectCount = 0;
+        enabled = interactionEnabled;
+        if (pointable is Behaviour pointableBehaviour)
+            pointableBehaviour.enabled = interactionEnabled;
+    }
+
     private void Awake()
     {
         if (board == null) board = transform;

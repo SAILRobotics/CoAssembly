@@ -22,6 +22,8 @@ public class GripStateReceiver : MonoBehaviour
     public bool                applyIncomingBoxSize = true;
     public GameObject          arHandle;
     public ARManipulationHandle manipulationHandle;
+    [Tooltip("Optional board-direct ISDK touch grab used by WorkHoldingTestNew.")]
+    public BoardTouchGrabPublisher touchGrab;
 
     [Header("Carried-board gripper")]
     [Tooltip("Template cloned for a gripper that follows the participant-moved AR board.")]
@@ -62,6 +64,7 @@ public class GripStateReceiver : MonoBehaviour
         public float[]  box_rot_xyzw;
         public float[]  box_size;
         public float[]  box_color;
+        public string   interaction_mode;
     }
 
     private class PoseData
@@ -71,6 +74,7 @@ public class GripStateReceiver : MonoBehaviour
         public Quaternion boxRot;
         public Vector3   boxSize;
         public Color?    boxColor;
+        public string    interactionMode;
     }
 
     private SubscriberSocket  _socket;
@@ -91,6 +95,7 @@ public class GripStateReceiver : MonoBehaviour
     private Renderer[] _carriedGripperRenderers;
     private Renderer[] _handleRenderers;
     private bool _loggedCarriedGripperVisible;
+    private bool _touchMode;
 
     private static readonly Quaternion BoardMeshCorrection =
         Quaternion.AngleAxis(90f, Vector3.forward)
@@ -122,6 +127,7 @@ public class GripStateReceiver : MonoBehaviour
     {
         if (arBox    != null) arBox.SetActive(false);
         if (arHandle != null) arHandle.SetActive(false);
+        if (touchGrab != null) touchGrab.SetInteractionEnabled(false);
         if (arHandle != null)
             _handleRenderers = arHandle.GetComponentsInChildren<Renderer>(true);
         if (carriedGripperTemplate != null)
@@ -229,6 +235,7 @@ public class GripStateReceiver : MonoBehaviour
                                                            d.box_rot_xyzw[2], d.box_rot_xyzw[3]),
                                 boxSize   = new Vector3(d.box_size[0], d.box_size[1], d.box_size[2]),
                                 boxColor  = incomingColor,
+                                interactionMode = d.interaction_mode,
                             });
                         }
                     }
@@ -253,6 +260,19 @@ public class GripStateReceiver : MonoBehaviour
         while (_queue.TryDequeue(out var d)) latest = d;
         if (latest == null) return;
 
+        if (!string.IsNullOrEmpty(latest.interactionMode))
+        {
+            bool touchMode = latest.interactionMode == "touchgrab";
+            if (touchMode != _touchMode)
+            {
+                _touchMode = touchMode;
+                if (touchGrab != null)
+                    touchGrab.SetInteractionEnabled(_touchMode);
+                Debug.Log($"[GripStateReceiver] Interaction mode: "
+                    + $"{latest.interactionMode}");
+            }
+        }
+
         // Python publishes the board pose derived from the live robot TCP.
         // Recover the TCP pose and drive the one interactive gripper visual;
         // unlike the AR-carried and target grippers, this object retains its
@@ -275,12 +295,23 @@ public class GripStateReceiver : MonoBehaviour
             return;
 
         bool handleActive = latest.gripState == "grabbed" || latest.gripState == "moving";
-        bool grabbed      = manipulationHandle != null && manipulationHandle.IsGrabbed;
+        bool grabbed      = (manipulationHandle != null && manipulationHandle.IsGrabbed)
+                         || (_touchMode && touchGrab != null && touchGrab.IsGrabbed);
         bool moveComplete = latest.gripState == "grabbed" && _prevGripState == "moving";
         // A queued idle packet must never hide the board after ISDK has
         // already begun a grab. The local grab state is authoritative until
         // the manipulation ends.
         bool cancelled    = latest.gripState == "idle" && !grabbed;
+
+        // Handle-based AR exposes only its separate handle before selection.
+        // TouchGrab has no separate handle, so the board itself must remain
+        // visible and follow the live TCP in order to be directly selectable.
+        if (_touchMode && handleActive && !grabbed
+                && !_boxFrozen && !_resultVisible && arBox != null)
+        {
+            arBox.SetActive(true);
+            SetRenderersVisible(_boardRenderers, true);
+        }
 
         if (grabbed && arBox != null)
         {
@@ -357,7 +388,7 @@ public class GripStateReceiver : MonoBehaviour
         // active, expose only the selectable handle. The board and cloned
         // carried gripper appear when OnGrabbed activates arBox. In the
         // Hybrid freedrive-only zone, idle hides the handle as well.
-        if (arBox != null && handleActive && !grabbed
+        if (arBox != null && !_touchMode && handleActive && !grabbed
                 && !_boxFrozen && !_resultVisible)
             arBox.SetActive(false);
 
@@ -377,8 +408,8 @@ public class GripStateReceiver : MonoBehaviour
         // ARManipulationHandle owns the pose instead.
         if (arHandle != null)
         {
-            arHandle.SetActive(handleActive);
-            if (handleActive && !grabbed && !_boxFrozen && arBox != null)
+            arHandle.SetActive(handleActive && !_touchMode);
+            if (handleActive && !_touchMode && !grabbed && !_boxFrozen && arBox != null)
             {
                 arHandle.transform.SetParent(worldRoot, false);
                 arHandle.transform.position = arBox.transform.position
