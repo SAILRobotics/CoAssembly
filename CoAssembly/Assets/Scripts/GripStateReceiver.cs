@@ -26,6 +26,8 @@ public class GripStateReceiver : MonoBehaviour
     [Header("Carried-board gripper")]
     [Tooltip("Template cloned for a gripper that follows the participant-moved AR board.")]
     public GameObject          carriedGripperTemplate;
+    [Tooltip("The real clickable robot-gripper visual (tool id 200). Its pose is driven from the live TCP pose received from Python.")]
+    public GameObject          interactiveRobotGripper;
     public bool                showCarriedGripper = true;
     [Tooltip("Board-center offset from the TCP/gripper along Unity-local +Y.")]
     public float               carriedGripperForwardOffset = 0.23215f;
@@ -250,6 +252,21 @@ public class GripStateReceiver : MonoBehaviour
         PoseData latest = null;
         while (_queue.TryDequeue(out var d)) latest = d;
         if (latest == null) return;
+
+        // Python publishes the board pose derived from the live robot TCP.
+        // Recover the TCP pose and drive the one interactive gripper visual;
+        // unlike the AR-carried and target grippers, this object retains its
+        // tool-id 200 interaction components.
+        if (interactiveRobotGripper != null)
+        {
+            if (worldRoot != null
+                    && interactiveRobotGripper.transform.parent != worldRoot)
+                interactiveRobotGripper.transform.SetParent(worldRoot, false);
+            Vector3 tcpOffsetAxis = latest.boxRot * Vector3.up;
+            interactiveRobotGripper.transform.localPosition = latest.boxPos
+                - carriedGripperForwardOffset * tcpOffsetAxis;
+            interactiveRobotGripper.transform.localRotation = latest.boxRot;
+        }
 
         bool handleActive = latest.gripState == "grabbed" || latest.gripState == "moving";
         bool grabbed      = manipulationHandle != null && manipulationHandle.IsGrabbed;
