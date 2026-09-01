@@ -32,9 +32,9 @@ public class BoardTouchGrabPublisher : MonoBehaviour
 
     [Header("Touch volume")]
     [Tooltip("Invisible padding around the board used only to make hand contact reliable.")]
-    [Min(0f)] public float interactionPadding = 0.025f;
+    [Min(0f)] public float interactionPadding = 0.01f;
     [Tooltip("Minimum front/back depth of the invisible touch volume.")]
-    [Min(0.015f)] public float minimumInteractionDepth = 0.05f;
+    [Min(0.015f)] public float minimumInteractionDepth = 0.025f;
 
     public bool IsGrabbed => _selectCount > 0;
 
@@ -82,11 +82,14 @@ public class BoardTouchGrabPublisher : MonoBehaviour
         if (interactionCollider != null)
         {
             Vector3 size = interactionCollider.size;
-            float padding = Mathf.Max(0.025f, interactionPadding);
+            // Keep this only slightly larger than the rendered board. A deep
+            // TouchHandGrab volume continues overlapping an opened hand and
+            // feels as though the board is stuck to it.
+            float padding = Mathf.Max(0.01f, interactionPadding);
             size.x += 2f * padding;
             size.y += 2f * padding;
             size.z = Mathf.Max(size.z,
-                Mathf.Max(0.05f, minimumInteractionDepth));
+                Mathf.Max(0.025f, minimumInteractionDepth));
             interactionCollider.size = size;
         }
     }

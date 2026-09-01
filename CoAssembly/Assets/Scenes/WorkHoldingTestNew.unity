@@ -3149,7 +3149,7 @@ MonoBehaviour:
   _maxGrabPoints: -1
   _rigidbody: {fileID: 219046387}
   _kinematicWhileSelected: 1
-  _throwWhenUnselected: 1
+  _throwWhenUnselected: 0
   _forceKinematicDisabled: 0
 --- !u!114 &219046391
 MonoBehaviour:
@@ -3168,6 +3168,8 @@ MonoBehaviour:
   worldRoot: {fileID: 1683168509}
   board: {fileID: 0}
   poseStreamHz: 20
+  interactionPadding: 0.01
+  minimumInteractionDepth: 0.025
 --- !u!114 &219046392
 MonoBehaviour:
   m_ObjectHideFlags: 0
