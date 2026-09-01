@@ -1331,7 +1331,8 @@ class _GripPoseBridge:
         self._sub.setsockopt(zmq.RCVTIMEO, 0)
 
     def publish(self, grip_state: str, T_tcp_world: np.ndarray,
-                box_color: "list[float] | None" = None) -> None:
+                box_color: "list[float] | None" = None,
+                gripper_color: "list[float] | None" = None) -> None:
         """Compute box pose from TCP transform and publish."""
         # Box centre = TCP position + BOX_FORWARD_OFFSET along gripper Z
         gripper_z_world = T_tcp_world[:3, :3] @ np.array([0.0, 0.0, 1.0])
@@ -1352,6 +1353,8 @@ class _GripPoseBridge:
         }
         if box_color is not None:
             msg["box_color"] = [float(c) for c in box_color]
+        if gripper_color is not None:
+            msg["gripper_color"] = [float(c) for c in gripper_color]
         try:
             self._pub.send_string(json.dumps(msg))
         except Exception:

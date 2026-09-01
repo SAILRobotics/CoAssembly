@@ -251,7 +251,16 @@ public class GripStateReceiver : MonoBehaviour
         bool handleActive = latest.gripState == "grabbed" || latest.gripState == "moving";
         bool grabbed      = manipulationHandle != null && manipulationHandle.IsGrabbed;
         bool moveComplete = latest.gripState == "grabbed" && _prevGripState == "moving";
-        bool cancelled    = latest.gripState == "idle";
+        // A queued idle packet must never hide the board after ISDK has
+        // already begun a grab. The local grab state is authoritative until
+        // the manipulation ends.
+        bool cancelled    = latest.gripState == "idle" && !grabbed;
+
+        if (grabbed && arBox != null)
+        {
+            arBox.SetActive(true);
+            SetRenderersVisible(_boardRenderers, true);
+        }
 
         // Freeze the box the instant the user releases — before Python even transitions to 'moving'
         if (grabbed && !_prevIsGrabbed)
@@ -273,6 +282,8 @@ public class GripStateReceiver : MonoBehaviour
         // Grip mode cancelled — hide everything and reset
         if (cancelled)
         {
+            if (manipulationHandle != null)
+                manipulationHandle.CancelManipulation();
             if (arBox    != null) arBox.SetActive(false);
             if (arHandle != null) arHandle.SetActive(false);
             _prevGripState = "";
@@ -338,7 +349,7 @@ public class GripStateReceiver : MonoBehaviour
                 arHandle.transform.SetParent(worldRoot, false);
                 arHandle.transform.position = arBox.transform.position
                     - arBox.transform.rotation * Vector3.right * 0.0075f
-                    - arBox.transform.rotation * Vector3.forward * 0.1500f;
+                    - arBox.transform.rotation * Vector3.forward * 0.2000f;
                 arHandle.transform.rotation = arBox.transform.rotation
                     * Quaternion.AngleAxis(180f, Vector3.right);
             }

@@ -61,6 +61,7 @@ public class WorkholdingBoxReceiver : MonoBehaviour
         public float[] box_rot_xyzw;
         public float[] box_size;
         public float[] box_color;
+        public float[] gripper_color;
     }
 
     private class PoseData
@@ -70,6 +71,7 @@ public class WorkholdingBoxReceiver : MonoBehaviour
         public Quaternion rot;
         public Vector3    size;
         public Color?     color;
+        public Color?     gripperColor;
     }
 
     private SubscriberSocket _socket;
@@ -148,6 +150,15 @@ public class WorkholdingBoxReceiver : MonoBehaviour
                                 incomingColor = new Color(
                                     d.box_color[0], d.box_color[1], d.box_color[2], a);
                             }
+                            Color? incomingGripperColor = null;
+                            if (d.gripper_color != null && d.gripper_color.Length >= 3)
+                            {
+                                float a = d.gripper_color.Length >= 4
+                                    ? d.gripper_color[3] : targetGripperAlpha;
+                                incomingGripperColor = new Color(
+                                    d.gripper_color[0], d.gripper_color[1],
+                                    d.gripper_color[2], a);
+                            }
                             _queue.Enqueue(new PoseData
                             {
                                 proximityState = d.grip_state,
@@ -156,6 +167,7 @@ public class WorkholdingBoxReceiver : MonoBehaviour
                                                       d.box_rot_xyzw[2], d.box_rot_xyzw[3]),
                                 size = new Vector3(d.box_size[0], d.box_size[1], d.box_size[2]),
                                 color = incomingColor,
+                                gripperColor = incomingGripperColor,
                             });
                         }
                     }
@@ -201,6 +213,8 @@ public class WorkholdingBoxReceiver : MonoBehaviour
             Vector3 gripperOffsetAxis = latest.rot * Vector3.up;
             targetGripper.transform.localPosition = latest.pos - targetGripperForwardOffset * gripperOffsetAxis;
             targetGripper.transform.localRotation = latest.rot;
+            if (latest.gripperColor.HasValue)
+                ApplyTargetGripperColor(latest.gripperColor.Value);
             SetRenderersVisible(_targetGripperRenderers, true);
         }
 

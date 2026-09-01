@@ -213,10 +213,11 @@ class RobotControlServer:
     _MOVE_ANGLE_TOL_RAD      = np.deg2rad(10.0)
     _BOARD_MOVE_POS_TOL_M    = 0.01
     _BOARD_MOVE_ANGLE_TOL_RAD = np.deg2rad(3.0)
-    # Study completion is intentionally identical for AR and freedrive. Tight
-    # 1 cm/3 deg values remain an IK-validation criterion, not a study result.
-    _WORKHOLDING_MOVE_POS_TOL_M = 0.05
-    _WORKHOLDING_MOVE_ANGLE_TOL_RAD = np.deg2rad(15.0)
+    # Autonomous AR following should land accurately at the released pose.
+    # These controller tolerances are deliberately tighter than the separate
+    # 5 cm / 15 deg human trial-completion criterion in workholding_study.py.
+    _WORKHOLDING_MOVE_POS_TOL_M = 0.01
+    _WORKHOLDING_MOVE_ANGLE_TOL_RAD = np.deg2rad(3.0)
     # A hand target moves slightly even while the user tries to hold still.
     # Give the presenting motion a modestly wider completion envelope than
     # the former 1.5 cm / 6 deg / 0.30 s criterion.
@@ -241,10 +242,10 @@ class RobotControlServer:
     _SIM_BOARD_SMOOTH_ALPHA  = 0.55
     _SERVO_LOOKAHEAD_S       = 0.08
     _SERVO_GAIN              = 400
-    _WORKHOLDING_EMA_ALPHA   = 1.00
-    _WORKHOLDING_LOOKAHEAD_S = 0.03
-    _WORKHOLDING_GAIN        = 500
-    _WORKHOLDING_OSC_SPEED_SCALE = 1.15
+    _WORKHOLDING_EMA_ALPHA   = 0.75
+    _WORKHOLDING_LOOKAHEAD_S = 0.08
+    _WORKHOLDING_GAIN        = 350
+    _WORKHOLDING_OSC_SPEED_SCALE = 0.60
     _WORKHOLDING_BRAKE_DIST_M = 0.06
     _WORKHOLDING_BRAKE_ANGLE_RAD = np.deg2rad(10.0)
     # Hand delivery stays reactive at long range, then increasingly filters and
@@ -1485,8 +1486,12 @@ class RobotControlServer:
                                    pos_scale, rot_scale)
             else:
                 motion_scale = 1.0
+            profile_speed_scale = (
+                self._WORKHOLDING_OSC_SPEED_SCALE
+                if self._move_motion_profile == "workholding" else 1.0)
             max_step = (np.deg2rad(90.0 if self.simulation else 180.0)
                         * (1.0 if self.simulation else sc)
+                        * profile_speed_scale
                         * control_dt * motion_scale)
             q_target  = q_cur + np.clip(q_ik - q_cur, -max_step, max_step)
             if self._frax is not None:
