@@ -9,8 +9,8 @@ tests:
     freedrive  — physically drag the arm+board by hand. No AR handle.
     ar         — grab and drag the AR box handle in the headset; the robot
                  continuously follows it. No freedrive.
-    hybrid     — both channels live at once: freedrive AND continuous AR
-                 following.
+    hybrid     — both channels begin live; inside 30 cm of the study target,
+                 AR is disabled and only freedrive remains.
 
 Run the script once per mode (e.g. three separate invocations, one per
 condition) to cover all three.
@@ -446,6 +446,11 @@ class WorkholdingStudy:
     _STUDY_MOVE_STOP_DWELL_S   = 0.40    # stationary time required to end segment
     _AR_FOLLOW_POS_DEADBAND_M  = 0.005   # suppress hand-tracking position jitter
     _AR_FOLLOW_ANGLE_DEADBAND_DEG = 2.0  # suppress hand-tracking rotation jitter
+    _HYBRID_AR_CUTOFF_DISTANCE_M = 0.30  # switch permanently to freedrive
+    _HYBRID_FREEDRIVE_GRIPPER_RGBA = [0.10, 0.75, 1.00, 0.90]
+    _PALM_CBF_RADIUS_M = 0.10       # 20 cm diameter hand obstacle
+    _PALM_CBF_CLEARANCE_M = 0.02
+    _PALM_CBF_PUBLISH_INTERVAL_S = 1.0 / 30.0
     _STUDY_TRAJ_SAMPLE_HZ     = 10.0
     _REPLAY_SAMPLE_HZ         = 30.0
 
@@ -612,6 +617,9 @@ class WorkholdingStudy:
         self._post_stop_freedrive_active = False
         self._post_stop_freedrive_start_errors = None
         self._ar_follow_last_board_T: "np.ndarray | None" = None
+        self._hybrid_freedrive_only = False
+        self._last_palm_cbf_pub_time = 0.0
+        self._palm_cbf_active = False
         self._trial_tcp_path_length_m = 0.0
         self._trial_tcp_angular_path_length_deg = 0.0
         self._trial_path_prev_tcp_pos: "np.ndarray | None" = None
@@ -1272,6 +1280,50 @@ class WorkholdingStudy:
         self.vis.update_mode_indicator(T_tcp, mode_state)
         self.vis.tick()
 
+    def _update_palm_cbf_obstacle(self, now: float) -> None:
+        """Publish the closest tracked palm during autonomous AR following."""
+        following_ar = bool(
+            self._ar_enabled
+            and not self._hybrid_freedrive_only
+            and (self._auto_move_pending
+                 or self.robot.board_state == "moving_board"))
+        if not following_ar or not self.anchor.locked:
+            if self._palm_cbf_active:
+                self.robot.update_palm_obstacle(None)
+                self._palm_cbf_active = False
+            return
+        if (now - self._last_palm_cbf_pub_time
+                < self._PALM_CBF_PUBLISH_INTERVAL_S):
+            return
+
+        left_pts, right_pts = self.hands.world_joints(
+            self.anchor.T_world_tracking)
+        candidates = []
+        for points in (left_pts, right_pts):
+            if points is None or len(points) <= 6:
+                continue
+            palm = (np.asarray(points[3], float)
+                    + np.asarray(points[1], float)
+                    + np.asarray(points[6], float)) / 3.0
+            if palm.shape == (3,) and np.all(np.isfinite(palm)):
+                candidates.append(palm)
+        T_tcp = self.robot.tcp_pose
+        if candidates:
+            if T_tcp is not None:
+                tcp_pos = T_tcp[:3, 3]
+                palm_center = min(
+                    candidates, key=lambda p: float(np.linalg.norm(p - tcp_pos)))
+            else:
+                palm_center = candidates[0]
+            self.robot.update_palm_obstacle(
+                palm_center, radius=self._PALM_CBF_RADIUS_M,
+                clearance=self._PALM_CBF_CLEARANCE_M)
+            self._last_palm_cbf_pub_time = now
+            self._palm_cbf_active = True
+        elif self._palm_cbf_active:
+            self.robot.update_palm_obstacle(None)
+            self._palm_cbf_active = False
+
     def _compute_default_tcp(self) -> "tuple[np.ndarray, np.ndarray]":
         """FK of cfg.ROBOT_DEFAULT_JOINT_DEG via the client's local (IK-free)
         pb_scene mirror — save/restore current_q so live visualization is
@@ -1300,7 +1352,11 @@ class WorkholdingStudy:
 
     def _on_auto_move_complete(self, ok: bool) -> None:
         self._auto_move_pending = False
-        self._auto_move_result  = bool(ok)
+        # Cancelling continuous AR following at the Hybrid handoff is an
+        # intentional control-mode transition, not a failed move that should
+        # poison the next reset-to-default state.
+        self._auto_move_result = (
+            None if self._hybrid_freedrive_only and not ok else bool(ok))
         self._replay_event("ar_move_complete", success=bool(ok))
 
     def _start_auto_move(self, pos: np.ndarray, quat: np.ndarray,
@@ -1343,6 +1399,7 @@ class WorkholdingStudy:
         self._post_stop_freedrive_active = False
         self._post_stop_freedrive_start_errors = None
         self._ar_follow_last_board_T = None
+        self._hybrid_freedrive_only = False
         self._trial_tcp_path_length_m = 0.0
         self._trial_tcp_angular_path_length_deg = 0.0
         self._trial_recording_start_source = ""
@@ -1384,6 +1441,42 @@ class WorkholdingStudy:
         self._replay_event("trial_ready", pose_idx=pose_idx,
                            start_policy=self._trial_start_policy,
                            target_board_world_T=self._trial_target_T)
+
+    def _maybe_lock_hybrid_to_freedrive(self) -> None:
+        """Disable AR for the rest of a Hybrid trial inside the 30 cm zone."""
+        if (self.mode != "hybrid" or self._hybrid_freedrive_only
+                or not self._trial_timer_running
+                or self._trial_target_T is None):
+            return
+        T_tcp = self.robot.tcp_pose
+        if T_tcp is None:
+            return
+        T_board = self._board_pose_from_tcp(T_tcp)
+        distance_m = float(np.linalg.norm(
+            T_board[:3, 3] - self._trial_target_T[:3, 3]))
+        if distance_m > self._HYBRID_AR_CUTOFF_DISTANCE_M:
+            return
+
+        self._hybrid_freedrive_only = True
+        # Hide and disable the interactive AR board/handle immediately. The
+        # separate Study 2 target ghost remains visible on its own port.
+        self.ar_bridge.publish("idle", T_tcp)
+        if self._auto_move_pending or self.robot.board_state == "moving_board":
+            self.robot.cancel_move()
+        self.robot.set_board_freedrive(True)
+        self._prev_tcp_pos_for_speed = None
+        self._prev_tcp_rot_for_speed = None
+        self._prev_tcp_t_for_speed = None
+        self._was_moving_freedrive = False
+        self._freedrive_stationary_since = None
+        self._close_status_line()
+        print(f"[Hybrid] Within {distance_m * 100:.1f} cm of target — "
+              "AR disabled; freedrive only for the rest of this trial.")
+        self._replay_event(
+            "hybrid_ar_disabled_near_target",
+            distance_to_target_m=distance_m,
+            cutoff_distance_m=self._HYBRID_AR_CUTOFF_DISTANCE_M,
+            board_world_T=T_board)
 
     def _trial_elapsed(self, now: "float | None" = None) -> float:
         if now is None:
@@ -2033,10 +2126,11 @@ class WorkholdingStudy:
             recording = self._trial_timer_running
             if recording:
                 self._update_path_length_accumulators(now)
+                self._maybe_lock_hybrid_to_freedrive()
             if recording:
                 if self._freedrive_enabled:
                     self._tick_freedrive_channel(now)
-            if self._ar_enabled:
+            if self._ar_enabled and not self._hybrid_freedrive_only:
                 self._tick_ar_channel(
                     now, recording=recording,
                     accept_commands=recording)
@@ -2063,7 +2157,7 @@ class WorkholdingStudy:
             # deliberately excluding these moves from timed interaction and
             # path metrics.  ENTER captures the resulting placement as the
             # enter-confirmation error before the deterministic exact snap.
-            if self._ar_enabled:
+            if self._ar_enabled and not self._hybrid_freedrive_only:
                 self._tick_ar_channel(now, recording=False)
             if self._freedrive_enabled:
                 self._tick_post_stop_freedrive_channel(now)
@@ -2147,7 +2241,10 @@ class WorkholdingStudy:
                         quest_proximity_state)
                     self.ghost_bridge.publish(
                         quest_proximity_state, T_fake_tcp,
-                        box_color=target_color)
+                        box_color=target_color,
+                        gripper_color=(
+                            self._HYBRID_FREEDRIVE_GRIPPER_RGBA
+                            if self._hybrid_freedrive_only else target_color))
 
                 if self.anchor.locked and not self._study_started:
                     self._study_started = True
@@ -2159,6 +2256,7 @@ class WorkholdingStudy:
                     self.workspace_bound_pub.publish(
                         self._ws_lo, self._ws_hi, self._BOUNDS_VIS_DIST)
                     self._tick_study(_now)
+                    self._update_palm_cbf_obstacle(_now)
                     if self._phase == "trial_running":
                         self._print_live_status(_now)
 
@@ -2323,6 +2421,9 @@ class WorkholdingStudy:
 
     def close(self) -> None:
         self._close_status_line()
+        if self._palm_cbf_active:
+            self.robot.update_palm_obstacle(None)
+            self._palm_cbf_active = False
         self.aruco_worker.stop()
         time.sleep(0.05)
         cv.destroyAllWindows()

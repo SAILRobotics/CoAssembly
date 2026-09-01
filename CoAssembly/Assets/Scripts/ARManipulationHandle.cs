@@ -51,6 +51,13 @@ public class ARManipulationHandle : MonoBehaviour
         targetPublisher.SendPose(localPos, localRot, manipulationState);
     }
 
+    /// <summary>End an active grab without publishing another robot target.</summary>
+    public void CancelManipulation()
+    {
+        _isGrabbed = false;
+        _currentInteractor = null;
+    }
+
     private void Awake()
     {
         _grabInteractable = GetComponent<HandGrabInteractable>();
@@ -141,7 +148,7 @@ public class ARManipulationHandle : MonoBehaviour
         {
             arHandle.transform.position = arBox.transform.position
                 - arBox.transform.rotation * Vector3.right * 0.0075f
-                - arBox.transform.rotation * Vector3.forward * 0.1500f;
+                - arBox.transform.rotation * Vector3.forward * 0.2000f;
             arHandle.transform.rotation = arBox.transform.rotation
                 * Quaternion.AngleAxis(180f, Vector3.right);
         }
