@@ -261,6 +261,13 @@ public class GripStateReceiver : MonoBehaviour
             arBox.SetActive(true);
             SetRenderersVisible(_boardRenderers, true);
         }
+        else if (handleActive && arBox != null)
+        {
+            // Re-enable the complete AR manipulation visualization after a
+            // Hybrid freedrive-only zone published idle and hid it.
+            arBox.SetActive(true);
+            SetRenderersVisible(_boardRenderers, true);
+        }
 
         // Freeze the box the instant the user releases — before Python even transitions to 'moving'
         if (grabbed && !_prevIsGrabbed)

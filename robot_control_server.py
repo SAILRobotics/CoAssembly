@@ -242,10 +242,10 @@ class RobotControlServer:
     _SIM_BOARD_SMOOTH_ALPHA  = 0.55
     _SERVO_LOOKAHEAD_S       = 0.08
     _SERVO_GAIN              = 400
-    _WORKHOLDING_EMA_ALPHA   = 0.75
-    _WORKHOLDING_LOOKAHEAD_S = 0.08
-    _WORKHOLDING_GAIN        = 350
-    _WORKHOLDING_OSC_SPEED_SCALE = 0.60
+    _WORKHOLDING_EMA_ALPHA   = 0.90
+    _WORKHOLDING_LOOKAHEAD_S = 0.04
+    _WORKHOLDING_GAIN        = 450
+    _WORKHOLDING_OSC_SPEED_SCALE = 0.95
     _WORKHOLDING_BRAKE_DIST_M = 0.06
     _WORKHOLDING_BRAKE_ANGLE_RAD = np.deg2rad(10.0)
     # Hand delivery stays reactive at long range, then increasingly filters and
@@ -772,6 +772,7 @@ class RobotControlServer:
                 self._finish_joint_move(True)
                 return
             try:
+                self.servoStop()
                 speed = (0.5 * self._speed_scale
                          * self._joint_move_speed_multiplier)
                 ok = bool(self._rtde_ctrl_conn().moveJ(
@@ -784,6 +785,16 @@ class RobotControlServer:
     def _finish_joint_move(self, ok: bool) -> None:
         cb = self._joint_move_on_complete
         was_board_move = self._joint_move_is_board
+        # Reaching the joint tolerance does not guarantee that the UR-side
+        # asynchronous moveJ script has exited. Release it before a callback
+        # can immediately launch the next reset/snap command; otherwise the
+        # controller rejects that command as "another thread is controlling
+        # the robot".
+        if not self.simulation and self._rtde_ctrl is not None:
+            try:
+                self._rtde_ctrl.stopJ(2.0)
+            except Exception as exc:
+                print(f"[Robot] Joint moveJ release warning: {exc}")
         self._joint_move_target = None
         self._joint_move_runner = None
         self._joint_move_sent = False
@@ -815,6 +826,7 @@ class RobotControlServer:
             err = np.max(np.abs(_wrap_nearest(target, self.pb_scene.current_q)
                                 - self.pb_scene.current_q))
             if not self._joint_move_sent:
+                self.servoStop()
                 speed = (0.5 * self._speed_scale
                          * self._joint_move_speed_multiplier)
                 ctrl.moveJ(list(target), speed, speed, asynchronous=True)
