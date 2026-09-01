@@ -87,6 +87,7 @@ public class GripStateReceiver : MonoBehaviour
     private Material _targetOverlayMaterial;
     private GameObject _carriedGripper;
     private Renderer[] _carriedGripperRenderers;
+    private Renderer[] _handleRenderers;
     private bool _loggedCarriedGripperVisible;
 
     private static readonly Quaternion BoardMeshCorrection =
@@ -119,6 +120,8 @@ public class GripStateReceiver : MonoBehaviour
     {
         if (arBox    != null) arBox.SetActive(false);
         if (arHandle != null) arHandle.SetActive(false);
+        if (arHandle != null)
+            _handleRenderers = arHandle.GetComponentsInChildren<Renderer>(true);
         if (carriedGripperTemplate != null)
         {
             Transform parent = worldRoot != null
@@ -433,9 +436,19 @@ public class GripStateReceiver : MonoBehaviour
 
     private void ApplyPythonBoardColor(Color color)
     {
-        if (_boardRenderers == null || _boardColorBlock == null) return;
-        if (transparentTargetOverlay) color.a = targetOverlayAlpha;
-        foreach (Renderer renderer in _boardRenderers)
+        ApplyRendererColor(_boardRenderers, color,
+                           transparentTargetOverlay ? targetOverlayAlpha : color.a);
+        ApplyRendererColor(_carriedGripperRenderers, color, color.a);
+        ApplyRendererColor(_handleRenderers, color, color.a);
+    }
+
+    private void ApplyRendererColor(Renderer[] renderers, Color color, float alpha)
+    {
+        if (renderers == null) return;
+        color.a = alpha;
+        if (_boardColorBlock == null)
+            _boardColorBlock = new MaterialPropertyBlock();
+        foreach (Renderer renderer in renderers)
         {
             if (renderer == null) continue;
             renderer.GetPropertyBlock(_boardColorBlock);
