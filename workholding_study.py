@@ -14,9 +14,9 @@ tests:
     hybrid     — starts with continuous AR following and freedrive locked out.
                  Clicking the stationary robot gripper (tool id 200) toggles
                  between AR following and freedrive-only control.
-    touchgrab  — identical channels and gripper-click toggle to hybrid, but the
-                 AR box is grabbed with ISDK Touch Hand Grab (run the
-                 WorkHoldingTestNew Unity build). Same 5012/5013 data path.
+    touchgrab  — identical to AR control, except the AR box itself is grabbed
+                 with ISDK Touch Hand Grab instead of using the separate AR
+                 handle (run the WorkHoldingTestNew Unity build).
 
 Run the script once per mode (e.g. four separate invocations, one per
 condition) to cover all four.
@@ -100,10 +100,8 @@ _CHANNELS = {
     "freedrive": {"freedrive": True,  "ar": False},
     "ar":        {"freedrive": False, "ar": True},
     "hybrid":    {"freedrive": True,  "ar": True},
-    # Same channels as hybrid; the AR box is grabbed with ISDK Touch Hand Grab
-    # (WorkHoldingTestNew scene) instead of the ARManipulationHandle. Data path
-    # is identical (5012 out / 5013 in), so it is treated like "hybrid" below.
-    "touchgrab": {"freedrive": True,  "ar": True},
+    # Same control channel as AR. Only the Unity-side grab affordance differs.
+    "touchgrab": {"freedrive": False, "ar": True},
 }
 
 _TRIAL_CSV_HEADER = [
@@ -1294,8 +1292,10 @@ class WorkholdingStudy:
 
         if self._teach_mode:
             mode_state = "freedrive"
-        elif self.mode in ("hybrid", "touchgrab"):
+        elif self.mode == "hybrid":
             mode_state = ("freedrive" if self._hybrid_freedrive_only else "ar")
+        elif self.mode == "touchgrab":
+            mode_state = "ar"
         else:
             mode_state = self.mode
         self.vis.update_mode_indicator(T_tcp, mode_state)
@@ -1440,9 +1440,9 @@ class WorkholdingStudy:
         self._post_stop_freedrive_start_errors = None
         self._ar_follow_last_board_T = None
         self._hybrid_freedrive_only = False
-        if self.mode in ("hybrid", "touchgrab"):
-            # Hybrid/touchgrab start each trial in AR-follow mode. The explicit
-            # TCP click is the only way to enable freedrive.
+        if self.mode == "hybrid":
+            # Hybrid starts each trial in AR-follow mode. The explicit TCP
+            # click is the only way to enable freedrive.
             self.robot.set_board_freedrive(False)
         gripper_color = (self._FREEDRIVE_GRIPPER_RGBA
                          if self.mode == "freedrive"
@@ -1492,7 +1492,7 @@ class WorkholdingStudy:
 
     def _handle_hybrid_gripper_click(self, event: dict) -> None:
         """Toggle stationary Hybrid trials between AR and freedrive control."""
-        if (self.mode not in ("hybrid", "touchgrab")
+        if (self.mode != "hybrid"
                 or event.get("event_type") != "selected"
                 or int(event.get("tool_id", -1)) != self._TCP_TOOL_ID):
             return
@@ -2194,7 +2194,7 @@ class WorkholdingStudy:
                 self._update_path_length_accumulators(now)
             if recording:
                 if (self._freedrive_enabled
-                        and (self.mode not in ("hybrid", "touchgrab")
+                        and (self.mode != "hybrid"
                              or self._hybrid_freedrive_only)):
                     self._tick_freedrive_channel(now)
             if self._ar_enabled and not self._hybrid_freedrive_only:
@@ -2227,7 +2227,7 @@ class WorkholdingStudy:
             if self._ar_enabled and not self._hybrid_freedrive_only:
                 self._tick_ar_channel(now, recording=False)
             if (self._freedrive_enabled
-                    and (self.mode not in ("hybrid", "touchgrab")
+                    and (self.mode != "hybrid"
                          or self._hybrid_freedrive_only)):
                 self._tick_post_stop_freedrive_channel(now)
 

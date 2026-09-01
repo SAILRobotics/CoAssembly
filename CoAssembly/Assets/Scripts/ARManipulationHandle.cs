@@ -30,6 +30,11 @@ public class ARManipulationHandle : MonoBehaviour
     public float               handleDepth = 0.0210058f;
     [Tooltip("Pose stream rate while the AR board is being dragged.")]
     [Range(5f, 60f)] public float poseStreamHz = 20f;
+    [Header("Grab assistance")]
+    [Tooltip("Minimum invisible capsule radius used to make the handle easier to acquire.")]
+    [Min(0.02f)] public float assistedColliderRadius = 0.04f;
+    [Tooltip("Minimum invisible capsule length used to make the handle easier to acquire.")]
+    [Min(0.12f)] public float assistedColliderHeight = 0.16f;
     public bool IsGrabbed => _isGrabbed;
     public float HandleHalfDepth => handleDepth * 0.5f;
 
@@ -61,7 +66,14 @@ public class ARManipulationHandle : MonoBehaviour
     private void Awake()
     {
         _grabInteractable = GetComponent<HandGrabInteractable>();
-
+        CapsuleCollider grabCollider = GetComponent<CapsuleCollider>();
+        if (grabCollider != null)
+        {
+            grabCollider.radius = Mathf.Max(
+                grabCollider.radius, Mathf.Max(0.04f, assistedColliderRadius));
+            grabCollider.height = Mathf.Max(
+                grabCollider.height, Mathf.Max(0.16f, assistedColliderHeight));
+        }
     }
 
     private void OnEnable()
