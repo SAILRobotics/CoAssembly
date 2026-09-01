@@ -54,7 +54,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Replay a workholding JSONL log")
     parser.add_argument("log", type=Path)
     parser.add_argument("--session-id")
-    parser.add_argument("--mode", choices=("freedrive", "ar", "hybrid"),
+    parser.add_argument("--mode", choices=("freedrive", "ar", "hybrid", "touchgrab"),
                         help="Replay only this study condition")
     parser.add_argument("--speed", type=float, default=1.0)
     args = parser.parse_args()
