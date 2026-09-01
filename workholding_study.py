@@ -449,6 +449,10 @@ class WorkholdingStudy:
     _AR_FOLLOW_ANGLE_DEADBAND_DEG = 2.0  # suppress hand-tracking rotation jitter
     _HYBRID_AR_CUTOFF_DISTANCE_M = 0.15  # reversible AR/freedrive boundary
     _HYBRID_FREEDRIVE_GRIPPER_RGBA = [0.10, 0.75, 1.00, 0.90]
+    _AR_ASSEMBLY_RGBA = {
+        "ar": [0.10, 0.90, 0.20, 0.70],
+        "hybrid": [0.10, 0.75, 1.00, 0.70],
+    }
     _PALM_CBF_RADIUS_M = 0.03       # 6 cm diameter hand obstacle
     _PALM_CBF_CLEARANCE_M = 0.02
     _PALM_CBF_PUBLISH_INTERVAL_S = 1.0 / 30.0
@@ -1912,7 +1916,9 @@ class WorkholdingStudy:
             "grabbed" if board_state == "holding_board" else "idle")
         T_tcp = self.robot.tcp_pose
         if T_tcp is not None:
-            self.ar_bridge.publish(grip_state, T_tcp)
+            self.ar_bridge.publish(
+                grip_state, T_tcp,
+                box_color=self._AR_ASSEMBLY_RGBA.get(self.mode))
 
         if self._auto_move_result is not None:
             ok = self._auto_move_result
