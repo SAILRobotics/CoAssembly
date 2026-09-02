@@ -10,11 +10,11 @@ tests:
 
     freedrive  — physically drag the arm+board by hand. No AR handle.
     ar         — grab and drag the AR box handle in the headset; the robot
-                 continuously follows it. No freedrive.
-    hybrid     — starts with continuous AR following and freedrive locked out.
+                 moves to the selected pose when the handle is released.
+    hybrid     — starts with discrete AR placement and freedrive locked out.
                  Clicking the stationary robot gripper (tool id 200) toggles
                  between AR following and freedrive-only control.
-    touchgrab  — identical to AR control, except the AR box itself is grabbed
+    touchgrab  — identical to discrete AR control, except the AR box itself is grabbed
                  with ISDK Touch Hand Grab instead of using the separate AR
                  handle (run the WorkHoldingTestNew Unity build).
 
@@ -216,6 +216,24 @@ class _WorkholdingSceneVis(_SceneVis):
                 mesh.transform(self._hidden_T())
                 self.vis.add_geometry(mesh)
                 self._study_target_mesh = mesh
+
+        # Separate visualization of the participant-controlled virtual board.
+        # The inherited BoardAR mesh continues to show the physical board at
+        # the live TCP, so discrete AR placement can display both at once.
+        self._user_board_mesh = None
+        self._user_board_T = self._hidden_T()
+        if asset.exists():
+            mesh = o3d.io.read_triangle_mesh(str(asset))
+            if len(mesh.vertices):
+                mesh.compute_vertex_normals()
+                T_local = np.eye(4, dtype=np.float64)
+                T_local[:3, :3] = ScipyR.from_euler(
+                    "y", 90.0, degrees=True).as_matrix()
+                mesh.transform(T_local)
+                mesh.paint_uniform_color([0.0, 1.0, 1.0])
+                mesh.transform(self._hidden_T())
+                self.vis.add_geometry(mesh)
+                self._user_board_mesh = mesh
 
         self._target_gripper_mesh = None
         self._target_gripper_T = self._hidden_T()
@@ -431,6 +449,17 @@ class _WorkholdingSceneVis(_SceneVis):
         self._ar_handle_T = T_new
         self.vis.update_geometry(self._ar_handle_mesh)
 
+    def update_user_board(self, T_board: "np.ndarray | None") -> None:
+        """Show the virtual board at the live Unity grab pose."""
+        if self._user_board_mesh is None:
+            return
+        T_new = (np.asarray(T_board, dtype=np.float64)
+                 if T_board is not None else self._hidden_T())
+        delta = T_new @ np.linalg.inv(self._user_board_T)
+        self._user_board_mesh.transform(delta)
+        self._user_board_T = np.array(T_new, dtype=np.float64, copy=True)
+        self.vis.update_geometry(self._user_board_mesh)
+
 
 class WorkholdingStudy:
     # Same lock/relock tuning as MainScene / workholding_testing.py.
@@ -456,10 +485,6 @@ class WorkholdingStudy:
     _STUDY_MOVE_STOP_DWELL_S   = 0.40    # stationary time required to end segment
     _AR_FOLLOW_POS_DEADBAND_M  = 0.005   # suppress hand-tracking position jitter
     _AR_FOLLOW_ANGLE_DEADBAND_DEG = 2.0  # suppress hand-tracking rotation jitter
-    # TouchGrab deliberately trails the held virtual board. This prevents the
-    # robot from aggressively snapping under the participant's hand; release
-    # still commands the exact final board pose.
-    _TOUCHGRAB_HELD_FOLLOW_GAIN = 0.30
     _TCP_TOOL_ID = _ToolSelectionManager.TCP_TOOL_ID
     # Live robot-gripper mode indicator. These are forced colors so hover and
     # selection feedback cannot obscure the current control mode.
@@ -473,7 +498,12 @@ class WorkholdingStudy:
         "hybrid": [0.0, 1.0, 1.0, 0.70],
         "touchgrab": [0.0, 1.0, 1.0, 0.70],
     }
-    _PALM_CBF_RADIUS_M = 0.03       # 6 cm diameter hand obstacle
+    # Dynamic hand/palm obstacle disabled for Study 2. During AR/TouchGrab the
+    # participant intentionally holds an affordance beside the robot tool, so
+    # treating that hand as a moving CBF obstacle distorts wrist rotations.
+    # Static robot/environment/workspace CBF constraints remain enabled.
+    _ENABLE_PALM_CBF = False
+    _PALM_CBF_RADIUS_M = 0.03
     _PALM_CBF_CLEARANCE_M = 0.02
     _PALM_CBF_PUBLISH_INTERVAL_S = 1.0 / 30.0
     _STUDY_TRAJ_SAMPLE_HZ     = 10.0
@@ -642,9 +672,12 @@ class WorkholdingStudy:
         self._post_stop_freedrive_active = False
         self._post_stop_freedrive_start_errors = None
         self._ar_follow_last_board_T: "np.ndarray | None" = None
+        self._user_manipulated_board_T: "np.ndarray | None" = None
+        self._user_board_grabbed = False
         self._hybrid_freedrive_only = False
         self._last_palm_cbf_pub_time = 0.0
         self._palm_cbf_active = False
+        self._palm_cbf_disabled_cleared = False
         self._trial_tcp_path_length_m = 0.0
         self._trial_tcp_angular_path_length_deg = 0.0
         self._trial_path_prev_tcp_pos: "np.ndarray | None" = None
@@ -1252,6 +1285,9 @@ class WorkholdingStudy:
         # study, including the initial insertion phase.  Its gripper remains
         # open until the server reports that the board has been grasped.
         self.vis.update_board_ar_from_tcp(T_tcp, cfg.BOX_FORWARD_OFFSET)
+        self.vis.update_user_board(
+            self._user_manipulated_board_T
+            if self._ar_enabled and self._user_board_grabbed else None)
         # The controller workspace is defined in the calibrated world frame,
         # so its Open3D wireframe can remain visible before marker locking.
         self.vis.update_workspace_bound(self._ws_lo, self._ws_hi)
@@ -1307,6 +1343,14 @@ class WorkholdingStudy:
 
     def _update_palm_cbf_obstacle(self, now: float) -> None:
         """Publish the closest tracked palm during autonomous AR following."""
+        if not self._ENABLE_PALM_CBF:
+            # Clear once even if this process did not set the sphere: the
+            # long-running robot server may retain one from a prior session.
+            if not self._palm_cbf_disabled_cleared:
+                self.robot.update_palm_obstacle(None)
+                self._palm_cbf_active = False
+                self._palm_cbf_disabled_cleared = True
+            return
         following_ar = bool(
             self._ar_enabled
             and not self._hybrid_freedrive_only
@@ -1378,7 +1422,7 @@ class WorkholdingStudy:
 
     def _on_auto_move_complete(self, ok: bool) -> None:
         self._auto_move_pending = False
-        # Cancelling continuous AR following at the Hybrid handoff is an
+        # Cancelling an AR move at the Hybrid handoff is an
         # intentional control-mode transition, not a failed move that should
         # poison the next reset-to-default state.
         self._auto_move_result = (
@@ -1443,9 +1487,11 @@ class WorkholdingStudy:
         self._post_stop_freedrive_active = False
         self._post_stop_freedrive_start_errors = None
         self._ar_follow_last_board_T = None
+        self._user_manipulated_board_T = None
+        self._user_board_grabbed = False
         self._hybrid_freedrive_only = False
         if self.mode == "hybrid":
-            # Hybrid starts each trial in AR-follow mode. The explicit TCP
+            # Hybrid starts each trial in discrete AR-placement mode. The explicit TCP
             # click is the only way to enable freedrive.
             self.robot.set_board_freedrive(False)
         gripper_color = (self._FREEDRIVE_GRIPPER_RGBA
@@ -1531,7 +1577,7 @@ class WorkholdingStudy:
             self.ar_bridge.publish("grabbed", T_tcp)
             self.robot.set_board_freedrive(False)
             color = self._AR_GRIPPER_RGBA
-            mode_label = "AR FOLLOW"
+            mode_label = "AR PLACEMENT"
         self.tools.set_forced_color(self._TCP_TOOL_ID, color)
         self._prev_tcp_pos_for_speed = None
         self._prev_tcp_rot_for_speed = None
@@ -1990,6 +2036,12 @@ class WorkholdingStudy:
         manipulation_event = self.ar_bridge.poll_event()
         if manipulation_event is not None:
             manipulation_state, T_box_target = manipulation_event
+            if manipulation_state in ("grabbed", "dragging"):
+                self._user_manipulated_board_T = T_box_target.copy()
+                self._user_board_grabbed = True
+            elif manipulation_state in ("released", "cancelled"):
+                self._user_manipulated_board_T = None
+                self._user_board_grabbed = False
             if not accept_commands:
                 if manipulation_state == "released":
                     self._close_status_line()
@@ -2001,29 +2053,13 @@ class WorkholdingStudy:
                         reason="trial_not_started")
                 return
             post_stop = self._phase == "await_snap_confirmation"
-            T_box_command = T_box_target
-            if (self.mode == "touchgrab"
-                    and manipulation_state != "released"
-                    and T_tcp is not None):
-                # Follow only partway toward the held board. Recompute from
-                # the live robot pose so a stationary hand is approached
-                # smoothly rather than receiving an instantaneous snap.
-                T_live_board = self._board_pose_from_tcp(T_tcp)
-                T_box_command = T_live_board.copy()
-                position_delta = (
-                    T_box_target[:3, 3] - T_live_board[:3, 3])
-                position_step = (
-                    self._TOUCHGRAB_HELD_FOLLOW_GAIN * position_delta)
-                T_box_command[:3, 3] += position_step
+            # AR, Hybrid-AR, and TouchGrab are discrete placement channels.
+            # The virtual object remains responsive in Unity while held, but
+            # the physical robot receives no target until the user releases.
+            if manipulation_state != "released":
+                return
 
-                relative_rotation = ScipyR.from_matrix(
-                    T_live_board[:3, :3].T @ T_box_target[:3, :3])
-                rotation_step = (
-                    self._TOUCHGRAB_HELD_FOLLOW_GAIN
-                    * relative_rotation.as_rotvec())
-                T_box_command[:3, :3] = (
-                    T_live_board[:3, :3]
-                    @ ScipyR.from_rotvec(rotation_step).as_matrix())
+            T_box_command = T_box_target
 
             tcp_pos  = (T_box_command[:3, 3]
                        - cfg.BOX_FORWARD_OFFSET * T_box_command[:3, 2])
@@ -2057,7 +2093,7 @@ class WorkholdingStudy:
                 self._close_status_line()
                 release_label = (f"#{self._trial_interactions}"
                                  if recording else "(not recorded)")
-                print(f"[AR] Release {release_label}; robot following final "
+                print(f"[AR] Release {release_label}; robot moving to final "
                       f"TCP {np.round(tcp_pos, 3).tolist()}")
                 self._replay_event(
                     "ar_handle_released",

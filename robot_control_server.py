@@ -218,6 +218,7 @@ class RobotControlServer:
     # 5 cm / 15 deg human trial-completion criterion in workholding_study.py.
     _WORKHOLDING_MOVE_POS_TOL_M = 0.01
     _WORKHOLDING_MOVE_ANGLE_TOL_RAD = np.deg2rad(3.0)
+    _WORKHOLDING_MOVE_DWELL_S = 0.15
     # A hand target moves slightly even while the user tries to hold still.
     # Give the presenting motion a modestly wider completion envelope than
     # the former 1.5 cm / 6 deg / 0.30 s criterion.
@@ -242,12 +243,13 @@ class RobotControlServer:
     _SIM_BOARD_SMOOTH_ALPHA  = 0.55
     _SERVO_LOOKAHEAD_S       = 0.08
     _SERVO_GAIN              = 400
-    _WORKHOLDING_EMA_ALPHA   = 0.90
+    # Responsive discrete placement after AR/TouchGrab release.
+    _WORKHOLDING_EMA_ALPHA   = 0.88
     _WORKHOLDING_LOOKAHEAD_S = 0.04
-    _WORKHOLDING_GAIN        = 450
-    _WORKHOLDING_OSC_SPEED_SCALE = 0.95
-    _WORKHOLDING_BRAKE_DIST_M = 0.06
-    _WORKHOLDING_BRAKE_ANGLE_RAD = np.deg2rad(10.0)
+    _WORKHOLDING_GAIN        = 480
+    _WORKHOLDING_OSC_SPEED_SCALE = 1.40
+    _WORKHOLDING_BRAKE_DIST_M = 0.035
+    _WORKHOLDING_BRAKE_ANGLE_RAD = np.deg2rad(6.0)
     # Hand delivery stays reactive at long range, then increasingly filters and
     # brakes the command only inside the final 8 cm around the user's hand.
     _HANDOVER_OSC_SPEED_SCALE = 1.15
@@ -1404,9 +1406,12 @@ class RobotControlServer:
                 print(f"[Robot] dist: {_dc}{dist*100:5.1f} cm{_RST}  "
                       f"angle: {_ac}{np.rad2deg(angle_err):5.1f}°{_RST}")
 
-            dwell_s = (self._HANDOVER_MOVE_DWELL_S
-                       if self._move_motion_profile == "handover"
-                       else self._MOVE_DWELL_S)
+            dwell_s = (
+                self._HANDOVER_MOVE_DWELL_S
+                if self._move_motion_profile == "handover" else
+                self._WORKHOLDING_MOVE_DWELL_S
+                if self._move_motion_profile == "workholding" else
+                self._MOVE_DWELL_S)
             if (dist < pos_tol and angle_err < angle_tol):
                 if self._move_conv_start is None:
                     self._move_conv_start = time.perf_counter()
