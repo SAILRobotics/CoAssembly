@@ -383,9 +383,10 @@ public class GripStateReceiver : MonoBehaviour
                 manipulationHandle.CancelManipulation();
             if (arBox    != null) arBox.SetActive(false);
             if (arHandle != null) arHandle.SetActive(false);
-            // Remember explicit idle in TouchGrab so subsequent pose-only
-            // heartbeats do not resurrect the board during freedrive.
-            _prevGripState = _touchMode ? "idle" : "";
+            // Remember explicit idle so subsequent pose-only heartbeats do not
+            // resurrect the board (TouchGrab) or the handle (AR/Hybrid) during
+            // freedrive — pose_only fires every tick regardless of mode.
+            _prevGripState = "idle";
             _prevIsGrabbed = false;
             _resultVisible = false;
             _targetReachedForCurrentMove = false;
