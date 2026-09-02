@@ -248,7 +248,7 @@ def _candidate_tool_names(ptype: str, side: str, row: int):
     Tiers: exact per-part name, then the GEAR_STAND alias, then the shared bin by type."""
     s = side.upper()
     if ptype == "Bearing":
-        return [f"BEARING_ROW{row}_{s}", f"ROW{row}_KIT"]
+        return [f"BEARING_ROW{row}_{s}", "BEARINGS", f"ROW{row}_KIT"]
     if ptype == "Stand":
         return [f"STAND_ROW{row}_{s}", f"GEAR_STAND_ROW{row}_{s}"]
     if ptype == "GearRod":
@@ -256,12 +256,12 @@ def _candidate_tool_names(ptype: str, side: str, row: int):
     if ptype == "Gear":
         return [f"GEAR_ROW{row}_{s}"]
     if ptype == "Pin":
-        return [f"PIN_ROW{row}_{s}", f"ROW{row}_KIT"]
+        return [f"PIN_ROW{row}_{s}", "PINS", f"ROW{row}_KIT"]
     if ptype == "Screw":
-        return [f"SCREW_ROW{row}_{s}", f"ROW{row}_KIT"]
+        return [f"SCREW_ROW{row}_{s}", "SCREWS", f"ROW{row}_KIT"]
     if ptype == "CrankHandle":
         # The crank is stored in the row-1 kit; other rows have no crank step.
-        return [f"CRANK_HANDLE_ROW{row}", f"ROW{row}_KIT"] if row == 1 else []
+        return [f"CRANK_HANDLE_ROW{row}", "CRANK_HANDLE", f"ROW{row}_KIT"] if row == 1 else []
     return []
 
 

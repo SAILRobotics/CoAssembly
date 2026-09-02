@@ -57,7 +57,7 @@ except Exception:
 def _study4_tool_layout(condition: str | None) -> Path:
     """Return the shared physical layout used by every Study 4 condition."""
     return (Path(__file__).resolve().parent.parent
-            / "scene_layout" / "tool_layout1.json")
+            / "scene_layout" / "tool_layout2.json")
 
 
 @dataclass(frozen=True)
@@ -1488,14 +1488,20 @@ class TaskGraph:
     def parts_for_reference_label(label: str) -> list[str]:
         """Expand one VLM dataset label to physical task-graph identifiers."""
         label = str(label).strip().upper()
-        if label == "BEARING":
+        if label in ("BEARING", "BEARINGS"):
             return sorted(p for p in PROVIDED_PARTS if p.startswith("BEARING_"))
-        if label == "PIN":
+        if label in ("PIN", "PINS"):
             return sorted(p for p in PROVIDED_PARTS if p.startswith("PIN_"))
+        if label in ("SCREW", "SCREWS"):
+            return sorted(p for p in PROVIDED_PARTS if p.startswith("SCREW_"))
+        if label == "CRANK_HANDLE":
+            return ["CRANK_HANDLE_ROW1"]
         row_group = re.fullmatch(r"(BEARING|PIN)_ROW([1-4])", label)
         if row_group:
             kind, row = row_group.groups()
-            return [f"{kind}_ROW{row}_LEFT", f"{kind}_ROW{row}_RIGHT"]
+            return sorted(
+                part for part in PROVIDED_PARTS
+                if part.startswith(f"{kind}_ROW{row}_"))
         kit = re.fullmatch(r"ROW([1-4])_KIT", label)
         if kit:
             row = kit.group(1)
@@ -1521,7 +1527,11 @@ class TaskGraph:
         layout ID/type but no VLM ``matched_parts`` payload.
         """
         name = str(tool_name).strip().upper()
+        if name in ("SCREWS", "BEARINGS", "CRANK_HANDLE", "PINS"):
+            return TaskGraph.parts_for_reference_label(name)
         if re.fullmatch(r"ROW[1-4]_KIT", name):
+            return TaskGraph.parts_for_reference_label(name)
+        if re.fullmatch(r"(BEARING|PIN|SCREW)_ROW[1-4]", name):
             return TaskGraph.parts_for_reference_label(name)
         stand = re.fullmatch(r"GEAR_STAND_ROW([1-4])_(LEFT|RIGHT)", name)
         if stand:
@@ -1530,7 +1540,7 @@ class TaskGraph:
         tool_contents = {
             "BIT_WRENCH": ["BIT_WRENCH"],
             "BIT_SCREWDRIVER": ["BIT_SCREWDRIVER"],
-            # tool_layout1.json retains the historical one-l spelling.
+            # Older layouts retain the historical one-l spelling.
             "PHILIPS_SCREWDRIVER": ["PHILLIPS_SCREWDRIVER"],
             "PHILLIPS_SCREWDRIVER": ["PHILLIPS_SCREWDRIVER"],
             "BITHOLDER1": ["BIT_HOLDER1", "H5_HEX_BIT", "H3_HEX_BIT"],
@@ -2419,13 +2429,10 @@ class DearPyGuiTaskGraphApp:
                     self._vlm.set_focused_step("")
                     self._vlm.set_resolved_part_candidates([])
                 self._publish_selected_step_board_highlight()
-            # Study 4 does not score Row 1 stages 1.5 or 1.6. As soon as all
-            # prerequisites for 1.5 exist, complete both sequentially; 1.5
-            # unlocks 1.6. The controller emits their normal semantic events,
-            # keeping Unity, Open3D, and this graph synchronized.
-            if row == 1 and self.controller is not None:
-                self.controller.sm.complete_automatically(1, 5)
-                self.controller.sm.complete_automatically(1, 6)
+            # Study 4 scores only ordered steps 1--4 for each row. Completing
+            # step 4 also completes steps 5 and 6 in every synchronized view.
+            if stage == 4:
+                self._auto_complete_row_steps_five_and_six(row)
         # Undo mapped steps in reverse dependency order.
         elif event == "uncomplete":
             for sid in reversed(ids):
@@ -3108,11 +3115,28 @@ class DearPyGuiTaskGraphApp:
                 and tool_id not in self._acquired_tool_ids]
 
     def _removable_consumable_ids(self, tool_ids: Iterable[int]) -> set[int]:
-        """Consume parts while keeping reusable tools available for later rows."""
-        return {int(tool_id) for tool_id in tool_ids
-                if (int(tool_id) in self._tool_defs_by_id
-                    and self._tool_defs_by_id[int(tool_id)].get("category")
-                    == "part")}
+        """Consume one-off parts while keeping shared supply objects visible."""
+        persistent_supplies = {
+            "SCREWS",
+            "BEARINGS",
+            "CRANK_HANDLE",
+            "PINS",
+        }
+        removable: set[int] = set()
+        for tool_id in map(int, tool_ids):
+            definition = self._tool_defs_by_id.get(tool_id)
+            if not definition or definition.get("category") != "part":
+                continue
+            tool_type = str(definition.get("type", "")).strip().upper()
+            # tool_layout1 groups bearings, screws, and pins into reusable
+            # per-row supply kits.  tool_layout2 exposes the same supplies as
+            # four plainly named objects.  Neither representation is consumed
+            # when one graph step uses a part from it.
+            if (tool_type in persistent_supplies
+                    or re.fullmatch(r"ROW[1-4]_KIT", tool_type)):
+                continue
+            removable.add(tool_id)
+        return removable
 
     def _handle_pegboard_interaction(self, interaction: dict) -> None:
         """Log hovers and speak the hovered part during an active trial."""
@@ -5493,6 +5517,38 @@ class DearPyGuiTaskGraphApp:
                     for sid in step_ids if sid in self.graph.by_id)
         sm.done8 = "finish_gearbox" in self.graph.completed
 
+    def _auto_complete_row_steps_five_and_six(self, row: int) -> list[str]:
+        """Complete ordered row steps 5 and 6 and synchronize every view."""
+        completed: list[str] = []
+        for stage in (5, 6):
+            step_ids = TaskGraph.steps_for_control(row, stage)
+            if not step_ids:
+                continue
+            step = self.graph.by_id[step_ids[0]]
+            if self.graph.state(step) == "complete":
+                continue
+            ok, message = self.graph.complete(step)
+            self.log(f"[AutoComplete] {message}")
+            if not ok:
+                break
+            completed.append(step.id)
+            self._notify_vlm(f"AUTO COMPLETE: {step.id} -> {step.output}")
+            self._send_select({
+                "event": "complete", "row": row, "stage": stage,
+                "step": step.id, "automatic": True,
+            })
+        if completed:
+            self._sync_sm_from_graph()
+            if self.controller is not None:
+                self.controller.send({
+                    "command": "recolor", "row": row,
+                    "done_stages": self.controller.sm._completed_stages(row),
+                })
+            self.log(
+                f"[AutoComplete] Row {row}: ordered steps 5 and 6 complete "
+                "in GUI, Open3D, and Unity.")
+        return completed
+
     def _complete_selected(self) -> None:
         """Complete a ready selected step or undo a completed frontier step."""
         if not self.selected_id:
@@ -5520,6 +5576,8 @@ class DearPyGuiTaskGraphApp:
                 self._send_select({"event": "uncomplete" if was_complete else "complete",
                                    "row": coords[0], "stage": coords[1],
                                    "step": self.selected_id})
+                if not was_complete and coords[1] == 4:
+                    self._auto_complete_row_steps_five_and_six(coords[0])
             self._log_session_event(
                 "graph_uncomplete" if was_complete else "graph_complete")
         self.log(message)

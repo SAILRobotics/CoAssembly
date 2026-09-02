@@ -85,6 +85,21 @@ python3 workholding_study.py \
   --target-poses-file study_logs/study2/workholding_targets.json
 ```
 
+### Condition 4 — TouchGrab
+
+Use the Unity `WorkHoldingTestNew` scene for this condition. The participant
+directly grabs the cyan AR board with ISDK Touch Hand Grab; the Python data
+path is otherwise identical to the AR condition. In AR, Hybrid-AR, and
+TouchGrab, the virtual board moves while held and the physical robot moves
+only after release.
+
+```bash
+python3 workholding_study.py \
+  --session-name P01 \
+  --mode touchgrab \
+  --target-poses-file study_logs/study2/workholding_targets.json
+```
+
 Study 2 writes one shared replay log per participant to
 `study_logs/study2/P01_replay.jsonl`; each record includes its condition in the
 `mode` field. Restarting a command automatically resumes after the last fully
@@ -150,7 +165,7 @@ python3 task_graph/study4_part_acquisition_study.py \
 
 ```bash
 python3 task_graph/study4_part_acquisition_study.py \
-  --participant-id mahya \
+  --participant-id P0 \
   --condition language \
   --vlm-model Qwen/Qwen3-VL-8B-Instruct
 ```

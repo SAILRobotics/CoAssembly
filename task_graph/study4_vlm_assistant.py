@@ -41,8 +41,11 @@ FASTENING_TOOL_LABELS = (
     "PHILLIPS_SCREWDRIVER",
 )
 ROW_KIT_LABELS = tuple(f"ROW{row}_KIT" for row in range(1, 5))
+CATEGORY_REFERENCE_LABELS = ("BEARING", "PIN", "SCREW")
 ROW_GROUP_LABELS = tuple(
-    f"{kind}_ROW{row}" for kind in ("BEARING", "PIN") for row in range(1, 5)
+    f"{kind}_ROW{row}"
+    for kind in ("BEARING", "PIN", "SCREW")
+    for row in range(1, 5)
 )
 ASSEMBLY_LABELS = tuple(
     label
@@ -107,6 +110,9 @@ def _load_part_label_names() -> list[str]:
     """Load the canonical ontology without depending on a study-output CSV."""
     labels = set(FASTENING_TOOL_LABELS)
     labels.update(ROW_KIT_LABELS)
+    # Keep natural singular category references valid even when the physical
+    # layout represents their reusable containers with plural labels.
+    labels.update(CATEGORY_REFERENCE_LABELS)
     labels.update(ROW_GROUP_LABELS)
     labels.update(ASSEMBLY_LABELS)
 
@@ -115,7 +121,7 @@ def _load_part_label_names() -> list[str]:
     # exports, which may legitimately be absent on a study machine.
     try:
         layout_path = (Path(__file__).resolve().parent.parent
-                       / "scene_layout" / "tool_layout1.json")
+                       / "scene_layout" / "tool_layout2.json")
         entries = json.loads(layout_path.read_text(encoding="utf-8")).get(
             "tools", [])
         labels.update(
@@ -166,7 +172,7 @@ def _load_physical_layout_inventory() -> str:
     """Build concise VLM context from the live pegboard layout."""
     try:
         path = (Path(__file__).resolve().parent.parent / "scene_layout" /
-                "tool_layout1.json")
+                "tool_layout2.json")
         entries = json.loads(path.read_text(encoding="utf-8")).get("tools", [])
         allowed = set(_load_part_label_names())
         lines: list[str] = []
@@ -578,7 +584,7 @@ class VLMAssistant:
         elif study4_condition == "task_aware":
             self._system_prompt += (
                 "\n--- CURRENT PHYSICAL PEGBOARD INVENTORY "
-                "(from scene_layout/tool_layout1.json) ---\n"
+                "(from scene_layout/tool_layout2.json) ---\n"
                 + _load_physical_layout_inventory()
                 + "\n--- END CURRENT PHYSICAL PEGBOARD INVENTORY ---\n"
                 "This inventory defines which objects are independently "
