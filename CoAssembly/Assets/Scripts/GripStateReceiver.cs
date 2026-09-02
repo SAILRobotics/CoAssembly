@@ -293,6 +293,12 @@ public class GripStateReceiver : MonoBehaviour
             interactiveRobotGripper.transform.localRotation = latest.boxRot;
         }
 
+        // The local grab state is authoritative over robot-pose heartbeats.
+        // In particular, a pose_only packet must never overwrite the board
+        // transform while ARManipulationHandle or TouchHandGrab owns it.
+        bool grabbed = (manipulationHandle != null && manipulationHandle.IsGrabbed)
+                    || (_touchMode && touchGrab != null && touchGrab.IsGrabbed);
+
         // A pose-only heartbeat keeps the clickable robot gripper attached to
         // the physical TCP during setup, freedrive, resets, and transitions.
         // TouchGrab is different from handle-based AR: the board itself is
@@ -301,7 +307,7 @@ public class GripStateReceiver : MonoBehaviour
         // the participant switches TouchGrab/Hybrid into freedrive.
         if (latest.gripState == "pose_only")
         {
-            if (_touchMode && _prevGripState != "idle" && arBox != null
+            if (!grabbed && _touchMode && _prevGripState != "idle" && arBox != null
                     && !_boxFrozen && !_resultVisible)
             {
                 arBox.transform.SetParent(worldRoot, false);
@@ -312,7 +318,8 @@ public class GripStateReceiver : MonoBehaviour
                 arBox.SetActive(true);
                 SetRenderersVisible(_boardRenderers, true);
             }
-            else if ((_interactionMode == "ar" || _interactionMode == "hybrid")
+            else if (!grabbed
+                    && (_interactionMode == "ar" || _interactionMode == "hybrid")
                     && _prevGripState != "idle" && arHandle != null
                     && arBox != null)
             {
@@ -335,8 +342,6 @@ public class GripStateReceiver : MonoBehaviour
         }
 
         bool handleActive = latest.gripState == "grabbed" || latest.gripState == "moving";
-        bool grabbed      = (manipulationHandle != null && manipulationHandle.IsGrabbed)
-                         || (_touchMode && touchGrab != null && touchGrab.IsGrabbed);
         bool moveComplete = latest.gripState == "grabbed" && _prevGripState == "moving";
         // A queued idle packet must never hide the board after ISDK has
         // already begun a grab. The local grab state is authoritative until
