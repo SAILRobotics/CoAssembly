@@ -233,6 +233,7 @@ class RobotControlServer:
     _HANDOVER_STAGE_SPEED_RAD_S = 1.0
     _MOVE_DWELL_S            = 0.30
     _MOVE_STALL_TIMEOUT_S     = 3.0
+    _WORKHOLDING_MOVE_STALL_TIMEOUT_S = 1.5
     _MOVE_PROGRESS_POS_M      = 0.002
     _MOVE_PROGRESS_ANGLE_RAD  = np.deg2rad(1.0)
     _MOVE_BRAKE_DIST_M       = 0.05
@@ -1339,14 +1340,17 @@ class RobotControlServer:
         if self._move_motion_profile == "workholding":
             pos_tol = self._WORKHOLDING_MOVE_POS_TOL_M
             angle_tol = self._WORKHOLDING_MOVE_ANGLE_TOL_RAD
+            stall_timeout_s = self._WORKHOLDING_MOVE_STALL_TIMEOUT_S
         elif self._move_motion_profile == "handover":
             pos_tol = self._HANDOVER_MOVE_POS_TOL_M
             angle_tol = self._HANDOVER_MOVE_ANGLE_TOL_RAD
+            stall_timeout_s = self._MOVE_STALL_TIMEOUT_S
         else:
             pos_tol = (self._BOARD_MOVE_POS_TOL_M
                        if self._move_is_board else self._MOVE_POS_TOL_M)
             angle_tol = (self._BOARD_MOVE_ANGLE_TOL_RAD
                          if self._move_is_board else self._MOVE_ANGLE_TOL_RAD)
+            stall_timeout_s = self._MOVE_STALL_TIMEOUT_S
 
         q_cur = self.pb_scene.current_q.copy()
 
@@ -1390,9 +1394,9 @@ class RobotControlServer:
             elif ((dist >= pos_tol
                    or angle_err >= angle_tol)
                   and _now - self._move_progress_t
-                  >= self._MOVE_STALL_TIMEOUT_S):
+                  >= stall_timeout_s):
                 print(f"[Robot] move_to_pose unreachable/no progress for "
-                      f"{self._MOVE_STALL_TIMEOUT_S:.1f} s "
+                      f"{stall_timeout_s:.1f} s "
                       f"({dist*100:.1f} cm, "
                       f"{np.rad2deg(angle_err):.1f}°) → cancelled")
                 self._finish_move(False)

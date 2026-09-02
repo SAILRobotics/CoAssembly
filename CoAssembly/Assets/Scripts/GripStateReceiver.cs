@@ -299,6 +299,25 @@ public class GripStateReceiver : MonoBehaviour
         bool grabbed = (manipulationHandle != null && manipulationHandle.IsGrabbed)
                     || (_touchMode && touchGrab != null && touchGrab.IsGrabbed);
 
+        // Detect local grab transitions before handling pose_only.  A robot
+        // heartbeat can be the first network packet processed after release;
+        // freezing here prevents that packet from replacing the released
+        // target pose with the current TCP pose.
+        if (grabbed && !_prevIsGrabbed)
+        {
+            _resultVisible = false;
+            _targetReachedForCurrentMove = false;
+            SetBoardColor(manipulatingColor);
+        }
+        if (_prevIsGrabbed && !grabbed)
+        {
+            _boxFrozen = true;
+            _resultVisible = false;
+            _targetReachedForCurrentMove = false;
+            if (arBox != null) arBox.SetActive(true);
+            SetBoardColor(movingColor);
+        }
+
         // A pose-only heartbeat keeps the clickable robot gripper attached to
         // the physical TCP during setup, freedrive, resets, and transitions.
         // TouchGrab is different from handle-based AR: the board itself is
@@ -338,6 +357,7 @@ public class GripStateReceiver : MonoBehaviour
                 arHandle.transform.rotation = arBox.transform.rotation
                     * Quaternion.AngleAxis(180f, Vector3.right);
             }
+            _prevIsGrabbed = grabbed;
             return;
         }
 
@@ -364,21 +384,6 @@ public class GripStateReceiver : MonoBehaviour
             SetRenderersVisible(_boardRenderers, true);
         }
 
-        // Freeze the box the instant the user releases — before Python even transitions to 'moving'
-        if (grabbed && !_prevIsGrabbed)
-        {
-            _resultVisible = false;
-            _targetReachedForCurrentMove = false;
-            SetBoardColor(manipulatingColor);
-        }
-        if (_prevIsGrabbed && !grabbed)
-        {
-            _boxFrozen = true;
-            _resultVisible = false;
-            _targetReachedForCurrentMove = false;
-            if (arBox != null) arBox.SetActive(true);
-            SetBoardColor(movingColor);
-        }
         if (cancelled) _boxFrozen = false;
 
         // Grip mode cancelled — hide everything and reset
