@@ -464,7 +464,7 @@ class WorkholdingStudy:
     # Live robot-gripper mode indicator. These are forced colors so hover and
     # selection feedback cannot obscure the current control mode.
     _AR_GRIPPER_RGBA = [0.0, 0.0, 0.0, 1.0]
-    _FREEDRIVE_GRIPPER_RGBA = [1.0, 0.0, 0.0, 1.0]
+    _FREEDRIVE_GRIPPER_RGBA = [0.5, 0.0, 0.5, 1.0]
     # The participant-controlled AR assembly is cyan in every AR-capable
     # condition; target/proximity colors are published on the separate ghost
     # channel and remain independent.
