@@ -1,0 +1,327 @@
+# Study 4 Non-Clean Language Grounding — Full Transcripts
+
+Total `vlm_interaction` events (language + task_aware): **460**. Non-clean-grounding: **75** (16.3%).
+
+Each entry: participant, condition, step, what the user said, what the system said back, and the system's structured prediction. Judge each as user-side (ambiguous/out-of-scope phrasing) or system-side (a clear request the model still failed to resolve).
+
+## `selected_step_physical_cycle` (33)
+
+- **arunn** / task_aware / r1_gear_rod (Row 1.2: assemble gear rod)
+  - Said: "remaining part"
+  - System replied: "I identified and highlighted the Row 1 gear rod."
+  - Prediction: `GEAR_ROD_ROW1`
+- **arunn** / task_aware / r2_bearing_right (Row 2.1: bearing into right stand)
+  - Said: "remaining part"
+  - System replied: "I identified and highlighted the Row 2 right stand."
+  - Prediction: `GEAR_STAND_ROW2_RIGHT`
+- **arunn** / task_aware / r2_bearing_left (Row 2.3: bearing into left stand)
+  - Said: "remaining part"
+  - System replied: "I identified and highlighted the Row 2 left stand."
+  - Prediction: `GEAR_STAND_ROW2_LEFT`
+- **junghoon** / task_aware / r1_bearing_right (Row 1.1: bearing into right stand)
+  - Said: "other part"
+  - System replied: "I identified and highlighted the bearing."
+  - Prediction: `BEARINGS`
+- **junghoon** / task_aware / r1_fasten_first_stand (Row 1.4: fasten right stand)
+  - Said: "the other oene"
+  - System replied: "I identified and highlighted the bit holder1."
+  - Prediction: `BITHOLDER1`
+- **junghoon** / task_aware / r2_bearing_right (Row 2.1: bearing into right stand)
+  - Said: "Give me one."
+  - System replied: "I identified and highlighted the bearing."
+  - Prediction: `BEARINGS`
+- **junghoon** / task_aware / r2_bearing_right (Row 2.1: bearing into right stand)
+  - Said: "the other one please"
+  - System replied: "I identified and highlighted the Row 2 right stand."
+  - Prediction: `GEAR_STAND_ROW2_RIGHT`
+- **junghoon** / task_aware / r2_bearing_left (Row 2.3: bearing into left stand)
+  - Said: "give me one"
+  - System replied: "I identified and highlighted the bearing."
+  - Prediction: `BEARINGS`
+- **junghoon** / task_aware / r2_bearing_left (Row 2.3: bearing into left stand)
+  - Said: "give me the other one"
+  - System replied: "I identified and highlighted the Row 2 left stand."
+  - Prediction: `GEAR_STAND_ROW2_LEFT`
+- **junghoon** / task_aware / r2_fasten_first_stand (Row 2.4: fasten right stand)
+  - Said: "give me one"
+  - System replied: "I identified and highlighted the screw."
+  - Prediction: `SCREWS`
+- **junghoon** / task_aware / r2_fasten_first_stand (Row 2.4: fasten right stand)
+  - Said: "another one"
+  - System replied: "I identified and highlighted the interchangeable-bit screwdriver."
+  - Prediction: `BIT_SCREWDRIVER`
+- **junghoon** / task_aware / r2_fasten_first_stand (Row 2.4: fasten right stand)
+  - Said: "the other one"
+  - System replied: "I identified and highlighted the bit holder2."
+  - Prediction: `BITHOLDER2`
+- **junhyun** / task_aware / r2_bearing_left (Row 2.3: bearing into left stand)
+  - Said: "one of them"
+  - System replied: "I identified and highlighted the bearing."
+  - Prediction: `BEARINGS`
+- **junhyun** / task_aware / r1_fasten_first_stand (Row 1.4: fasten right stand)
+  - Said: "the another one"
+  - System replied: "I identified and highlighted the bit holder1."
+  - Prediction: `BITHOLDER1`
+- **junhyun** / task_aware / r2_fasten_first_stand (Row 2.4: fasten right stand)
+  - Said: "another one"
+  - System replied: "I identified and highlighted the screw."
+  - Prediction: `SCREWS`
+- **kuber** / task_aware / r2_bearing_right (Row 2.1: bearing into right stand)
+  - Said: "give me one of the parts"
+  - System replied: "I identified and highlighted the bearing."
+  - Prediction: `BEARINGS`
+- **kuber** / task_aware / r2_bearing_right (Row 2.1: bearing into right stand)
+  - Said: "other one"
+  - System replied: "I identified and highlighted the Row 2 right stand."
+  - Prediction: `GEAR_STAND_ROW2_RIGHT`
+- **mahya** / task_aware / r2_bearing_right (Row 2.1: bearing into right stand)
+  - Said: "Can you give me one of them?"
+  - System replied: "I identified and highlighted the Row 2 kit."
+  - Prediction: `ROW2_KIT`
+- **mahya** / task_aware / r2_bearing_right (Row 2.1: bearing into right stand)
+  - Said: "Can you give me the other one?"
+  - System replied: "I identified and highlighted the Row 2 right stand."
+  - Prediction: `GEAR_STAND_ROW2_RIGHT`
+- **mahya** / task_aware / r2_fasten_first_stand (Row 2.4: fasten right stand)
+  - Said: "Can you give me one of them?"
+  - System replied: "I identified and highlighted the interchangeable-bit screwdriver."
+  - Prediction: `BIT_SCREWDRIVER`
+- **mahya** / task_aware / r2_fasten_first_stand (Row 2.4: fasten right stand)
+  - Said: "Can you give me the other one?"
+  - System replied: "I identified and highlighted the bit holder2."
+  - Prediction: `BITHOLDER2`
+- **mahya** / task_aware / r2_gear_rod (Row 2.2: assemble gear rod)
+  - Said: "Can you give me one of them?"
+  - System replied: "I identified and highlighted the Row 2 gear rod."
+  - Prediction: `GEAR_ROD_ROW2`
+- **mahya** / task_aware / r2_gear_rod (Row 2.2: assemble gear rod)
+  - Said: "Can you give me the other one?"
+  - System replied: "I identified and highlighted the Row 2 left gear."
+  - Prediction: `GEAR_ROW2_LEFT`
+- **mahya** / task_aware / r1_gear_rod (Row 1.2: assemble gear rod)
+  - Said: "Can you give me one of them?"
+  - System replied: "I identified and highlighted the Row 1 left gear."
+  - Prediction: `GEAR_ROW1_LEFT`
+- **mahya** / task_aware / r1_gear_rod (Row 1.2: assemble gear rod)
+  - Said: "Can you give me the other one?"
+  - System replied: "I identified and highlighted the Row 1 gear rod."
+  - Prediction: `GEAR_ROD_ROW1`
+- **mahya** / task_aware / r1_gear_rod (Row 1.2: assemble gear rod)
+  - Said: "Can you give me the other one?"
+  - System replied: "I identified and highlighted the Row 1 kit."
+  - Prediction: `ROW1_KIT`
+- **pantea** / task_aware / r2_gear_rod (Row 2.2: assemble gear rod)
+  - Said: "can you get me one of the gears"
+  - System replied: "I identified and highlighted the Row 2 left gear."
+  - Prediction: `GEAR_ROW2_LEFT`
+- **pantea** / task_aware / r1_fasten_first_stand (Row 1.4: fasten right stand)
+  - Said: "can I get the other one"
+  - System replied: "I identified and highlighted the bit holder1."
+  - Prediction: `BITHOLDER1`
+- **parisa** / task_aware / r1_gear_rod (Row 1.2: assemble gear rod)
+  - Said: "can you get the other one?"
+  - System replied: "I identified and highlighted the Row 1 left gear."
+  - Prediction: `GEAR_ROW1_LEFT`
+- **parisa** / task_aware / r2_gear_rod (Row 2.2: assemble gear rod)
+  - Said: "give me the other gear"
+  - System replied: "I identified and highlighted the Row 2 right gear."
+  - Prediction: `GEAR_ROW2_RIGHT`
+- **parisa** / task_aware / r2_bearing_right (Row 2.1: bearing into right stand)
+  - Said: "GIVE ME THE OTHER ONE"
+  - System replied: "I identified and highlighted the bearing."
+  - Prediction: `BEARINGS`
+- **parisa** / task_aware / r2_fasten_first_stand (Row 2.4: fasten right stand)
+  - Said: "GIVE ME THE SCREW"
+  - System replied: "I identified and highlighted the screw."
+  - Prediction: `SCREWS`
+- **parisa** / task_aware / r2_fasten_first_stand (Row 2.4: fasten right stand)
+  - Said: "GIVE ME THE OTHER ONE"
+  - System replied: "I identified and highlighted the bit holder2."
+  - Prediction: `BITHOLDER2`
+
+## `selected_step_needs_highlight` (18)
+
+- **arunn** / task_aware / r2_gear_rod (Row 2.2: assemble gear rod)
+  - Said: "remaining part"
+  - System replied: "I identified and highlighted the parts."
+  - Prediction: `AMBIGUOUS`
+- **arunn** / task_aware / r2_fasten_first_stand (Row 2.4: fasten right stand)
+  - Said: "the first part"
+  - System replied: "I identified and highlighted the parts."
+  - Prediction: `AMBIGUOUS`
+- **mahya** / task_aware / r2_bearing_right (Row 2.1: bearing into right stand)
+  - Said: "What parts do I need?"
+  - System replied: "I identified and highlighted the parts."
+  - Prediction: `AMBIGUOUS`
+- **mahya** / task_aware / r2_bearing_right (Row 2.1: bearing into right stand)
+  - Said: "Which parts do I need for this step?"
+  - System replied: "I identified and highlighted the parts."
+  - Prediction: `AMBIGUOUS`
+- **mahya** / task_aware / r2_fasten_first_stand (Row 2.4: fasten right stand)
+  - Said: "Which parts do I need for this step?"
+  - System replied: "I identified and highlighted the parts."
+  - Prediction: `AMBIGUOUS`
+- **mahya** / task_aware / r2_fasten_first_stand (Row 2.4: fasten right stand)
+  - Said: "Which parts do I need?"
+  - System replied: "I identified and highlighted the parts."
+  - Prediction: `AMBIGUOUS`
+- **mahya** / task_aware / r2_gear_rod (Row 2.2: assemble gear rod)
+  - Said: "Which parts do I need?"
+  - System replied: "I identified and highlighted the parts."
+  - Prediction: `AMBIGUOUS`
+- **mahya** / task_aware / r2_bearing_left (Row 2.3: bearing into left stand)
+  - Said: "Which parts do I need?"
+  - System replied: "I identified and highlighted the parts."
+  - Prediction: `AMBIGUOUS`
+- **mahya** / task_aware / r1_gear_rod (Row 1.2: assemble gear rod)
+  - Said: "Which parts do I need?"
+  - System replied: "I identified and highlighted the parts."
+  - Prediction: `AMBIGUOUS`
+- **mahya** / task_aware / r1_bearing_right (Row 1.1: bearing into right stand)
+  - Said: "Which parts do I need for this?"
+  - System replied: "I identified and highlighted the parts."
+  - Prediction: `AMBIGUOUS`
+- **mahya** / task_aware / r1_bearing_left (Row 1.3: bearing into left stand)
+  - Said: "Which parts do I need?"
+  - System replied: "I identified and highlighted the parts."
+  - Prediction: `AMBIGUOUS`
+- **parisa** / task_aware / r1_gear_rod (Row 1.2: assemble gear rod)
+  - Said: "What parts do I need?"
+  - System replied: "I identified and highlighted the parts."
+  - Prediction: `AMBIGUOUS`
+- **parisa** / task_aware / r2_gear_rod (Row 2.2: assemble gear rod)
+  - Said: "what parts do I need"
+  - System replied: "I identified and highlighted the parts."
+  - Prediction: `AMBIGUOUS`
+- **parisa** / task_aware / r1_bearing_right (Row 1.1: bearing into right stand)
+  - Said: "which parts dO I NEED"
+  - System replied: "I identified and highlighted the parts."
+  - Prediction: `AMBIGUOUS`
+- **parisa** / task_aware / r1_bearing_left (Row 1.3: bearing into left stand)
+  - Said: "WHAT PARTS DO I need"
+  - System replied: "I identified and highlighted the parts."
+  - Prediction: `AMBIGUOUS`
+- **parisa** / task_aware / r2_bearing_right (Row 2.1: bearing into right stand)
+  - Said: "what parts dO i NEED"
+  - System replied: "I identified and highlighted the parts."
+  - Prediction: `AMBIGUOUS`
+- **parisa** / task_aware / r2_bearing_left (Row 2.3: bearing into left stand)
+  - Said: "WHAT PARTS DO I NEED"
+  - System replied: "I identified and highlighted the parts."
+  - Prediction: `AMBIGUOUS`
+- **parisa** / task_aware / r2_fasten_first_stand (Row 2.4: fasten right stand)
+  - Said: "WHAT PARTS DO I NEED"
+  - System replied: "I identified and highlighted the parts."
+  - Prediction: `AMBIGUOUS`
+
+## `language_physical_alternative_ambiguous` (7)
+
+- **mahya** / language / r1_fasten_first_stand (Row 1.4: fasten right stand)
+  - Said: "Can you give me the bit holder?"
+  - System replied: "Which other object do you mean: Bit Holder 1, containing the H5 and H3 hex bits, or Bit Holder 2, containing the T25 Torx bit?"
+  - Prediction: `AMBIGUOUS`
+- **mahya** / language / r1_fasten_first_stand (Row 1.4: fasten right stand)
+  - Said: "Can you give me the beat holder for row number one?"
+  - System replied: "Which other object do you mean: Bit Holder 1, containing the H5 and H3 hex bits, or Bit Holder 2, containing the T25 Torx bit?"
+  - Prediction: `AMBIGUOUS`
+- **mahya** / language / r2_gear_rod (Row 2.2: assemble gear rod)
+  - Said: "Can you give me the large gear for row number two?"
+  - System replied: "Which other object do you mean: Row 2 left gear, or Row 2 right gear?"
+  - Prediction: `AMBIGUOUS`
+- **mahya** / language / r2_gear_rod (Row 2.2: assemble gear rod)
+  - Said: "Can you give me the first gear for row number two?"
+  - System replied: "Which other object do you mean: Row 2 left gear, or Row 2 right gear?"
+  - Prediction: `AMBIGUOUS`
+- **mahya** / task_aware / r1_gear_rod (Row 1.2: assemble gear rod)
+  - Said: "Can you give me the o the first one?"
+  - System replied: "Which other object do you mean: Row 1 left gear, or Row 1 wooden retaining pins?"
+  - Prediction: `AMBIGUOUS`
+- **pantea** / task_aware / r2_gear_rod (Row 2.2: assemble gear rod)
+  - Said: "can I get one gear"
+  - System replied: "Which other object do you mean: Row 2 left gear, or Row 2 right gear?"
+  - Prediction: `AMBIGUOUS`
+- **pantea** / task_aware / r2_gear_rod (Row 2.2: assemble gear rod)
+  - Said: "can you give me larger gear"
+  - System replied: "Which other object do you mean: Row 2 left gear, or Row 2 right gear?"
+  - Prediction: `AMBIGUOUS`
+
+## `outside_selected_step_search_space` (7)
+
+- **apoorva** / task_aware / r2_fasten_first_stand (Row 2.4: fasten right stand)
+  - Said: "bit holder"
+  - System replied: "That object is not required for the selected step. This step is to screw the right stand to the board."
+  - Prediction: `BIT_HOLDER1`
+- **arunn** / task_aware / r2_fasten_first_stand (Row 2.4: fasten right stand)
+  - Said: "bit holder"
+  - System replied: "That object is not required for the selected step. This step is to screw the right stand to the board."
+  - Prediction: `BIT_HOLDER1`
+- **junghoon** / task_aware / r1_bearing_right (Row 1.1: bearing into right stand)
+  - Said: "the other stand"
+  - System replied: "That object is not required for the selected step. This step is to put the bearing into the right stand."
+  - Prediction: `STAND_ROW1_LEFT`
+- **kuber** / task_aware / r2_fasten_first_stand (Row 2.4: fasten right stand)
+  - Said: "bit holder"
+  - System replied: "That object is not required for the selected step. This step is to screw the right stand to the board."
+  - Prediction: `BIT_HOLDER1`
+- **mann** / task_aware / r2_fasten_first_stand (Row 2.4: fasten right stand)
+  - Said: "bit holder"
+  - System replied: "That object is not required for the selected step. This step is to screw the right stand to the board."
+  - Prediction: `BIT_HOLDER1`
+- **mann** / task_aware / r2_fasten_first_stand (Row 2.4: fasten right stand)
+  - Said: "bit holder"
+  - System replied: "That object is not required for the selected step. This step is to screw the right stand to the board."
+  - Prediction: `BIT_HOLDER1`
+- **sandeep** / task_aware / r2_fasten_first_stand (Row 2.4: fasten right stand)
+  - Said: "bit holder"
+  - System replied: "That object is not required for the selected step. This step is to screw the right stand to the board."
+  - Prediction: `BIT_HOLDER1`
+
+## `language_ambiguous` (4)
+
+- **mahya** / language / r1_bearing_right (Row 1.1: bearing into right stand)
+  - Said: "Can you give me the bearing for Rovan?"
+  - System replied: "Which row are you assembling?"
+  - Prediction: `AMBIGUOUS`
+- **mahya** / language / r2_gear_rod (Row 2.2: assemble gear rod)
+  - Said: "Can you give me one of the gear for row number two?"
+  - System replied: "Do you mean the left gear or the right gear in Row 2?"
+  - Prediction: `AMBIGUOUS`
+- **mahya** / language / r2_gear_rod (Row 2.2: assemble gear rod)
+  - Said: "Can you give me the large gear for row number two?"
+  - System replied: "Do you mean the left gear or the right gear in Row 2?"
+  - Prediction: `AMBIGUOUS`
+- **sandeep** / language / r2_bearing_right (Row 2.1: bearing into right stand)
+  - Said: "red right geartsand"
+  - System replied: "Which gear do you mean? Please give its row, color, size, or position."
+  - Prediction: `AMBIGUOUS`
+
+## `selected_step_object_already_acquired` (4)
+
+- **apoorva** / task_aware / r1_gear_rod (Row 1.2: assemble gear rod)
+  - Said: "the last part"
+  - System replied: "Row 1 wooden retaining pins is already covered by pin, which you selected. The remaining object for this step is Row 1 left gear."
+  - Prediction: `PIN_ROW1`
+- **arunn** / task_aware / r1_bearing_right (Row 1.1: bearing into right stand)
+  - Said: "last part"
+  - System replied: "Bearing is already covered by bearing, which you selected. The remaining object for this step is Row 1 right stand."
+  - Prediction: `BEARING`
+- **junhyun** / task_aware / r2_gear_rod (Row 2.2: assemble gear rod)
+  - Said: "large gear"
+  - System replied: "Row 2 left gear is already covered by Row 2 left gear, which you selected. The remaining object for this step is Row 2 right gear and pin."
+  - Prediction: `GEAR_ROW2_LEFT`
+- **kuber** / task_aware / r1_fasten_first_stand (Row 1.4: fasten right stand)
+  - Said: "screw"
+  - System replied: "Bit holder 1, containing the h5 and h3 hex bits is already covered by bit holder1, which you selected. The remaining object for this step is screw."
+  - Prediction: `BIT_HOLDER1`
+
+## `step_cycle_empty` (2)
+
+- **kuber** / task_aware / r2_gear_rod (Row 2.2: assemble gear rod)
+  - Said: "final part"
+  - System replied: "There are no remaining pegboard objects for this step."
+  - Prediction: `AMBIGUOUS`
+- **parisa** / task_aware / r2_gear_rod (Row 2.2: assemble gear rod)
+  - Said: "give me one of the gears"
+  - System replied: "There are no remaining pegboard objects for this step."
+  - Prediction: `AMBIGUOUS`
+

@@ -1,0 +1,165 @@
+participant,source_csv_row,scale,item_number,question,Gesture,Language + Gesture,Task-Aware
+Parisa Ghasemi,5,NASA-TLX,1,Mental Demand — How mentally demanding was it to request the part this way?,100,30,10
+Parisa Ghasemi,5,NASA-TLX,2,Physical Demand — How physically demanding was it to request the part this way?,100,10,10
+Parisa Ghasemi,5,NASA-TLX,3,Temporal Demand — How hurried or rushed did requesting the part feel?,30,10,10
+Parisa Ghasemi,5,NASA-TLX,4,Performance — How successful do you feel you were at getting the correct part?,80,90,90
+Parisa Ghasemi,5,NASA-TLX,5,Effort — How hard did you have to work to get the correct part?,100,40,10
+Parisa Ghasemi,5,NASA-TLX,6,"Frustration — How insecure, discouraged, irritated, stressed, or annoyed did you feel while requesting the part?",80,20,10
+Parisa Ghasemi,5,Confidence,1,System — How confident were you that the system understood what you needed?,5,6,6
+Parisa Ghasemi,5,Confidence,2,Retrieval — How confident were you that the system was going to bring you the correct part?,4,6,6
+Parisa Ghasemi,5,Usability,1,Part Detection — How clear was it which part you needed to request?,2,6,7 (Very easy)
+Parisa Ghasemi,5,Usability,2,Part Selection — How easy was it to request the part that you wanted?,2,5,7 (Very easy)
+Parisa Ghasemi,5,Adaptability,1,Phrasing — How much did you need to tailor the phrasing of your request to the system?,1 (Not at all),3,3
+Parisa Ghasemi,5,Adaptability,2,Movement — How much did you need to adjust your position to request the part?,6,1 (Not at all),1 (Not at all)
+Parisa Ghasemi,5,Additional Comments,1,Any Additional Comments?,,,
+Parisa Ghasemi,5,Overall Preference Rank,1,"Thinking back across all three ways of finding and requesting parts, please rank them from your most preferred (1) to your least preferred (3), based on your overall experience.",3,2,1
+,,,,,,,
+Mahya,6,NASA-TLX,1,Mental Demand — How mentally demanding was it to request the part this way?,50,30,50
+Mahya,6,NASA-TLX,2,Physical Demand — How physically demanding was it to request the part this way?,60,20,60
+Mahya,6,NASA-TLX,3,Temporal Demand — How hurried or rushed did requesting the part feel?,30,20,30
+Mahya,6,NASA-TLX,4,Performance — How successful do you feel you were at getting the correct part?,90,90,90
+Mahya,6,NASA-TLX,5,Effort — How hard did you have to work to get the correct part?,60,30,60
+Mahya,6,NASA-TLX,6,"Frustration — How insecure, discouraged, irritated, stressed, or annoyed did you feel while requesting the part?",20,20,20
+Mahya,6,Confidence,1,System — How confident were you that the system understood what you needed?,6,5,6
+Mahya,6,Confidence,2,Retrieval — How confident were you that the system was going to bring you the correct part?,7 (Very much),4,7 (Very much)
+Mahya,6,Usability,1,Part Detection — How clear was it which part you needed to request?,6,6,6
+Mahya,6,Usability,2,Part Selection — How easy was it to request the part that you wanted?,6,6,6
+Mahya,6,Adaptability,1,Phrasing — How much did you need to tailor the phrasing of your request to the system?,1 (Not at all),5,5
+Mahya,6,Adaptability,2,Movement — How much did you need to adjust your position to request the part?,6,3,1 (Not at all)
+Mahya,6,Additional Comments,1,Any Additional Comments?,,,
+Mahya,6,Overall Preference Rank,1,"Thinking back across all three ways of finding and requesting parts, please rank them from your most preferred (1) to your least preferred (3), based on your overall experience.",3,2,1
+,,,,,,,
+Pantea Habibi,7,NASA-TLX,1,Mental Demand — How mentally demanding was it to request the part this way?,50,80,20
+Pantea Habibi,7,NASA-TLX,2,Physical Demand — How physically demanding was it to request the part this way?,50,0,0
+Pantea Habibi,7,NASA-TLX,3,Temporal Demand — How hurried or rushed did requesting the part feel?,0,0,0
+Pantea Habibi,7,NASA-TLX,4,Performance — How successful do you feel you were at getting the correct part?,90,80,80
+Pantea Habibi,7,NASA-TLX,5,Effort — How hard did you have to work to get the correct part?,60,20,30
+Pantea Habibi,7,NASA-TLX,6,"Frustration — How insecure, discouraged, irritated, stressed, or annoyed did you feel while requesting the part?",30,5,5
+Pantea Habibi,7,Confidence,1,System — How confident were you that the system understood what you needed?,5,4,3
+Pantea Habibi,7,Confidence,2,Retrieval — How confident were you that the system was going to bring you the correct part?,6,4,4
+Pantea Habibi,7,Usability,1,Part Detection — How clear was it which part you needed to request?,4,5,5
+Pantea Habibi,7,Usability,2,Part Selection — How easy was it to request the part that you wanted?,4,6,5
+Pantea Habibi,7,Adaptability,1,Phrasing — How much did you need to tailor the phrasing of your request to the system?,1 (Not at all),7 (A great deal),3
+Pantea Habibi,7,Adaptability,2,Movement — How much did you need to adjust your position to request the part?,5,1 (Not at all),1 (Not at all)
+Pantea Habibi,7,Additional Comments,1,Any Additional Comments?,,,Second and third were similar but third would be easier and faster since you don’t need to describe much. For my case in three cases the system said the step completed even when I haven’t requested some of the parts.
+Pantea Habibi,7,Overall Preference Rank,1,"Thinking back across all three ways of finding and requesting parts, please rank them from your most preferred (1) to your least preferred (3), based on your overall experience.",2,3,1
+,,,,,,,
+Austin Graves,8,NASA-TLX,1,Mental Demand — How mentally demanding was it to request the part this way?,80,70,30
+Austin Graves,8,NASA-TLX,2,Physical Demand — How physically demanding was it to request the part this way?,60,75,20
+Austin Graves,8,NASA-TLX,3,Temporal Demand — How hurried or rushed did requesting the part feel?,70,35,15
+Austin Graves,8,NASA-TLX,4,Performance — How successful do you feel you were at getting the correct part?,60,80,95
+Austin Graves,8,NASA-TLX,5,Effort — How hard did you have to work to get the correct part?,80,45,5
+Austin Graves,8,NASA-TLX,6,"Frustration — How insecure, discouraged, irritated, stressed, or annoyed did you feel while requesting the part?",90,85,10
+Austin Graves,8,Confidence,1,System — How confident were you that the system understood what you needed?,5,3,6
+Austin Graves,8,Confidence,2,Retrieval — How confident were you that the system was going to bring you the correct part?,6,5,7 (Very much)
+Austin Graves,8,Usability,1,Part Detection — How clear was it which part you needed to request?,3,3,7 (Very easy)
+Austin Graves,8,Usability,2,Part Selection — How easy was it to request the part that you wanted?,4,5,6
+Austin Graves,8,Adaptability,1,Phrasing — How much did you need to tailor the phrasing of your request to the system?,1 (Not at all),6,1 (Not at all)
+Austin Graves,8,Adaptability,2,Movement — How much did you need to adjust your position to request the part?,6,1 (Not at all),1 (Not at all)
+Austin Graves,8,Additional Comments,1,Any Additional Comments?,Bounding boxes obscured the visibility of the parts.,,
+Austin Graves,8,Overall Preference Rank,1,"Thinking back across all three ways of finding and requesting parts, please rank them from your most preferred (1) to your least preferred (3), based on your overall experience.",2,3,1
+,,,,,,,
+Sandeep,9,NASA-TLX,1,Mental Demand — How mentally demanding was it to request the part this way?,70,60,20
+Sandeep,9,NASA-TLX,2,Physical Demand — How physically demanding was it to request the part this way?,60,10,10
+Sandeep,9,NASA-TLX,3,Temporal Demand — How hurried or rushed did requesting the part feel?,30,20,20
+Sandeep,9,NASA-TLX,4,Performance — How successful do you feel you were at getting the correct part?,35,50,85
+Sandeep,9,NASA-TLX,5,Effort — How hard did you have to work to get the correct part?,70,40,25
+Sandeep,9,NASA-TLX,6,"Frustration — How insecure, discouraged, irritated, stressed, or annoyed did you feel while requesting the part?",65,40,15
+Sandeep,9,Confidence,1,System — How confident were you that the system understood what you needed?,2,5,6
+Sandeep,9,Confidence,2,Retrieval — How confident were you that the system was going to bring you the correct part?,3,5,6
+Sandeep,9,Usability,1,Part Detection — How clear was it which part you needed to request?,2,5,6
+Sandeep,9,Usability,2,Part Selection — How easy was it to request the part that you wanted?,2,5,6
+Sandeep,9,Adaptability,1,Phrasing — How much did you need to tailor the phrasing of your request to the system?,1 (Not at all),3,6
+Sandeep,9,Adaptability,2,Movement — How much did you need to adjust your position to request the part?,3,2,6
+Sandeep,9,Additional Comments,1,Any Additional Comments?,,,
+Sandeep,9,Overall Preference Rank,1,"Thinking back across all three ways of finding and requesting parts, please rank them from your most preferred (1) to your least preferred (3), based on your overall experience.",3,2,1
+,,,,,,,
+Jung hun phee,10,NASA-TLX,1,Mental Demand — How mentally demanding was it to request the part this way?,100,54,5
+Jung hun phee,10,NASA-TLX,2,Physical Demand — How physically demanding was it to request the part this way?,100,10,0
+Jung hun phee,10,NASA-TLX,3,Temporal Demand — How hurried or rushed did requesting the part feel?,100,36,1
+Jung hun phee,10,NASA-TLX,4,Performance — How successful do you feel you were at getting the correct part?,40,58,100
+Jung hun phee,10,NASA-TLX,5,Effort — How hard did you have to work to get the correct part?,100,49,0
+Jung hun phee,10,NASA-TLX,6,"Frustration — How insecure, discouraged, irritated, stressed, or annoyed did you feel while requesting the part?",100,56,6
+Jung hun phee,10,Confidence,1,System — How confident were you that the system understood what you needed?,1 (Not at all),3,7 (Very much)
+Jung hun phee,10,Confidence,2,Retrieval — How confident were you that the system was going to bring you the correct part?,1 (Not at all),2,7 (Very much)
+Jung hun phee,10,Usability,1,Part Detection — How clear was it which part you needed to request?,1 (Very difficult),3,7 (Very easy)
+Jung hun phee,10,Usability,2,Part Selection — How easy was it to request the part that you wanted?,1 (Very difficult),4,7 (Very easy)
+Jung hun phee,10,Adaptability,1,Phrasing — How much did you need to tailor the phrasing of your request to the system?,1 (Not at all),4,7 (A great deal)
+Jung hun phee,10,Adaptability,2,Movement — How much did you need to adjust your position to request the part?,1 (Not at all),4,7 (A great deal)
+Jung hun phee,10,Additional Comments,1,Any Additional Comments?,,,
+Jung hun phee,10,Overall Preference Rank,1,"Thinking back across all three ways of finding and requesting parts, please rank them from your most preferred (1) to your least preferred (3), based on your overall experience.",3,2,1
+,,,,,,,
+Junhyun Kim,11,NASA-TLX,1,Mental Demand — How mentally demanding was it to request the part this way?,35,50,20
+Junhyun Kim,11,NASA-TLX,2,Physical Demand — How physically demanding was it to request the part this way?,50,10,10
+Junhyun Kim,11,NASA-TLX,3,Temporal Demand — How hurried or rushed did requesting the part feel?,40,50,15
+Junhyun Kim,11,NASA-TLX,4,Performance — How successful do you feel you were at getting the correct part?,15,30,20
+Junhyun Kim,11,NASA-TLX,5,Effort — How hard did you have to work to get the correct part?,35,30,15
+Junhyun Kim,11,NASA-TLX,6,"Frustration — How insecure, discouraged, irritated, stressed, or annoyed did you feel while requesting the part?",20,25,20
+Junhyun Kim,11,Confidence,1,System — How confident were you that the system understood what you needed?,6,4,5
+Junhyun Kim,11,Confidence,2,Retrieval — How confident were you that the system was going to bring you the correct part?,6,4,5
+Junhyun Kim,11,Usability,1,Part Detection — How clear was it which part you needed to request?,4,4,4
+Junhyun Kim,11,Usability,2,Part Selection — How easy was it to request the part that you wanted?,5,3,6
+Junhyun Kim,11,Adaptability,1,Phrasing — How much did you need to tailor the phrasing of your request to the system?,1 (Not at all),7 (A great deal),3
+Junhyun Kim,11,Adaptability,2,Movement — How much did you need to adjust your position to request the part?,6,1 (Not at all),1 (Not at all)
+Junhyun Kim,11,Additional Comments,1,Any Additional Comments?,,,
+Junhyun Kim,11,Overall Preference Rank,1,"Thinking back across all three ways of finding and requesting parts, please rank them from your most preferred (1) to your least preferred (3), based on your overall experience.",2,3,1
+,,,,,,,
+Mann Mehta,12,NASA-TLX,1,Mental Demand — How mentally demanding was it to request the part this way?,33,17,0
+Mann Mehta,12,NASA-TLX,2,Physical Demand — How physically demanding was it to request the part this way?,0,0,0
+Mann Mehta,12,NASA-TLX,3,Temporal Demand — How hurried or rushed did requesting the part feel?,0,0,0
+Mann Mehta,12,NASA-TLX,4,Performance — How successful do you feel you were at getting the correct part?,75,72,92
+Mann Mehta,12,NASA-TLX,5,Effort — How hard did you have to work to get the correct part?,40,0,0
+Mann Mehta,12,NASA-TLX,6,"Frustration — How insecure, discouraged, irritated, stressed, or annoyed did you feel while requesting the part?",10,0,0
+Mann Mehta,12,Confidence,1,System — How confident were you that the system understood what you needed?,5,7 (Very much),7 (Very much)
+Mann Mehta,12,Confidence,2,Retrieval — How confident were you that the system was going to bring you the correct part?,7 (Very much),7 (Very much),7 (Very much)
+Mann Mehta,12,Usability,1,Part Detection — How clear was it which part you needed to request?,7 (Very easy),7 (Very easy),7 (Very easy)
+Mann Mehta,12,Usability,2,Part Selection — How easy was it to request the part that you wanted?,7 (Very easy),7 (Very easy),7 (Very easy)
+Mann Mehta,12,Adaptability,1,Phrasing — How much did you need to tailor the phrasing of your request to the system?,1 (Not at all),7 (A great deal),3
+Mann Mehta,12,Adaptability,2,Movement — How much did you need to adjust your position to request the part?,3,1 (Not at all),1 (Not at all)
+Mann Mehta,12,Additional Comments,1,Any Additional Comments?,,,
+Mann Mehta,12,Overall Preference Rank,1,"Thinking back across all three ways of finding and requesting parts, please rank them from your most preferred (1) to your least preferred (3), based on your overall experience.",2,3,1
+,,,,,,,
+Kuber Sarwal,13,NASA-TLX,1,Mental Demand — How mentally demanding was it to request the part this way?,40,29,60
+Kuber Sarwal,13,NASA-TLX,2,Physical Demand — How physically demanding was it to request the part this way?,40,20,20
+Kuber Sarwal,13,NASA-TLX,3,Temporal Demand — How hurried or rushed did requesting the part feel?,0,0,0
+Kuber Sarwal,13,NASA-TLX,4,Performance — How successful do you feel you were at getting the correct part?,82,100,65
+Kuber Sarwal,13,NASA-TLX,5,Effort — How hard did you have to work to get the correct part?,39,36,34
+Kuber Sarwal,13,NASA-TLX,6,"Frustration — How insecure, discouraged, irritated, stressed, or annoyed did you feel while requesting the part?",6,6,7
+Kuber Sarwal,13,Confidence,1,System — How confident were you that the system understood what you needed?,1 (Not at all),6,7 (Very much)
+Kuber Sarwal,13,Confidence,2,Retrieval — How confident were you that the system was going to bring you the correct part?,6,6,7 (Very much)
+Kuber Sarwal,13,Usability,1,Part Detection — How clear was it which part you needed to request?,4,6,7 (Very easy)
+Kuber Sarwal,13,Usability,2,Part Selection — How easy was it to request the part that you wanted?,6,7 (Very easy),7 (Very easy)
+Kuber Sarwal,13,Adaptability,1,Phrasing — How much did you need to tailor the phrasing of your request to the system?,3,1 (Not at all),1 (Not at all)
+Kuber Sarwal,13,Adaptability,2,Movement — How much did you need to adjust your position to request the part?,2,1 (Not at all),1 (Not at all)
+Kuber Sarwal,13,Additional Comments,1,Any Additional Comments?,,,
+Kuber Sarwal,13,Overall Preference Rank,1,"Thinking back across all three ways of finding and requesting parts, please rank them from your most preferred (1) to your least preferred (3), based on your overall experience.",2,3,1
+,,,,,,,
+Apoorva Narula,14,NASA-TLX,1,Mental Demand — How mentally demanding was it to request the part this way?,1,20,5
+Apoorva Narula,14,NASA-TLX,2,Physical Demand — How physically demanding was it to request the part this way?,1,1,1
+Apoorva Narula,14,NASA-TLX,3,Temporal Demand — How hurried or rushed did requesting the part feel?,10,5,1
+Apoorva Narula,14,NASA-TLX,4,Performance — How successful do you feel you were at getting the correct part?,95,95,90
+Apoorva Narula,14,NASA-TLX,5,Effort — How hard did you have to work to get the correct part?,5,90,10
+Apoorva Narula,14,NASA-TLX,6,"Frustration — How insecure, discouraged, irritated, stressed, or annoyed did you feel while requesting the part?",1,10,5
+Apoorva Narula,14,Confidence,1,System — How confident were you that the system understood what you needed?,7 (Very much),7 (Very much),6
+Apoorva Narula,14,Confidence,2,Retrieval — How confident were you that the system was going to bring you the correct part?,7 (Very much),6,7 (Very much)
+Apoorva Narula,14,Usability,1,Part Detection — How clear was it which part you needed to request?,7 (Very easy),6,6
+Apoorva Narula,14,Usability,2,Part Selection — How easy was it to request the part that you wanted?,7 (Very easy),6,6
+Apoorva Narula,14,Adaptability,1,Phrasing — How much did you need to tailor the phrasing of your request to the system?,1,4,3
+Apoorva Narula,14,Adaptability,2,Movement — How much did you need to adjust your position to request the part?,1,1 (Not at all),1 (Not at all)
+Apoorva Narula,14,Additional Comments,1,Any Additional Comments?,,,
+Apoorva Narula,14,Overall Preference Rank,1,"Thinking back across all three ways of finding and requesting parts, please rank them from your most preferred (1) to your least preferred (3), based on your overall experience.",3,2,1
+,,,,,,,
+Arunnganabathy Sankar,15,NASA-TLX,1,Mental Demand — How mentally demanding was it to request the part this way?,40,27,16
+Arunnganabathy Sankar,15,NASA-TLX,2,Physical Demand — How physically demanding was it to request the part this way?,4,0,0
+Arunnganabathy Sankar,15,NASA-TLX,3,Temporal Demand — How hurried or rushed did requesting the part feel?,0,0,0
+Arunnganabathy Sankar,15,NASA-TLX,4,Performance — How successful do you feel you were at getting the correct part?,42,50,63
+Arunnganabathy Sankar,15,NASA-TLX,5,Effort — How hard did you have to work to get the correct part?,28,17,12
+Arunnganabathy Sankar,15,NASA-TLX,6,"Frustration — How insecure, discouraged, irritated, stressed, or annoyed did you feel while requesting the part?",59,48,25
+Arunnganabathy Sankar,15,Confidence,1,System — How confident were you that the system understood what you needed?,3,4,5
+Arunnganabathy Sankar,15,Confidence,2,Retrieval — How confident were you that the system was going to bring you the correct part?,3,4,5
+Arunnganabathy Sankar,15,Usability,1,Part Detection — How clear was it which part you needed to request?,5,4,5
+Arunnganabathy Sankar,15,Usability,2,Part Selection — How easy was it to request the part that you wanted?,2,3,6
+Arunnganabathy Sankar,15,Adaptability,1,Phrasing — How much did you need to tailor the phrasing of your request to the system?,1 (Not at all),6,4
+Arunnganabathy Sankar,15,Adaptability,2,Movement — How much did you need to adjust your position to request the part?,6,1 (Not at all),1 (Not at all)
+Arunnganabathy Sankar,15,Additional Comments,1,Any Additional Comments?,,,
+Arunnganabathy Sankar,15,Overall Preference Rank,1,"Thinking back across all three ways of finding and requesting parts, please rank them from your most preferred (1) to your least preferred (3), based on your overall experience.",3,2,1

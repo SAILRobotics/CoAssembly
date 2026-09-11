@@ -1,0 +1,83 @@
+{
+  "derived_from_annotations": "study_logs/study2/apoorva_grasp_annotations.json",
+  "participant": "apoorva",
+  "source_log": "study_logs/study2/apoorva_replay.jsonl",
+  "trials": {
+    "apoorva-ar-1788555649232|ar|4": {
+      "annotated_at": "2026-09-05T01:03:49.193051+00:00",
+      "excluded_grasp_pairs": [
+        {
+          "excluded_at": "2026-09-04T23:50:31.729737+00:00",
+          "onset_frame_index": 89,
+          "onset_source": "recorded",
+          "onset_time_monotonic_s": 595536.084364307,
+          "release_frame_index": 131,
+          "release_time_monotonic_s": 595538.319055687
+        },
+        {
+          "excluded_at": "2026-09-05T01:03:49.193034+00:00",
+          "onset_frame_index": 287,
+          "onset_source": "recorded",
+          "onset_time_monotonic_s": 595546.906035184,
+          "release_frame_index": 359,
+          "release_time_monotonic_s": 595550.574064896
+        }
+      ],
+      "grasp_frame_indices": [],
+      "grasp_times_monotonic_s": [],
+      "mode": "ar",
+      "no_grasp": false,
+      "reviewed": false,
+      "session_id": "apoorva-ar-1788555649232",
+      "trial_idx": 4
+    },
+    "apoorva-ar-1788555649232|ar|5": {
+      "annotated_at": "2026-09-04T23:51:45.780216+00:00",
+      "excluded_grasp_pairs": [
+        {
+          "excluded_at": "2026-09-04T23:51:41.328967+00:00",
+          "onset_frame_index": 754,
+          "onset_source": "recorded",
+          "onset_time_monotonic_s": 595610.992530557,
+          "release_frame_index": 764,
+          "release_time_monotonic_s": 595611.456652015
+        },
+        {
+          "excluded_at": "2026-09-04T23:51:45.780198+00:00",
+          "onset_frame_index": 834,
+          "onset_source": "recorded",
+          "onset_time_monotonic_s": 595614.920469804,
+          "release_frame_index": 843,
+          "release_time_monotonic_s": 595615.38791884
+        }
+      ],
+      "grasp_frame_indices": [],
+      "grasp_times_monotonic_s": [],
+      "mode": "ar",
+      "no_grasp": false,
+      "reviewed": false,
+      "session_id": "apoorva-ar-1788555649232",
+      "trial_idx": 5
+    },
+    "apoorva-hybrid-1788556252774|hybrid|7": {
+      "annotated_at": "2026-09-04T23:53:19.107612+00:00",
+      "excluded_grasp_pairs": [
+        {
+          "excluded_at": "2026-09-04T23:53:19.107595+00:00",
+          "onset_frame_index": 99,
+          "onset_source": "recorded",
+          "onset_time_monotonic_s": 596224.271856629,
+          "release_frame_index": 101,
+          "release_time_monotonic_s": 596224.336669261
+        }
+      ],
+      "grasp_frame_indices": [],
+      "grasp_times_monotonic_s": [],
+      "mode": "hybrid",
+      "no_grasp": false,
+      "reviewed": false,
+      "session_id": "apoorva-hybrid-1788556252774",
+      "trial_idx": 7
+    }
+  }
+}

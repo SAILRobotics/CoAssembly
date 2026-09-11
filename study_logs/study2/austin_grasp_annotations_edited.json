@@ -1,0 +1,47 @@
+{
+  "derived_from_annotations": "study_logs/study2/austin_grasp_annotations.json",
+  "participant": "austin",
+  "source_log": "study_logs/study2/austin_replay.jsonl",
+  "trials": {
+    "austin-hybrid-1788398766288|hybrid|0": {
+      "annotated_at": "2026-09-05T01:09:43.957130+00:00",
+      "excluded_grasp_pairs": [
+        {
+          "excluded_at": "2026-09-05T01:09:43.957111+00:00",
+          "onset_frame_index": 46,
+          "onset_source": "recorded",
+          "onset_time_monotonic_s": 438755.483182914,
+          "release_frame_index": 53,
+          "release_time_monotonic_s": 438755.749005013
+        }
+      ],
+      "grasp_frame_indices": [],
+      "grasp_times_monotonic_s": [],
+      "mode": "hybrid",
+      "no_grasp": false,
+      "reviewed": false,
+      "session_id": "austin-hybrid-1788398766288",
+      "trial_idx": 0
+    },
+    "austin-hybrid-1788398766288|hybrid|7": {
+      "annotated_at": "2026-09-05T01:10:29.077781+00:00",
+      "excluded_grasp_pairs": [
+        {
+          "excluded_at": "2026-09-05T01:10:29.077763+00:00",
+          "onset_frame_index": 43,
+          "onset_source": "recorded",
+          "onset_time_monotonic_s": 438977.447752477,
+          "release_frame_index": 58,
+          "release_time_monotonic_s": 438978.121602443
+        }
+      ],
+      "grasp_frame_indices": [],
+      "grasp_times_monotonic_s": [],
+      "mode": "hybrid",
+      "no_grasp": false,
+      "reviewed": false,
+      "session_id": "austin-hybrid-1788398766288",
+      "trial_idx": 7
+    }
+  }
+}

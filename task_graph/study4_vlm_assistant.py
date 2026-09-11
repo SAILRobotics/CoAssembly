@@ -616,6 +616,7 @@ class VLMAssistant:
         self._next_tex_id = 0
         self._exchanges: list[tuple[str, str]] = []
         self._pending_question: str = ""
+        self.on_question_submitted = None
         self._current_status = "loading"
         self._history_count = 0   # tracks number of Q/A pairs stored in worker
         self._part_labels = _load_part_label_names()
@@ -720,7 +721,8 @@ class VLMAssistant:
         """Whether the worker can accept a participant utterance now."""
         return self._current_status == "ready"
 
-    def submit_question(self, text: str) -> bool:
+    def submit_question(self, text: str,
+                        input_source: str = "speech_proxy") -> bool:
         """Ask Qwen to infer intent, resolve references, or answer normally.
 
         The model—not a Python keyword list—decides whether the utterance is a
@@ -734,6 +736,8 @@ class VLMAssistant:
             return False
         self._pending_question = text
         self._pending_part_text = text
+        if self.on_question_submitted is not None:
+            self.on_question_submitted(text, input_source)
         self._render_history(pending=True)
 
         clarification = ""
@@ -1584,7 +1588,7 @@ Return only independently selectable physical objects on the pegboard:
         if not question:
             return
         self.dpg.set_value("vlm_question", "")
-        self.submit_question(question)
+        self.submit_question(question, input_source="speech_proxy")
 
     def _clear_history(self) -> None:
         self._worker.reset_history()

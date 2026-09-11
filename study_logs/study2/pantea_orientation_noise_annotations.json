@@ -1,0 +1,41 @@
+{
+  "annotation_type": "orientation_confusion_noise",
+  "participant": "pantea",
+  "source_log": "study_logs/study2/pantea_replay.jsonl",
+  "trials": {
+    "pantea-freedrive-1788388306402|freedrive|5": {
+      "annotation_note": "Participant manipulated the board with an incorrect/confused orientation; interval marked manually for sensitivity analysis.",
+      "intervals": [
+        {
+          "annotated_at": "2026-09-05T02:01:21.054959+00:00",
+          "end_frame_index": 149,
+          "end_time_monotonic_s": 428358.081665159,
+          "reason": "orientation_confusion",
+          "start_frame_index": 37,
+          "start_time_monotonic_s": 428352.246771345,
+          "treatment": "exclude_as_noise"
+        }
+      ],
+      "mode": "freedrive",
+      "session_id": "pantea-freedrive-1788388306402",
+      "trial_idx": 5
+    },
+    "pantea-freedrive-1788388306402|freedrive|6": {
+      "annotation_note": "Participant manipulated the board with an incorrect/confused orientation; interval marked manually for sensitivity analysis.",
+      "intervals": [
+        {
+          "annotated_at": "2026-09-05T02:02:29.019511+00:00",
+          "end_frame_index": 139,
+          "end_time_monotonic_s": 428388.411581185,
+          "reason": "orientation_confusion",
+          "start_frame_index": 99,
+          "start_time_monotonic_s": 428386.346484018,
+          "treatment": "exclude_as_noise"
+        }
+      ],
+      "mode": "freedrive",
+      "session_id": "pantea-freedrive-1788388306402",
+      "trial_idx": 6
+    }
+  }
+}

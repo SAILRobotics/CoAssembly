@@ -1,0 +1,12 @@
+study,measure,n,kendalls_w,approx_achieved_power,n_for_80_percent_power,n_for_90_percent_power
+Study 2,Task-Specific Workload,11,0.13,0.30811085369042834,38,49
+Study 2,Adjustment Controllability,11,0.69,0.9465189954135209,7,10
+Study 2,Robot Motion Predictability,11,0.48,0.8371188296033102,11,14
+Study 2,Perceived Operational Safety,11,0.31,0.6432713712465488,16,21
+Study 2,Trust in Safe Positioning,11,0.03,0.10305169144717052,161,211
+Study 2,Preference Rank,11,0.52,0.8668148267892224,10,13
+Study 4,NASA-TLX,11,0.42,0.7821556663125224,12,16
+Study 4,Assistance Confidence,11,0.14,0.32917001471798923,35,46
+Study 4,Request Clarity and Ease,11,0.39,0.749436216064288,13,17
+Study 4,Interaction Adaptation Burden,11,0.22,0.4900340035936932,22,29
+Study 4,Preference Rank,11,0.75,0.9619767135783611,7,9

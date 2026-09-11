@@ -1,0 +1,24 @@
+index,participant,target_name,description,description_review_status,description_flag_type,description_review_note
+97,Pantea,BEARING,white ring,wrong,material_color,"Bearing is rendered black, but the description says white."
+98,Pantea,SCREW_ROW1,white screw,questionable,material_color,Row 1 screw is rendered silver; white may be a perceptual synonym under bright lighting.
+101,Pantea,SCREW_ROW4,smaller white screw,questionable,material_color,Row 4 screw is rendered silver; white may be a perceptual synonym under bright lighting.
+104,Pantea,PIN,red peg on right side on green row,questionable,material_color,"Pin is rendered brown, but the description says red; reddish-brown may explain the response."
+124,Austin,SCREW_ROW1,White hex bolt,questionable,material_color,Row 1 screw is rendered silver; white may be a perceptual synonym under bright lighting.
+125,Austin,SCREW_ROW2,Red hex bolt,questionable,material_color,"Row 2 screw is rendered black, but the description says red. The color may instead refer to the associated colored assembly row, so this is not treated as definitely wrong."
+126,Austin,SCREW_ROW3,Green star bolt,questionable,material_color,"Row 3 screw is rendered black, but the description says green. The color may instead refer to the associated colored assembly row, so this is not treated as definitely wrong."
+127,Austin,SCREW_ROW4,Blue philips bolt,questionable,material_color,"Row 4 screw is rendered silver, but the description says blue. The color may instead refer to the associated colored assembly row, so this is not treated as definitely wrong."
+133,JungHoon,STAND_ROW2_LEFT,red right gear stand,wrong,side,"Target is STAND_ROW2_LEFT, but the description says right."
+135,JungHoon,STAND_ROW3_LEFT,Green right gear stand,wrong,side,"Target is STAND_ROW3_LEFT, but the description says right."
+149,JungHoon,BEARING,white bearing,wrong,material_color,"Bearing is rendered black, but the description says white."
+150,JungHoon,SCREW_ROW1,white pin,wrong,object_category,"Target is a Row 1 screw, but the description identifies it as a pin."
+158,Junhyun,STAND_ROW1_RIGHT,white gear stand on the left,wrong,side,"Target is STAND_ROW1_RIGHT, but the description says left."
+201,Mann,BEARING,left green bearing,questionable,material_color,"Bearing is rendered black, but the description says green. The color may instead refer to the associated colored assembly row, so this is not treated as definitely wrong."
+202,Mann,SCREW_ROW1,left white screw for row 1,questionable,material_color,Row 1 screw is rendered silver; white may be a perceptual synonym under bright lighting.
+203,Mann,SCREW_ROW2,left red screw for row 2,questionable,material_color,"Row 2 screw is rendered black, but the description says red. The color may instead refer to the associated colored assembly row, so this is not treated as definitely wrong."
+204,Mann,SCREW_ROW3,right green screw for row 3,questionable,material_color,"Row 3 screw is rendered black, but the description says green. The color may instead refer to the associated colored assembly row, so this is not treated as definitely wrong."
+205,Mann,SCREW_ROW4,right blue screw for row 4,questionable,material_color,"Row 4 screw is rendered silver, but the description says blue. The color may instead refer to the associated colored assembly row, so this is not treated as definitely wrong."
+229,Kuber,SCREW_ROW2,red screw on the left,questionable,material_color,"Row 2 screw is rendered black, but the description says red. The color may instead refer to the associated colored assembly row, so this is not treated as definitely wrong."
+230,Kuber,SCREW_ROW3,right green screw,questionable,material_color,"Row 3 screw is rendered black, but the description says green. The color may instead refer to the associated colored assembly row, so this is not treated as definitely wrong."
+238,Apoorva,STAND_ROW2_RIGHT,"row 2, left gearstand, red colour, triangle marking",wrong,side,"Target is STAND_ROW2_RIGHT, but the description says left."
+253,Apoorva,BEARING,"Row 1 bearing, white",questionable,material_color,"Bearing is rendered black, but the description says white. The color may instead refer to the associated colored assembly row, so this is not treated as definitely wrong."
+283,Arunn,SCREW_ROW4,Flat headed screw with thin head used in Row 4,questionable,part_subtype,Row 4 uses a pan-head Phillips screw; “flat headed” may be an inaccurate subtype description.

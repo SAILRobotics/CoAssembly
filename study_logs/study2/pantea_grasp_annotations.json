@@ -1,0 +1,266 @@
+{
+  "participant": "pantea",
+  "source_log": "study_logs/study2/pantea_replay.jsonl",
+  "trials": {
+    "pantea-ar-1788388643739|ar|0": {
+      "annotated_at": "2026-09-03T16:58:29.770492+00:00",
+      "grasp_frame_indices": [
+        39,
+        67,
+        466
+      ],
+      "grasp_times_monotonic_s": [
+        428590.510187472,
+        428591.913019064,
+        428612.115533525
+      ],
+      "mode": "ar",
+      "no_grasp": false,
+      "reviewed": true,
+      "session_id": "pantea-ar-1788388643739",
+      "trial_idx": 0
+    },
+    "pantea-ar-1788388643739|ar|1": {
+      "annotated_at": "2026-09-03T16:59:03.336000+00:00",
+      "grasp_frame_indices": [
+        31
+      ],
+      "grasp_times_monotonic_s": [
+        428651.617052726
+      ],
+      "mode": "ar",
+      "no_grasp": false,
+      "reviewed": true,
+      "session_id": "pantea-ar-1788388643739",
+      "trial_idx": 1
+    },
+    "pantea-ar-1788388643739|ar|2": {
+      "annotated_at": "2026-09-03T16:59:21.077723+00:00",
+      "grasp_frame_indices": [
+        47
+      ],
+      "grasp_times_monotonic_s": [
+        428685.395534798
+      ],
+      "mode": "ar",
+      "no_grasp": false,
+      "reviewed": true,
+      "session_id": "pantea-ar-1788388643739",
+      "trial_idx": 2
+    },
+    "pantea-ar-1788388643739|ar|3": {
+      "annotated_at": "2026-09-03T17:00:05.348286+00:00",
+      "grasp_frame_indices": [
+        59
+      ],
+      "grasp_times_monotonic_s": [
+        428723.52808351
+      ],
+      "mode": "ar",
+      "no_grasp": false,
+      "reviewed": true,
+      "session_id": "pantea-ar-1788388643739",
+      "trial_idx": 3
+    },
+    "pantea-ar-1788388643739|ar|4": {
+      "annotated_at": "2026-09-03T17:00:48.468009+00:00",
+      "grasp_frame_indices": [
+        55
+      ],
+      "grasp_times_monotonic_s": [
+        428752.99210921
+      ],
+      "mode": "ar",
+      "no_grasp": false,
+      "reviewed": true,
+      "session_id": "pantea-ar-1788388643739",
+      "trial_idx": 4
+    },
+    "pantea-ar-1788388987475|ar|5": {
+      "annotated_at": "2026-09-03T17:02:30.699590+00:00",
+      "grasp_frame_indices": [
+        34,
+        310,
+        629
+      ],
+      "grasp_times_monotonic_s": [
+        428874.387432216,
+        428888.311959449,
+        428904.587091584
+      ],
+      "mode": "ar",
+      "no_grasp": false,
+      "reviewed": true,
+      "session_id": "pantea-ar-1788388987475",
+      "trial_idx": 5
+    },
+    "pantea-ar-1788389109147|ar|6": {
+      "annotated_at": "2026-09-03T17:03:10.401199+00:00",
+      "grasp_frame_indices": [
+        22,
+        219
+      ],
+      "grasp_times_monotonic_s": [
+        429004.015321083,
+        429013.955848017
+      ],
+      "mode": "ar",
+      "no_grasp": false,
+      "reviewed": true,
+      "session_id": "pantea-ar-1788389109147",
+      "trial_idx": 6
+    },
+    "pantea-ar-1788389109147|ar|7": {
+      "annotated_at": "2026-09-03T17:04:28.870352+00:00",
+      "grasp_frame_indices": [
+        31,
+        261,
+        609,
+        869
+      ],
+      "grasp_times_monotonic_s": [
+        429042.969151674,
+        429054.169331395,
+        429070.785393559,
+        429082.41771468
+      ],
+      "mode": "ar",
+      "no_grasp": false,
+      "reviewed": true,
+      "session_id": "pantea-ar-1788389109147",
+      "trial_idx": 7
+    },
+    "pantea-hybrid-1788389309330|hybrid|0": {
+      "annotated_at": "2026-09-03T17:08:23.713112+00:00",
+      "grasp_frame_indices": [
+        24,
+        312,
+        338
+      ],
+      "grasp_times_monotonic_s": [
+        429217.465305755,
+        429232.544644135,
+        429233.823347237
+      ],
+      "mode": "hybrid",
+      "no_grasp": false,
+      "reviewed": true,
+      "session_id": "pantea-hybrid-1788389309330",
+      "trial_idx": 0
+    },
+    "pantea-hybrid-1788389309330|hybrid|1": {
+      "annotated_at": "2026-09-03T17:09:31.344534+00:00",
+      "grasp_frame_indices": [
+        26,
+        82
+      ],
+      "grasp_times_monotonic_s": [
+        429271.159159825,
+        429273.991167163
+      ],
+      "mode": "hybrid",
+      "no_grasp": false,
+      "reviewed": true,
+      "session_id": "pantea-hybrid-1788389309330",
+      "trial_idx": 1
+    },
+    "pantea-hybrid-1788389309330|hybrid|2": {
+      "annotated_at": "2026-09-03T17:10:11.079320+00:00",
+      "grasp_frame_indices": [
+        31
+      ],
+      "grasp_times_monotonic_s": [
+        429306.784253778
+      ],
+      "mode": "hybrid",
+      "no_grasp": false,
+      "reviewed": true,
+      "session_id": "pantea-hybrid-1788389309330",
+      "trial_idx": 2
+    },
+    "pantea-hybrid-1788389309330|hybrid|3": {
+      "annotated_at": "2026-09-03T17:10:51.215267+00:00",
+      "grasp_frame_indices": [
+        27,
+        34
+      ],
+      "grasp_times_monotonic_s": [
+        429327.982377434,
+        429328.360134579
+      ],
+      "mode": "hybrid",
+      "no_grasp": false,
+      "reviewed": true,
+      "session_id": "pantea-hybrid-1788389309330",
+      "trial_idx": 3
+    },
+    "pantea-hybrid-1788389309330|hybrid|4": {
+      "annotated_at": "2026-09-03T17:11:18.277570+00:00",
+      "grasp_frame_indices": [
+        62
+      ],
+      "grasp_times_monotonic_s": [
+        429357.789307507
+      ],
+      "mode": "hybrid",
+      "no_grasp": false,
+      "reviewed": true,
+      "session_id": "pantea-hybrid-1788389309330",
+      "trial_idx": 4
+    },
+    "pantea-hybrid-1788389309330|hybrid|5": {
+      "annotated_at": "2026-09-03T17:11:36.119009+00:00",
+      "grasp_frame_indices": [
+        28
+      ],
+      "grasp_times_monotonic_s": [
+        429384.534822802
+      ],
+      "mode": "hybrid",
+      "no_grasp": false,
+      "reviewed": true,
+      "session_id": "pantea-hybrid-1788389309330",
+      "trial_idx": 5
+    },
+    "pantea-hybrid-1788389309330|hybrid|6": {
+      "annotated_at": "2026-09-03T17:13:17.866345+00:00",
+      "grasp_frame_indices": [
+        26,
+        370,
+        504,
+        721,
+        857,
+        966
+      ],
+      "grasp_times_monotonic_s": [
+        429428.026744911,
+        429445.150986331,
+        429451.938585552,
+        429463.424662381,
+        429470.597543271,
+        429476.248513186
+      ],
+      "mode": "hybrid",
+      "no_grasp": false,
+      "reviewed": true,
+      "session_id": "pantea-hybrid-1788389309330",
+      "trial_idx": 6
+    },
+    "pantea-hybrid-1788389309330|hybrid|7": {
+      "annotated_at": "2026-09-03T17:14:01.369438+00:00",
+      "grasp_frame_indices": [
+        22,
+        201
+      ],
+      "grasp_times_monotonic_s": [
+        429507.369989627,
+        429516.722156284
+      ],
+      "mode": "hybrid",
+      "no_grasp": false,
+      "reviewed": true,
+      "session_id": "pantea-hybrid-1788389309330",
+      "trial_idx": 7
+    }
+  }
+}

@@ -1,0 +1,589 @@
+participant,condition,step_id,tool_name,part_elapsed_s
+apoorva,Gesture,r2_bearing_right,GEAR_STAND_ROW2_RIGHT,19.603396
+apoorva,Gesture,r2_bearing_right,BEARINGS,45.452193
+apoorva,Gesture,r2_bearing_left,GEAR_STAND_ROW2_LEFT,18.515004
+apoorva,Gesture,r1_gear_rod,GEAR_ROD_ROW1,5.594591
+apoorva,Gesture,r1_gear_rod,GEAR_ROW1_LEFT,14.667576
+apoorva,Gesture,r1_gear_rod,PINS,12.871676
+apoorva,Gesture,r1_bearing_right,GEAR_STAND_ROW1_RIGHT,3.43843
+apoorva,Gesture,r1_bearing_right,BEARINGS,7.176223
+apoorva,Gesture,r1_bearing_left,GEAR_STAND_ROW1_LEFT,2.838847
+apoorva,Gesture,r2_gear_rod,GEAR_ROD_ROW2,7.539432
+apoorva,Gesture,r2_gear_rod,GEAR_ROW2_RIGHT,8.630564
+apoorva,Gesture,r2_gear_rod,GEAR_ROW2_LEFT,2.311857
+apoorva,Gesture,r2_gear_rod,PINS,4.589585
+apoorva,Gesture,r2_fasten_first_stand,SCREWS,26.583959
+apoorva,Gesture,r2_fasten_first_stand,BIT_SCREWDRIVER,8.844739
+apoorva,Gesture,r2_fasten_first_stand,BITHOLDER2,3.157676
+apoorva,Gesture,r1_fasten_first_stand,BITHOLDER1,22.806278
+apoorva,Language + Gesture,r2_bearing_right,GEAR_STAND_ROW2_RIGHT,9.035943
+apoorva,Language + Gesture,r2_bearing_right,BEARINGS,12.939183
+apoorva,Language + Gesture,r2_gear_rod,GEAR_ROD_ROW2,8.632117
+apoorva,Language + Gesture,r2_gear_rod,GEAR_ROW2_RIGHT,5.21918
+apoorva,Language + Gesture,r2_gear_rod,GEAR_ROW2_LEFT,8.044323
+apoorva,Language + Gesture,r2_gear_rod,PINS,8.176197
+apoorva,Language + Gesture,r2_bearing_left,GEAR_STAND_ROW2_LEFT,11.401582
+apoorva,Language + Gesture,r2_bearing_left,BEARINGS,7.333973
+apoorva,Language + Gesture,r1_gear_rod,GEAR_ROD_ROW1,7.419568
+apoorva,Language + Gesture,r1_gear_rod,GEAR_ROW1_LEFT,8.032024
+apoorva,Language + Gesture,r1_gear_rod,PINS,8.336815
+apoorva,Language + Gesture,r1_bearing_right,GEAR_STAND_ROW1_RIGHT,9.408085
+apoorva,Language + Gesture,r1_bearing_right,BEARINGS,7.285177
+apoorva,Language + Gesture,r1_bearing_left,GEAR_STAND_ROW1_LEFT,9.974016
+apoorva,Language + Gesture,r1_fasten_first_stand,SCREWS,7.413141
+apoorva,Language + Gesture,r1_fasten_first_stand,BIT_SCREWDRIVER,11.149722
+apoorva,Language + Gesture,r1_fasten_first_stand,BITHOLDER1,18.551357
+apoorva,Language + Gesture,r2_fasten_first_stand,BITHOLDER2,8.349282
+apoorva,Task-Aware,r1_bearing_right,GEAR_STAND_ROW1_RIGHT,11.364943
+apoorva,Task-Aware,r1_bearing_right,BEARINGS,9.444259
+apoorva,Task-Aware,r1_bearing_left,GEAR_STAND_ROW1_LEFT,7.854595
+apoorva,Task-Aware,r2_bearing_right,GEAR_STAND_ROW2_RIGHT,8.845713
+apoorva,Task-Aware,r2_bearing_right,BEARINGS,9.62644
+apoorva,Task-Aware,r2_gear_rod,GEAR_ROD_ROW2,8.102469
+apoorva,Task-Aware,r2_gear_rod,GEAR_ROW2_RIGHT,8.75686
+apoorva,Task-Aware,r2_gear_rod,GEAR_ROW2_LEFT,11.33604
+apoorva,Task-Aware,r2_gear_rod,PINS,8.93603
+apoorva,Task-Aware,r2_bearing_left,GEAR_STAND_ROW2_LEFT,9.337161
+apoorva,Task-Aware,r2_bearing_left,BEARINGS,9.088805
+apoorva,Task-Aware,r1_gear_rod,GEAR_ROD_ROW1,10.569052
+apoorva,Task-Aware,r1_gear_rod,PINS,9.680926
+apoorva,Task-Aware,r1_gear_rod,GEAR_ROW1_LEFT,20.795737
+apoorva,Task-Aware,r1_fasten_first_stand,SCREWS,7.42748
+apoorva,Task-Aware,r1_fasten_first_stand,BIT_SCREWDRIVER,8.775191
+apoorva,Task-Aware,r1_fasten_first_stand,BITHOLDER1,10.085997
+apoorva,Task-Aware,r2_fasten_first_stand,BITHOLDER2,44.872462
+arunn,Gesture,r1_bearing_right,GEAR_STAND_ROW1_RIGHT,23.215064
+arunn,Gesture,r1_bearing_right,BEARINGS,5.666094
+arunn,Gesture,r1_bearing_left,GEAR_STAND_ROW1_LEFT,17.632743
+arunn,Gesture,r2_gear_rod,GEAR_ROW2_RIGHT,6.188349
+arunn,Gesture,r2_gear_rod,PINS,7.429545
+arunn,Gesture,r2_gear_rod,GEAR_ROD_ROW2,6.9392
+arunn,Gesture,r2_gear_rod,GEAR_ROW2_LEFT,5.837844
+arunn,Gesture,r2_bearing_right,BEARINGS,3.829362
+arunn,Gesture,r2_bearing_right,GEAR_STAND_ROW2_RIGHT,3.895037
+arunn,Gesture,r2_fasten_first_stand,SCREWS,11.013323
+arunn,Gesture,r2_fasten_first_stand,BIT_SCREWDRIVER,4.279496
+arunn,Gesture,r2_fasten_first_stand,BITHOLDER2,13.43411
+arunn,Gesture,r2_bearing_left,BEARINGS,3.167625
+arunn,Gesture,r2_bearing_left,GEAR_STAND_ROW2_LEFT,2.367055
+arunn,Gesture,r1_gear_rod,GEAR_ROD_ROW1,4.157264
+arunn,Gesture,r1_gear_rod,GEAR_ROW1_LEFT,3.451637
+arunn,Gesture,r1_gear_rod,PINS,9.963431
+arunn,Gesture,r1_fasten_first_stand,SCREWS,5.044461
+arunn,Gesture,r1_fasten_first_stand,BIT_SCREWDRIVER,3.524457
+arunn,Gesture,r1_fasten_first_stand,BITHOLDER1,1.935364
+arunn,Language + Gesture,r2_bearing_right,GEAR_STAND_ROW2_RIGHT,13.466171
+arunn,Language + Gesture,r2_bearing_right,BEARINGS,9.286438
+arunn,Language + Gesture,r2_gear_rod,GEAR_ROD_ROW2,9.22779
+arunn,Language + Gesture,r2_gear_rod,PINS,9.107109
+arunn,Language + Gesture,r2_gear_rod,GEAR_ROW2_LEFT,12.813965
+arunn,Language + Gesture,r2_gear_rod,GEAR_ROW2_RIGHT,72.095684
+arunn,Language + Gesture,r1_gear_rod,GEAR_ROW1_LEFT,11.182731
+arunn,Language + Gesture,r1_gear_rod,GEAR_ROD_ROW1,18.317391
+arunn,Language + Gesture,r1_bearing_right,BEARINGS,8.233612
+arunn,Language + Gesture,r1_bearing_right,GEAR_STAND_ROW1_RIGHT,12.086526
+arunn,Language + Gesture,r1_bearing_left,GEAR_STAND_ROW1_LEFT,10.683931
+arunn,Language + Gesture,r1_fasten_first_stand,SCREWS,8.108077
+arunn,Language + Gesture,r1_fasten_first_stand,BIT_SCREWDRIVER,14.08635
+arunn,Language + Gesture,r1_fasten_first_stand,BITHOLDER1,8.943759
+arunn,Language + Gesture,r2_bearing_left,BEARINGS,16.779445
+arunn,Language + Gesture,r2_bearing_left,GEAR_STAND_ROW2_LEFT,11.349359
+arunn,Language + Gesture,r2_fasten_first_stand,SCREWS,7.919313
+arunn,Language + Gesture,r2_fasten_first_stand,BIT_SCREWDRIVER,32.252142
+arunn,Language + Gesture,r2_fasten_first_stand,BITHOLDER2,8.368706
+arunn,Task-Aware,r1_bearing_right,BEARINGS,7.455813
+arunn,Task-Aware,r1_bearing_right,GEAR_STAND_ROW1_RIGHT,21.665711
+arunn,Task-Aware,r1_bearing_left,GEAR_STAND_ROW1_LEFT,8.800261
+arunn,Task-Aware,r1_gear_rod,GEAR_ROW1_LEFT,9.037944
+arunn,Task-Aware,r1_gear_rod,PINS,8.852071
+arunn,Task-Aware,r1_gear_rod,GEAR_ROD_ROW1,11.918626
+arunn,Task-Aware,r2_bearing_right,BEARINGS,7.569723
+arunn,Task-Aware,r2_bearing_right,GEAR_STAND_ROW2_RIGHT,11.747809
+arunn,Task-Aware,r2_gear_rod,GEAR_ROW2_LEFT,10.049103
+arunn,Task-Aware,r2_gear_rod,PINS,10.519522
+arunn,Task-Aware,r2_gear_rod,GEAR_ROD_ROW2,8.625205
+arunn,Task-Aware,r2_gear_rod,GEAR_ROW2_RIGHT,15.449533
+arunn,Task-Aware,r2_bearing_left,BEARINGS,9.499258
+arunn,Task-Aware,r2_bearing_left,GEAR_STAND_ROW2_LEFT,10.414051
+arunn,Task-Aware,r1_fasten_first_stand,BIT_SCREWDRIVER,8.680675
+arunn,Task-Aware,r1_fasten_first_stand,BITHOLDER1,9.544513
+arunn,Task-Aware,r1_fasten_first_stand,SCREWS,10.36151
+arunn,Task-Aware,r2_fasten_first_stand,BITHOLDER2,37.157179
+austin,Gesture,r1_bearing_right,GEAR_STAND_ROW1_RIGHT,7.350619
+austin,Gesture,r1_bearing_right,BEARINGS,52.640478
+austin,Gesture,r1_gear_rod,GEAR_ROW1_LEFT,5.335363
+austin,Gesture,r1_gear_rod,GEAR_ROD_ROW1,5.436339
+austin,Gesture,r1_gear_rod,PINS,15.023712
+austin,Gesture,r2_gear_rod,GEAR_ROD_ROW2,3.467742
+austin,Gesture,r2_gear_rod,GEAR_ROW2_LEFT,8.83925
+austin,Gesture,r2_gear_rod,GEAR_ROW2_RIGHT,4.766763
+austin,Gesture,r1_fasten_first_stand,SCREWS,4.566655
+austin,Gesture,r1_fasten_first_stand,BIT_SCREWDRIVER,7.603681
+austin,Gesture,r1_fasten_first_stand,BITHOLDER1,2.552248
+austin,Gesture,r1_bearing_left,BEARINGS,4.335746
+austin,Gesture,r1_bearing_left,GEAR_STAND_ROW1_LEFT,10.070509
+austin,Gesture,r2_bearing_right,GEAR_STAND_ROW2_RIGHT,4.05237
+austin,Gesture,r2_bearing_right,BEARINGS,3.551494
+austin,Gesture,r2_bearing_left,GEAR_STAND_ROW2_LEFT,3.573652
+austin,Gesture,r2_fasten_first_stand,BIT_SCREWDRIVER,4.251834
+austin,Gesture,r2_fasten_first_stand,BITHOLDER2,6.806269
+austin,Gesture,r2_fasten_first_stand,SCREWS,5.966419
+austin,Language + Gesture,r1_bearing_right,BEARINGS,11.405758
+austin,Language + Gesture,r1_bearing_right,GEAR_STAND_ROW1_RIGHT,12.994946
+austin,Language + Gesture,r1_gear_rod,GEAR_ROD_ROW1,9.235389
+austin,Language + Gesture,r1_gear_rod,GEAR_ROW1_LEFT,10.048173
+austin,Language + Gesture,r1_gear_rod,PINS,9.827574
+austin,Language + Gesture,r1_bearing_left,BEARINGS,10.19214
+austin,Language + Gesture,r1_bearing_left,GEAR_STAND_ROW1_LEFT,9.940225
+austin,Language + Gesture,r2_gear_rod,GEAR_ROD_ROW2,10.064575
+austin,Language + Gesture,r2_gear_rod,GEAR_ROW2_LEFT,11.718623
+austin,Language + Gesture,r2_gear_rod,PINS,24.53629
+austin,Language + Gesture,r2_gear_rod,GEAR_ROW2_RIGHT,28.326022
+austin,Language + Gesture,r2_bearing_right,GEAR_STAND_ROW2_RIGHT,9.838841
+austin,Language + Gesture,r2_bearing_right,BEARINGS,10.371752
+austin,Language + Gesture,r2_bearing_left,GEAR_STAND_ROW2_LEFT,9.799866
+austin,Language + Gesture,r1_fasten_first_stand,BIT_SCREWDRIVER,13.447878
+austin,Language + Gesture,r1_fasten_first_stand,BITHOLDER1,8.85821
+austin,Language + Gesture,r1_fasten_first_stand,SCREWS,9.537135
+austin,Language + Gesture,r2_fasten_first_stand,BIT_SCREWDRIVER,12.205356
+austin,Language + Gesture,r2_fasten_first_stand,BITHOLDER2,7.308514
+austin,Language + Gesture,r2_fasten_first_stand,SCREWS,14.441623
+austin,Task-Aware,r1_bearing_right,BEARINGS,12.861168
+austin,Task-Aware,r1_bearing_right,GEAR_STAND_ROW1_RIGHT,8.651084
+austin,Task-Aware,r1_gear_rod,GEAR_ROD_ROW1,7.677908
+austin,Task-Aware,r1_gear_rod,GEAR_ROW1_LEFT,7.679464
+austin,Task-Aware,r1_gear_rod,PINS,8.041189
+austin,Task-Aware,r1_bearing_left,BEARINGS,7.294022
+austin,Task-Aware,r1_bearing_left,GEAR_STAND_ROW1_LEFT,7.546037
+austin,Task-Aware,r1_fasten_first_stand,BIT_SCREWDRIVER,7.729215
+austin,Task-Aware,r1_fasten_first_stand,BITHOLDER1,7.356167
+austin,Task-Aware,r1_fasten_first_stand,SCREWS,7.856861
+austin,Task-Aware,r2_gear_rod,GEAR_ROD_ROW2,7.288051
+austin,Task-Aware,r2_gear_rod,GEAR_ROW2_LEFT,8.628858
+austin,Task-Aware,r2_gear_rod,GEAR_ROW2_RIGHT,9.464616
+austin,Task-Aware,r2_gear_rod,PINS,8.948931
+austin,Task-Aware,r2_bearing_right,BEARINGS,7.856011
+austin,Task-Aware,r2_bearing_right,GEAR_STAND_ROW2_RIGHT,6.966672
+austin,Task-Aware,r2_bearing_left,GEAR_STAND_ROW2_LEFT,12.916542
+junghoon,Gesture,r1_bearing_right,GEAR_STAND_ROW1_RIGHT,57.572983
+junghoon,Gesture,r1_bearing_right,BEARINGS,24.373944
+junghoon,Gesture,r1_bearing_left,GEAR_STAND_ROW1_LEFT,6.216042
+junghoon,Gesture,r1_gear_rod,GEAR_ROD_ROW1,4.182594
+junghoon,Gesture,r1_gear_rod,GEAR_ROW1_LEFT,11.446912
+junghoon,Gesture,r1_gear_rod,PINS,28.958122
+junghoon,Gesture,r2_gear_rod,GEAR_ROD_ROW2,7.115085
+junghoon,Gesture,r2_gear_rod,GEAR_ROW2_RIGHT,8.105743
+junghoon,Gesture,r2_gear_rod,GEAR_ROW2_LEFT,2.505884
+junghoon,Gesture,r2_bearing_right,BEARINGS,7.930559
+junghoon,Gesture,r2_bearing_right,GEAR_STAND_ROW2_RIGHT,7.872539
+junghoon,Gesture,r2_bearing_left,GEAR_STAND_ROW2_LEFT,2.984738
+junghoon,Gesture,r2_fasten_first_stand,SCREWS,20.262071
+junghoon,Gesture,r2_fasten_first_stand,BIT_SCREWDRIVER,5.792711
+junghoon,Gesture,r2_fasten_first_stand,BITHOLDER2,18.847012
+junghoon,Gesture,r1_fasten_first_stand,BITHOLDER1,27.657144
+junghoon,Language + Gesture,r1_bearing_right,GEAR_STAND_ROW1_RIGHT,10.08123
+junghoon,Language + Gesture,r1_bearing_right,BEARINGS,5.003231
+junghoon,Language + Gesture,r2_gear_rod,GEAR_ROD_ROW2,21.30025
+junghoon,Language + Gesture,r2_gear_rod,GEAR_ROW2_RIGHT,6.852592
+junghoon,Language + Gesture,r2_gear_rod,GEAR_ROW2_LEFT,6.18419
+junghoon,Language + Gesture,r2_gear_rod,PINS,7.056027
+junghoon,Language + Gesture,r1_gear_rod,GEAR_ROD_ROW1,14.520532
+junghoon,Language + Gesture,r1_gear_rod,GEAR_ROW1_LEFT,6.223139
+junghoon,Language + Gesture,r1_bearing_left,GEAR_STAND_ROW1_LEFT,9.004702
+junghoon,Language + Gesture,r1_bearing_left,BEARINGS,19.245741
+junghoon,Language + Gesture,r1_fasten_first_stand,BITHOLDER1,7.110872
+junghoon,Language + Gesture,r1_fasten_first_stand,BIT_SCREWDRIVER,10.537612
+junghoon,Language + Gesture,r1_fasten_first_stand,SCREWS,19.033586
+junghoon,Language + Gesture,r2_bearing_right,GEAR_STAND_ROW2_RIGHT,10.342316
+junghoon,Language + Gesture,r2_bearing_right,BEARINGS,10.645051
+junghoon,Language + Gesture,r2_bearing_left,GEAR_STAND_ROW2_LEFT,9.986757
+junghoon,Language + Gesture,r2_fasten_first_stand,BITHOLDER2,14.178831
+junghoon,Language + Gesture,r2_fasten_first_stand,BIT_SCREWDRIVER,10.641934
+junghoon,Language + Gesture,r2_fasten_first_stand,SCREWS,13.482989
+junghoon,Task-Aware,r2_gear_rod,GEAR_ROD_ROW2,13.883106
+junghoon,Task-Aware,r2_gear_rod,GEAR_ROW2_RIGHT,12.59575
+junghoon,Task-Aware,r2_gear_rod,GEAR_ROW2_LEFT,15.76992
+junghoon,Task-Aware,r2_gear_rod,PINS,9.603807
+junghoon,Task-Aware,r1_gear_rod,GEAR_ROD_ROW1,8.765059
+junghoon,Task-Aware,r1_gear_rod,GEAR_ROW1_LEFT,8.907438
+junghoon,Task-Aware,r1_bearing_right,GEAR_STAND_ROW1_RIGHT,12.360115
+junghoon,Task-Aware,r1_bearing_right,BEARINGS,26.967979
+junghoon,Task-Aware,r1_bearing_left,GEAR_STAND_ROW1_LEFT,11.184298
+junghoon,Task-Aware,r1_fasten_first_stand,BIT_SCREWDRIVER,10.66752
+junghoon,Task-Aware,r1_fasten_first_stand,SCREWS,7.243062
+junghoon,Task-Aware,r1_fasten_first_stand,BITHOLDER1,6.379279
+junghoon,Task-Aware,r2_bearing_right,BEARINGS,7.132619
+junghoon,Task-Aware,r2_bearing_right,GEAR_STAND_ROW2_RIGHT,10.332776
+junghoon,Task-Aware,r2_bearing_left,GEAR_STAND_ROW2_LEFT,24.928777
+junghoon,Task-Aware,r2_fasten_first_stand,SCREWS,7.824861
+junghoon,Task-Aware,r2_fasten_first_stand,BIT_SCREWDRIVER,6.063767
+junghoon,Task-Aware,r2_fasten_first_stand,BITHOLDER2,5.47163
+junhyun,Gesture,r1_bearing_right,GEAR_STAND_ROW1_RIGHT,44.59179
+junhyun,Gesture,r1_bearing_right,BEARINGS,26.044657
+junhyun,Gesture,r1_bearing_left,GEAR_STAND_ROW1_LEFT,27.36724
+junhyun,Gesture,r2_gear_rod,GEAR_ROD_ROW2,13.145957
+junhyun,Gesture,r2_gear_rod,GEAR_ROW2_RIGHT,7.890152
+junhyun,Gesture,r2_gear_rod,GEAR_ROW2_LEFT,2.920407
+junhyun,Gesture,r2_gear_rod,PINS,12.324755
+junhyun,Gesture,r2_bearing_right,GEAR_STAND_ROW2_RIGHT,7.656331
+junhyun,Gesture,r2_bearing_right,BEARINGS,7.174706
+junhyun,Gesture,r1_gear_rod,GEAR_ROD_ROW1,4.483661
+junhyun,Gesture,r1_gear_rod,GEAR_ROW1_LEFT,13.61996
+junhyun,Gesture,r1_gear_rod,PINS,6.553836
+junhyun,Gesture,r1_fasten_first_stand,SCREWS,13.621199
+junhyun,Gesture,r1_fasten_first_stand,BIT_SCREWDRIVER,15.818448
+junhyun,Gesture,r1_fasten_first_stand,BITHOLDER1,10.506761
+junhyun,Gesture,r2_bearing_left,GEAR_STAND_ROW2_LEFT,19.343455
+junhyun,Gesture,r2_bearing_left,BEARINGS,5.072055
+junhyun,Gesture,r2_fasten_first_stand,SCREWS,4.36556
+junhyun,Gesture,r2_fasten_first_stand,BIT_SCREWDRIVER,19.652808
+junhyun,Gesture,r2_fasten_first_stand,BITHOLDER2,6.113357
+junhyun,Language + Gesture,r1_gear_rod,GEAR_ROD_ROW1,8.678455
+junhyun,Language + Gesture,r1_gear_rod,PINS,6.204068
+junhyun,Language + Gesture,r1_gear_rod,GEAR_ROW1_LEFT,12.370418
+junhyun,Language + Gesture,r2_bearing_right,GEAR_STAND_ROW2_RIGHT,12.39966
+junhyun,Language + Gesture,r2_bearing_right,BEARINGS,8.464168
+junhyun,Language + Gesture,r1_bearing_right,GEAR_STAND_ROW1_RIGHT,12.063206
+junhyun,Language + Gesture,r1_bearing_left,GEAR_STAND_ROW1_LEFT,12.756261
+junhyun,Language + Gesture,r1_bearing_left,BEARINGS,8.565501
+junhyun,Language + Gesture,r2_gear_rod,GEAR_ROD_ROW2,20.578701
+junhyun,Language + Gesture,r2_gear_rod,GEAR_ROW2_RIGHT,11.832188
+junhyun,Language + Gesture,r2_gear_rod,GEAR_ROW2_LEFT,11.148456
+junhyun,Language + Gesture,r2_gear_rod,PINS,9.816911
+junhyun,Language + Gesture,r2_bearing_left,GEAR_STAND_ROW2_LEFT,11.750855
+junhyun,Language + Gesture,r2_bearing_left,BEARINGS,8.120873
+junhyun,Language + Gesture,r1_fasten_first_stand,SCREWS,8.456327
+junhyun,Language + Gesture,r1_fasten_first_stand,BIT_SCREWDRIVER,16.024576
+junhyun,Language + Gesture,r1_fasten_first_stand,BITHOLDER1,12.188866
+junhyun,Language + Gesture,r2_fasten_first_stand,BITHOLDER2,8.460215
+junhyun,Language + Gesture,r2_fasten_first_stand,SCREWS,23.719973
+junhyun,Language + Gesture,r2_fasten_first_stand,BIT_SCREWDRIVER,7.207333
+junhyun,Task-Aware,r1_gear_rod,PINS,8.59676
+junhyun,Task-Aware,r1_gear_rod,GEAR_ROW1_LEFT,5.23397
+junhyun,Task-Aware,r1_gear_rod,GEAR_ROD_ROW1,11.250669
+junhyun,Task-Aware,r2_gear_rod,GEAR_ROD_ROW2,7.646381
+junhyun,Task-Aware,r2_gear_rod,GEAR_ROW2_LEFT,11.861329
+junhyun,Task-Aware,r2_gear_rod,GEAR_ROW2_RIGHT,29.410326
+junhyun,Task-Aware,r2_bearing_right,GEAR_STAND_ROW2_RIGHT,13.254899
+junhyun,Task-Aware,r2_bearing_right,BEARINGS,8.40547
+junhyun,Task-Aware,r1_bearing_right,GEAR_STAND_ROW1_RIGHT,19.347691
+junhyun,Task-Aware,r1_bearing_left,GEAR_STAND_ROW1_LEFT,8.559917
+junhyun,Task-Aware,r1_bearing_left,BEARINGS,9.732603
+junhyun,Task-Aware,r2_bearing_left,GEAR_STAND_ROW2_LEFT,22.05453
+junhyun,Task-Aware,r1_fasten_first_stand,SCREWS,7.594096
+junhyun,Task-Aware,r1_fasten_first_stand,BIT_SCREWDRIVER,8.815359
+junhyun,Task-Aware,r1_fasten_first_stand,BITHOLDER1,20.564262
+junhyun,Task-Aware,r2_fasten_first_stand,BITHOLDER2,24.224472
+kuber,Gesture,r2_bearing_right,GEAR_STAND_ROW2_RIGHT,5.467744
+kuber,Gesture,r2_bearing_right,BEARINGS,20.297925
+kuber,Gesture,r1_bearing_right,GEAR_STAND_ROW1_RIGHT,1.779028
+kuber,Gesture,r1_bearing_left,GEAR_STAND_ROW1_LEFT,2.948707
+kuber,Gesture,r1_bearing_left,BEARINGS,2.848899
+kuber,Gesture,r2_gear_rod,GEAR_ROD_ROW2,3.005097
+kuber,Gesture,r2_gear_rod,GEAR_ROW2_RIGHT,3.812118
+kuber,Gesture,r2_gear_rod,GEAR_ROW2_LEFT,3.129564
+kuber,Gesture,r2_gear_rod,PINS,10.667404
+kuber,Gesture,r2_bearing_left,GEAR_STAND_ROW2_LEFT,4.62458
+kuber,Gesture,r2_bearing_left,BEARINGS,5.467088
+kuber,Gesture,r2_fasten_first_stand,BIT_SCREWDRIVER,3.401818
+kuber,Gesture,r2_fasten_first_stand,BITHOLDER2,9.311086
+kuber,Gesture,r2_fasten_first_stand,SCREWS,26.660848
+kuber,Gesture,r1_gear_rod,GEAR_ROD_ROW1,2.684466
+kuber,Gesture,r1_gear_rod,GEAR_ROW1_LEFT,3.008743
+kuber,Gesture,r1_gear_rod,PINS,7.07098
+kuber,Gesture,r1_fasten_first_stand,BIT_SCREWDRIVER,3.281787
+kuber,Gesture,r1_fasten_first_stand,BITHOLDER1,3.670608
+kuber,Gesture,r1_fasten_first_stand,SCREWS,3.186593
+kuber,Language + Gesture,r2_bearing_right,GEAR_STAND_ROW2_RIGHT,13.057399
+kuber,Language + Gesture,r2_bearing_right,BEARINGS,6.335003
+kuber,Language + Gesture,r1_bearing_right,GEAR_STAND_ROW1_RIGHT,9.070507
+kuber,Language + Gesture,r1_bearing_left,GEAR_STAND_ROW1_LEFT,9.194068
+kuber,Language + Gesture,r1_bearing_left,BEARINGS,15.757363
+kuber,Language + Gesture,r1_gear_rod,GEAR_ROD_ROW1,7.688305
+kuber,Language + Gesture,r1_gear_rod,GEAR_ROW1_LEFT,11.489318
+kuber,Language + Gesture,r1_gear_rod,PINS,7.865548
+kuber,Language + Gesture,r1_fasten_first_stand,BIT_SCREWDRIVER,11.887231
+kuber,Language + Gesture,r1_fasten_first_stand,BITHOLDER1,11.520893
+kuber,Language + Gesture,r1_fasten_first_stand,SCREWS,13.92692
+kuber,Language + Gesture,r2_gear_rod,GEAR_ROD_ROW2,8.048938
+kuber,Language + Gesture,r2_gear_rod,GEAR_ROW2_LEFT,9.146653
+kuber,Language + Gesture,r2_gear_rod,GEAR_ROW2_RIGHT,7.111293
+kuber,Language + Gesture,r2_gear_rod,PINS,7.76775
+kuber,Language + Gesture,r2_bearing_left,GEAR_STAND_ROW2_LEFT,9.96036
+kuber,Language + Gesture,r2_bearing_left,BEARINGS,7.708
+kuber,Language + Gesture,r2_fasten_first_stand,BIT_SCREWDRIVER,9.324929
+kuber,Language + Gesture,r2_fasten_first_stand,BITHOLDER2,9.373684
+kuber,Language + Gesture,r2_fasten_first_stand,SCREWS,10.266806
+kuber,Task-Aware,r2_bearing_right,BEARINGS,9.919024
+kuber,Task-Aware,r2_bearing_right,GEAR_STAND_ROW2_RIGHT,11.276794
+kuber,Task-Aware,r2_bearing_left,GEAR_STAND_ROW2_LEFT,14.83821
+kuber,Task-Aware,r2_gear_rod,GEAR_ROD_ROW2,7.303754
+kuber,Task-Aware,r2_gear_rod,GEAR_ROW2_LEFT,8.40648
+kuber,Task-Aware,r2_gear_rod,GEAR_ROW2_RIGHT,7.192693
+kuber,Task-Aware,r2_gear_rod,PINS,20.167273
+kuber,Task-Aware,r2_fasten_first_stand,BIT_SCREWDRIVER,7.068521
+kuber,Task-Aware,r2_fasten_first_stand,BITHOLDER2,20.585459
+kuber,Task-Aware,r2_fasten_first_stand,SCREWS,8.270727
+kuber,Task-Aware,r1_gear_rod,GEAR_ROD_ROW1,6.746732
+kuber,Task-Aware,r1_gear_rod,GEAR_ROW1_LEFT,7.580448
+kuber,Task-Aware,r1_gear_rod,PINS,8.584186
+kuber,Task-Aware,r1_bearing_right,GEAR_STAND_ROW1_RIGHT,8.201481
+kuber,Task-Aware,r1_bearing_right,BEARINGS,6.841799
+kuber,Task-Aware,r1_bearing_left,GEAR_STAND_ROW1_LEFT,9.961318
+kuber,Task-Aware,r1_fasten_first_stand,BIT_SCREWDRIVER,9.109954
+kuber,Task-Aware,r1_fasten_first_stand,BITHOLDER1,9.32856
+kuber,Task-Aware,r1_fasten_first_stand,SCREWS,15.411164
+mahya,Gesture,r1_bearing_right,ROW1_KIT,26.782102
+mahya,Gesture,r1_bearing_right,GEAR_STAND_ROW1_RIGHT,9.067758
+mahya,Gesture,r1_fasten_first_stand,BIT_SCREWDRIVER,41.952637
+mahya,Gesture,r1_fasten_first_stand,BITHOLDER1,6.75292
+mahya,Gesture,r1_gear_rod,GEAR_ROW1_LEFT,7.336186
+mahya,Gesture,r1_gear_rod,GEAR_ROD_ROW1,3.27088
+mahya,Gesture,r1_bearing_left,GEAR_STAND_ROW1_LEFT,8.874214
+mahya,Gesture,r2_gear_rod,GEAR_ROD_ROW2,3.018054
+mahya,Gesture,r2_gear_rod,GEAR_ROW2_LEFT,12.589585
+mahya,Gesture,r2_gear_rod,GEAR_ROW2_RIGHT,5.286355
+mahya,Gesture,r2_gear_rod,ROW2_KIT,12.922872
+mahya,Gesture,r2_bearing_right,GEAR_STAND_ROW2_RIGHT,4.800787
+mahya,Gesture,r2_bearing_left,GEAR_STAND_ROW2_LEFT,4.601765
+mahya,Language + Gesture,r1_bearing_right,GEAR_STAND_ROW1_RIGHT,10.482246
+mahya,Language + Gesture,r1_bearing_right,ROW1_KIT,24.049623
+mahya,Language + Gesture,r1_gear_rod,GEAR_ROW1_LEFT,9.741834
+mahya,Language + Gesture,r1_gear_rod,GEAR_ROD_ROW1,9.749497
+mahya,Language + Gesture,r1_bearing_left,GEAR_STAND_ROW1_LEFT,70.86338
+mahya,Language + Gesture,r1_fasten_first_stand,BIT_SCREWDRIVER,8.499943
+mahya,Language + Gesture,r1_fasten_first_stand,BITHOLDER1,33.11374
+mahya,Language + Gesture,r2_gear_rod,GEAR_ROD_ROW2,12.146293
+mahya,Language + Gesture,r2_gear_rod,GEAR_ROW2_RIGHT,85.819704
+mahya,Language + Gesture,r2_gear_rod,GEAR_ROW2_LEFT,9.810814
+mahya,Language + Gesture,r2_gear_rod,ROW2_KIT,13.648695
+mahya,Language + Gesture,r2_bearing_right,GEAR_STAND_ROW2_RIGHT,23.978525
+mahya,Language + Gesture,r2_bearing_left,GEAR_STAND_ROW2_LEFT,38.225626
+mahya,Task-Aware,r2_bearing_right,ROW2_KIT,25.23005
+mahya,Task-Aware,r2_bearing_right,GEAR_STAND_ROW2_RIGHT,8.844174
+mahya,Task-Aware,r2_fasten_first_stand,BIT_SCREWDRIVER,33.879085
+mahya,Task-Aware,r2_fasten_first_stand,BITHOLDER2,8.584054
+mahya,Task-Aware,r2_gear_rod,GEAR_ROD_ROW2,21.364956
+mahya,Task-Aware,r2_gear_rod,GEAR_ROW2_LEFT,8.946076
+mahya,Task-Aware,r2_gear_rod,GEAR_ROW2_RIGHT,8.719274
+mahya,Task-Aware,r2_bearing_left,GEAR_STAND_ROW2_LEFT,12.271131
+mahya,Task-Aware,r1_gear_rod,GEAR_ROW1_LEFT,34.15507
+mahya,Task-Aware,r1_gear_rod,GEAR_ROD_ROW1,9.062991
+mahya,Task-Aware,r1_gear_rod,ROW1_KIT,9.169093
+mahya,Task-Aware,r1_bearing_right,GEAR_STAND_ROW1_RIGHT,13.347842
+mahya,Task-Aware,r1_bearing_left,GEAR_STAND_ROW1_LEFT,15.660775
+mann,Gesture,r1_bearing_right,GEAR_STAND_ROW1_RIGHT,10.675203
+mann,Gesture,r1_bearing_right,BEARINGS,7.520001
+mann,Gesture,r2_bearing_right,GEAR_STAND_ROW2_RIGHT,7.816444
+mann,Gesture,r2_bearing_left,GEAR_STAND_ROW2_LEFT,14.873053
+mann,Gesture,r2_bearing_left,BEARINGS,11.253459
+mann,Gesture,r1_gear_rod,GEAR_ROW1_LEFT,7.975139
+mann,Gesture,r1_gear_rod,GEAR_ROD_ROW1,7.959831
+mann,Gesture,r1_gear_rod,PINS,8.729686
+mann,Gesture,r2_gear_rod,GEAR_ROW2_LEFT,22.52056
+mann,Gesture,r2_gear_rod,GEAR_ROW2_RIGHT,2.645888
+mann,Gesture,r2_gear_rod,GEAR_ROD_ROW2,6.05798
+mann,Gesture,r1_bearing_left,GEAR_STAND_ROW1_LEFT,66.303777
+mann,Gesture,r1_bearing_left,BEARINGS,12.529322
+mann,Gesture,r1_fasten_first_stand,BIT_SCREWDRIVER,3.872723
+mann,Gesture,r1_fasten_first_stand,BITHOLDER1,3.060276
+mann,Gesture,r1_fasten_first_stand,SCREWS,50.175486
+mann,Gesture,r2_fasten_first_stand,BITHOLDER2,20.520687
+mann,Language + Gesture,r1_gear_rod,GEAR_ROD_ROW1,13.968022
+mann,Language + Gesture,r1_gear_rod,GEAR_ROW1_LEFT,39.263129
+mann,Language + Gesture,r1_gear_rod,PINS,20.48811
+mann,Language + Gesture,r2_gear_rod,GEAR_ROW2_LEFT,9.958049
+mann,Language + Gesture,r2_gear_rod,GEAR_ROW2_RIGHT,10.72608
+mann,Language + Gesture,r2_gear_rod,GEAR_ROD_ROW2,10.204648
+mann,Language + Gesture,r1_bearing_right,GEAR_STAND_ROW1_RIGHT,9.634067
+mann,Language + Gesture,r1_bearing_right,BEARINGS,10.169809
+mann,Language + Gesture,r1_bearing_left,GEAR_STAND_ROW1_LEFT,11.886304
+mann,Language + Gesture,r2_bearing_right,GEAR_STAND_ROW2_RIGHT,10.81831
+mann,Language + Gesture,r2_bearing_right,BEARINGS,11.313503
+mann,Language + Gesture,r1_fasten_first_stand,SCREWS,8.555709
+mann,Language + Gesture,r1_fasten_first_stand,BIT_SCREWDRIVER,11.906179
+mann,Language + Gesture,r1_fasten_first_stand,BITHOLDER1,8.311923
+mann,Language + Gesture,r2_bearing_left,BEARINGS,14.090273
+mann,Language + Gesture,r2_bearing_left,GEAR_STAND_ROW2_LEFT,34.646439
+mann,Language + Gesture,r2_fasten_first_stand,BIT_SCREWDRIVER,8.801602
+mann,Language + Gesture,r2_fasten_first_stand,SCREWS,14.531347
+mann,Language + Gesture,r2_fasten_first_stand,BITHOLDER2,12.586355
+mann,Task-Aware,r2_bearing_right,GEAR_STAND_ROW2_RIGHT,13.056122
+mann,Task-Aware,r2_bearing_right,BEARINGS,8.046743
+mann,Task-Aware,r1_bearing_right,GEAR_STAND_ROW1_RIGHT,10.732482
+mann,Task-Aware,r1_gear_rod,GEAR_ROD_ROW1,7.859566
+mann,Task-Aware,r1_gear_rod,GEAR_ROW1_LEFT,8.225857
+mann,Task-Aware,r1_gear_rod,PINS,8.223707
+mann,Task-Aware,r1_bearing_left,GEAR_STAND_ROW1_LEFT,9.453449
+mann,Task-Aware,r1_bearing_left,BEARINGS,8.933445
+mann,Task-Aware,r1_fasten_first_stand,BIT_SCREWDRIVER,11.26012
+mann,Task-Aware,r1_fasten_first_stand,BITHOLDER1,8.624039
+mann,Task-Aware,r1_fasten_first_stand,SCREWS,7.659291
+mann,Task-Aware,r2_bearing_left,BEARINGS,7.633181
+mann,Task-Aware,r2_bearing_left,GEAR_STAND_ROW2_LEFT,10.795615
+mann,Task-Aware,r2_gear_rod,GEAR_ROW2_LEFT,7.660398
+mann,Task-Aware,r2_gear_rod,GEAR_ROW2_RIGHT,10.443328
+mann,Task-Aware,r2_gear_rod,GEAR_ROD_ROW2,8.17046
+mann,Task-Aware,r2_gear_rod,PINS,8.607374
+mann,Task-Aware,r2_fasten_first_stand,BIT_SCREWDRIVER,8.316647
+mann,Task-Aware,r2_fasten_first_stand,BITHOLDER2,35.695053
+mann,Task-Aware,r2_fasten_first_stand,SCREWS,8.931137
+pantea,Gesture,r1_bearing_right,GEAR_STAND_ROW1_RIGHT,12.67264
+pantea,Gesture,r1_bearing_right,BEARINGS,41.301934
+pantea,Gesture,r1_gear_rod,GEAR_ROD_ROW1,5.502541
+pantea,Gesture,r1_gear_rod,GEAR_ROW1_LEFT,8.302742
+pantea,Gesture,r1_gear_rod,PINS,11.122415
+pantea,Gesture,r1_bearing_left,GEAR_STAND_ROW1_LEFT,5.669912
+pantea,Gesture,r1_bearing_left,BEARINGS,4.585282
+pantea,Gesture,r2_gear_rod,GEAR_ROD_ROW2,12.625503
+pantea,Gesture,r2_gear_rod,GEAR_ROW2_LEFT,8.968164
+pantea,Gesture,r2_gear_rod,GEAR_ROW2_RIGHT,1.750857
+pantea,Gesture,r2_gear_rod,PINS,22.410441
+pantea,Gesture,r1_fasten_first_stand,SCREWS,10.987272
+pantea,Gesture,r1_fasten_first_stand,BIT_SCREWDRIVER,9.406693
+pantea,Gesture,r1_fasten_first_stand,BITHOLDER1,32.013293
+pantea,Gesture,r2_bearing_right,GEAR_STAND_ROW2_RIGHT,7.219775
+pantea,Gesture,r2_bearing_right,BEARINGS,17.54188
+pantea,Gesture,r2_fasten_first_stand,BIT_SCREWDRIVER,7.069863
+pantea,Gesture,r2_fasten_first_stand,BITHOLDER2,14.355986
+pantea,Gesture,r2_fasten_first_stand,SCREWS,4.886078
+pantea,Gesture,r2_bearing_left,GEAR_STAND_ROW2_LEFT,19.183729
+pantea,Gesture,r2_bearing_left,BEARINGS,19.901285
+pantea,Language + Gesture,r1_bearing_right,GEAR_STAND_ROW1_RIGHT,12.400038
+pantea,Language + Gesture,r1_bearing_right,BEARINGS,9.490256
+pantea,Language + Gesture,r1_gear_rod,GEAR_ROD_ROW1,16.042875
+pantea,Language + Gesture,r1_gear_rod,GEAR_ROW1_LEFT,14.720924
+pantea,Language + Gesture,r1_gear_rod,PINS,10.577332
+pantea,Language + Gesture,r1_bearing_left,GEAR_STAND_ROW1_LEFT,10.9989
+pantea,Language + Gesture,r1_bearing_left,BEARINGS,11.40712
+pantea,Language + Gesture,r2_gear_rod,GEAR_ROD_ROW2,11.369334
+pantea,Language + Gesture,r2_gear_rod,GEAR_ROW2_RIGHT,12.532223
+pantea,Language + Gesture,r2_gear_rod,GEAR_ROW2_LEFT,11.553294
+pantea,Language + Gesture,r2_gear_rod,PINS,12.247939
+pantea,Language + Gesture,r2_bearing_right,GEAR_STAND_ROW2_RIGHT,10.967944
+pantea,Language + Gesture,r2_bearing_right,BEARINGS,13.021292
+pantea,Language + Gesture,r2_bearing_left,GEAR_STAND_ROW2_LEFT,23.595428
+pantea,Language + Gesture,r1_fasten_first_stand,BIT_SCREWDRIVER,11.068588
+pantea,Language + Gesture,r1_fasten_first_stand,SCREWS,11.014385
+pantea,Language + Gesture,r1_fasten_first_stand,BITHOLDER1,17.906961
+pantea,Task-Aware,r1_gear_rod,GEAR_ROD_ROW1,10.696082
+pantea,Task-Aware,r1_gear_rod,GEAR_ROW1_LEFT,10.839966
+pantea,Task-Aware,r1_gear_rod,PINS,12.723067
+pantea,Task-Aware,r2_gear_rod,GEAR_ROD_ROW2,8.629691
+pantea,Task-Aware,r2_gear_rod,GEAR_ROW2_LEFT,51.731683
+pantea,Task-Aware,r2_gear_rod,GEAR_ROW2_RIGHT,10.046894
+pantea,Task-Aware,r1_bearing_right,GEAR_STAND_ROW1_RIGHT,10.342981
+pantea,Task-Aware,r1_bearing_right,BEARINGS,10.392345
+pantea,Task-Aware,r1_bearing_left,GEAR_STAND_ROW1_LEFT,8.163254
+pantea,Task-Aware,r2_bearing_right,GEAR_STAND_ROW2_RIGHT,9.19646
+pantea,Task-Aware,r2_bearing_right,BEARINGS,11.286271
+pantea,Task-Aware,r2_bearing_left,GEAR_STAND_ROW2_LEFT,11.17487
+pantea,Task-Aware,r1_fasten_first_stand,BIT_SCREWDRIVER,12.233947
+pantea,Task-Aware,r1_fasten_first_stand,SCREWS,10.517219
+pantea,Task-Aware,r1_fasten_first_stand,BITHOLDER1,11.677122
+pantea,Task-Aware,r2_fasten_first_stand,BITHOLDER2,18.894864
+parisa,Gesture,r1_bearing_right,GEAR_STAND_ROW1_RIGHT,128.492999
+parisa,Gesture,r1_bearing_right,BEARINGS,40.60302
+parisa,Gesture,r1_gear_rod,GEAR_ROD_ROW1,15.234639
+parisa,Gesture,r1_gear_rod,GEAR_ROW1_LEFT,16.424298
+parisa,Gesture,r1_gear_rod,PINS,36.800709
+parisa,Gesture,r2_bearing_right,GEAR_STAND_ROW2_RIGHT,13.122709
+parisa,Gesture,r2_bearing_right,BEARINGS,12.755741
+parisa,Gesture,r1_bearing_left,GEAR_STAND_ROW1_LEFT,74.166022
+parisa,Gesture,r2_gear_rod,GEAR_ROD_ROW2,5.437347
+parisa,Gesture,r2_gear_rod,GEAR_ROW2_LEFT,11.504118
+parisa,Gesture,r2_gear_rod,GEAR_ROW2_RIGHT,4.186651
+parisa,Gesture,r2_gear_rod,PINS,3.434137
+parisa,Gesture,r2_bearing_left,GEAR_STAND_ROW2_LEFT,32.847353
+parisa,Gesture,r2_bearing_left,BEARINGS,6.135445
+parisa,Gesture,r1_fasten_first_stand,SCREWS,10.804532
+parisa,Gesture,r1_fasten_first_stand,BIT_SCREWDRIVER,9.67141
+parisa,Gesture,r1_fasten_first_stand,BITHOLDER1,80.436945
+parisa,Language + Gesture,r2_bearing_right,GEAR_STAND_ROW2_RIGHT,17.237472
+parisa,Language + Gesture,r2_bearing_right,BEARINGS,15.455392
+parisa,Language + Gesture,r1_gear_rod,GEAR_ROD_ROW1,11.316426
+parisa,Language + Gesture,r1_gear_rod,GEAR_ROW1_LEFT,14.745686
+parisa,Language + Gesture,r1_gear_rod,PINS,8.840906
+parisa,Language + Gesture,r2_gear_rod,GEAR_ROD_ROW2,8.80495
+parisa,Language + Gesture,r2_gear_rod,GEAR_ROW2_LEFT,13.957733
+parisa,Language + Gesture,r2_gear_rod,GEAR_ROW2_RIGHT,27.546438
+parisa,Language + Gesture,r1_bearing_right,GEAR_STAND_ROW1_RIGHT,13.701394
+parisa,Language + Gesture,r1_bearing_right,BEARINGS,14.599846
+parisa,Language + Gesture,r1_bearing_left,GEAR_STAND_ROW1_LEFT,13.095926
+parisa,Language + Gesture,r2_bearing_left,GEAR_STAND_ROW2_LEFT,22.67754
+parisa,Language + Gesture,r2_bearing_left,BEARINGS,16.01013
+parisa,Language + Gesture,r2_fasten_first_stand,SCREWS,15.803475
+parisa,Language + Gesture,r2_fasten_first_stand,BIT_SCREWDRIVER,33.816857
+parisa,Language + Gesture,r2_fasten_first_stand,BITHOLDER2,16.822188
+parisa,Task-Aware,r1_gear_rod,GEAR_ROD_ROW1,29.009341
+parisa,Task-Aware,r1_gear_rod,GEAR_ROW1_LEFT,16.721535
+parisa,Task-Aware,r1_gear_rod,PINS,13.646078
+parisa,Task-Aware,r2_gear_rod,GEAR_ROD_ROW2,24.751928
+parisa,Task-Aware,r2_gear_rod,GEAR_ROW2_LEFT,32.135643
+parisa,Task-Aware,r2_gear_rod,GEAR_ROW2_RIGHT,11.887664
+parisa,Task-Aware,r1_bearing_right,GEAR_STAND_ROW1_RIGHT,29.89446
+parisa,Task-Aware,r1_bearing_right,BEARINGS,9.143596
+parisa,Task-Aware,r1_bearing_left,GEAR_STAND_ROW1_LEFT,51.394144
+parisa,Task-Aware,r2_bearing_right,GEAR_STAND_ROW2_RIGHT,28.57706
+parisa,Task-Aware,r2_bearing_right,BEARINGS,9.532796
+parisa,Task-Aware,r2_bearing_left,GEAR_STAND_ROW2_LEFT,34.471745
+parisa,Task-Aware,r2_fasten_first_stand,BIT_SCREWDRIVER,10.917858
+parisa,Task-Aware,r2_fasten_first_stand,SCREWS,32.722067
+parisa,Task-Aware,r2_fasten_first_stand,BITHOLDER2,11.153587
+sandeep,Gesture,r1_bearing_right,GEAR_STAND_ROW1_RIGHT,7.643523
+sandeep,Gesture,r1_bearing_right,BEARINGS,48.976164
+sandeep,Gesture,r1_gear_rod,GEAR_ROW1_LEFT,6.680317
+sandeep,Gesture,r1_gear_rod,PINS,5.406703
+sandeep,Gesture,r1_gear_rod,GEAR_ROD_ROW1,14.583066
+sandeep,Gesture,r1_bearing_left,GEAR_STAND_ROW1_LEFT,15.933925
+sandeep,Gesture,r1_bearing_left,BEARINGS,6.550554
+sandeep,Gesture,r1_fasten_first_stand,BITHOLDER1,1.774461
+sandeep,Gesture,r1_fasten_first_stand,SCREWS,10.168812
+sandeep,Gesture,r1_fasten_first_stand,BIT_SCREWDRIVER,12.223169
+sandeep,Gesture,r2_gear_rod,GEAR_ROD_ROW2,16.059112
+sandeep,Gesture,r2_gear_rod,GEAR_ROW2_RIGHT,11.135412
+sandeep,Gesture,r2_gear_rod,GEAR_ROW2_LEFT,55.151842
+sandeep,Gesture,r2_gear_rod,PINS,8.759556
+sandeep,Gesture,r2_bearing_right,GEAR_STAND_ROW2_RIGHT,5.681204
+sandeep,Gesture,r2_bearing_right,BEARINGS,5.378973
+sandeep,Gesture,r2_bearing_left,GEAR_STAND_ROW2_LEFT,7.541677
+sandeep,Gesture,r2_fasten_first_stand,BITHOLDER2,5.131992
+sandeep,Gesture,r2_fasten_first_stand,BIT_SCREWDRIVER,4.937276
+sandeep,Gesture,r2_fasten_first_stand,SCREWS,114.230463
+sandeep,Language + Gesture,r1_gear_rod,GEAR_ROD_ROW1,8.471689
+sandeep,Language + Gesture,r1_gear_rod,GEAR_ROW1_LEFT,9.059764
+sandeep,Language + Gesture,r1_gear_rod,PINS,29.205134
+sandeep,Language + Gesture,r1_bearing_right,GEAR_STAND_ROW1_RIGHT,9.427153
+sandeep,Language + Gesture,r1_bearing_right,BEARINGS,6.84155
+sandeep,Language + Gesture,r1_bearing_left,GEAR_STAND_ROW1_LEFT,7.833468
+sandeep,Language + Gesture,r2_bearing_right,GEAR_STAND_ROW2_RIGHT,21.24678
+sandeep,Language + Gesture,r2_bearing_right,BEARINGS,6.064469
+sandeep,Language + Gesture,r2_gear_rod,GEAR_ROD_ROW2,6.433009
+sandeep,Language + Gesture,r2_gear_rod,GEAR_ROW2_LEFT,4.110179
+sandeep,Language + Gesture,r2_gear_rod,GEAR_ROW2_RIGHT,5.1
+sandeep,Language + Gesture,r2_gear_rod,PINS,4.153101
+sandeep,Language + Gesture,r2_bearing_left,GEAR_STAND_ROW2_LEFT,7.917402
+sandeep,Language + Gesture,r2_bearing_left,BEARINGS,7.623672
+sandeep,Language + Gesture,r1_fasten_first_stand,BITHOLDER1,7.985436
+sandeep,Language + Gesture,r1_fasten_first_stand,SCREWS,6.292466
+sandeep,Language + Gesture,r1_fasten_first_stand,BIT_SCREWDRIVER,23.312675
+sandeep,Language + Gesture,r2_fasten_first_stand,BITHOLDER2,5.955006
+sandeep,Task-Aware,r2_gear_rod,GEAR_ROD_ROW2,8.823507
+sandeep,Task-Aware,r2_gear_rod,GEAR_ROW2_LEFT,15.202744
+sandeep,Task-Aware,r2_gear_rod,GEAR_ROW2_RIGHT,9.094211
+sandeep,Task-Aware,r2_gear_rod,PINS,7.414512
+sandeep,Task-Aware,r1_bearing_right,GEAR_STAND_ROW1_RIGHT,7.970363
+sandeep,Task-Aware,r1_bearing_right,BEARINGS,4.129316
+sandeep,Task-Aware,r1_bearing_left,GEAR_STAND_ROW1_LEFT,7.057895
+sandeep,Task-Aware,r1_fasten_first_stand,BITHOLDER1,6.025748
+sandeep,Task-Aware,r1_fasten_first_stand,BIT_SCREWDRIVER,4.720357
+sandeep,Task-Aware,r1_fasten_first_stand,SCREWS,6.825106
+sandeep,Task-Aware,r1_gear_rod,GEAR_ROD_ROW1,7.200425
+sandeep,Task-Aware,r1_gear_rod,GEAR_ROW1_LEFT,6.749095
+sandeep,Task-Aware,r1_gear_rod,PINS,6.248483
+sandeep,Task-Aware,r2_bearing_right,GEAR_STAND_ROW2_RIGHT,7.18519
+sandeep,Task-Aware,r2_bearing_right,BEARINGS,4.523371
+sandeep,Task-Aware,r2_bearing_left,GEAR_STAND_ROW2_LEFT,9.82772
+sandeep,Task-Aware,r2_fasten_first_stand,BIT_SCREWDRIVER,11.361561
+sandeep,Task-Aware,r2_fasten_first_stand,SCREWS,6.879473
+sandeep,Task-Aware,r2_fasten_first_stand,BITHOLDER2,26.209396

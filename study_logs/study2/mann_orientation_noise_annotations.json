@@ -1,0 +1,24 @@
+{
+  "annotation_type": "orientation_confusion_noise",
+  "participant": "mann",
+  "source_log": "study_logs/study2/mann_replay.jsonl",
+  "trials": {
+    "mann-freedrive-1788531901498|freedrive|6": {
+      "annotation_note": "Participant manipulated the board with an incorrect/confused orientation; interval marked manually for sensitivity analysis.",
+      "intervals": [
+        {
+          "annotated_at": "2026-09-05T02:10:39.896408+00:00",
+          "end_frame_index": 44,
+          "end_time_monotonic_s": 572114.731955607,
+          "reason": "orientation_confusion",
+          "start_frame_index": 19,
+          "start_time_monotonic_s": 572113.413685799,
+          "treatment": "exclude_as_noise"
+        }
+      ],
+      "mode": "freedrive",
+      "session_id": "mann-freedrive-1788531901498",
+      "trial_idx": 6
+    }
+  }
+}

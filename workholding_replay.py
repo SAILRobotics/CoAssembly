@@ -105,9 +105,12 @@ def main() -> None:
                 vis.select_target(pose_idx, state)
                 vis.update_target_gripper(targets[pose_idx],
                                           cfg.BOX_FORWARD_OFFSET, state)
+            virtual_board = _array(
+                record.get("user_manipulated_board_world_T"), matrix=True)
+            if virtual_board is None:
+                virtual_board = _array(record.get("board_world_T"), matrix=True)
             vis.update_ar_handle(
-                _array(record.get("board_world_T"), matrix=True)
-                if record.get("ar_enabled") else None)
+                virtual_board if record.get("ar_enabled") else None)
             vis.tick()
     finally:
         vis.close()

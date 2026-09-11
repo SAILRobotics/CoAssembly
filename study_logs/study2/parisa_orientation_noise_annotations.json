@@ -1,0 +1,24 @@
+{
+  "annotation_type": "orientation_confusion_noise",
+  "participant": "parisa",
+  "source_log": "study_logs/study2/parisa_replay.jsonl",
+  "trials": {
+    "parisa-freedrive-1788359853571|freedrive|5": {
+      "annotation_note": "Participant manipulated the board with an incorrect/confused orientation; interval marked manually for sensitivity analysis.",
+      "intervals": [
+        {
+          "annotated_at": "2026-09-05T01:38:32.322561+00:00",
+          "end_frame_index": 119,
+          "end_time_monotonic_s": 399975.767730459,
+          "reason": "orientation_confusion",
+          "start_frame_index": 95,
+          "start_time_monotonic_s": 399974.58179618,
+          "treatment": "exclude_as_noise"
+        }
+      ],
+      "mode": "freedrive",
+      "session_id": "parisa-freedrive-1788359853571",
+      "trial_idx": 5
+    }
+  }
+}

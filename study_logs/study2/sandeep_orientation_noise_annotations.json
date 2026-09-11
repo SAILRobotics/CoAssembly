@@ -1,0 +1,6 @@
+{
+  "annotation_type": "orientation_confusion_noise",
+  "participant": "sandeep",
+  "source_log": "study_logs/study2/sandeep_replay.jsonl",
+  "trials": {}
+}

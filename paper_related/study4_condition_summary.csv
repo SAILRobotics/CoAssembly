@@ -1,0 +1,40 @@
+condition,metric,n,mean,sd
+Gesture,total_time_s,11,247.36743836363638,111.56112810463866
+Gesture,interactions_total,11,274.1818181818182,144.55989636259304
+Gesture,error_rate,11,0.19916027154663518,0.09930953849372523
+Gesture,head_translation_total_m,11,10.491831181818183,7.643919803877548
+Gesture,head_rotation_total_deg,11,2159.5662423636363,1772.8444778124972
+Gesture,left_hand_translation_total_m,11,6.502678090909091,4.882381460437918
+Gesture,right_hand_translation_total_m,11,12.233246181818181,8.283016354291869
+Gesture,total_hand_translation_total_m,11,18.735924636363638,12.05481891792095
+Gesture,active_time_s,11,226.9609539843197,93.81155312060504
+Gesture,part_time_s,11,13.71611044271679,6.392660232556287
+Gesture,part_time_first_s,11,14.171847738636364,9.954097817509535
+Gesture,part_time_later_s,11,13.129516080802784,5.777621816680211
+Gesture,inference_s,0,,
+Language + Gesture,total_time_s,11,239.388528,53.99053223013138
+Language + Gesture,interactions_total,11,21.09090909090909,3.1766191290283907
+Language + Gesture,error_rate,11,0.0,0.0
+Language + Gesture,head_translation_total_m,11,5.15205209090909,3.422290205138233
+Language + Gesture,head_rotation_total_deg,11,1689.411106090909,1216.6298167443706
+Language + Gesture,left_hand_translation_total_m,11,3.8342018181818185,4.837958033189246
+Language + Gesture,right_hand_translation_total_m,11,5.726139636363636,5.8126675783805535
+Language + Gesture,total_hand_translation_total_m,11,9.560341818181818,10.180123962083565
+Language + Gesture,active_time_s,7,167.362688,42.23530107128719
+Language + Gesture,part_time_s,11,13.640737108175138,5.0030819714814
+Language + Gesture,part_time_first_s,11,12.529707219155844,4.443496998189516
+Language + Gesture,part_time_later_s,11,14.541189837511478,5.966000545475247
+Language + Gesture,inference_s,7,3.3381722366190743,0.13773926556222696
+Task-Aware,total_time_s,11,213.38963372727272,50.14370248794293
+Task-Aware,interactions_total,11,21,1.7320508075688772
+Task-Aware,error_rate,11,0.0,0.0
+Task-Aware,head_translation_total_m,11,4.786188909090909,4.101422357752721
+Task-Aware,head_rotation_total_deg,11,1305.4214438181818,926.1541441894531
+Task-Aware,left_hand_translation_total_m,11,2.5328222727272727,3.176098630493111
+Task-Aware,right_hand_translation_total_m,11,4.865081363636364,8.012749129301106
+Task-Aware,total_hand_translation_total_m,11,7.397903727272727,10.213959097478002
+Task-Aware,active_time_s,7,163.20832314285713,16.700495609558413
+Task-Aware,part_time_s,11,12.700679173292523,4.099880603483423
+Task-Aware,part_time_first_s,11,13.730954608766234,6.601783195636163
+Task-Aware,part_time_later_s,11,11.645952194972452,2.8673760802657324
+Task-Aware,inference_s,7,3.987316718181818,0.29881517348625103

@@ -281,8 +281,16 @@ class _WorkholdingSceneVis(_SceneVis):
         self._mode_sphere_T = self._hidden_T()
         self._mode_sphere_state = None
 
-    def configure_target_ghosts(self, target_poses: list[np.ndarray]) -> None:
-        """Draw every saved board target in white against the black background."""
+    def configure_target_ghosts(
+            self, target_poses: list[np.ndarray],
+            visible_index: "int | None" = None) -> None:
+        """Draw all saved targets, or only one target when an index is given."""
+        for mesh in self._target_ghosts:
+            if mesh is not None:
+                self.vis.remove_geometry(mesh, reset_bounding_box=False)
+        self._target_ghosts.clear()
+        self._selected_target_index = None
+        self._reached_target_indices.clear()
         if self._target_board_asset is None:
             return
         base = o3d.io.read_triangle_mesh(str(self._target_board_asset))
@@ -293,7 +301,10 @@ class _WorkholdingSceneVis(_SceneVis):
         T_local[:3, :3] = ScipyR.from_euler(
             "y", 90.0, degrees=True).as_matrix()
         base.transform(T_local)
-        for T_target in target_poses:
+        for index, T_target in enumerate(target_poses):
+            if visible_index is not None and index != visible_index:
+                self._target_ghosts.append(None)
+                continue
             mesh = o3d.geometry.TriangleMesh(base)
             mesh.transform(np.asarray(T_target, dtype=float))
             mesh.paint_uniform_color(self._TARGET_DEFAULT_COLOR)
@@ -304,12 +315,14 @@ class _WorkholdingSceneVis(_SceneVis):
         """Color the active target by live board-to-target proximity."""
         previous = self._selected_target_index
         if (previous is not None and previous != target_index
-                and previous < len(self._target_ghosts)):
+                and previous < len(self._target_ghosts)
+                and self._target_ghosts[previous] is not None):
             self._target_ghosts[previous].paint_uniform_color(
                 self._TARGET_DEFAULT_COLOR)
             self.vis.update_geometry(self._target_ghosts[previous])
         self._selected_target_index = int(target_index)
-        if target_index < len(self._target_ghosts):
+        if (target_index < len(self._target_ghosts)
+                and self._target_ghosts[target_index] is not None):
             color = {
                 "reached": self._TARGET_REACHED_COLOR,
                 "near": self._TARGET_NEAR_COLOR,
@@ -323,7 +336,8 @@ class _WorkholdingSceneVis(_SceneVis):
                             T_target: np.ndarray) -> None:
         """Keep a reached target visible as a persistent solid green board."""
         if (target_index in self._reached_target_indices
-                or target_index >= len(self._target_ghosts)):
+                or target_index >= len(self._target_ghosts)
+                or self._target_ghosts[target_index] is None):
             return
         self._reached_target_indices.add(int(target_index))
         mesh = self._target_ghosts[target_index]
@@ -859,6 +873,8 @@ class WorkholdingStudy:
             robot_q_rad=self.robot.q, tcp_world_T=T_tcp,
             robot_link_world_T=self.robot.arm_link_poses(),
             board_world_T=T_board, target_board_world_T=self._trial_target_T,
+            user_manipulated_board_world_T=self._user_manipulated_board_T,
+            user_board_grabbed=self._user_board_grabbed,
             head_world_T=head_T, left_hand_world=left_pts,
             right_hand_world=right_pts,
             world_tracking_T=self.anchor.T_world_tracking,
@@ -1287,7 +1303,7 @@ class WorkholdingStudy:
         self.vis.update_board_ar_from_tcp(T_tcp, cfg.BOX_FORWARD_OFFSET)
         self.vis.update_user_board(
             self._user_manipulated_board_T
-            if self._ar_enabled and self._user_board_grabbed else None)
+            if self._ar_enabled else None)
         # The controller workspace is defined in the calibrated world frame,
         # so its Open3D wireframe can remain visible before marker locking.
         self.vis.update_workspace_bound(self._ws_lo, self._ws_hi)
@@ -1317,12 +1333,17 @@ class WorkholdingStudy:
             T_target = self._poses_T[target_pose_idx]
             target_reachable = self._target_reachability.get(
                 target_pose_idx, False)
-        # The cyan BoardAR preview is shown at the live TCP from startup, even
-        # before marker lock or physical grasp. Drive the Open3D handle from
-        # that same pose so the two never appear separated by state gating.
+        # Before the first manipulation, the handle follows the live TCP. Once
+        # the participant grabs the virtual board, that board owns the handle
+        # pose.  In particular, keep the released pose fixed while the robot
+        # travels to it; ownership returns to the TCP only when the commanded
+        # move completes.
         T_preview_board = self._board_pose_from_tcp(T_tcp)
+        T_handle_board = (self._user_manipulated_board_T
+                          if self._user_manipulated_board_T is not None
+                          else T_preview_board)
         self.vis.update_ar_handle(
-            T_preview_board if self._ar_enabled else None)
+            T_handle_board if self._ar_enabled else None)
         display_state = self._target_display_state(T_target)
         if T_target is not None:
             self.vis.select_target(target_pose_idx, display_state)
@@ -1997,6 +2018,11 @@ class WorkholdingStudy:
             self._auto_move_result = None
             if ok and T_tcp is not None and self._trial_target_T is not None:
                 T_board = self._board_pose_from_tcp(T_tcp)
+                # The robot has reached the released virtual board. Clear the
+                # independent target pose so subsequent robot motion once
+                # again drives the board/handle preview from the live TCP.
+                self._user_manipulated_board_T = None
+                self._user_board_grabbed = False
                 pos_err, ang_err = self._pose_error(
                     T_board, self._trial_target_T)
                 if self._phase == "await_snap_confirmation":
@@ -2036,12 +2062,24 @@ class WorkholdingStudy:
         manipulation_event = self.ar_bridge.poll_event()
         if manipulation_event is not None:
             manipulation_state, T_box_target = manipulation_event
+            was_grabbed = self._user_board_grabbed
             if manipulation_state in ("grabbed", "dragging"):
                 self._user_manipulated_board_T = T_box_target.copy()
                 self._user_board_grabbed = True
-            elif manipulation_state in ("released", "cancelled"):
+            elif manipulation_state == "released":
+                # A release creates a persistent world-space target. Do not
+                # snap it back to the TCP while the robot is travelling.
+                self._user_manipulated_board_T = T_box_target.copy()
+                self._user_board_grabbed = False
+            elif manipulation_state == "cancelled":
                 self._user_manipulated_board_T = None
                 self._user_board_grabbed = False
+            if manipulation_state == "grabbed" and not was_grabbed:
+                self._replay_event(
+                    "ar_handle_grabbed",
+                    grabbed_board_world_T=T_box_target,
+                    recording=bool(recording),
+                    post_stop=self._phase == "await_snap_confirmation")
             if not accept_commands:
                 if manipulation_state == "released":
                     self._close_status_line()

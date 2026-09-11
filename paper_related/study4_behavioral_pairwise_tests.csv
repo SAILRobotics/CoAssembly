@@ -1,0 +1,25 @@
+metric,condition_a,condition_b,n,mean_a_minus_b,wilcoxon_W,p_raw,p_holm
+Time per step (s),Gesture,Language + Gesture,11,0.6965990795454554,32.0,0.9658203125,1.0
+Time per step (s),Gesture,Task-Aware,11,4.165692847402597,26.0,0.5771484375,1.0
+Time per step (s),Language + Gesture,Task-Aware,11,3.469093767857142,17.0,0.1748046875,0.5244140625
+Time per part (s),Gesture,Language + Gesture,11,0.07537333454165328,30.0,0.8310546875,1.0
+Time per part (s),Gesture,Task-Aware,11,1.0154312694242673,27.0,0.6376953125,1.0
+Time per part (s),Language + Gesture,Task-Aware,11,0.9400579348826141,27.0,0.6376953125,1.0
+Error rate (wrong / total selections),Gesture,Language + Gesture,11,0.19916027154663518,0.0,0.0009765625,0.0029296875
+Error rate (wrong / total selections),Gesture,Task-Aware,11,0.19916027154663518,0.0,0.0009765625,0.0029296875
+Error rate (wrong / total selections),Language + Gesture,Task-Aware,11,0.0,0.0,1.0,1.0
+Interactions per step,Gesture,Language + Gesture,11,30.996753246753247,1.0,0.001953125,0.005859375
+Interactions per step,Gesture,Task-Aware,11,31.008116883116884,1.0,0.001953125,0.005859375
+Interactions per step,Language + Gesture,Task-Aware,11,0.011363636363636364,33.0,1.0,1.0
+Interactions per part,Gesture,Language + Gesture,11,13.182390755958867,1.0,0.001953125,0.005859375
+Interactions per part,Gesture,Task-Aware,11,13.138128112857215,1.0,0.001953125,0.005859375
+Interactions per part,Language + Gesture,Task-Aware,11,-0.0442626431016524,19.0,0.240234375,0.240234375
+Head translation per step (m),Gesture,Language + Gesture,11,0.7181079220779221,9.0,0.0322265625,0.064453125
+Head translation per step (m),Gesture,Task-Aware,11,0.7454661282467532,5.0,0.009765625,0.029296875
+Head translation per step (m),Language + Gesture,Task-Aware,11,0.027358206168831164,17.0,0.5146697234497355,0.5146697234497355
+Hand translation per step (m),Gesture,Language + Gesture,9,1.3919141984126984,7.0,0.07421875,0.1484375
+Hand translation per step (m),Gesture,Task-Aware,9,1.7287923134920635,2.0,0.01171875,0.03515625
+Hand translation per step (m),Language + Gesture,Task-Aware,9,0.336878115079365,10.0,0.49896229860376107,0.49896229860376107
+Head rotation per step (deg),Gesture,Language + Gesture,11,64.19107517045452,24.0,0.46484375,0.46484375
+Head rotation per step (deg),Gesture,Task-Aware,11,112.27482504870129,11.0,0.0537109375,0.1611328125
+Head rotation per step (deg),Language + Gesture,Task-Aware,11,48.083749878246756,10.0,0.1386406338132186,0.2772812676264372

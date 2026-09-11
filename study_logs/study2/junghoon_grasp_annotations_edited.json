@@ -1,0 +1,61 @@
+{
+  "derived_from_annotations": "study_logs/study2/junghoon_grasp_annotations.json",
+  "participant": "junghoon",
+  "source_log": "study_logs/study2/junghoon_replay.jsonl",
+  "trials": {
+    "junghoon-ar-1788474668116|ar|0": {
+      "audit_note": "Two unmatched green onset markers suppressed; replay log retained unchanged.",
+      "excluded_grasp_onsets": [
+        {
+          "audit": "grasp_release_consistency_2026-09-04",
+          "frame_index": 144,
+          "reason": "unpaired recorded onset; no remaining release",
+          "time_monotonic_s": 514563.356012026
+        },
+        {
+          "audit": "grasp_release_consistency_2026-09-04",
+          "frame_index": 223,
+          "reason": "unpaired recorded onset; no remaining release",
+          "time_monotonic_s": 514567.560825826
+        }
+      ],
+      "mode": "ar",
+      "session_id": "junghoon-ar-1788474668116",
+      "trial_idx": 0
+    },
+    "junghoon-hybrid-1788475185509|hybrid|0": {
+      "annotated_at": "2026-09-05T01:14:22.985908+00:00",
+      "excluded_grasp_pairs": [
+        {
+          "excluded_at": "2026-09-05T01:14:22.985890+00:00",
+          "onset_frame_index": 29,
+          "onset_source": "recorded",
+          "onset_time_monotonic_s": 515067.071711741,
+          "release_frame_index": 35,
+          "release_time_monotonic_s": 515067.448714915
+        }
+      ],
+      "grasp_frame_indices": [],
+      "grasp_times_monotonic_s": [],
+      "mode": "hybrid",
+      "no_grasp": false,
+      "reviewed": false,
+      "session_id": "junghoon-hybrid-1788475185509",
+      "trial_idx": 0
+    },
+    "junghoon-hybrid-1788475185509|hybrid|5": {
+      "audit_note": "One unmatched green onset marker suppressed; replay log retained unchanged.",
+      "excluded_grasp_onsets": [
+        {
+          "audit": "grasp_release_consistency_2026-09-04",
+          "frame_index": 28,
+          "reason": "unpaired recorded onset; no remaining release",
+          "time_monotonic_s": 515250.774719823
+        }
+      ],
+      "mode": "hybrid",
+      "session_id": "junghoon-hybrid-1788475185509",
+      "trial_idx": 5
+    }
+  }
+}

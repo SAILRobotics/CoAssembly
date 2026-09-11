@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>H2R CoAssembly Project Proposal</title>
+<style>
+  @page { size: 8.5in 11in; margin: 0.75in 0.85in; }
+  body { font-family: Arial, sans-serif; color: #20252b; font-size: 10.5pt; line-height: 1.32; }
+  h1 { color: #17365d; font-size: 22pt; margin: 0 0 4pt; text-align: center; }
+  .subtitle { text-align:center; color:#4f6272; font-size:12pt; margin-bottom:16pt; }
+  .meta { width:100%; border-collapse:collapse; margin:0 0 16pt; }
+  .meta td { border:1px solid #9fbad0; padding:7pt; }
+  .meta td:first-child { width:27%; background:#dce6f1; font-weight:bold; color:#17365d; }
+  h2 { color:#17365d; font-size:14pt; border-bottom:1.5px solid #4f81bd; padding-bottom:2pt; margin:15pt 0 6pt; }
+  h3 { color:#365f91; font-size:11.5pt; margin:10pt 0 3pt; }
+  p { margin:0 0 7pt; text-align:justify; }
+  ul, ol { margin:3pt 0 8pt 18pt; padding-left:10pt; }
+  li { margin-bottom:3pt; }
+  table.data { width:100%; border-collapse:collapse; margin:6pt 0 11pt; font-size:9.5pt; }
+  table.data th { background:#365f91; color:white; border:1px solid #27486f; padding:5pt; text-align:left; }
+  table.data td { border:1px solid #aeb9c3; padding:5pt; vertical-align:top; }
+  table.data tr:nth-child(even) td { background:#f2f6fa; }
+  .points { text-align:center; width:10%; white-space:nowrap; }
+  .note { background:#eef4f9; border-left:4px solid #4f81bd; padding:7pt 9pt; margin:8pt 0; }
+  .refs p { padding-left:16pt; text-indent:-16pt; font-size:9.5pt; }
+  .small { font-size:9pt; color:#4f4f4f; }
+</style>
+</head>
+<body>
+<h1>Task-Aware Multimodal Assistance for Human–Robot Co-Assembly</h1>
+<div class="subtitle">H2R CoAssembly: Mixed-Reality Gearbox Assembly with Context-Aware Part Retrieval</div>
+
+<table class="meta">
+  <tr><td>Name(s)</td><td>[Student Name]</td></tr>
+  <tr><td>Course</td><td>CS 7633 — Fall 2026</td></tr>
+  <tr><td>Project platform</td><td>H2R CoAssembly / Meta Quest 3 / collaborative robot</td></tr>
+</table>
+
+<h2>Motivation</h2>
+<p>Collaborative assembly is slowed when a worker must stop, search for a component, or translate an underspecified request such as “bring me the red gear” into the robot’s rigid vocabulary. Gesture-only interfaces can also require the worker to reposition their body and point precisely, while language-only interfaces may fail when several parts share a name. The H2R CoAssembly project addresses this coordination gap by combining speech, gesture, mixed-reality scene information, and the current assembly state. Its central question is: <em>Does task awareness reduce the effort and ambiguity of requesting parts during human–robot assembly compared with gesture alone or language plus gesture?</em></p>
+<p>The project builds directly on prior HRI and AR research. Lambrecht and Nimpsch [1] found that natural, predictive requests can support flexible just-in-time handovers, but may increase cognitive workload; this motivates measuring both successful retrieval and workload. Liu et al. [2] incorporated task context into learning collaborative assembly assistance, motivating our explicit task graph as a transparent and testable context model. Zigart and Schlund [3] compared spatial AR with conventional assembly support and motivate our hands-free Meta Quest 3 interface. Lunding et al. [4] used AR to improve workspace awareness and coordinate parallel assembly, while our work extends the idea toward multimodal, task-state-aware part referral. Together, these studies motivate an integrated system whose assistance is grounded in the worker’s language, visible pointing behavior, and the set of parts that are valid at the current step.</p>
+
+<h2>Proposed Methodology</h2>
+<p>The technical system will represent a four-row educational gearbox as a dependency-based task graph. Each step will be labeled READY, BLOCKED, or COMPLETED; completing a step consumes raw components and creates a named subassembly. A Meta Quest 3 client will visualize relevant components and collect pointing/gesture input. A speech interface and vision-language component will resolve flexible references—including row number, color, shape, side, size, and location—to canonical objects. The state engine will constrain responses to active parts and currently feasible actions, preventing the assistant from recommending consumed parts or blocked steps. Robot-side Python services will communicate with the mixed-reality Unity application, highlight or retrieve the selected part, and log events for replay and analysis.</p>
+<p>The empirical component will use a three-condition <strong>within-subjects design</strong>: (1) Gesture, (2) Language + Gesture, and (3) Task-Aware multimodal assistance. Interface condition is the <strong>independent variable</strong>. Retrieval accuracy, request time, correction count, workload, confidence, clarity/ease, adaptation burden, and preference are <strong>dependent variables</strong>. Condition order will use <strong>counterbalancing</strong> to reduce learning and carryover effects. Participants will perform comparable part-request trials during gearbox assembly, with row identity encoded redundantly by number, color, and shape. Trial logs, questionnaires, and observations provide <strong>triangulation</strong> across behavioral and self-report evidence. A brief post-condition question will serve as a <strong>manipulation check</strong> that participants noticed and understood the available interaction cues.</p>
+<p>The study will recruit approximately 18–24 adult participants, subject to course time and equipment access. This target improves on the existing pilot-scale N=11 data and is large enough to detect effects in the approximate range already observed for workload and clarity, while remaining feasible for a semester project. The study’s <strong>unit of analysis</strong> will be the participant for condition-level comparisons. We will define each measure before analysis through explicit <strong>operationalization</strong>: for example, retrieval success means the intended physical object is selected without correction, and request time runs from prompt onset to confirmed selection. The physical robot, real components, and complete gearbox sequence support <strong>ecological validity</strong>; consistent scripts, equivalent trials, and validated multi-item scales support <strong>construct validity</strong>.</p>
+
+<h3>Hardware and Software</h3>
+<ul>
+  <li>Meta Quest 3 headset; RGB-D/scene camera as available; microphone and audio output.</li>
+  <li>Collaborative robot arm with gripper, physical gearbox parts, pegboard storage, and calibration markers.</li>
+  <li>Unity/C# mixed-reality application; Python robot-control, perception, task-graph, and study-logging services.</li>
+  <li>Speech recognition/text-to-speech, a vision-language model, Open3D/RealSense utilities, NumPy/SciPy/Pandas, and Qualtrics or equivalent questionnaires.</li>
+</ul>
+
+<h2>Proposed Evaluation</h2>
+<p>Success means that the task-aware condition reliably chooses feasible parts, lowers interaction cost without reducing safety or user confidence, and produces reproducible evidence. Each participant’s three conditions will be compared with Friedman tests for ordinal or non-normal composite outcomes, followed—when justified—by paired Wilcoxon signed-rank tests with Holm correction. Effect sizes (Kendall’s W and matched-pairs effect sizes), confidence intervals, descriptive statistics, and missing-data counts will accompany p-values. Interaction logs will also be inspected for failure modes such as ambiguous requests, wrong-row selection, incorrect left/right resolution, and recommendations inconsistent with the task graph.</p>
+
+<table class="data">
+  <tr><th>Metric</th><th>Definition / success criterion</th></tr>
+  <tr><td>Part-retrieval accuracy</td><td>Correct physical candidate on first confirmed response; ≥90% for Task-Aware and no worse than either baseline.</td></tr>
+  <tr><td>Task-state validity</td><td>Percentage of recommendations that are active and READY; target 100% on scripted regression cases and ≥95% in study trials.</td></tr>
+  <tr><td>Request completion time</td><td>Prompt onset to confirmed part selection; Task-Aware median lower than Gesture and Language + Gesture.</td></tr>
+  <tr><td>Repairs and corrections</td><td>Clarifications, repeated requests, or manually corrected selections per trial; fewer in Task-Aware.</td></tr>
+  <tr><td>NASA-TLX workload</td><td>Six-item workload score, with Performance reverse-scored so lower is better; Task-Aware expected to be lowest.</td></tr>
+  <tr><td>Confidence, clarity/ease, adaptation</td><td>Predefined Likert composites; higher confidence and clarity/ease, lower adaptation burden.</td></tr>
+  <tr><td>Preference</td><td>Rank ordering of the three conditions and qualitative rationale; majority preference for Task-Aware.</td></tr>
+  <tr><td>System robustness</td><td>Task-graph self-test, replay consistency, latency, crash-free trial rate, and documented recovery from recognition failures.</td></tr>
+</table>
+
+<h2>Project Timeline</h2>
+<table class="data">
+  <tr><th>Milestone</th><th>Planned deliverable</th></tr>
+  <tr><td>Project Check-In Day 1</td><td>Freeze research question and requirements; complete focused literature review; demonstrate task-graph state engine and gearbox inventory; finalize outcome definitions and study hypotheses.</td></tr>
+  <tr><td>Project Mid-Point “Poster” Session</td><td>Demonstrate end-to-end Quest-to-Python communication, speech/gesture capture, canonical part resolution, AR highlighting, and event logging on at least one full gearbox row; present pilot latency and accuracy.</td></tr>
+  <tr><td>Project Check-In Day 2</td><td>Complete all three study conditions, robot safety checks, counterbalanced protocol, consent/training materials, regression tests, and a small pilot; revise based on pilot failures.</td></tr>
+  <tr><td>Final Project Presentations</td><td>Complete data collection and statistical analysis; deliver reproducible code, final demonstration, results visualizations, limitations, and a paper-style report.</td></tr>
+</table>
+
+<h2>Proposed Grading Rubric</h2>
+<table class="data">
+  <tr><th>Finding / System Component / Capability / Validation Test</th><th class="points">Points</th></tr>
+  <tr><td><strong>Task graph and state model:</strong> correct dependencies, active-part inventory, READY/BLOCKED/COMPLETED transitions, undo/reset behavior, and passing automated self-tests.</td><td class="points">20</td></tr>
+  <tr><td><strong>Multimodal reference resolution:</strong> speech and gesture inputs resolve row, color, shape, side, size, and location; ambiguous requests are handled explicitly; validated on a labeled test set.</td><td class="points">25</td></tr>
+  <tr><td><strong>Mixed-reality interface:</strong> stable Meta Quest 3 visualization, calibrated object highlights, understandable feedback, and measured end-to-end latency.</td><td class="points">20</td></tr>
+  <tr><td><strong>Robot integration and safety:</strong> reliable client/server control, bounded behavior, safe-stop/recovery procedures, and successful scripted gearbox trials.</td><td class="points">20</td></tr>
+  <tr><td><strong>Experimental design and execution:</strong> justified conditions, counterbalancing, consistent protocol, usable instruments, documented recruitment/sample, and complete anonymized logs.</td><td class="points">20</td></tr>
+  <tr><td><strong>Evaluation and statistical analysis:</strong> correct metrics and tests, effect sizes, uncertainty, multiplicity correction, behavioral failure analysis, and conclusions supported by evidence.</td><td class="points">25</td></tr>
+  <tr><td><strong>Reproducibility and technical quality:</strong> clear setup instructions, maintainable code, configuration/data documentation, automated tests, and replayable analysis pipeline.</td><td class="points">10</td></tr>
+  <tr><td><strong>Final technical report:</strong> coherent motivation and related work, system description, results, limitations, responsible handling of participant data, and actionable future work.</td><td class="points">10</td></tr>
+  <tr><th>Total</th><th class="points">150</th></tr>
+</table>
+
+<h2>References</h2>
+<div class="refs">
+  <p>[1] J. Lambrecht and S. Nimpsch, “Human Prediction for the Natural Instruction of Handovers in Human Robot Collaboration,” <em>2019 28th IEEE International Conference on Robot and Human Interactive Communication (RO-MAN)</em>, pp. 1–6, 2019. doi: 10.1109/RO-MAN46459.2019.8956379.</p>
+  <p>[2] H. Liu, L. Wang, X. V. Wang, and G. Zheng, “Learn How to Assist Humans Through Human Teaching and Robot Learning in Human–Robot Collaborative Assembly,” <em>IEEE Transactions on Systems, Man, and Cybernetics: Systems</em>, vol. 51, no. 1, pp. 264–273, 2021. doi: 10.1109/TSMC.2020.3010285.</p>
+  <p>[3] T. Zigart and S. Schlund, “Ready for Industrial Use? A User Study of Spatial Augmented Reality in Industrial Assembly,” <em>2022 IEEE International Symposium on Mixed and Augmented Reality Adjunct (ISMAR-Adjunct)</em>, pp. 60–65, 2022. doi: 10.1109/ISMAR-Adjunct57072.2022.00022.</p>
+  <p>[4] J. Lunding, C. K. Ellinger, A. S. N. Nair, and W. Broll, “AR-supported Human-Robot Collaboration: Facilitating Workspace Awareness and Parallelized Assembly Tasks,” <em>2023 IEEE International Symposium on Mixed and Augmented Reality (ISMAR)</em>, 2023. doi: 10.1109/ISMAR59233.2023.00123.</p>
+  <p>[5] S. G. Hart and L. E. Staveland, “Development of NASA-TLX (Task Load Index): Results of Empirical and Theoretical Research,” in <em>Human Mental Workload</em>, 1988, pp. 139–183. doi: 10.1016/S0166-4115(08)62386-9.</p>
+</div>
+
+<div class="note small"><strong>Glossary-term check:</strong> This proposal visibly includes more than seven HRI Research Methods Glossary terms in bold: within-subjects design, independent variable, dependent variables, counterbalancing, triangulation, manipulation check, unit of analysis, operationalization, ecological validity, and construct validity.</div>
+</body>
+</html>

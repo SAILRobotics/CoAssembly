@@ -1,0 +1,287 @@
+index,timestamp,participant,target_type,target_id,target_name,render_index,description,presentation_number,target_presentations
+1,2026-08-31 20:09:01,Sandeep,individual_part,Row1_GearStand_Left.stl,STAND_ROW1_LEFT,1,Left white stand,1,1
+2,2026-08-31 20:09:17,Sandeep,individual_part,Row1_GearStand_Right.stl,STAND_ROW1_RIGHT,2,Right white stand,1,1
+3,2026-08-31 20:09:25,Sandeep,individual_part,Row2_GearStand_Left.stl,STAND_ROW2_LEFT,3,Left red stand,1,1
+4,2026-08-31 20:09:35,Sandeep,individual_part,Row2_GearStand_Right.stl,STAND_ROW2_RIGHT,4,Right red stand,1,1
+5,2026-08-31 20:09:51,Sandeep,individual_part,Row3_GearStand_Left.stl,STAND_ROW3_LEFT,5,Green left stand,1,1
+6,2026-08-31 20:10:01,Sandeep,individual_part,Row3_GearStand_Right.stl,STAND_ROW3_RIGHT,6,Green right stand,1,1
+7,2026-08-31 20:10:10,Sandeep,individual_part,Row4_GearStand_Left.stl,STAND_ROW4_LEFT,7,Blue left stand,1,1
+8,2026-08-31 20:10:21,Sandeep,individual_part,Row4_GearStand_Right.stl,STAND_ROW4_RIGHT,8,Blue right stand,1,1
+9,2026-08-31 20:10:48,Sandeep,individual_part,Row1_GearRod.stl,GEAR_ROD_ROW1,9,White gear shaft,1,1
+10,2026-08-31 20:10:59,Sandeep,individual_part,Row2_GearRod.stl,GEAR_ROD_ROW2,10,Red gear shaft,1,1
+11,2026-08-31 20:11:07,Sandeep,individual_part,Row3_GearRod.stl,GEAR_ROD_ROW3,11,Green gear shaft,1,1
+12,2026-08-31 20:11:18,Sandeep,individual_part,Row4_GearRod.stl,GEAR_ROD_ROW4,12,Blue gear shaft,1,1
+13,2026-08-31 20:11:31,Sandeep,individual_part,Row1_Gear_Left.stl,GEAR_ROW1_LEFT,13,Large white gear,1,1
+14,2026-08-31 20:11:40,Sandeep,individual_part,Row2_Gear_Left.stl,GEAR_ROW2_LEFT,14,Smaller red gear,1,1
+15,2026-08-31 20:11:47,Sandeep,individual_part,Row2_Gear_Right.stl,GEAR_ROW2_RIGHT,15,Larger red gear,1,1
+16,2026-08-31 20:11:58,Sandeep,individual_part,Row3_Gear_Left.stl,GEAR_ROW3_LEFT,16,Smaller green gear,1,1
+17,2026-08-31 20:12:06,Sandeep,individual_part,Row3_Gear_Right.stl,GEAR_ROW3_RIGHT,17,Larger green gear,1,1
+18,2026-08-31 20:12:14,Sandeep,individual_part,Row4_Gear_Left.stl,GEAR_ROW4_LEFT,18,Large blue gear,1,1
+19,2026-08-31 20:12:38,Sandeep,individual_part,Bearing.stl,BEARING,19,Black bearing,1,1
+20,2026-08-31 20:14:36,Sandeep,individual_part,Row1_Screws.stl,SCREW_ROW1,20,Silver screw for row 1,1,1
+21,2026-08-31 20:14:52,Sandeep,individual_part,Row2_Screws.stl,SCREW_ROW2,21,Black screw for row 2,1,1
+22,2026-08-31 20:15:09,Sandeep,individual_part,Row3_Screws.stl,SCREW_ROW3,22,Black screw for row 3,1,1
+23,2026-08-31 20:15:27,Sandeep,individual_part,Row4_Screws.stl,SCREW_ROW4,23,Silver screw for row 4,1,1
+24,2026-08-31 20:15:43,Sandeep,individual_part,Handle.stl,CRANK_HANDLE_ROW1,24,White crank,1,1
+25,2026-08-31 20:15:56,Sandeep,individual_part,BaseBoard.stl,BASE_BOARD,25,Baseboard,1,1
+26,2026-08-31 20:16:22,Sandeep,individual_part,WoodenPin.stl,PIN,26,Wooden peg,1,1
+27,2026-09-01 12:47:05,Mahya,individual_part,Row1_GearStand_Left.stl,STAND_ROW1_LEFT,1,left circle shaft holder,1,1
+28,2026-09-01 12:47:18,Mahya,individual_part,Row1_GearStand_Right.stl,STAND_ROW1_RIGHT,2,right circle shaft holder,1,1
+29,2026-09-01 12:47:39,Mahya,individual_part,Row2_GearStand_Left.stl,STAND_ROW2_LEFT,3,left triangle shaft holder,1,1
+30,2026-09-01 12:47:49,Mahya,individual_part,Row2_GearStand_Right.stl,STAND_ROW2_RIGHT,4,right triangle shaft holder,1,1
+31,2026-09-01 12:48:06,Mahya,individual_part,Row3_GearStand_Left.stl,STAND_ROW3_LEFT,5,left hexagon shaft holder,1,1
+32,2026-09-01 12:48:13,Mahya,individual_part,Row3_GearStand_Right.stl,STAND_ROW3_RIGHT,6,right hexagon shaft holder,1,1
+33,2026-09-01 12:48:25,Mahya,individual_part,Row4_GearStand_Left.stl,STAND_ROW4_LEFT,7,left square shaft holder,1,1
+34,2026-09-01 12:48:31,Mahya,individual_part,Row4_GearStand_Right.stl,STAND_ROW4_RIGHT,8,right square shaft holder,1,1
+35,2026-09-01 12:49:01,Mahya,individual_part,Row1_GearRod.stl,GEAR_ROD_ROW1,9,row one shaft,1,1
+36,2026-09-01 12:49:12,Mahya,individual_part,Row2_GearRod.stl,GEAR_ROD_ROW2,10,row two shaft,1,1
+37,2026-09-01 12:49:18,Mahya,individual_part,Row3_GearRod.stl,GEAR_ROD_ROW3,11,row three shaft,1,1
+38,2026-09-01 12:49:24,Mahya,individual_part,Row4_GearRod.stl,GEAR_ROD_ROW4,12,row four shaft,1,1
+39,2026-09-01 12:49:40,Mahya,individual_part,Row1_Gear_Left.stl,GEAR_ROW1_LEFT,13,gear row one,1,1
+40,2026-09-01 12:49:55,Mahya,individual_part,Row2_Gear_Left.stl,GEAR_ROW2_LEFT,14,small gear row 2,1,1
+41,2026-09-01 12:50:01,Mahya,individual_part,Row2_Gear_Right.stl,GEAR_ROW2_RIGHT,15,large gear row 2,1,1
+42,2026-09-01 12:50:08,Mahya,individual_part,Row3_Gear_Left.stl,GEAR_ROW3_LEFT,16,small gear row 3,1,1
+43,2026-09-01 12:50:30,Mahya,individual_part,Row3_Gear_Right.stl,GEAR_ROW3_RIGHT,17,large gear row 3,1,1
+44,2026-09-01 12:50:39,Mahya,individual_part,Row4_Gear_Left.stl,GEAR_ROW4_LEFT,18,gear row 4,1,1
+45,2026-09-01 12:50:52,Mahya,individual_part,Bearing.stl,BEARING,19,bearing,1,1
+46,2026-09-01 12:51:37,Mahya,individual_part,Row1_Screws.stl,SCREW_ROW1,20,silver screw row one,1,1
+47,2026-09-01 12:51:52,Mahya,individual_part,Row2_Screws.stl,SCREW_ROW2,21,black screw row two,1,1
+48,2026-09-01 12:52:08,Mahya,individual_part,Row3_Screws.stl,SCREW_ROW3,22,black screw row three,1,1
+49,2026-09-01 12:52:17,Mahya,individual_part,Row4_Screws.stl,SCREW_ROW4,23,silver screw row four,1,1
+50,2026-09-01 12:52:31,Mahya,individual_part,Handle.stl,CRANK_HANDLE_ROW1,24,crank handle,1,1
+51,2026-09-01 12:52:39,Mahya,individual_part,BaseBoard.stl,BASE_BOARD,25,base plate,1,1
+52,2026-09-01 12:52:55,Mahya,individual_part,WoodenPin.stl,PIN,26,wooden pin,1,1
+53,2026-09-02 10:13:40,Parisa,individual_part,Row1_GearStand_Left.stl,STAND_ROW1_LEFT,1,Left gear stand in row 1,1,1
+54,2026-09-02 10:13:59,Parisa,individual_part,Row1_GearStand_Right.stl,STAND_ROW1_RIGHT,2,Right gear stand in row 1,1,1
+55,2026-09-02 10:17:40,Parisa,individual_part,Row2_GearStand_Left.stl,STAND_ROW2_LEFT,3,red gear stand at the left,1,1
+56,2026-09-02 10:18:18,Parisa,individual_part,Row2_GearStand_Right.stl,STAND_ROW2_RIGHT,4,right red bracket aat second row,1,1
+57,2026-09-02 10:19:00,Parisa,individual_part,Row3_GearStand_Left.stl,STAND_ROW3_LEFT,5,row 3 gear stand next to the left gear,1,1
+58,2026-09-02 10:19:49,Parisa,individual_part,Row3_GearStand_Right.stl,STAND_ROW3_RIGHT,6,right gear stand at third row,1,1
+59,2026-09-02 10:21:35,Parisa,individual_part,Row4_GearStand_Left.stl,STAND_ROW4_LEFT,7,gear stand at bottom left corner,1,1
+60,2026-09-02 10:22:18,Parisa,individual_part,Row4_GearStand_Right.stl,STAND_ROW4_RIGHT,8,fourth row right side blue bracket,1,1
+61,2026-09-02 10:22:36,Parisa,individual_part,Row1_GearRod.stl,GEAR_ROD_ROW1,9,shaft of the row 1,1,1
+62,2026-09-02 10:22:56,Parisa,individual_part,Row2_GearRod.stl,GEAR_ROD_ROW2,10,second row shaft,1,1
+63,2026-09-02 10:23:03,Parisa,individual_part,Row3_GearRod.stl,GEAR_ROD_ROW3,11,green shaft,1,1
+64,2026-09-02 10:23:12,Parisa,individual_part,Row4_GearRod.stl,GEAR_ROD_ROW4,12,blue shaft,1,1
+65,2026-09-02 10:23:37,Parisa,individual_part,Row1_Gear_Left.stl,GEAR_ROW1_LEFT,13,white gear,1,1
+66,2026-09-02 10:23:58,Parisa,individual_part,Row2_Gear_Left.stl,GEAR_ROW2_LEFT,14,left red gear,1,1
+67,2026-09-02 10:24:17,Parisa,individual_part,Row2_Gear_Right.stl,GEAR_ROW2_RIGHT,15,right red gear,1,1
+68,2026-09-02 10:24:33,Parisa,individual_part,Row3_Gear_Left.stl,GEAR_ROW3_LEFT,16,small gear in row 3,1,1
+69,2026-09-02 10:24:49,Parisa,individual_part,Row3_Gear_Right.stl,GEAR_ROW3_RIGHT,17,big gear in row 3,1,1
+70,2026-09-02 10:25:10,Parisa,individual_part,Row4_Gear_Left.stl,GEAR_ROW4_LEFT,18,row 4 gear,1,1
+71,2026-09-02 10:26:11,Parisa,individual_part,Bearing.stl,BEARING,19,left side stand bearing in row 3,1,1
+72,2026-09-02 10:27:10,Parisa,individual_part,Row1_Screws.stl,SCREW_ROW1,20,first row screw for the left stand,1,1
+73,2026-09-02 10:27:41,Parisa,individual_part,Row2_Screws.stl,SCREW_ROW2,21,left stand screw in row 2,1,1
+74,2026-09-02 10:29:23,Parisa,individual_part,Row3_Screws.stl,SCREW_ROW3,22,right stand metal screw in the green row,1,1
+75,2026-09-02 10:30:10,Parisa,individual_part,Row4_Screws.stl,SCREW_ROW4,23,screw of the bottom right stand,1,1
+76,2026-09-02 10:30:31,Parisa,individual_part,Handle.stl,CRANK_HANDLE_ROW1,24,crank handle,1,1
+77,2026-09-02 10:30:43,Parisa,individual_part,BaseBoard.stl,BASE_BOARD,25,base board,1,1
+78,2026-09-02 10:31:02,Parisa,individual_part,WoodenPin.stl,PIN,26,wood pin,1,1
+79,2026-09-02 18:17:24,Pantea,individual_part,Row1_GearStand_Left.stl,STAND_ROW1_LEFT,1,white stand on left side,1,1
+80,2026-09-02 18:17:38,Pantea,individual_part,Row1_GearStand_Right.stl,STAND_ROW1_RIGHT,2,white stand on right side,1,1
+81,2026-09-02 18:17:55,Pantea,individual_part,Row2_GearStand_Left.stl,STAND_ROW2_LEFT,3,red stand on left side,1,1
+82,2026-09-02 18:18:07,Pantea,individual_part,Row2_GearStand_Right.stl,STAND_ROW2_RIGHT,4,red stand on right side,1,1
+83,2026-09-02 18:18:24,Pantea,individual_part,Row3_GearStand_Left.stl,STAND_ROW3_LEFT,5,green stand on left  side,1,1
+84,2026-09-02 18:18:41,Pantea,individual_part,Row3_GearStand_Right.stl,STAND_ROW3_RIGHT,6,green stand on right side,1,1
+85,2026-09-02 18:18:49,Pantea,individual_part,Row4_GearStand_Left.stl,STAND_ROW4_LEFT,7,blue stand on left side,1,1
+86,2026-09-02 18:18:57,Pantea,individual_part,Row4_GearStand_Right.stl,STAND_ROW4_RIGHT,8,blue stand on right side,1,1
+87,2026-09-02 18:19:05,Pantea,individual_part,Row1_GearRod.stl,GEAR_ROD_ROW1,9,white rod,1,1
+88,2026-09-02 18:19:13,Pantea,individual_part,Row2_GearRod.stl,GEAR_ROD_ROW2,10,red rod,1,1
+89,2026-09-02 18:19:17,Pantea,individual_part,Row3_GearRod.stl,GEAR_ROD_ROW3,11,green rod,1,1
+90,2026-09-02 18:19:23,Pantea,individual_part,Row4_GearRod.stl,GEAR_ROD_ROW4,12,blue rod,1,1
+91,2026-09-02 18:19:30,Pantea,individual_part,Row1_Gear_Left.stl,GEAR_ROW1_LEFT,13,white gear,1,1
+92,2026-09-02 18:19:42,Pantea,individual_part,Row2_Gear_Left.stl,GEAR_ROW2_LEFT,14,smaller red gear,1,1
+93,2026-09-02 18:19:57,Pantea,individual_part,Row2_Gear_Right.stl,GEAR_ROW2_RIGHT,15,larger red grear,1,1
+94,2026-09-02 18:20:07,Pantea,individual_part,Row3_Gear_Left.stl,GEAR_ROW3_LEFT,16,smaller green gear,1,1
+95,2026-09-02 18:20:15,Pantea,individual_part,Row3_Gear_Right.stl,GEAR_ROW3_RIGHT,17,larger green gear,1,1
+96,2026-09-02 18:20:22,Pantea,individual_part,Row4_Gear_Left.stl,GEAR_ROW4_LEFT,18,blue gear,1,1
+97,2026-09-02 18:20:49,Pantea,individual_part,Bearing.stl,BEARING,19,white ring,1,1
+98,2026-09-02 18:21:09,Pantea,individual_part,Row1_Screws.stl,SCREW_ROW1,20,white screw,1,1
+99,2026-09-02 18:21:34,Pantea,individual_part,Row2_Screws.stl,SCREW_ROW2,21,smalle black screw,1,1
+100,2026-09-02 18:21:50,Pantea,individual_part,Row3_Screws.stl,SCREW_ROW3,22,bigger black screw,1,1
+101,2026-09-02 18:22:04,Pantea,individual_part,Row4_Screws.stl,SCREW_ROW4,23,smaller white screw,1,1
+102,2026-09-02 18:22:17,Pantea,individual_part,Handle.stl,CRANK_HANDLE_ROW1,24,white handle on right side,1,1
+103,2026-09-02 18:22:23,Pantea,individual_part,BaseBoard.stl,BASE_BOARD,25,board,1,1
+104,2026-09-02 18:22:59,Pantea,individual_part,WoodenPin.stl,PIN,26,red peg on right side on green row,1,1
+105,2026-09-02 20:45:55,Austin,individual_part,Row1_GearStand_Left.stl,STAND_ROW1_LEFT,1,Left white gear stand,1,1
+106,2026-09-02 20:46:07,Austin,individual_part,Row1_GearStand_Right.stl,STAND_ROW1_RIGHT,2,Right white gear stand,1,1
+107,2026-09-02 20:46:40,Austin,individual_part,Row2_GearStand_Left.stl,STAND_ROW2_LEFT,3,Red left gear stand,1,1
+108,2026-09-02 20:46:47,Austin,individual_part,Row2_GearStand_Right.stl,STAND_ROW2_RIGHT,4,Red right gear stand,1,1
+109,2026-09-02 20:46:59,Austin,individual_part,Row3_GearStand_Left.stl,STAND_ROW3_LEFT,5,Green left gear stand,1,1
+110,2026-09-02 20:47:06,Austin,individual_part,Row3_GearStand_Right.stl,STAND_ROW3_RIGHT,6,Green right gear stand,1,1
+111,2026-09-02 20:47:13,Austin,individual_part,Row4_GearStand_Left.stl,STAND_ROW4_LEFT,7,Blue left gear stand,1,1
+112,2026-09-02 20:47:21,Austin,individual_part,Row4_GearStand_Right.stl,STAND_ROW4_RIGHT,8,Blue right gear stand,1,1
+113,2026-09-02 20:47:31,Austin,individual_part,Row1_GearRod.stl,GEAR_ROD_ROW1,9,White shaft,1,1
+114,2026-09-02 20:47:35,Austin,individual_part,Row2_GearRod.stl,GEAR_ROD_ROW2,10,Red shaft,1,1
+115,2026-09-02 20:47:39,Austin,individual_part,Row3_GearRod.stl,GEAR_ROD_ROW3,11,Green shaft,1,1
+116,2026-09-02 20:47:43,Austin,individual_part,Row4_GearRod.stl,GEAR_ROD_ROW4,12,Blue shaft,1,1
+117,2026-09-02 20:47:50,Austin,individual_part,Row1_Gear_Left.stl,GEAR_ROW1_LEFT,13,White gear,1,1
+118,2026-09-02 20:48:00,Austin,individual_part,Row2_Gear_Left.stl,GEAR_ROW2_LEFT,14,Red small gear,1,1
+119,2026-09-02 20:48:03,Austin,individual_part,Row2_Gear_Right.stl,GEAR_ROW2_RIGHT,15,Red large gear,1,1
+120,2026-09-02 20:48:08,Austin,individual_part,Row3_Gear_Left.stl,GEAR_ROW3_LEFT,16,Green small gear,1,1
+121,2026-09-02 20:48:17,Austin,individual_part,Row3_Gear_Right.stl,GEAR_ROW3_RIGHT,17,Green large gear,1,1
+122,2026-09-02 20:48:20,Austin,individual_part,Row4_Gear_Left.stl,GEAR_ROW4_LEFT,18,Blue gear,1,1
+123,2026-09-02 20:48:39,Austin,individual_part,Bearing.stl,BEARING,19,Bearing,1,1
+124,2026-09-02 20:48:59,Austin,individual_part,Row1_Screws.stl,SCREW_ROW1,20,White hex bolt,1,1
+125,2026-09-02 20:49:17,Austin,individual_part,Row2_Screws.stl,SCREW_ROW2,21,Red hex bolt,1,1
+126,2026-09-02 20:49:45,Austin,individual_part,Row3_Screws.stl,SCREW_ROW3,22,Green star bolt,1,1
+127,2026-09-02 20:51:42,Austin,individual_part,Row4_Screws.stl,SCREW_ROW4,23,Blue philips bolt,1,1
+128,2026-09-02 20:51:55,Austin,individual_part,Handle.stl,CRANK_HANDLE_ROW1,24,White crank handle,1,1
+129,2026-09-02 20:52:01,Austin,individual_part,BaseBoard.stl,BASE_BOARD,25,Base plate,1,1
+130,2026-09-02 20:52:12,Austin,individual_part,WoodenPin.stl,PIN,26,Wooden pin,1,1
+131,2026-09-03 18:09:49,JungHoon,individual_part,Row1_GearStand_Left.stl,STAND_ROW1_LEFT,1,A left white gear stand,1,1
+132,2026-09-03 18:10:16,JungHoon,individual_part,Row1_GearStand_Right.stl,STAND_ROW1_RIGHT,2,white right gear stand,1,1
+133,2026-09-03 18:10:29,JungHoon,individual_part,Row2_GearStand_Left.stl,STAND_ROW2_LEFT,3,red right gear stand,1,1
+134,2026-09-03 18:10:48,JungHoon,individual_part,Row2_GearStand_Right.stl,STAND_ROW2_RIGHT,4,Right red gear stand,1,1
+135,2026-09-03 18:11:03,JungHoon,individual_part,Row3_GearStand_Left.stl,STAND_ROW3_LEFT,5,Green right gear stand,1,1
+136,2026-09-03 18:11:39,JungHoon,individual_part,Row3_GearStand_Right.stl,STAND_ROW3_RIGHT,6,Right green gear stand,1,1
+137,2026-09-03 18:11:50,JungHoon,individual_part,Row4_GearStand_Left.stl,STAND_ROW4_LEFT,7,Left Blue Gear Stand,1,1
+138,2026-09-03 18:12:01,JungHoon,individual_part,Row4_GearStand_Right.stl,STAND_ROW4_RIGHT,8,Right Blue Gear Stand,1,1
+139,2026-09-03 18:12:19,JungHoon,individual_part,Row1_GearRod.stl,GEAR_ROD_ROW1,9,white sheft,1,1
+140,2026-09-03 18:12:23,JungHoon,individual_part,Row2_GearRod.stl,GEAR_ROD_ROW2,10,red sheft,1,1
+141,2026-09-03 18:12:28,JungHoon,individual_part,Row3_GearRod.stl,GEAR_ROD_ROW3,11,green sheft,1,1
+142,2026-09-03 18:12:32,JungHoon,individual_part,Row4_GearRod.stl,GEAR_ROD_ROW4,12,blue sheft,1,1
+143,2026-09-03 18:12:51,JungHoon,individual_part,Row1_Gear_Left.stl,GEAR_ROW1_LEFT,13,white gear,1,1
+144,2026-09-03 18:13:06,JungHoon,individual_part,Row2_Gear_Left.stl,GEAR_ROW2_LEFT,14,smaller red gear on left,1,1
+145,2026-09-03 18:13:16,JungHoon,individual_part,Row2_Gear_Right.stl,GEAR_ROW2_RIGHT,15,Larger red gear,1,1
+146,2026-09-03 18:13:24,JungHoon,individual_part,Row3_Gear_Left.stl,GEAR_ROW3_LEFT,16,green left gear,1,1
+147,2026-09-03 18:13:31,JungHoon,individual_part,Row3_Gear_Right.stl,GEAR_ROW3_RIGHT,17,green right gear,1,1
+148,2026-09-03 18:13:34,JungHoon,individual_part,Row4_Gear_Left.stl,GEAR_ROW4_LEFT,18,blue gear,1,1
+149,2026-09-03 18:13:46,JungHoon,individual_part,Bearing.stl,BEARING,19,white bearing,1,1
+150,2026-09-03 18:13:57,JungHoon,individual_part,Row1_Screws.stl,SCREW_ROW1,20,white pin,1,1
+151,2026-09-03 18:14:24,JungHoon,individual_part,Row2_Screws.stl,SCREW_ROW2,21,Screw for row2,1,1
+152,2026-09-03 18:14:47,JungHoon,individual_part,Row3_Screws.stl,SCREW_ROW3,22,screw for right row3,1,1
+153,2026-09-03 18:15:24,JungHoon,individual_part,Row4_Screws.stl,SCREW_ROW4,23,screw for blue row right,1,1
+154,2026-09-03 18:15:38,JungHoon,individual_part,Handle.stl,CRANK_HANDLE_ROW1,24,white handle,1,1
+155,2026-09-03 18:15:45,JungHoon,individual_part,BaseBoard.stl,BASE_BOARD,25,baseboard,1,1
+156,2026-09-03 18:15:52,JungHoon,individual_part,WoodenPin.stl,PIN,26,pin,1,1
+157,2026-09-03 20:19:35,Junhyun,individual_part,Row1_GearStand_Left.stl,STAND_ROW1_LEFT,1,a white gearstand on the left side,1,1
+158,2026-09-03 20:22:09,Junhyun,individual_part,Row1_GearStand_Right.stl,STAND_ROW1_RIGHT,2,white gear stand on the left,1,1
+159,2026-09-03 20:22:35,Junhyun,individual_part,Row2_GearStand_Left.stl,STAND_ROW2_LEFT,3,red triangle gear stand on the left,1,1
+160,2026-09-03 20:22:55,Junhyun,individual_part,Row2_GearStand_Right.stl,STAND_ROW2_RIGHT,4,red triangle gear stand on the right side,1,1
+161,2026-09-03 20:23:33,Junhyun,individual_part,Row3_GearStand_Left.stl,STAND_ROW3_LEFT,5,green gear stand of the row 3 on the left side,1,1
+162,2026-09-03 20:23:48,Junhyun,individual_part,Row3_GearStand_Right.stl,STAND_ROW3_RIGHT,6,green gear stand of row 3 on the right side,1,1
+163,2026-09-03 20:24:04,Junhyun,individual_part,Row4_GearStand_Left.stl,STAND_ROW4_LEFT,7,square blue gear stand on the left side,1,1
+164,2026-09-03 20:24:15,Junhyun,individual_part,Row4_GearStand_Right.stl,STAND_ROW4_RIGHT,8,square blue gear stand on the right side,1,1
+165,2026-09-03 20:24:35,Junhyun,individual_part,Row1_GearRod.stl,GEAR_ROD_ROW1,9,white gear rod on the row 1,1,1
+166,2026-09-03 20:24:47,Junhyun,individual_part,Row2_GearRod.stl,GEAR_ROD_ROW2,10,red gear rod on the row 2,1,1
+167,2026-09-03 20:25:27,Junhyun,individual_part,Row3_GearRod.stl,GEAR_ROD_ROW3,11,green gear rod,1,1
+168,2026-09-03 20:25:32,Junhyun,individual_part,Row4_GearRod.stl,GEAR_ROD_ROW4,12,blue gear rod,1,1
+169,2026-09-03 20:26:00,Junhyun,individual_part,Row1_Gear_Left.stl,GEAR_ROW1_LEFT,13,white gear on the row 1,1,1
+170,2026-09-03 20:26:26,Junhyun,individual_part,Row2_Gear_Left.stl,GEAR_ROW2_LEFT,14,red triangle gear on row 2,1,1
+171,2026-09-03 20:26:51,Junhyun,individual_part,Row2_Gear_Right.stl,GEAR_ROW2_RIGHT,15,red gear on the right side,1,1
+172,2026-09-03 20:27:07,Junhyun,individual_part,Row3_Gear_Left.stl,GEAR_ROW3_LEFT,16,green gear on the left side,1,1
+173,2026-09-03 20:27:22,Junhyun,individual_part,Row3_Gear_Right.stl,GEAR_ROW3_RIGHT,17,green gear on the right side,1,1
+174,2026-09-03 20:27:32,Junhyun,individual_part,Row4_Gear_Left.stl,GEAR_ROW4_LEFT,18,blue gear on the left side,1,1
+175,2026-09-03 20:28:01,Junhyun,individual_part,Bearing.stl,BEARING,19,bearing from left side of row 3,1,1
+176,2026-09-03 20:28:41,Junhyun,individual_part,Row1_Screws.stl,SCREW_ROW1,20,screw from left side of row 1,1,1
+177,2026-09-03 20:29:43,Junhyun,individual_part,Row2_Screws.stl,SCREW_ROW2,21,screw from left side of row 2,1,1
+178,2026-09-03 20:30:00,Junhyun,individual_part,Row3_Screws.stl,SCREW_ROW3,22,screw from right side of row 3,1,1
+179,2026-09-03 20:30:19,Junhyun,individual_part,Row4_Screws.stl,SCREW_ROW4,23,screw from right side of row 4,1,1
+180,2026-09-03 20:30:37,Junhyun,individual_part,Handle.stl,CRANK_HANDLE_ROW1,24,gear handle from row 1,1,1
+181,2026-09-03 20:30:46,Junhyun,individual_part,BaseBoard.stl,BASE_BOARD,25,base board,1,1
+182,2026-09-03 20:31:11,Junhyun,individual_part,WoodenPin.stl,PIN,26,wooden pin from right side of row 3,1,1
+183,2026-09-04 10:10:16,Mann,individual_part,Row1_GearStand_Left.stl,STAND_ROW1_LEFT,1,white gearstand on the left,1,1
+184,2026-09-04 10:10:34,Mann,individual_part,Row1_GearStand_Right.stl,STAND_ROW1_RIGHT,2,white gearstand on the right,1,1
+185,2026-09-04 10:10:46,Mann,individual_part,Row2_GearStand_Left.stl,STAND_ROW2_LEFT,3,red gearstand on the left,1,1
+186,2026-09-04 10:11:05,Mann,individual_part,Row2_GearStand_Right.stl,STAND_ROW2_RIGHT,4,red gearstand on the right,1,1
+187,2026-09-04 10:11:32,Mann,individual_part,Row3_GearStand_Left.stl,STAND_ROW3_LEFT,5,green gearstand on the left,1,1
+188,2026-09-04 10:11:44,Mann,individual_part,Row3_GearStand_Right.stl,STAND_ROW3_RIGHT,6,green gearstand on the right,1,1
+189,2026-09-04 10:12:04,Mann,individual_part,Row4_GearStand_Left.stl,STAND_ROW4_LEFT,7,blue gearstand on the left,1,1
+190,2026-09-04 10:12:14,Mann,individual_part,Row4_GearStand_Right.stl,STAND_ROW4_RIGHT,8,blue gearstand on the right,1,1
+191,2026-09-04 10:12:27,Mann,individual_part,Row1_GearRod.stl,GEAR_ROD_ROW1,9,white shaft,1,1
+192,2026-09-04 10:12:33,Mann,individual_part,Row2_GearRod.stl,GEAR_ROD_ROW2,10,red shaft,1,1
+193,2026-09-04 10:12:39,Mann,individual_part,Row3_GearRod.stl,GEAR_ROD_ROW3,11,green shaft,1,1
+194,2026-09-04 10:12:45,Mann,individual_part,Row4_GearRod.stl,GEAR_ROD_ROW4,12,blue shaft,1,1
+195,2026-09-04 10:13:21,Mann,individual_part,Row1_Gear_Left.stl,GEAR_ROW1_LEFT,13,white gear,1,1
+196,2026-09-04 10:13:47,Mann,individual_part,Row2_Gear_Left.stl,GEAR_ROW2_LEFT,14,left red gear,1,1
+197,2026-09-04 10:13:52,Mann,individual_part,Row2_Gear_Right.stl,GEAR_ROW2_RIGHT,15,right red gear,1,1
+198,2026-09-04 10:14:00,Mann,individual_part,Row3_Gear_Left.stl,GEAR_ROW3_LEFT,16,left green gear,1,1
+199,2026-09-04 10:14:06,Mann,individual_part,Row3_Gear_Right.stl,GEAR_ROW3_RIGHT,17,right green gear,1,1
+200,2026-09-04 10:14:19,Mann,individual_part,Row4_Gear_Left.stl,GEAR_ROW4_LEFT,18,left blue gear,1,1
+201,2026-09-04 10:14:52,Mann,individual_part,Bearing.stl,BEARING,19,left green bearing,1,1
+202,2026-09-04 10:15:28,Mann,individual_part,Row1_Screws.stl,SCREW_ROW1,20,left white screw for row 1,1,1
+203,2026-09-04 10:15:43,Mann,individual_part,Row2_Screws.stl,SCREW_ROW2,21,left red screw for row 2,1,1
+204,2026-09-04 10:15:56,Mann,individual_part,Row3_Screws.stl,SCREW_ROW3,22,right green screw for row 3,1,1
+205,2026-09-04 10:16:19,Mann,individual_part,Row4_Screws.stl,SCREW_ROW4,23,right blue screw for row 4,1,1
+206,2026-09-04 10:16:50,Mann,individual_part,Handle.stl,CRANK_HANDLE_ROW1,24,white right handle,1,1
+207,2026-09-04 10:16:59,Mann,individual_part,BaseBoard.stl,BASE_BOARD,25,black bottom board,1,1
+208,2026-09-04 10:17:17,Mann,individual_part,WoodenPin.stl,PIN,26,right wooden pin for green,1,1
+209,2026-09-04 13:08:53,Kuber,individual_part,Row1_GearStand_Left.stl,STAND_ROW1_LEFT,1,a white gearstand on the left,1,1
+210,2026-09-04 13:09:14,Kuber,individual_part,Row1_GearStand_Right.stl,STAND_ROW1_RIGHT,2,row 1 right gear stand,1,1
+211,2026-09-04 13:09:27,Kuber,individual_part,Row2_GearStand_Left.stl,STAND_ROW2_LEFT,3,row 2 left gear stand,1,1
+212,2026-09-04 13:09:36,Kuber,individual_part,Row2_GearStand_Right.stl,STAND_ROW2_RIGHT,4,red gear stand on the right,1,1
+213,2026-09-04 13:09:47,Kuber,individual_part,Row3_GearStand_Left.stl,STAND_ROW3_LEFT,5,green gear stand on the left,1,1
+214,2026-09-04 13:10:04,Kuber,individual_part,Row3_GearStand_Right.stl,STAND_ROW3_RIGHT,6,right gear stand in row 3,1,1
+215,2026-09-04 13:10:13,Kuber,individual_part,Row4_GearStand_Left.stl,STAND_ROW4_LEFT,7,left blue gear stand,1,1
+216,2026-09-04 13:10:22,Kuber,individual_part,Row4_GearStand_Right.stl,STAND_ROW4_RIGHT,8,row 4 gear stand on the right,1,1
+217,2026-09-04 13:10:48,Kuber,individual_part,Row1_GearRod.stl,GEAR_ROD_ROW1,9,row 1 rod,1,1
+218,2026-09-04 13:10:52,Kuber,individual_part,Row2_GearRod.stl,GEAR_ROD_ROW2,10,red rod,1,1
+219,2026-09-04 13:11:00,Kuber,individual_part,Row3_GearRod.stl,GEAR_ROD_ROW3,11,rod for row 3,1,1
+220,2026-09-04 13:11:06,Kuber,individual_part,Row4_GearRod.stl,GEAR_ROD_ROW4,12,blue rod,1,1
+221,2026-09-04 13:11:13,Kuber,individual_part,Row1_Gear_Left.stl,GEAR_ROW1_LEFT,13,white gear on the left,1,1
+222,2026-09-04 13:11:23,Kuber,individual_part,Row2_Gear_Left.stl,GEAR_ROW2_LEFT,14,row 2 left gear,1,1
+223,2026-09-04 13:11:27,Kuber,individual_part,Row2_Gear_Right.stl,GEAR_ROW2_RIGHT,15,row 2 right gear,1,1
+224,2026-09-04 13:11:33,Kuber,individual_part,Row3_Gear_Left.stl,GEAR_ROW3_LEFT,16,green left gear,1,1
+225,2026-09-04 13:11:37,Kuber,individual_part,Row3_Gear_Right.stl,GEAR_ROW3_RIGHT,17,green right gear,1,1
+226,2026-09-04 13:11:42,Kuber,individual_part,Row4_Gear_Left.stl,GEAR_ROW4_LEFT,18,blue left gear,1,1
+227,2026-09-04 13:11:51,Kuber,individual_part,Bearing.stl,BEARING,19,row 3 left bearing,1,1
+228,2026-09-04 13:12:03,Kuber,individual_part,Row1_Screws.stl,SCREW_ROW1,20,row 1 left screw,1,1
+229,2026-09-04 13:12:16,Kuber,individual_part,Row2_Screws.stl,SCREW_ROW2,21,red screw on the left,1,1
+230,2026-09-04 13:12:30,Kuber,individual_part,Row3_Screws.stl,SCREW_ROW3,22,right green screw,1,1
+231,2026-09-04 13:12:41,Kuber,individual_part,Row4_Screws.stl,SCREW_ROW4,23,row 4 right screw,1,1
+232,2026-09-04 13:12:51,Kuber,individual_part,Handle.stl,CRANK_HANDLE_ROW1,24,handle on the right of row 1,1,1
+233,2026-09-04 13:13:11,Kuber,individual_part,BaseBoard.stl,BASE_BOARD,25,baseboard,1,1
+234,2026-09-04 13:13:26,Kuber,individual_part,WoodenPin.stl,PIN,26,pin on the right of row 3,1,1
+235,2026-09-04 16:21:59,Apoorva,individual_part,Row1_GearStand_Left.stl,STAND_ROW1_LEFT,1,"Row 1, left component (gearstand)with circle marking",1,1
+236,2026-09-04 16:22:54,Apoorva,individual_part,Row1_GearStand_Right.stl,STAND_ROW1_RIGHT,2,"row 1, right gearstand, white colour",1,1
+237,2026-09-04 16:23:42,Apoorva,individual_part,Row2_GearStand_Left.stl,STAND_ROW2_LEFT,3,"row 2, left gearstand, red colour , triangle marking",1,1
+238,2026-09-04 16:24:39,Apoorva,individual_part,Row2_GearStand_Right.stl,STAND_ROW2_RIGHT,4,"row 2, left gearstand, red colour, triangle marking",1,1
+239,2026-09-04 16:26:07,Apoorva,individual_part,Row3_GearStand_Left.stl,STAND_ROW3_LEFT,5,"Row 3, left gearsatnd, hexagon marking, green colour",1,1
+240,2026-09-04 16:26:39,Apoorva,individual_part,Row3_GearStand_Right.stl,STAND_ROW3_RIGHT,6,"row 3, right gearstand, hexagon marking, green colour",1,1
+241,2026-09-04 16:27:14,Apoorva,individual_part,Row4_GearStand_Left.stl,STAND_ROW4_LEFT,7,"row 4, square marking, blue colour, gearstand",1,1
+242,2026-09-04 16:27:48,Apoorva,individual_part,Row4_GearStand_Right.stl,STAND_ROW4_RIGHT,8,"row 4, right gearstand, blue colour, square marking",1,1
+243,2026-09-04 16:28:09,Apoorva,individual_part,Row1_GearRod.stl,GEAR_ROD_ROW1,9,"row 1, rod, white colour",1,1
+244,2026-09-04 16:28:21,Apoorva,individual_part,Row2_GearRod.stl,GEAR_ROD_ROW2,10,"row 2 rod, red colour",1,1
+245,2026-09-04 16:28:34,Apoorva,individual_part,Row3_GearRod.stl,GEAR_ROD_ROW3,11,"row 3 rod, green colour",1,1
+246,2026-09-04 16:28:49,Apoorva,individual_part,Row4_GearRod.stl,GEAR_ROD_ROW4,12,"row 4 rod, blue colour",1,1
+247,2026-09-04 16:29:09,Apoorva,individual_part,Row1_Gear_Left.stl,GEAR_ROW1_LEFT,13,"row 1 gear, white colour",1,1
+248,2026-09-04 16:29:21,Apoorva,individual_part,Row2_Gear_Left.stl,GEAR_ROW2_LEFT,14,"row 2 gear, red colour",1,1
+249,2026-09-04 16:29:52,Apoorva,individual_part,Row2_Gear_Right.stl,GEAR_ROW2_RIGHT,15,"row 2 right gear (bigger one), red colour",1,1
+250,2026-09-04 16:30:14,Apoorva,individual_part,Row3_Gear_Left.stl,GEAR_ROW3_LEFT,16,row 3 green smaller gear (left one),1,1
+251,2026-09-04 16:30:48,Apoorva,individual_part,Row3_Gear_Right.stl,GEAR_ROW3_RIGHT,17,"row 3, green, bigger gear (right one)",1,1
+252,2026-09-04 16:31:17,Apoorva,individual_part,Row4_Gear_Left.stl,GEAR_ROW4_LEFT,18,"row 4 gear, blue colour",1,1
+253,2026-09-04 16:31:58,Apoorva,individual_part,Bearing.stl,BEARING,19,"Row 1 bearing, white",1,1
+254,2026-09-04 16:32:53,Apoorva,individual_part,Row1_Screws.stl,SCREW_ROW1,20,row 1 screw,1,1
+255,2026-09-04 16:33:10,Apoorva,individual_part,Row2_Screws.stl,SCREW_ROW2,21,row 2 screw,1,1
+256,2026-09-04 16:33:23,Apoorva,individual_part,Row3_Screws.stl,SCREW_ROW3,22,row 3 screw,1,1
+257,2026-09-04 16:33:32,Apoorva,individual_part,Row4_Screws.stl,SCREW_ROW4,23,row 4 screw,1,1
+258,2026-09-04 16:34:07,Apoorva,individual_part,Handle.stl,CRANK_HANDLE_ROW1,24,"row 1, handle, white",1,1
+259,2026-09-04 16:34:20,Apoorva,individual_part,BaseBoard.stl,BASE_BOARD,25,"the base, board",1,1
+260,2026-09-04 16:34:33,Apoorva,individual_part,WoodenPin.stl,PIN,26,wooden pin,1,1
+261,2026-09-05 09:50:34,Arunn,individual_part,Row1_GearStand_Left.stl,STAND_ROW1_LEFT,1,Left side white gear stand labeled with a circle,1,1
+262,2026-09-05 09:51:33,Arunn,individual_part,Row1_GearStand_Right.stl,STAND_ROW1_RIGHT,2,Right side white gear stand; it has a through hole with an internal shoulder,1,1
+263,2026-09-05 09:51:58,Arunn,individual_part,Row2_GearStand_Left.stl,STAND_ROW2_LEFT,3,Left side gear stand; it is red and is labeled with a triangle,1,1
+264,2026-09-05 09:52:45,Arunn,individual_part,Row2_GearStand_Right.stl,STAND_ROW2_RIGHT,4,Right side gear stand; it is red and labeled with a triangle,1,1
+265,2026-09-05 09:53:23,Arunn,individual_part,Row3_GearStand_Left.stl,STAND_ROW3_LEFT,5,Left side green gear stand; it is labeled with a hexagon,1,1
+266,2026-09-05 09:53:36,Arunn,individual_part,Row3_GearStand_Right.stl,STAND_ROW3_RIGHT,6,Right side green gear stand; it is labeled with a hexagon,1,1
+267,2026-09-05 09:53:59,Arunn,individual_part,Row4_GearStand_Left.stl,STAND_ROW4_LEFT,7,Left side blue gear stand; it is labeled with a square,1,1
+268,2026-09-05 09:54:06,Arunn,individual_part,Row4_GearStand_Right.stl,STAND_ROW4_RIGHT,8,Right side blue gear stand; it is labeled with a square,1,1
+269,2026-09-05 09:54:53,Arunn,individual_part,Row1_GearRod.stl,GEAR_ROD_ROW1,9,White gear shaft; it is the longest of the four shafts,1,1
+270,2026-09-05 09:55:11,Arunn,individual_part,Row2_GearRod.stl,GEAR_ROD_ROW2,10,Red gear shaft,1,1
+271,2026-09-05 09:55:17,Arunn,individual_part,Row3_GearRod.stl,GEAR_ROD_ROW3,11,Green gear shaft,1,1
+272,2026-09-05 09:55:24,Arunn,individual_part,Row4_GearRod.stl,GEAR_ROD_ROW4,12,Blue gear shaft,1,1
+273,2026-09-05 09:56:25,Arunn,individual_part,Row1_Gear_Left.stl,GEAR_ROW1_LEFT,13,White input gear; there is a circle embossed on the face without the shaft collar,1,1
+274,2026-09-05 09:57:35,Arunn,individual_part,Row2_Gear_Left.stl,GEAR_ROW2_LEFT,14,"Small red gear; it has 20 teeth, and there is a triangle embossed on one face",1,1
+275,2026-09-05 09:58:39,Arunn,individual_part,Row2_Gear_Right.stl,GEAR_ROW2_RIGHT,15,Large red gear; it has 32 teeth and is marked with a triangle on one face,1,1
+276,2026-09-05 09:59:42,Arunn,individual_part,Row3_Gear_Left.stl,GEAR_ROW3_LEFT,16,Small green gear; it has 20 teeth and is marked with a hexagon on one face,1,1
+277,2026-09-05 10:00:28,Arunn,individual_part,Row3_Gear_Right.stl,GEAR_ROW3_RIGHT,17,Large green gear; it has 24 teeth and is marked with a hexagon on one face,1,1
+278,2026-09-05 10:01:24,Arunn,individual_part,Row4_Gear_Left.stl,GEAR_ROW4_LEFT,18,Large blue output gear; it has 42 teeth and is marked with a square on one face,1,1
+279,2026-09-05 10:02:31,Arunn,individual_part,Bearing.stl,BEARING,19,"Black bearing for shafts; it has two rectangular keyways cut along the length of the bearing, 180 degrees apart",1,1
+280,2026-09-05 10:03:29,Arunn,individual_part,Row1_Screws.stl,SCREW_ROW1,20,Socket head screw that is used on Row 1,1,1
+281,2026-09-05 10:04:26,Arunn,individual_part,Row2_Screws.stl,SCREW_ROW2,21,Button head screw used in Row 2,1,1
+282,2026-09-05 10:04:44,Arunn,individual_part,Row3_Screws.stl,SCREW_ROW3,22,Button head screw used in Row 3,1,1
+283,2026-09-05 10:05:23,Arunn,individual_part,Row4_Screws.stl,SCREW_ROW4,23,Flat headed screw with thin head used in Row 4,1,1
+284,2026-09-05 10:05:33,Arunn,individual_part,Handle.stl,CRANK_HANDLE_ROW1,24,Input handle,1,1
+285,2026-09-05 10:05:41,Arunn,individual_part,BaseBoard.stl,BASE_BOARD,25,Black base plate,1,1
+286,2026-09-05 10:05:59,Arunn,individual_part,WoodenPin.stl,PIN,26,Brown pin used to fix gears,1,1

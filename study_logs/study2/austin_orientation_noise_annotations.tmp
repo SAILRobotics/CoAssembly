@@ -1,0 +1,6 @@
+{
+  "annotation_type": "orientation_confusion_noise",
+  "participant": "austin",
+  "source_log": "study_logs/study2/austin_replay.jsonl",
+  "trials": {}
+}

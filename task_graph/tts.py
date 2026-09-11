@@ -228,7 +228,8 @@ class TTSService:
                 if return_code not in (0, -15):
                     raise subprocess.CalledProcessError(
                         return_code, ["paplay", str(out_path)])
-                self._events.put(("spoken", text))
+                self._events.put(
+                    ("interrupted" if return_code == -15 else "spoken", text))
             except Exception as error:
                 self._events.put(("error", f"{self.engine}: {error}"))
             finally:

@@ -1,0 +1,266 @@
+{
+  "derived_from_annotations": "study_logs/study2/parisa_grasp_annotations.json",
+  "participant": "parisa",
+  "source_log": "study_logs/study2/parisa_replay.jsonl",
+  "trials": {
+    "parisa-ar-1788360794686|ar|0": {
+      "annotated_at": "2026-09-03T17:18:19.155343+00:00",
+      "grasp_frame_indices": [
+        77,
+        104
+      ],
+      "grasp_times_monotonic_s": [
+        400763.025528217,
+        400764.509905573
+      ],
+      "mode": "ar",
+      "no_grasp": false,
+      "reviewed": true,
+      "session_id": "parisa-ar-1788360794686",
+      "trial_idx": 0
+    },
+    "parisa-ar-1788360794686|ar|1": {
+      "annotated_at": "2026-09-03T17:18:30.160873+00:00",
+      "grasp_frame_indices": [
+        46
+      ],
+      "grasp_times_monotonic_s": [
+        400791.795615534
+      ],
+      "mode": "ar",
+      "no_grasp": false,
+      "reviewed": true,
+      "session_id": "parisa-ar-1788360794686",
+      "trial_idx": 1
+    },
+    "parisa-ar-1788360794686|ar|2": {
+      "annotated_at": "2026-09-03T17:18:47.151614+00:00",
+      "grasp_frame_indices": [
+        43
+      ],
+      "grasp_times_monotonic_s": [
+        400828.043345832
+      ],
+      "mode": "ar",
+      "no_grasp": false,
+      "reviewed": true,
+      "session_id": "parisa-ar-1788360794686",
+      "trial_idx": 2
+    },
+    "parisa-ar-1788360794686|ar|3": {
+      "annotated_at": "2026-09-03T17:18:58.673673+00:00",
+      "grasp_frame_indices": [
+        44
+      ],
+      "grasp_times_monotonic_s": [
+        400859.308712243
+      ],
+      "mode": "ar",
+      "no_grasp": false,
+      "reviewed": true,
+      "session_id": "parisa-ar-1788360794686",
+      "trial_idx": 3
+    },
+    "parisa-ar-1788360794686|ar|4": {
+      "annotated_at": "2026-09-03T17:19:07.644919+00:00",
+      "grasp_frame_indices": [
+        26
+      ],
+      "grasp_times_monotonic_s": [
+        400886.990495421
+      ],
+      "mode": "ar",
+      "no_grasp": false,
+      "reviewed": true,
+      "session_id": "parisa-ar-1788360794686",
+      "trial_idx": 4
+    },
+    "parisa-ar-1788360794686|ar|5": {
+      "annotated_at": "2026-09-03T17:19:32.206396+00:00",
+      "grasp_frame_indices": [
+        58
+      ],
+      "grasp_times_monotonic_s": [
+        400935.56493857
+      ],
+      "mode": "ar",
+      "no_grasp": false,
+      "reviewed": true,
+      "session_id": "parisa-ar-1788360794686",
+      "trial_idx": 5
+    },
+    "parisa-ar-1788360794686|ar|6": {
+      "annotated_at": "2026-09-03T17:20:16.143061+00:00",
+      "grasp_frame_indices": [
+        21,
+        447
+      ],
+      "grasp_times_monotonic_s": [
+        400966.107946947,
+        400987.534314012
+      ],
+      "mode": "ar",
+      "no_grasp": false,
+      "reviewed": true,
+      "session_id": "parisa-ar-1788360794686",
+      "trial_idx": 6
+    },
+    "parisa-ar-1788361588836|ar|7": {
+      "annotated_at": "2026-09-03T17:22:23.118323+00:00",
+      "grasp_frame_indices": [
+        75,
+        441,
+        821,
+        1166,
+        1608
+      ],
+      "grasp_times_monotonic_s": [
+        401487.766403455,
+        401506.859441682,
+        401527.167030517,
+        401544.658991285,
+        401567.368618394
+      ],
+      "mode": "ar",
+      "no_grasp": false,
+      "reviewed": true,
+      "session_id": "parisa-ar-1788361588836",
+      "trial_idx": 7
+    },
+    "parisa-freedrive-1788359853571|freedrive|5": {
+      "grasp_frame_indices": [],
+      "grasp_times_monotonic_s": [],
+      "mode": "freedrive",
+      "no_grasp": false,
+      "release_frame_indices": [],
+      "release_times_monotonic_s": [],
+      "reviewed": false,
+      "session_id": "parisa-freedrive-1788359853571",
+      "trial_idx": 5
+    },
+    "parisa-hybrid-1788362972477|hybrid|0": {
+      "annotated_at": "2026-09-03T17:22:34.423766+00:00",
+      "grasp_frame_indices": [
+        68
+      ],
+      "grasp_times_monotonic_s": [
+        402885.039513066
+      ],
+      "mode": "hybrid",
+      "no_grasp": false,
+      "reviewed": true,
+      "session_id": "parisa-hybrid-1788362972477",
+      "trial_idx": 0
+    },
+    "parisa-hybrid-1788362972477|hybrid|1": {
+      "annotated_at": "2026-09-03T17:22:54.200324+00:00",
+      "grasp_frame_indices": [
+        43
+      ],
+      "grasp_times_monotonic_s": [
+        402913.142218522
+      ],
+      "mode": "hybrid",
+      "no_grasp": false,
+      "reviewed": true,
+      "session_id": "parisa-hybrid-1788362972477",
+      "trial_idx": 1
+    },
+    "parisa-hybrid-1788362972477|hybrid|2": {
+      "annotated_at": "2026-09-03T17:23:06.355080+00:00",
+      "grasp_frame_indices": [
+        50
+      ],
+      "grasp_times_monotonic_s": [
+        402942.925759829
+      ],
+      "mode": "hybrid",
+      "no_grasp": false,
+      "reviewed": true,
+      "session_id": "parisa-hybrid-1788362972477",
+      "trial_idx": 2
+    },
+    "parisa-hybrid-1788362972477|hybrid|3": {
+      "annotated_at": "2026-09-03T17:23:28.731987+00:00",
+      "grasp_frame_indices": [
+        48
+      ],
+      "grasp_times_monotonic_s": [
+        402966.921523474
+      ],
+      "mode": "hybrid",
+      "no_grasp": false,
+      "reviewed": true,
+      "session_id": "parisa-hybrid-1788362972477",
+      "trial_idx": 3
+    },
+    "parisa-hybrid-1788362972477|hybrid|4": {
+      "annotated_at": "2026-09-03T17:24:52.571248+00:00",
+      "grasp_frame_indices": [
+        142
+      ],
+      "grasp_times_monotonic_s": [
+        403005.602270927
+      ],
+      "mode": "hybrid",
+      "no_grasp": false,
+      "reviewed": true,
+      "session_id": "parisa-hybrid-1788362972477",
+      "trial_idx": 4
+    },
+    "parisa-hybrid-1788362972477|hybrid|5": {
+      "annotated_at": "2026-09-03T17:25:14.881804+00:00",
+      "grasp_frame_indices": [
+        32
+      ],
+      "grasp_times_monotonic_s": [
+        403049.688402291
+      ],
+      "mode": "hybrid",
+      "no_grasp": false,
+      "reviewed": true,
+      "session_id": "parisa-hybrid-1788362972477",
+      "trial_idx": 5
+    },
+    "parisa-hybrid-1788362972477|hybrid|6": {
+      "annotated_at": "2026-09-05T01:44:30.606559+00:00",
+      "audit_note": "Recorded release at frame 65 was judged spurious; manual onset 66 is paired with recorded release 185. Replay log retained unchanged.",
+      "excluded_grasp_pairs": [],
+      "excluded_release_events": [
+        {
+          "excluded_at": "2026-09-05T01:45:00+00:00",
+          "frame_index": 65,
+          "reason": "spurious early release; manually reviewed",
+          "time_monotonic_s": 403096.509109808
+        }
+      ],
+      "grasp_frame_indices": [
+        66
+      ],
+      "grasp_times_monotonic_s": [
+        403096.53639772
+      ],
+      "mode": "hybrid",
+      "no_grasp": false,
+      "release_frame_indices": [],
+      "release_times_monotonic_s": [],
+      "reviewed": true,
+      "session_id": "parisa-hybrid-1788362972477",
+      "trial_idx": 6
+    },
+    "parisa-hybrid-1788362972477|hybrid|7": {
+      "annotated_at": "2026-09-03T17:25:53.416875+00:00",
+      "grasp_frame_indices": [
+        87
+      ],
+      "grasp_times_monotonic_s": [
+        403142.937069598
+      ],
+      "mode": "hybrid",
+      "no_grasp": false,
+      "reviewed": true,
+      "session_id": "parisa-hybrid-1788362972477",
+      "trial_idx": 7
+    }
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "condition": "language",
+  "participant_id": "mahya",
+  "pending_events": [],
+  "state": {
+    "acquired_tool_ids": [
+      20
+    ],
+    "acquisition_complete": true,
+    "completed_steps": [
+      "r1_bearing_right",
+      "r1_gear_rod",
+      "r1_bearing_left",
+      "r1_fasten_first_stand",
+      "r2_gear_rod",
+      "r2_bearing_right",
+      "r2_bearing_left"
+    ],
+    "head_rotation_deg": 508.9220868532323,
+    "head_translation_m": 2.6478529876025467,
+    "removed_tool_ids": [
+      14,
+      15,
+      18,
+      19,
+      20,
+      21,
+      26,
+      27,
+      28,
+      34,
+      35
+    ],
+    "selected_step": "r2_bearing_left",
+    "step_attempt": 7,
+    "step_elapsed_s": 38.25098332198104,
+    "step_event_index": 8,
+    "trial_finished_elapsed_s": 38.25098332198104,
+    "trial_recording": false,
+    "trial_required_tool_ids": [
+      20
+    ]
+  },
+  "updated_at": "2026-09-01T15:02:59.211-04:00"
+}

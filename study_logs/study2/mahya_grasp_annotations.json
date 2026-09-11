@@ -1,0 +1,20 @@
+{
+  "participant": "mahya",
+  "source_log": "study_logs/study2/mahya_replay.jsonl",
+  "trials": {
+    "mahya-ar-1788283375623|ar|0": {
+      "annotated_at": "2026-09-03T17:31:05.411194+00:00",
+      "grasp_frame_indices": [
+        42
+      ],
+      "grasp_times_monotonic_s": [
+        323308.919712095
+      ],
+      "mode": "ar",
+      "no_grasp": false,
+      "reviewed": true,
+      "session_id": "mahya-ar-1788283375623",
+      "trial_idx": 0
+    }
+  }
+}

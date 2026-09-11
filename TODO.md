@@ -58,13 +58,13 @@ participant sessions unless the targets need to be recalibrated.
 python3 workholding_study.py \
   --session-name P01 \
   --mode freedrive \
-  --target-poses-file study_logs/study2/workholding_targets.json
+  --target-poses-file study_logs/study2/workholding_targets_original.json
 ```
 
 python3 workholding_study.py \
   --session-name P01 \
   --mode freedrive \
-  --target-poses-file study_logs/study2/workholding_targets.json \
+  --target-poses-file study_logs/study2/workholding_targets_original.json \
   --no-resume
 
 ### Condition 2 — AR handle
@@ -73,7 +73,7 @@ python3 workholding_study.py \
 python3 workholding_study.py \
   --session-name P01 \
   --mode ar \
-  --target-poses-file study_logs/study2/workholding_targets.json
+  --target-poses-file study_logs/study2/workholding_targets_original.json
 ```
 
 ### Condition 3 — Hybrid
@@ -83,22 +83,6 @@ python3 workholding_study.py \
   --session-name P01 \
   --mode hybrid \
   --target-poses-file study_logs/study2/workholding_targets.json
-```
-
-### Condition 4 — TouchGrab
-
-Use the Unity `WorkHoldingTestNew` scene for this condition. The participant
-directly grabs the cyan AR board with ISDK Touch Hand Grab; the Python data
-path is otherwise identical to the AR condition. In AR, Hybrid-AR, and
-TouchGrab, the virtual board moves while held and the physical robot moves
-only after release.
-
-```bash
-python3 workholding_study.py \
-  --session-name P01 \
-  --mode touchgrab \
-  --target-poses-file study_logs/study2/workholding_targets.json
-```
 
 Study 2 writes one shared replay log per participant to
 `study_logs/study2/P01_replay.jsonl`; each record includes its condition in the
@@ -106,47 +90,6 @@ Study 2 writes one shared replay log per participant to
 completed trial. Records from an unfinished trial are removed, and that trial
 is repeated. Add `--no-resume` to intentionally restart only the selected
 condition from Trial 1; records from the other conditions are preserved.
-
-## Study 3 — Robot handover
-
-Run each condition with the same participant ID. Use the real-robot controller
-command above before starting.
-
-### Condition 1 — No ghost, no color
-
-```bash
-python3 study3_handover_study.py \
-  --no-simulation \
-  --participant-id P01 \
-  --condition no_ghost_no_color
-```
-
-### Condition 2 — Ghost, no color
-
-```bash
-python3 study3_handover_study.py \
-  --no-simulation \
-  --participant-id P01 \
-  --condition ghost_no_color
-```
-
-<!-- ### Condition 3 — No ghost, robot color
-
-```bash
-python3 study3_handover_study.py \
-  --no-simulation \
-  --participant-id P01 \
-  --condition no_ghost_robot_color
-``` -->
-
-### Condition 4 — Ghost and color
-
-```bash
-python3 study3_handover_study.py \
-  --no-simulation \
-  --participant-id P01 \
-  --condition ghost_color
-```
 
 ## Study 4 — Part acquisition
 

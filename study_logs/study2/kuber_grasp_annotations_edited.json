@@ -1,0 +1,113 @@
+{
+  "derived_from_annotations": "study_logs/study2/kuber_grasp_annotations.json",
+  "participant": "kuber",
+  "source_log": "study_logs/study2/kuber_replay.jsonl",
+  "trials": {
+    "kuber-ar-1788543045900|ar|0": {
+      "annotated_at": "2026-09-04T23:54:31.206073+00:00",
+      "excluded_grasp_pairs": [
+        {
+          "excluded_at": "2026-09-04T23:54:31.206055+00:00",
+          "onset_frame_index": 200,
+          "onset_source": "recorded",
+          "onset_time_monotonic_s": 583079.601912111,
+          "release_frame_index": 317,
+          "release_time_monotonic_s": 583085.616819684
+        }
+      ],
+      "grasp_frame_indices": [],
+      "grasp_times_monotonic_s": [],
+      "mode": "ar",
+      "no_grasp": false,
+      "reviewed": false,
+      "session_id": "kuber-ar-1788543045900",
+      "trial_idx": 0
+    },
+    "kuber-ar-1788543045900|ar|4": {
+      "annotated_at": "2026-09-04T23:54:59.352639+00:00",
+      "excluded_grasp_pairs": [
+        {
+          "excluded_at": "2026-09-04T23:54:59.352618+00:00",
+          "onset_frame_index": 72,
+          "onset_source": "recorded",
+          "onset_time_monotonic_s": 583210.541078319,
+          "release_frame_index": 84,
+          "release_time_monotonic_s": 583211.192799137
+        }
+      ],
+      "grasp_frame_indices": [],
+      "grasp_times_monotonic_s": [],
+      "mode": "ar",
+      "no_grasp": false,
+      "reviewed": false,
+      "session_id": "kuber-ar-1788543045900",
+      "trial_idx": 4
+    },
+    "kuber-ar-1788543462489|ar|5": {
+      "annotated_at": "2026-09-05T02:24:35.799257+00:00",
+      "audit_note": "Removed the 585-586 micro-interaction around requested frame 583 while retaining the adjacent valid 588-625 interaction. Onset 705 remains replaced by manual onset 706. Replay log retained unchanged.",
+      "excluded_grasp_onsets": [
+        {
+          "audit": "manual_pair_correction_2026-09-05",
+          "frame_index": 585,
+          "reason": "spurious micro-interaction around frame 583",
+          "time_monotonic_s": 583378.303336089
+        },
+        {
+          "audit": "manual_pair_correction_2026-09-05",
+          "frame_index": 586,
+          "reason": "duplicate onset belonging to spurious micro-interaction",
+          "time_monotonic_s": 583378.371137794
+        },
+        {
+          "audit": "grasp_release_consistency_2026-09-04",
+          "frame_index": 705,
+          "reason": "unpaired recorded onset; no remaining release",
+          "time_monotonic_s": 583384.456990912
+        }
+      ],
+      "excluded_grasp_pairs": [],
+      "excluded_release_events": [
+        {
+          "excluded_at": "2026-09-05T02:30:00+00:00",
+          "frame_index": 586,
+          "reason": "release belonging to spurious micro-interaction around frame 583",
+          "time_monotonic_s": 583378.371137794
+        }
+      ],
+      "grasp_frame_indices": [
+        706
+      ],
+      "grasp_times_monotonic_s": [
+        583384.489513412
+      ],
+      "mode": "ar",
+      "no_grasp": false,
+      "release_frame_indices": [],
+      "release_times_monotonic_s": [],
+      "reviewed": true,
+      "session_id": "kuber-ar-1788543462489",
+      "trial_idx": 5
+    },
+    "kuber-hybrid-1788543815144|hybrid|1": {
+      "annotated_at": "2026-09-04T23:57:05.396202+00:00",
+      "excluded_grasp_pairs": [
+        {
+          "excluded_at": "2026-09-04T23:57:05.396186+00:00",
+          "onset_frame_index": 27,
+          "onset_source": "recorded",
+          "onset_time_monotonic_s": 583730.799565534,
+          "release_frame_index": 38,
+          "release_time_monotonic_s": 583731.399743571
+        }
+      ],
+      "grasp_frame_indices": [],
+      "grasp_times_monotonic_s": [],
+      "mode": "hybrid",
+      "no_grasp": false,
+      "reviewed": false,
+      "session_id": "kuber-hybrid-1788543815144",
+      "trial_idx": 1
+    }
+  }
+}

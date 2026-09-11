@@ -1,0 +1,45 @@
+{
+  "condition": "gesture",
+  "participant_id": "mahya",
+  "pending_events": [],
+  "state": {
+    "acquired_tool_ids": [
+      20
+    ],
+    "acquisition_complete": true,
+    "completed_steps": [
+      "r1_bearing_right",
+      "r1_fasten_first_stand",
+      "r1_gear_rod",
+      "r1_bearing_left",
+      "r2_gear_rod",
+      "r2_bearing_right",
+      "r2_bearing_left"
+    ],
+    "head_rotation_deg": 79.91173849209157,
+    "head_translation_m": 1.5612550858375371,
+    "removed_tool_ids": [
+      14,
+      15,
+      18,
+      19,
+      20,
+      21,
+      26,
+      27,
+      28,
+      34,
+      35
+    ],
+    "selected_step": "r2_bearing_left",
+    "step_attempt": 7,
+    "step_elapsed_s": 4.6511629649903625,
+    "step_event_index": 10,
+    "trial_finished_elapsed_s": 4.6511629649903625,
+    "trial_recording": false,
+    "trial_required_tool_ids": [
+      20
+    ]
+  },
+  "updated_at": "2026-09-01T14:48:25.959-04:00"
+}

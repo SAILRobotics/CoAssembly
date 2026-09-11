@@ -1,0 +1,69 @@
+{
+  "derived_from_annotations": "study_logs/study2/junhyun_grasp_annotations.json",
+  "participant": "junhyun",
+  "source_log": "study_logs/study2/junhyun_replay.jsonl",
+  "trials": {
+    "junhyun-ar-1788482797669|ar|0": {
+      "audit_note": "One unmatched green onset marker suppressed; replay log retained unchanged.",
+      "excluded_grasp_onsets": [
+        {
+          "audit": "grasp_release_consistency_2026-09-04",
+          "frame_index": 34,
+          "reason": "unpaired duplicate recorded onset",
+          "time_monotonic_s": 522703.516716173
+        }
+      ],
+      "mode": "ar",
+      "session_id": "junhyun-ar-1788482797669",
+      "trial_idx": 0
+    },
+    "junhyun-ar-1788482797669|ar|3": {
+      "annotated_at": "2026-09-05T01:17:33.257305+00:00",
+      "excluded_grasp_pairs": [
+        {
+          "excluded_at": "2026-09-05T01:17:33.257286+00:00",
+          "onset_frame_index": 38,
+          "onset_source": "recorded",
+          "onset_time_monotonic_s": 522779.354983765,
+          "release_frame_index": 42,
+          "release_time_monotonic_s": 522779.638958055
+        }
+      ],
+      "grasp_frame_indices": [],
+      "grasp_times_monotonic_s": [],
+      "mode": "ar",
+      "no_grasp": false,
+      "reviewed": false,
+      "session_id": "junhyun-ar-1788482797669",
+      "trial_idx": 3
+    },
+    "junhyun-ar-1788482797669|ar|4": {
+      "annotated_at": "2026-09-05T01:17:46.746706+00:00",
+      "excluded_grasp_pairs": [
+        {
+          "excluded_at": "2026-09-05T01:17:43.978654+00:00",
+          "onset_frame_index": 34,
+          "onset_source": "recorded",
+          "onset_time_monotonic_s": 522811.349015713,
+          "release_frame_index": 39,
+          "release_time_monotonic_s": 522811.549557468
+        },
+        {
+          "excluded_at": "2026-09-05T01:17:46.746685+00:00",
+          "onset_frame_index": 48,
+          "onset_source": "recorded",
+          "onset_time_monotonic_s": 522811.982623535,
+          "release_frame_index": 48,
+          "release_time_monotonic_s": 522811.982623535
+        }
+      ],
+      "grasp_frame_indices": [],
+      "grasp_times_monotonic_s": [],
+      "mode": "ar",
+      "no_grasp": false,
+      "reviewed": false,
+      "session_id": "junhyun-ar-1788482797669",
+      "trial_idx": 4
+    }
+  }
+}

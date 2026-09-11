@@ -1,0 +1,48 @@
+{
+  "condition": "task_aware",
+  "participant_id": "austin",
+  "pending_events": [],
+  "state": {
+    "acquired_tool_ids": [],
+    "acquisition_complete": false,
+    "completed_steps": [
+      "r1_bearing_right",
+      "r1_gear_rod",
+      "r1_bearing_left",
+      "r1_fasten_first_stand",
+      "r1_insert_rod_and_fit_second",
+      "r1_fasten_second_stand",
+      "r2_gear_rod",
+      "r2_bearing_right",
+      "r2_bearing_left"
+    ],
+    "head_rotation_deg": null,
+    "head_translation_m": null,
+    "left_hand_translation_m": null,
+    "removed_tool_ids": [
+      14,
+      15,
+      18,
+      19,
+      20,
+      21,
+      26,
+      27,
+      28
+    ],
+    "right_hand_translation_m": null,
+    "selected_step": "r2_fasten_first_stand",
+    "step_attempt": 7,
+    "step_elapsed_s": 0.0,
+    "step_event_index": 0,
+    "total_hand_translation_m": null,
+    "trial_finished_elapsed_s": null,
+    "trial_recording": false,
+    "trial_required_tool_ids": [
+      7,
+      35,
+      37
+    ]
+  },
+  "updated_at": "2026-09-02T22:07:17.222-04:00"
+}

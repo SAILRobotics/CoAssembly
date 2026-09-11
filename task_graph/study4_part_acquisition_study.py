@@ -194,6 +194,38 @@ class PartAcquisitionStepLogger:
                 writer.writerow(row)
 
 
+class Study4BehaviorLogger:
+    """Append timestamped per-step head, hand, and hover data as JSONL."""
+
+    def __init__(self, path: str | Path, participant_id: str,
+                 condition: str, *, fresh_run: bool = False) -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.participant_id = participant_id
+        self.condition = condition
+        self._lock = threading.Lock()
+        if fresh_run and self.path.exists() and self.path.stat().st_size:
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup = self.path.with_name(
+                f"{self.path.stem}_archived_{stamp}{self.path.suffix}")
+            self.path.replace(backup)
+            print(f"[StudyLog] Archived behavior log -> {backup}")
+
+    def append(self, record_type: str, **values) -> None:
+        record = {
+            "schema": "study4_behavior_v1",
+            "record_type": record_type,
+            "timestamp": datetime.now().astimezone().isoformat(
+                timespec="milliseconds"),
+            "participant_id": self.participant_id,
+            "condition": self.condition,
+            **values,
+        }
+        with self._lock:
+            with self.path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, separators=(",", ":")) + "\n")
+
+
 class Study4SessionLogger:
     """Completed-step CSV plus an atomic live JSON resume checkpoint."""
 
@@ -203,6 +235,12 @@ class Study4SessionLogger:
         "step_event_index",
         "tool_id", "tool_name", "part_elapsed_s",
         "step_elapsed_s", "head_translation_m", "head_rotation_deg",
+        "left_hand_translation_m", "right_hand_translation_m",
+        "total_hand_translation_m",
+        "left_hover_time_s", "right_hover_time_s", "any_hover_time_s",
+        "hover_time_percent", "left_hover_episodes", "right_hover_episodes",
+        "left_hover_translation_m", "right_hover_translation_m",
+        "total_hover_translation_m",
         "correct", "transcript", "vlm_prediction",
         "vlm_raw", "graph_decision", "spoken_response", "state_json",
     )
@@ -541,6 +579,19 @@ class Study4Open3DScene:
         self._head_motion_last: np.ndarray | None = None
         self._head_translation_m = 0.0
         self._head_rotation_rad = 0.0
+        self._hand_motion_last: dict[str, np.ndarray | None] = {
+            "left": None, "right": None}
+        self._hand_translation_m = {"left": 0.0, "right": 0.0}
+        self._hovering_tool_by_hand: dict[str, int | None] = {
+            "left": None, "right": None}
+        self._hover_motion_last: dict[str, np.ndarray | None] = {
+            "left": None, "right": None}
+        self._hover_translation_m = {"left": 0.0, "right": 0.0}
+        self._hover_time_s = {"left": 0.0, "right": 0.0}
+        self._hover_episodes = {"left": 0, "right": 0}
+        self._any_hover_time_s = 0.0
+        self._motion_recording_started_t: float | None = None
+        self._hover_time_last_t: float | None = None
         self._camera_window = "Study 4 - Quest passthrough (Enter=lock)"
         self._camera_window_ok = False
         try:
@@ -566,25 +617,109 @@ class Study4Open3DScene:
         self._manual_lock_requested = True
 
     def start_head_motion_summary(self) -> None:
-        """Begin accumulating head-path translation and orientation change."""
+        """Begin accumulating head and hand path motion for a timed step."""
         self._head_motion_recording = True
         self._head_motion_last = None
         self._head_translation_m = 0.0
         self._head_rotation_rad = 0.0
+        self._hand_motion_last = {"left": None, "right": None}
+        self._hand_translation_m = {"left": 0.0, "right": 0.0}
+        self._hovering_tool_by_hand = {"left": None, "right": None}
+        self._hover_motion_last = {"left": None, "right": None}
+        self._hover_translation_m = {"left": 0.0, "right": 0.0}
+        self._hover_time_s = {"left": 0.0, "right": 0.0}
+        self._hover_episodes = {"left": 0, "right": 0}
+        self._any_hover_time_s = 0.0
+        self._motion_recording_started_t = time.monotonic()
+        self._hover_time_last_t = self._motion_recording_started_t
+
+    def _accumulate_hover_time(self, now: float) -> None:
+        if not self._head_motion_recording or self._hover_time_last_t is None:
+            return
+        elapsed = max(0.0, now - self._hover_time_last_t)
+        active = False
+        for hand_name in ("left", "right"):
+            if self._hovering_tool_by_hand[hand_name] is not None:
+                self._hover_time_s[hand_name] += elapsed
+                active = True
+        if active:
+            self._any_hover_time_s += elapsed
+        self._hover_time_last_t = now
+
+    def _update_hover_state(self, interaction: dict) -> None:
+        hand_name = str(interaction.get("hand", "")).strip().lower()
+        if hand_name not in self._hovering_tool_by_hand:
+            return
+        event_type = interaction.get("event_type")
+        tool_id = int(interaction.get("tool_id", -1))
+        if event_type == "hover_enter":
+            if self._hovering_tool_by_hand[hand_name] != tool_id:
+                self._hover_episodes[hand_name] += 1
+                self._hover_motion_last[hand_name] = None
+            self._hovering_tool_by_hand[hand_name] = tool_id
+        elif event_type == "hover_exit":
+            if self._hovering_tool_by_hand[hand_name] == tool_id:
+                self._hovering_tool_by_hand[hand_name] = None
+                self._hover_motion_last[hand_name] = None
+        elif event_type == "selected":
+            self._hovering_tool_by_hand[hand_name] = None
+            self._hover_motion_last[hand_name] = None
 
     def stop_head_motion_summary(self) -> dict[str, float]:
         """Stop and return accumulated motion for the current timed step."""
+        stopped_t = time.monotonic()
+        self._accumulate_hover_time(stopped_t)
+        trial_duration = max(
+            0.0, stopped_t - (self._motion_recording_started_t or stopped_t))
         self._head_motion_recording = False
         self._head_motion_last = None
+        self._hand_motion_last = {"left": None, "right": None}
+        self._hover_motion_last = {"left": None, "right": None}
+        self._hover_time_last_t = None
+        self._motion_recording_started_t = None
         return {
             "head_translation_m": self._head_translation_m,
             "head_rotation_deg": float(np.degrees(self._head_rotation_rad)),
+            "left_hand_translation_m": self._hand_translation_m["left"],
+            "right_hand_translation_m": self._hand_translation_m["right"],
+            "total_hand_translation_m": sum(self._hand_translation_m.values()),
+            "left_hover_time_s": self._hover_time_s["left"],
+            "right_hover_time_s": self._hover_time_s["right"],
+            "any_hover_time_s": self._any_hover_time_s,
+            "hover_time_percent": (
+                100.0 * self._any_hover_time_s / trial_duration
+                if trial_duration > 0.0 else 0.0),
+            "left_hover_episodes": self._hover_episodes["left"],
+            "right_hover_episodes": self._hover_episodes["right"],
+            "left_hover_translation_m": self._hover_translation_m["left"],
+            "right_hover_translation_m": self._hover_translation_m["right"],
+            "total_hover_translation_m": sum(
+                self._hover_translation_m.values()),
         }
 
     def head_motion_summary(self) -> dict[str, float]:
+        now = time.monotonic()
+        self._accumulate_hover_time(now)
+        trial_duration = max(
+            0.0, now - (self._motion_recording_started_t or now))
         return {
             "head_translation_m": self._head_translation_m,
             "head_rotation_deg": float(np.degrees(self._head_rotation_rad)),
+            "left_hand_translation_m": self._hand_translation_m["left"],
+            "right_hand_translation_m": self._hand_translation_m["right"],
+            "total_hand_translation_m": sum(self._hand_translation_m.values()),
+            "left_hover_time_s": self._hover_time_s["left"],
+            "right_hover_time_s": self._hover_time_s["right"],
+            "any_hover_time_s": self._any_hover_time_s,
+            "hover_time_percent": (
+                100.0 * self._any_hover_time_s / trial_duration
+                if trial_duration > 0.0 else 0.0),
+            "left_hover_episodes": self._hover_episodes["left"],
+            "right_hover_episodes": self._hover_episodes["right"],
+            "left_hover_translation_m": self._hover_translation_m["left"],
+            "right_hover_translation_m": self._hover_translation_m["right"],
+            "total_hover_translation_m": sum(
+                self._hover_translation_m.values()),
         }
 
     def reset_acquisition_colors(self) -> None:
@@ -746,6 +881,8 @@ class Study4Open3DScene:
     def tick(self) -> None:
         self.tool_interaction.poll(timeout_ms=0)
         for interaction in self.tool_interaction.pop_interaction_events():
+            self._accumulate_hover_time(time.monotonic())
+            self._update_hover_state(interaction)
             tool_id = int(interaction["tool_id"])
             if (interaction.get("event_type") != "selected"
                     and self._on_interaction is not None):
@@ -894,6 +1031,31 @@ class Study4Open3DScene:
                         -1.0, 1.0))
                     self._head_rotation_rad += float(np.arccos(cosine))
                 self._head_motion_last = current_head.copy()
+            # Use the palm centroid rather than a fingertip to reduce noise.
+            # Reset continuity independently whenever either hand is
+            # untracked, preventing reacquisition jumps from inflating paths.
+            for hand_name, joints in (("left", left), ("right", right)):
+                if joints is None or len(joints) <= 6:
+                    self._hand_motion_last[hand_name] = None
+                    continue
+                palm = np.mean(
+                    np.asarray(joints, dtype=float)[[1, 3, 6]], axis=0)
+                if palm.shape != (3,) or not np.all(np.isfinite(palm)):
+                    self._hand_motion_last[hand_name] = None
+                    continue
+                previous = self._hand_motion_last[hand_name]
+                if previous is not None:
+                    self._hand_translation_m[hand_name] += float(
+                        np.linalg.norm(palm - previous))
+                self._hand_motion_last[hand_name] = palm.copy()
+                if self._hovering_tool_by_hand[hand_name] is None:
+                    self._hover_motion_last[hand_name] = None
+                else:
+                    hover_previous = self._hover_motion_last[hand_name]
+                    if hover_previous is not None:
+                        self._hover_translation_m[hand_name] += float(
+                            np.linalg.norm(palm - hover_previous))
+                    self._hover_motion_last[hand_name] = palm.copy()
         effective_cam = self.anchor._effective_cam_T(self.cam.camera_T, center_T)
         T_world_cam = (self.anchor.world_T(effective_cam)
                        if effective_cam is not None else None)
@@ -943,6 +1105,7 @@ def _study4_open3d_worker(
 
     scene = None
     last_motion_publish = 0.0
+    last_behavior_publish = 0.0
     try:
         scene = Study4Open3DScene(
             unity_ip, layout_path, on_part_click=score_click,
@@ -978,6 +1141,27 @@ def _study4_open3d_worker(
                 scene.tick()
                 now = time.monotonic()
                 if (scene._head_motion_recording
+                        and now - last_behavior_publish >= 0.1):
+                    center_eye = scene.hands.center_eye_T()
+                    head_T = (scene.anchor.world_T(center_eye)
+                              if center_eye is not None
+                              and scene.anchor.locked else None)
+                    left, right = scene.hands.world_joints(
+                        scene.anchor.T_world_tracking)
+                    events.put(("behavior_frame", None, {
+                        "time_unix_s": time.time(),
+                        "time_monotonic_s": now,
+                        "head_world_T": (None if head_T is None
+                                         else np.asarray(head_T).tolist()),
+                        "left_hand_world": (None if left is None
+                                            else np.asarray(left).tolist()),
+                        "right_hand_world": (None if right is None
+                                             else np.asarray(right).tolist()),
+                        "active_hover_by_hand": dict(
+                            scene._hovering_tool_by_hand),
+                    }))
+                    last_behavior_publish = now
+                if (scene._head_motion_recording
                         and now - last_motion_publish >= 0.05):
                     motion_summaries.put(scene.head_motion_summary())
                     last_motion_publish = now
@@ -993,7 +1177,7 @@ class Study4Open3DProcess:
     """Queue-backed facade exposing the Study4Open3DScene methods used by the GUI."""
 
     def __init__(self, unity_ip: str, layout_path: str | Path, on_part_click,
-                 on_interaction=None) -> None:
+                 on_interaction=None, on_behavior=None) -> None:
         context = multiprocessing.get_context("spawn")
         self._commands = context.Queue()
         self._events = context.Queue()
@@ -1001,6 +1185,7 @@ class Study4Open3DProcess:
         self._motion_summaries = context.Queue()
         self._on_part_click = on_part_click
         self._on_interaction = on_interaction
+        self._on_behavior = on_behavior
         self._process = context.Process(
             target=_study4_open3d_worker,
             args=(unity_ip, str(layout_path), self._commands, self._events,
@@ -1057,6 +1242,8 @@ class Study4Open3DProcess:
                 self._responses.put((request_id, correct))
             elif name == "interaction" and self._on_interaction is not None:
                 self._on_interaction(payload)
+            elif name == "behavior_frame" and self._on_behavior is not None:
+                self._on_behavior(payload)
             elif name == "ready":
                 print("[Study4Open3D] Child scene ready", flush=True)
             elif name == "error":
@@ -1855,6 +2042,8 @@ class DearPyGuiTaskGraphApp:
 
         # run() sets this to a SpeechListener when voice input is enabled.
         self._speech = None   # SpeechListener, set in run() if enabled
+        self._last_speech_status: str | None = None
+        self._active_question_source = ""
         # run() sets this to a VLMAssistant when a model is enabled.
         self._vlm    = None   # VLMAssistant, set in run() if enabled
         # Asynchronous speech output; initialized by run() unless --no-tts.
@@ -1863,6 +2052,7 @@ class DearPyGuiTaskGraphApp:
         self._click_logger: PartAcquisitionClickLogger | None = None
         self._step_logger: PartAcquisitionStepLogger | None = None
         self._session_logger: Study4SessionLogger | None = None
+        self._behavior_logger: Study4BehaviorLogger | None = None
         self._step_attempt = 0
         self._step_event_index = 0
         self._trial_recording = False
@@ -1871,6 +2061,10 @@ class DearPyGuiTaskGraphApp:
         self._trial_finished_elapsed_s: float | None = None
         self._trial_head_translation_m: float | None = None
         self._trial_head_rotation_deg: float | None = None
+        self._trial_left_hand_translation_m: float | None = None
+        self._trial_right_hand_translation_m: float | None = None
+        self._trial_total_hand_translation_m: float | None = None
+        self._trial_hover_metrics: dict[str, float] = {}
         self._last_terminal_status_at = 0.0
         self._step_selected_at: float | None = None
         self._last_acquisition_at: float | None = None
@@ -2071,6 +2265,7 @@ class DearPyGuiTaskGraphApp:
                 model_name=vlm_model,
                 study4_condition=self.study4_condition,
             )
+            self._vlm.on_question_submitted = self._on_question_submitted
             # Report model selection in the operating-system terminal.
             print(f"[VLM] Assistant created: {vlm_model}")
         if tts_engine is not None:
@@ -2098,8 +2293,14 @@ class DearPyGuiTaskGraphApp:
             self._session_logger = Study4SessionLogger(
                 session_log_path, participant_id,
                 self.study4_condition or "", fresh_run=not resume_session)
+            behavior_path = Path(session_log_path).with_name(
+                f"{Path(session_log_path).stem}_behavior.jsonl")
+            self._behavior_logger = Study4BehaviorLogger(
+                behavior_path, participant_id,
+                self.study4_condition or "", fresh_run=not resume_session)
             self._step_attempt = self._session_logger.max_step_attempt()
             print(f"[StudyLog] Unified resumable session -> {session_log_path}")
+            print(f"[StudyLog] Raw behavior stream -> {behavior_path}")
         # Open3D and Dear PyGui both use GLFW/OpenGL and crash or black out when
         # they own windows in one process on this Linux setup.  Spawn the scene
         # renderer; its queue-backed facade preserves click scoring and updates.
@@ -2109,7 +2310,8 @@ class DearPyGuiTaskGraphApp:
                 self._study4_scene = Study4Open3DProcess(
                     unity_ip, self._tool_layout_path,
                     on_part_click=self._score_part_click,
-                    on_interaction=self._handle_pegboard_interaction)
+                    on_interaction=self._handle_pegboard_interaction,
+                    on_behavior=self._handle_behavior_frame)
                 startup("Open3D scene process launched")
             except Exception as error:
                 print(f"[Study4Open3D] Disabled: {error}", flush=True)
@@ -2431,7 +2633,7 @@ class DearPyGuiTaskGraphApp:
                 self._publish_selected_step_board_highlight()
             # Study 4 scores only ordered steps 1--4 for each row. Completing
             # step 4 also completes steps 5 and 6 in every synchronized view.
-            if stage == 4:
+            if row in range(1, 5) and self._row_first_four_complete(row):
                 self._auto_complete_row_steps_five_and_six(row)
         # Undo mapped steps in reverse dependency order.
         elif event == "uncomplete":
@@ -2904,6 +3106,16 @@ class DearPyGuiTaskGraphApp:
         # listening=continuous capture is active (or an optional wake word was
         # accepted); error=capture or recognition failed.
         status = self._speech.current_status
+        previous_status = self._last_speech_status
+        if status != previous_status:
+            if status == "speech":
+                self._log_lifecycle("speech_started")
+            if previous_status == "speech" and status in {
+                    "queued", "transcribing", "listening", "idle"}:
+                self._log_lifecycle("speech_capture_ended")
+            if status == "transcribing":
+                self._log_lifecycle("asr_started")
+            self._last_speech_status = status
         color, label = self._VOICE_STATUS_STYLE.get(
             status, ((200, 200, 200, 255), status))
         if not self._speech.input_enabled:
@@ -2942,12 +3154,19 @@ class DearPyGuiTaskGraphApp:
                 self.log("[Voice] Wake word detected — listening.")
             elif kind == "transcript":
                 self.log(f"[Voice] {payload}")
+                self._log_lifecycle("asr_completed", text=str(payload))
                 if self._tts is not None and self._tts.is_speaking:
                     self.log("[Voice] Ignored transcript produced during TTS playback.")
+                    self._log_lifecycle(
+                        "transcript_ignored_during_tts", text=str(payload))
                     continue
                 if route_to_vlm:
-                    if not self._vlm.submit_question(payload):
+                    if not self._vlm.submit_question(
+                            payload, input_source="microphone_speech"):
                         self.log("[Voice] VLM busy — transcript skipped.")
+                        self._log_lifecycle(
+                            "vlm_request_rejected", text=str(payload),
+                            detail="busy")
                     else:
                         self.log("[Voice] Transcript routed to VLM.")
                 elif self._vlm is not None and dpg.get_value("voice_to_vlm"):
@@ -2969,19 +3188,34 @@ class DearPyGuiTaskGraphApp:
                 and not allow_before_start):
             return
         self.log(f"[TTS] {text}")
-        self._tts.speak(text, replace=warning)
+        if self._tts.speak(text, replace=warning):
+            self._log_lifecycle(
+                "tts_queued", text=text,
+                detail="replace" if warning else "append")
+        else:
+            self._log_lifecycle("tts_queue_rejected", text=text)
 
     def _poll_tts(self) -> None:
         if self._tts is None:
             return
         for kind, payload in self._tts.poll():
-            if kind == "error":
+            if kind == "speaking":
+                self._log_lifecycle("tts_started", text=str(payload))
+            elif kind == "spoken":
+                self._log_lifecycle("tts_finished", text=str(payload))
+            elif kind == "interrupted":
+                self._log_lifecycle("tts_interrupted", text=str(payload))
+            elif kind == "error":
                 self.log(f"[TTS error] {payload}")
+                self._log_lifecycle("tts_error", detail=str(payload))
 
     def _poll_vlm_part_references(self) -> None:
         if self._vlm is None:
             return
         for result in self._vlm.poll_part_references():
+            self._log_lifecycle(
+                "vlm_inference_completed", text=str(result.get("text", "")),
+                detail=str(result.get("intent", result.get("label", ""))))
             self._handle_part_reference(result)
 
     def _poll_vlm_answers(self) -> None:
@@ -2989,6 +3223,9 @@ class DearPyGuiTaskGraphApp:
         if self._vlm is None:
             return
         for result in self._vlm.poll_answers():
+            self._log_lifecycle(
+                "vlm_inference_completed", text=str(result.get("text", "")),
+                detail=str(result.get("intent", "answer")))
             answer = result.get("answer", "").strip()
             self._log_session_event(
                 "vlm_answer", modality="language",
@@ -3015,6 +3252,14 @@ class DearPyGuiTaskGraphApp:
     def _friendly_reference_label(self, label: str,
                                   parts: list[str]) -> str:
         label = label.upper()
+        shared_supply_names = {
+            "BEARINGS": "bearing",
+            "SCREWS": "screw",
+            "CRANK_HANDLE": "handle",
+            "PINS": "pin",
+        }
+        if label in shared_supply_names:
+            return shared_supply_names[label]
         kit = re.fullmatch(r"ROW([1-4])_KIT", label)
         if kit:
             return f"Row {kit.group(1)} kit"
@@ -3140,6 +3385,12 @@ class DearPyGuiTaskGraphApp:
 
     def _handle_pegboard_interaction(self, interaction: dict) -> None:
         """Log hovers and speak the hovered part during an active trial."""
+        event_type = str(interaction.get("event_type", ""))
+        if event_type in {"hover_enter", "hover_exit"}:
+            self._log_behavior(
+                "hover_event", event_type=event_type,
+                hand=interaction.get("hand"),
+                tool_id=interaction.get("tool_id"))
         if interaction.get("event_type") != "hover_enter":
             return
         tool_id = int(interaction["tool_id"])
@@ -3164,12 +3415,18 @@ class DearPyGuiTaskGraphApp:
             # Every Study 4 condition receives the same hover-name feedback
             # after ENTER starts the trial. Replace stale hover speech so the
             # audio always describes the participant's current focus.
-            self._tts.speak(friendly, replace=True)
+            if self._tts.speak(friendly, replace=True):
+                self._log_lifecycle(
+                    "tts_queued", text=friendly, detail="replace_hover")
 
     def _score_part_click(self, interaction: dict) -> bool:
         """Score a click against graph truth without exposing truth visually."""
         tool_id = int(interaction["tool_id"])
         modality = str(interaction.get("modality", "click"))
+        self._log_behavior(
+            "selection_event", event_type="selected",
+            hand=interaction.get("hand"), tool_id=tool_id,
+            modality=modality)
         if not self._trial_recording:
             if self._acquisition_complete:
                 self._speak("This step is already complete.", warning=True)
@@ -3258,6 +3515,21 @@ class DearPyGuiTaskGraphApp:
                 "head_translation_m")
             self._trial_head_rotation_deg = head_motion.get(
                 "head_rotation_deg")
+            self._trial_left_hand_translation_m = head_motion.get(
+                "left_hand_translation_m")
+            self._trial_right_hand_translation_m = head_motion.get(
+                "right_hand_translation_m")
+            self._trial_total_hand_translation_m = head_motion.get(
+                "total_hand_translation_m")
+            self._trial_hover_metrics = {
+                key: head_motion[key] for key in (
+                    "left_hover_time_s", "right_hover_time_s",
+                    "any_hover_time_s", "hover_time_percent",
+                    "left_hover_episodes", "right_hover_episodes",
+                    "left_hover_translation_m", "right_hover_translation_m",
+                    "total_hover_translation_m")
+                if key in head_motion
+            }
             removed = self._removable_consumable_ids(self._acquired_tool_ids)
             self._removed_tool_ids.update(removed)
             if self._study4_scene is not None:
@@ -3310,7 +3582,21 @@ class DearPyGuiTaskGraphApp:
                     else f"{self._trial_head_translation_m:.6f}"),
                 head_rotation_deg=(
                     "" if self._trial_head_rotation_deg is None
-                    else f"{self._trial_head_rotation_deg:.6f}"))
+                    else f"{self._trial_head_rotation_deg:.6f}"),
+                left_hand_translation_m=(
+                    "" if self._trial_left_hand_translation_m is None
+                    else f"{self._trial_left_hand_translation_m:.6f}"),
+                right_hand_translation_m=(
+                    "" if self._trial_right_hand_translation_m is None
+                    else f"{self._trial_right_hand_translation_m:.6f}"),
+                total_hand_translation_m=(
+                    "" if self._trial_total_hand_translation_m is None
+                    else f"{self._trial_total_hand_translation_m:.6f}"),
+                **{
+                    key: (f"{value:.6f}" if "episodes" not in key
+                          else int(value))
+                    for key, value in self._trial_hover_metrics.items()
+                })
             self._auto_complete_acquired_step()
         elif correct:
             remaining = len(set(expected) - self._acquired_tool_ids)
@@ -3332,6 +3618,10 @@ class DearPyGuiTaskGraphApp:
         self._trial_finished_elapsed_s = None
         self._trial_head_translation_m = None
         self._trial_head_rotation_deg = None
+        self._trial_left_hand_translation_m = None
+        self._trial_right_hand_translation_m = None
+        self._trial_total_hand_translation_m = None
+        self._trial_hover_metrics = {}
         if self._speech is not None and not self._speech.input_enabled:
             self._speech.set_input_enabled(True)
         if self._tts is not None:
@@ -3399,9 +3689,24 @@ class DearPyGuiTaskGraphApp:
         self._trial_finished_elapsed_s = None
         self._trial_head_translation_m = None
         self._trial_head_rotation_deg = None
+        self._trial_left_hand_translation_m = None
+        self._trial_right_hand_translation_m = None
+        self._trial_total_hand_translation_m = None
+        self._trial_hover_metrics = {}
         if self._study4_scene is not None:
             self._study4_scene.start_head_motion_summary()
         self._log_session_event("step_started", modality="keyboard")
+        if self.study4_condition == "task_aware":
+            # Keep the READY phase cue-free. Reveal the selected step's
+            # relevant pegboard objects only after timing and motion capture
+            # have started, so task-aware preview time cannot occur outside
+            # the measured trial interval.
+            highlighted_ids = self._selected_step_pegboard_ids()
+            self._publish_selected_step_pegboard_highlight(announce=True)
+            self._log_session_event(
+                "task_aware_highlight_presented", modality="system",
+                vlm_prediction=json.dumps(highlighted_ids),
+                graph_decision="task_aware_proactive_highlight")
         self.log(
             f"[Trial] RUNNING attempt={self._step_attempt} — timer started; "
             "fetch all required parts to stop it.")
@@ -5549,6 +5854,14 @@ class DearPyGuiTaskGraphApp:
                 "in GUI, Open3D, and Unity.")
         return completed
 
+    def _row_first_four_complete(self, row: int) -> bool:
+        """Return whether all four participant-scored steps in a row are done."""
+        return all(
+            all(step_id in self.graph.completed
+                for step_id in TaskGraph.steps_for_control(row, stage))
+            for stage in (1, 2, 3, 4)
+        )
+
     def _complete_selected(self) -> None:
         """Complete a ready selected step or undo a completed frontier step."""
         if not self.selected_id:
@@ -5576,7 +5889,8 @@ class DearPyGuiTaskGraphApp:
                 self._send_select({"event": "uncomplete" if was_complete else "complete",
                                    "row": coords[0], "stage": coords[1],
                                    "step": self.selected_id})
-                if not was_complete and coords[1] == 4:
+                if (not was_complete and coords[0] in range(1, 5)
+                        and self._row_first_four_complete(coords[0])):
                     self._auto_complete_row_steps_five_and_six(coords[0])
             self._log_session_event(
                 "graph_uncomplete" if was_complete else "graph_complete")
@@ -5700,6 +6014,10 @@ class DearPyGuiTaskGraphApp:
             "trial_finished_elapsed_s": self._trial_finished_elapsed_s,
             "head_translation_m": self._trial_head_translation_m,
             "head_rotation_deg": self._trial_head_rotation_deg,
+            "left_hand_translation_m": self._trial_left_hand_translation_m,
+            "right_hand_translation_m": self._trial_right_hand_translation_m,
+            "total_hand_translation_m": self._trial_total_hand_translation_m,
+            **self._trial_hover_metrics,
         }
 
     def _log_session_event(self, event_type: str, **values) -> None:
@@ -5720,6 +6038,48 @@ class DearPyGuiTaskGraphApp:
             step_event_index=(self._step_event_index if grouped else ""),
             state_json=self._session_state(),
             **values)
+
+    def _log_behavior(self, record_type: str, **values) -> None:
+        if self._behavior_logger is None:
+            return
+        elapsed = (None if self._step_selected_at is None else
+                   max(0.0, time.monotonic() - self._step_selected_at))
+        values.setdefault("event_time_unix_s", time.time())
+        values.setdefault("event_time_monotonic_s", time.monotonic())
+        self._behavior_logger.append(
+            record_type,
+            step_id=self.selected_id,
+            step_attempt=self._step_attempt,
+            trial_recording=self._trial_recording,
+            step_elapsed_s=elapsed,
+            **values)
+
+    def _log_lifecycle(self, event_type: str, *, text: str = "",
+                       detail: str = "", modality: str = "lifecycle") -> None:
+        """Log one speech/VLM/TTS boundary to both analysis streams."""
+        elapsed = ("" if self._step_selected_at is None else
+                   f"{max(0.0, time.monotonic() - self._step_selected_at):.6f}")
+        self._log_session_event(
+            event_type, modality=modality, transcript=text,
+            graph_decision=detail, step_elapsed_s=elapsed)
+        self._log_behavior(
+            "lifecycle_event", event_type=event_type,
+            text=text, detail=detail)
+
+    def _on_question_submitted(self, text: str, input_source: str) -> None:
+        """Classify typed-on-behalf input as participant speech by proxy."""
+        source = str(input_source or "speech_proxy")
+        self._active_question_source = source
+        self._log_lifecycle(
+            "participant_speech_submitted", text=str(text), detail=source,
+            modality="speech")
+        self._log_lifecycle(
+            "vlm_request_submitted", text=str(text), detail=source,
+            modality="speech")
+
+    def _handle_behavior_frame(self, payload: dict) -> None:
+        """Attach current step identity to a sampled child-process pose."""
+        self._log_behavior("frame", **payload)
 
     def _resume_session(self) -> None:
         """Restore the latest participant-condition checkpoint, if present."""

@@ -1,0 +1,49 @@
+{
+  "condition": "task_aware",
+  "participant_id": "parisa",
+  "pending_events": [],
+  "state": {
+    "acquired_tool_ids": [
+      7,
+      35,
+      37
+    ],
+    "acquisition_complete": true,
+    "completed_steps": [
+      "r1_gear_rod",
+      "r2_gear_rod",
+      "r1_bearing_right",
+      "r1_bearing_left",
+      "r2_bearing_right",
+      "r2_bearing_left",
+      "r2_fasten_first_stand",
+      "r2_insert_rod_and_fit_second",
+      "r2_fasten_second_stand"
+    ],
+    "head_rotation_deg": 422.69939778945263,
+    "head_translation_m": 2.306544731540161,
+    "removed_tool_ids": [
+      14,
+      15,
+      18,
+      19,
+      20,
+      21,
+      26,
+      27,
+      28
+    ],
+    "selected_step": "r2_fasten_first_stand",
+    "step_attempt": 7,
+    "step_elapsed_s": 54.85603487101616,
+    "step_event_index": 13,
+    "trial_finished_elapsed_s": 54.85603487101616,
+    "trial_recording": false,
+    "trial_required_tool_ids": [
+      7,
+      35,
+      37
+    ]
+  },
+  "updated_at": "2026-09-02T12:28:18.968-04:00"
+}

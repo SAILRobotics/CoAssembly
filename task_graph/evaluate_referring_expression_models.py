@@ -136,8 +136,51 @@ RESULT_COLUMNS = [
     "strict_correct",
     "raw_model_answer",
     "inference_seconds",
+    "model_parameters",
+    "model_parameter_gib",
+    "gpu_vram_after_load_gib",
+    "peak_gpu_vram_gib",
     "error",
 ]
+
+
+def model_memory_metadata(model: Any) -> dict[str, float | int | str]:
+    """Return architecture size and current CUDA allocation after loading."""
+    parameters = list(model.parameters())
+    parameter_count = sum(parameter.numel() for parameter in parameters)
+    parameter_bytes = sum(
+        parameter.numel() * parameter.element_size() for parameter in parameters)
+    metadata: dict[str, float | int | str] = {
+        "model_parameters": parameter_count,
+        "model_parameter_gib": parameter_bytes / (1024 ** 3),
+        "gpu_vram_after_load_gib": "",
+        "peak_gpu_vram_gib": "",
+    }
+    try:
+        import torch
+        if torch.cuda.is_available():
+            metadata["gpu_vram_after_load_gib"] = sum(
+                torch.cuda.memory_allocated(device)
+                for device in range(torch.cuda.device_count())) / (1024 ** 3)
+            # Reset after loading: the later peak includes resident model memory
+            # plus the largest inference-time allocation, not temporary load buffers.
+            for device in range(torch.cuda.device_count()):
+                torch.cuda.reset_peak_memory_stats(device)
+    except (ImportError, RuntimeError):
+        pass
+    return metadata
+
+
+def peak_gpu_vram_gib() -> float | str:
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return sum(
+                torch.cuda.max_memory_allocated(device)
+                for device in range(torch.cuda.device_count())) / (1024 ** 3)
+    except (ImportError, RuntimeError):
+        pass
+    return ""
 
 
 def pandas_module():
@@ -316,7 +359,8 @@ def build_leaderboard(results: Any, path: Path):
             "model_alias", "model_id", "samples", "correct", "incorrect",
             "invalid_outputs", "accuracy", "strict_correct", "strict_accuracy",
             "mean_inference_seconds", "std_inference_seconds",
-            "total_inference_seconds",
+            "total_inference_seconds", "model_parameters", "model_parameter_gib",
+            "gpu_vram_after_load_gib", "peak_gpu_vram_gib",
         ])
     else:
         work = results.copy()
@@ -325,6 +369,9 @@ def build_leaderboard(results: Any, path: Path):
         work["strict_bool"] = (
             work.get("strict_correct", "").astype(str).str.casefold() == "true")
         work["seconds"] = pd.to_numeric(work["inference_seconds"], errors="coerce")
+        for column in ("model_parameters", "model_parameter_gib",
+                       "gpu_vram_after_load_gib", "peak_gpu_vram_gib"):
+            work[column + "_numeric"] = pd.to_numeric(work[column], errors="coerce")
         leaderboard = work.groupby(
             ["model_alias", "model_id"], as_index=False).agg(
                 samples=("index", "count"),
@@ -336,6 +383,10 @@ def build_leaderboard(results: Any, path: Path):
                 mean_inference_seconds=("seconds", "mean"),
                 std_inference_seconds=("seconds", "std"),
                 total_inference_seconds=("seconds", "sum"),
+                model_parameters=("model_parameters_numeric", "max"),
+                model_parameter_gib=("model_parameter_gib_numeric", "max"),
+                gpu_vram_after_load_gib=("gpu_vram_after_load_gib_numeric", "max"),
+                peak_gpu_vram_gib=("peak_gpu_vram_gib_numeric", "max"),
             )
         leaderboard["incorrect"] = (
             leaderboard["samples"] - leaderboard["correct"])
@@ -343,7 +394,8 @@ def build_leaderboard(results: Any, path: Path):
             "model_alias", "model_id", "samples", "correct", "incorrect",
             "invalid_outputs", "accuracy", "strict_correct", "strict_accuracy",
             "mean_inference_seconds", "std_inference_seconds",
-            "total_inference_seconds",
+            "total_inference_seconds", "model_parameters", "model_parameter_gib",
+            "gpu_vram_after_load_gib", "peak_gpu_vram_gib",
         ]].sort_values(["accuracy", "mean_inference_seconds"],
                        ascending=[False, True])
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -436,6 +488,14 @@ def main() -> int:
             print(f"SKIPPED: could not load {spec.model_id}\n  {message}",
                   file=sys.stderr, flush=True)
             continue
+        memory_metadata = model_memory_metadata(model)
+        print(
+            f"Parameters: {int(memory_metadata['model_parameters']):,} "
+            f"({float(memory_metadata['model_parameter_gib']):.2f} GiB parameter storage)"
+        )
+        if memory_metadata["gpu_vram_after_load_gib"] != "":
+            print(f"GPU VRAM after load: "
+                  f"{float(memory_metadata['gpu_vram_after_load_gib']):.2f} GiB")
         checkpoint_rows: list[dict[str, Any]] = []
         timestamp = datetime.now().isoformat(timespec="seconds")
         max_new_tokens = spec.max_new_tokens or args.max_new_tokens
@@ -486,6 +546,8 @@ def main() -> int:
                     "strict_correct": str(strict_correct),
                     "raw_model_answer": raw,
                     "inference_seconds": f"{elapsed:.4f}",
+                    **memory_metadata,
+                    "peak_gpu_vram_gib": peak_gpu_vram_gib(),
                     "error": error,
                 })
                 status = "OK" if correct else "WRONG"

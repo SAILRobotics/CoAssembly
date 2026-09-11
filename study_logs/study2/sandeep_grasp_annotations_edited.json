@@ -1,0 +1,51 @@
+{
+  "derived_from_annotations": "study_logs/study2/sandeep_grasp_annotations.json",
+  "participant": "sandeep",
+  "source_log": "study_logs/study2/sandeep_replay.jsonl",
+  "trials": {
+    "sandeep-ar-1788465575891|ar|7": {
+      "annotated_at": "2026-09-05T02:00:00+00:00",
+      "audit_note": "Tracking flicker around frames 186-191 was replaced by manual pair 187-236. Effective pairs are 12-54, 187-236, 409-449, and 478-497. Replay log retained unchanged.",
+      "excluded_grasp_onsets": [
+        {
+          "audit": "manual_pair_correction_2026-09-05",
+          "frame_index": 186,
+          "reason": "duplicate onset from tracking flicker; replaced by manual onset 187",
+          "time_monotonic_s": 505628.695049553
+        },
+        {
+          "audit": "manual_pair_correction_2026-09-05",
+          "frame_index": 191,
+          "reason": "duplicate onset from tracking flicker; replaced by manual onset 187",
+          "time_monotonic_s": 505628.994461694
+        }
+      ],
+      "excluded_grasp_pairs": [],
+      "excluded_release_events": [
+        {
+          "excluded_at": "2026-09-05T02:00:00+00:00",
+          "frame_index": 235,
+          "reason": "duplicate release; replaced by manual release 236",
+          "time_monotonic_s": 505631.278880196
+        }
+      ],
+      "grasp_frame_indices": [
+        187
+      ],
+      "grasp_times_monotonic_s": [
+        505628.76101571
+      ],
+      "mode": "ar",
+      "no_grasp": false,
+      "release_frame_indices": [
+        236
+      ],
+      "release_times_monotonic_s": [
+        505631.312717158
+      ],
+      "reviewed": true,
+      "session_id": "sandeep-ar-1788465575891",
+      "trial_idx": 7
+    }
+  }
+}

@@ -1,0 +1,212 @@
+{
+  "derived_from_annotations": "study_logs/study2/mann_grasp_annotations.json",
+  "participant": "mann",
+  "source_log": "study_logs/study2/mann_replay.jsonl",
+  "trials": {
+    "mann-ar-1788532806280|ar|0": {
+      "annotated_at": "2026-09-05T02:14:05.541278+00:00",
+      "audit_note": "One unmatched green onset marker suppressed; replay log retained unchanged.",
+      "excluded_grasp_onsets": [
+        {
+          "audit": "grasp_release_consistency_2026-09-04",
+          "frame_index": 214,
+          "reason": "unpaired recorded onset; no remaining release",
+          "time_monotonic_s": 572730.514824176
+        }
+      ],
+      "excluded_grasp_pairs": [
+        {
+          "excluded_at": "2026-09-04T23:57:38.742711+00:00",
+          "onset_frame_index": 82,
+          "onset_source": "recorded",
+          "onset_time_monotonic_s": 572723.5785951,
+          "release_frame_index": 83,
+          "release_time_monotonic_s": 572723.645620503
+        },
+        {
+          "excluded_at": "2026-09-05T02:11:09.994229+00:00",
+          "onset_frame_index": 87,
+          "onset_source": "recorded",
+          "onset_time_monotonic_s": 572723.878887396,
+          "release_frame_index": 93,
+          "release_time_monotonic_s": 572724.178924356
+        },
+        {
+          "excluded_at": "2026-09-05T02:11:17.047023+00:00",
+          "onset_frame_index": 89,
+          "onset_source": "recorded",
+          "onset_time_monotonic_s": 572723.97800875,
+          "release_frame_index": 410,
+          "release_time_monotonic_s": 572740.654765775
+        },
+        {
+          "excluded_at": "2026-09-05T02:13:24.322296+00:00",
+          "onset_frame_index": 89,
+          "onset_source": "recorded",
+          "onset_time_monotonic_s": 572723.97800875,
+          "release_frame_index": 96,
+          "release_time_monotonic_s": 572724.312798162
+        }
+      ],
+      "grasp_frame_indices": [
+        215
+      ],
+      "grasp_times_monotonic_s": [
+        572730.547745246
+      ],
+      "mode": "ar",
+      "no_grasp": false,
+      "release_frame_indices": [
+        96,
+        418
+      ],
+      "release_times_monotonic_s": [
+        572724.312798162,
+        572741.10394455
+      ],
+      "reviewed": true,
+      "session_id": "mann-ar-1788532806280",
+      "trial_idx": 0
+    },
+    "mann-ar-1788533298352|ar|5": {
+      "annotated_at": "2026-09-05T02:14:47.811251+00:00",
+      "excluded_grasp_pairs": [
+        {
+          "excluded_at": "2026-09-05T02:14:47.811236+00:00",
+          "onset_frame_index": 383,
+          "onset_source": "recorded",
+          "onset_time_monotonic_s": 573188.925729498,
+          "release_frame_index": 979,
+          "release_time_monotonic_s": 573219.17819093
+        }
+      ],
+      "grasp_frame_indices": [],
+      "grasp_times_monotonic_s": [],
+      "mode": "ar",
+      "no_grasp": false,
+      "release_frame_indices": [],
+      "release_times_monotonic_s": [],
+      "reviewed": false,
+      "session_id": "mann-ar-1788533298352",
+      "trial_idx": 5
+    },
+    "mann-ar-1788533298352|ar|6": {
+      "annotated_at": "2026-09-05T02:15:53.107658+00:00",
+      "audit_note": "One unmatched green onset marker suppressed; replay log retained unchanged.",
+      "excluded_grasp_onsets": [
+        {
+          "audit": "grasp_release_consistency_2026-09-04",
+          "frame_index": 626,
+          "reason": "unpaired duplicate recorded onset",
+          "time_monotonic_s": 573273.519203322
+        }
+      ],
+      "excluded_grasp_pairs": [
+        {
+          "excluded_at": "2026-09-05T02:15:28.646470+00:00",
+          "onset_frame_index": 76,
+          "onset_source": "recorded",
+          "onset_time_monotonic_s": 573249.441296935,
+          "release_frame_index": 80,
+          "release_time_monotonic_s": 573249.586317467
+        },
+        {
+          "excluded_at": "2026-09-05T02:15:53.107639+00:00",
+          "onset_frame_index": 615,
+          "onset_source": "recorded",
+          "onset_time_monotonic_s": 573273.093783711,
+          "release_frame_index": 621,
+          "release_time_monotonic_s": 573273.310636144
+        }
+      ],
+      "grasp_frame_indices": [],
+      "grasp_times_monotonic_s": [],
+      "mode": "ar",
+      "no_grasp": false,
+      "release_frame_indices": [],
+      "release_times_monotonic_s": [],
+      "reviewed": false,
+      "session_id": "mann-ar-1788533298352",
+      "trial_idx": 6
+    },
+    "mann-hybrid-1788533613689|hybrid|1": {
+      "annotated_at": "2026-09-05T02:16:21.821153+00:00",
+      "excluded_grasp_pairs": [
+        {
+          "excluded_at": "2026-09-05T02:16:18.969262+00:00",
+          "onset_frame_index": 206,
+          "onset_source": "recorded",
+          "onset_time_monotonic_s": 573560.814446162,
+          "release_frame_index": 216,
+          "release_time_monotonic_s": 573561.358139516
+        },
+        {
+          "excluded_at": "2026-09-05T02:16:21.821136+00:00",
+          "onset_frame_index": 362,
+          "onset_source": "recorded",
+          "onset_time_monotonic_s": 573568.651855365,
+          "release_frame_index": 364,
+          "release_time_monotonic_s": 573568.718047084
+        }
+      ],
+      "grasp_frame_indices": [],
+      "grasp_times_monotonic_s": [],
+      "mode": "hybrid",
+      "no_grasp": false,
+      "release_frame_indices": [],
+      "release_times_monotonic_s": [],
+      "reviewed": false,
+      "session_id": "mann-hybrid-1788533613689",
+      "trial_idx": 1
+    },
+    "mann-hybrid-1788533853621|hybrid|2": {
+      "annotated_at": "2026-09-04T23:58:51.293092+00:00",
+      "excluded_grasp_pairs": [
+        {
+          "excluded_at": "2026-09-04T23:58:51.293067+00:00",
+          "onset_frame_index": 28,
+          "onset_source": "recorded",
+          "onset_time_monotonic_s": 573735.728355091,
+          "release_frame_index": 30,
+          "release_time_monotonic_s": 573735.795573172
+        }
+      ],
+      "grasp_frame_indices": [],
+      "grasp_times_monotonic_s": [],
+      "mode": "hybrid",
+      "no_grasp": false,
+      "reviewed": false,
+      "session_id": "mann-hybrid-1788533853621",
+      "trial_idx": 2
+    },
+    "mann-hybrid-1788533853621|hybrid|6": {
+      "annotated_at": "2026-09-05T02:20:00+00:00",
+      "audit_note": "Removed the first release (111) and second onset (120) so the effective interaction pairs first onset 24 with second release 175.",
+      "excluded_grasp_onsets": [
+        {
+          "audit": "manual_pair_correction_2026-09-05",
+          "frame_index": 120,
+          "reason": "second onset removed to join the intended continuous interaction",
+          "time_monotonic_s": 573964.884039808
+        }
+      ],
+      "excluded_release_events": [
+        {
+          "excluded_at": "2026-09-05T02:20:00+00:00",
+          "frame_index": 111,
+          "reason": "first release removed to join the intended continuous interaction",
+          "time_monotonic_s": 573964.41735391
+        }
+      ],
+      "grasp_frame_indices": [],
+      "grasp_times_monotonic_s": [],
+      "mode": "hybrid",
+      "no_grasp": false,
+      "release_frame_indices": [],
+      "release_times_monotonic_s": [],
+      "reviewed": true,
+      "session_id": "mann-hybrid-1788533853621",
+      "trial_idx": 6
+    }
+  }
+}

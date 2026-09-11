@@ -12,21 +12,22 @@ task_graph/captures/*
 task_graph/dante_captures/*
 
 
-study_logs/*
-!study_logs/study1/
-!study_logs/study2/
-!study_logs/study3/
-!study_logs/study4/
-study_logs/study1/*
-study_logs/study2/*
-study_logs/study3/*
-study_logs/study4/*
-!study_logs/study1/.gitkeep
-!study_logs/study2/.gitkeep
-!study_logs/study3/.gitkeep
-!study_logs/study4/.gitkeep
+# study_logs/*
+# !study_logs/study1/
+# !study_logs/study2/
+# !study_logs/study3/
+# !study_logs/study4/
+# study_logs/study1/*
+# study_logs/study2/*
+# study_logs/study3/*
+# study_logs/study4/*
+# !study_logs/study1/.gitkeep
+# !study_logs/study2/.gitkeep
+# !study_logs/study3/.gitkeep
+# !study_logs/study4/.gitkeep
 
 paper/*
 
 # Machine-specific MCP server config (hardcodes an absolute nvm path)
 .mcp.json
+study_logs/study2/*_replay.jsonl

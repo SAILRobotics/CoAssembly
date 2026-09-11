@@ -1,0 +1,24 @@
+{
+  "annotation_type": "orientation_confusion_noise",
+  "participant": "kuber",
+  "source_log": "study_logs/study2/kuber_replay.jsonl",
+  "trials": {
+    "kuber-freedrive-1788542625634|freedrive|6": {
+      "annotation_note": "Participant manipulated the board with an incorrect/confused orientation; interval marked manually for sensitivity analysis.",
+      "intervals": [
+        {
+          "annotated_at": "2026-09-05T02:22:15.117708+00:00",
+          "end_frame_index": 52,
+          "end_time_monotonic_s": 582723.725243158,
+          "reason": "orientation_confusion",
+          "start_frame_index": 24,
+          "start_time_monotonic_s": 582722.582637954,
+          "treatment": "exclude_as_noise"
+        }
+      ],
+      "mode": "freedrive",
+      "session_id": "kuber-freedrive-1788542625634",
+      "trial_idx": 6
+    }
+  }
+}

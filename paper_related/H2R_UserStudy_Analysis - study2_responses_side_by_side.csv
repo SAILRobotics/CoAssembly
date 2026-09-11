@@ -1,0 +1,198 @@
+participant,source_csv_row,scale,item_number,question,Freedrive,AR Handle,Hybrid
+Parisa Ghasemi,5,NASA-TLX,1,Mental Demand — How mentally demanding was moving the board this way?,30,30,60
+Parisa Ghasemi,5,NASA-TLX,2,Physical Demand — How physically demanding was moving the board this way?,80,20,30
+Parisa Ghasemi,5,NASA-TLX,3,Temporal Demand — How hurried or rushed did this method feel?,20,10,10
+Parisa Ghasemi,5,NASA-TLX,4,Performance — How successful do you feel you were at positioning the board correctly?,90,80,80
+Parisa Ghasemi,5,NASA-TLX,5,Effort — How hard did you have to work to position the board this way?,40,20,30
+Parisa Ghasemi,5,NASA-TLX,6,"Frustration — How insecure, discouraged, irritated, stressed, or annoyed did you feel using this method?",20,20,20
+Parisa Ghasemi,5,Controllability,1,Fine Adjustment — How simple were small adjustments (tasks 6–10)?,2,2,2
+Parisa Ghasemi,5,Controllability,2,Coarse Adjustment — How simple were large adjustments (tasks 1–5)?,3,6,6
+Parisa Ghasemi,5,Controllability,3,Naturalness — How natural did it feel to control the robot's movement this way?,6,6,6
+Parisa Ghasemi,5,Predictability,1,Movement — How easy was it to predict how the robot was going to move?,3,2,3
+Parisa Ghasemi,5,Predictability,2,Position — How easy was it to predict where the robot was going to move?,6,2,3
+Parisa Ghasemi,5,Predictability,3,Onset Timing — How clearly could you tell when the robot was going to start moving?,7,4,5
+Parisa Ghasemi,5,Safety,1,Movement — How safe did you feel while the robot was moving?,6,5,5
+Parisa Ghasemi,5,Safety,2,Stationary — How safe did you feel that the robot was not going to move unexpectedly?,6,5,5
+Parisa Ghasemi,5,Trust,1,Trust — How much did you trust this method to safely position the board?,6,6,5
+Parisa Ghasemi,5,Additional Comments,1,Any Additional Comments?,,,
+Parisa Ghasemi,5,Overall Preference Rank,1,"Thinking back across all three control methods you used to move the board (Freedrive, AR Board and Handle, and Hybrid), please rank them from your most preferred (1) to your least preferred (3), based on your overall experience.",3,1,2
+,,,,,,,
+Mahya,6,NASA-TLX,1,Mental Demand — How mentally demanding was moving the board this way?,50,80,90
+Mahya,6,NASA-TLX,2,Physical Demand — How physically demanding was moving the board this way?,80,80,80
+Mahya,6,NASA-TLX,3,Temporal Demand — How hurried or rushed did this method feel?,20,30,20
+Mahya,6,NASA-TLX,4,Performance — How successful do you feel you were at positioning the board correctly?,90,70,80
+Mahya,6,NASA-TLX,5,Effort — How hard did you have to work to position the board this way?,80,80,70
+Mahya,6,NASA-TLX,6,"Frustration — How insecure, discouraged, irritated, stressed, or annoyed did you feel using this method?",10,70,20
+Mahya,6,Controllability,1,Fine Adjustment — How simple were small adjustments (tasks 6–10)?,5,6,6
+Mahya,6,Controllability,2,Coarse Adjustment — How simple were large adjustments (tasks 1–5)?,5,3,6
+Mahya,6,Controllability,3,Naturalness — How natural did it feel to control the robot's movement this way?,6,1,6
+Mahya,6,Predictability,1,Movement — How easy was it to predict how the robot was going to move?,6,5,6
+Mahya,6,Predictability,2,Position — How easy was it to predict where the robot was going to move?,6,5,6
+Mahya,6,Predictability,3,Onset Timing — How clearly could you tell when the robot was going to start moving?,6,3,5
+Mahya,6,Safety,1,Movement — How safe did you feel while the robot was moving?,7,4,6
+Mahya,6,Safety,2,Stationary — How safe did you feel that the robot was not going to move unexpectedly?,7,4,6
+Mahya,6,Trust,1,Trust — How much did you trust this method to safely position the board?,7,3,5
+Mahya,6,Additional Comments,1,Any Additional Comments?,,,
+Mahya,6,Overall Preference Rank,1,"Thinking back across all three control methods you used to move the board (Freedrive, AR Board and Handle, and Hybrid), please rank them from your most preferred (1) to your least preferred (3), based on your overall experience.",2,3,1
+,,,,,,,
+Pantea Habibi,7,NASA-TLX,1,Mental Demand — How mentally demanding was moving the board this way?,10,20,10
+Pantea Habibi,7,NASA-TLX,2,Physical Demand — How physically demanding was moving the board this way?,70,10,15
+Pantea Habibi,7,NASA-TLX,3,Temporal Demand — How hurried or rushed did this method feel?,10,0,0
+Pantea Habibi,7,NASA-TLX,4,Performance — How successful do you feel you were at positioning the board correctly?,90,90,90
+Pantea Habibi,7,NASA-TLX,5,Effort — How hard did you have to work to position the board this way?,20,10,10
+Pantea Habibi,7,NASA-TLX,6,"Frustration — How insecure, discouraged, irritated, stressed, or annoyed did you feel using this method?",0,0,0
+Pantea Habibi,7,Controllability,1,Fine Adjustment — How simple were small adjustments (tasks 6–10)?,6,5,7
+Pantea Habibi,7,Controllability,2,Coarse Adjustment — How simple were large adjustments (tasks 1–5)?,4,7,7
+Pantea Habibi,7,Controllability,3,Naturalness — How natural did it feel to control the robot's movement this way?,6,6,5
+Pantea Habibi,7,Predictability,1,Movement — How easy was it to predict how the robot was going to move?,7,4,6
+Pantea Habibi,7,Predictability,2,Position — How easy was it to predict where the robot was going to move?,7,4,6
+Pantea Habibi,7,Predictability,3,Onset Timing — How clearly could you tell when the robot was going to start moving?,7,4,6
+Pantea Habibi,7,Safety,1,Movement — How safe did you feel while the robot was moving?,7,5,5
+Pantea Habibi,7,Safety,2,Stationary — How safe did you feel that the robot was not going to move unexpectedly?,7,5,5
+Pantea Habibi,7,Trust,1,Trust — How much did you trust this method to safely position the board?,6,6,5
+Pantea Habibi,7,Additional Comments,1,Any Additional Comments?,,,Was mostly similar to AR mode but if the adjustment were supposed to be more accurate then maybe this would be better because alignment when you have physical feedback from the device would be easier for fine movements compared to to gross movement since releasing the pinch gesture add a little bit of jitter and it would be very straining to place very accurately
+Pantea Habibi,7,Overall Preference Rank,1,"Thinking back across all three control methods you used to move the board (Freedrive, AR Board and Handle, and Hybrid), please rank them from your most preferred (1) to your least preferred (3), based on your overall experience.",3,2,1
+,,,,,,,
+Austin Graves,8,NASA-TLX,1,Mental Demand — How mentally demanding was moving the board this way?,30,40,40
+Austin Graves,8,NASA-TLX,2,Physical Demand — How physically demanding was moving the board this way?,75,15,50
+Austin Graves,8,NASA-TLX,3,Temporal Demand — How hurried or rushed did this method feel?,20,10,30
+Austin Graves,8,NASA-TLX,4,Performance — How successful do you feel you were at positioning the board correctly?,80,70,95
+Austin Graves,8,NASA-TLX,5,Effort — How hard did you have to work to position the board this way?,70,35,35
+Austin Graves,8,NASA-TLX,6,"Frustration — How insecure, discouraged, irritated, stressed, or annoyed did you feel using this method?",80,45,10
+Austin Graves,8,Controllability,1,Fine Adjustment — How simple were small adjustments (tasks 6–10)?,3,2,6
+Austin Graves,8,Controllability,2,Coarse Adjustment — How simple were large adjustments (tasks 1–5)?,5,7,6
+Austin Graves,8,Controllability,3,Naturalness — How natural did it feel to control the robot's movement this way?,2,5,5
+Austin Graves,8,Predictability,1,Movement — How easy was it to predict how the robot was going to move?,7,3,3
+Austin Graves,8,Predictability,2,Position — How easy was it to predict where the robot was going to move?,7,2,6
+Austin Graves,8,Predictability,3,Onset Timing — How clearly could you tell when the robot was going to start moving?,6,6,5
+Austin Graves,8,Safety,1,Movement — How safe did you feel while the robot was moving?,7,5,5
+Austin Graves,8,Safety,2,Stationary — How safe did you feel that the robot was not going to move unexpectedly?,6,4,6
+Austin Graves,8,Trust,1,Trust — How much did you trust this method to safely position the board?,6,5,6
+Austin Graves,8,Additional Comments,1,Any Additional Comments?,"Certain translation motions were easy, other motions like rotation were more difficult.",Jerky motion of the robot was a little worrisome at times.,"The app accidentally detected me releasing the handle a few times, which made the robot move unexpectedly."
+Austin Graves,8,Overall Preference Rank,1,"Thinking back across all three control methods you used to move the board (Freedrive, AR Board and Handle, and Hybrid), please rank them from your most preferred (1) to your least preferred (3), based on your overall experience.",3,2,1
+,,,,,,,
+Sandeep,9,NASA-TLX,1,Mental Demand — How mentally demanding was moving the board this way?,40,40,25
+Sandeep,9,NASA-TLX,2,Physical Demand — How physically demanding was moving the board this way?,70,25,25
+Sandeep,9,NASA-TLX,3,Temporal Demand — How hurried or rushed did this method feel?,30,30,30
+Sandeep,9,NASA-TLX,4,Performance — How successful do you feel you were at positioning the board correctly?,80,80,85
+Sandeep,9,NASA-TLX,5,Effort — How hard did you have to work to position the board this way?,70,30,25
+Sandeep,9,NASA-TLX,6,"Frustration — How insecure, discouraged, irritated, stressed, or annoyed did you feel using this method?",60,20,25
+Sandeep,9,Controllability,1,Fine Adjustment — How simple were small adjustments (tasks 6–10)?,4,4,6
+Sandeep,9,Controllability,2,Coarse Adjustment — How simple were large adjustments (tasks 1–5)?,2,6,6
+Sandeep,9,Controllability,3,Naturalness — How natural did it feel to control the robot's movement this way?,5,5,5
+Sandeep,9,Predictability,1,Movement — How easy was it to predict how the robot was going to move?,5,5,6
+Sandeep,9,Predictability,2,Position — How easy was it to predict where the robot was going to move?,5,5,5
+Sandeep,9,Predictability,3,Onset Timing — How clearly could you tell when the robot was going to start moving?,5,5,5
+Sandeep,9,Safety,1,Movement — How safe did you feel while the robot was moving?,5,5,5
+Sandeep,9,Safety,2,Stationary — How safe did you feel that the robot was not going to move unexpectedly?,5,4,5
+Sandeep,9,Trust,1,Trust — How much did you trust this method to safely position the board?,5,5,5
+Sandeep,9,Additional Comments,1,Any Additional Comments?,,Manouverability is much better with pinching than with grasping.,
+Sandeep,9,Overall Preference Rank,1,"Thinking back across all three control methods you used to move the board (Freedrive, AR Board and Handle, and Hybrid), please rank them from your most preferred (1) to your least preferred (3), based on your overall experience.",3,2,1
+,,,,,,,
+Jung hun phee,10,NASA-TLX,1,Mental Demand — How mentally demanding was moving the board this way?,32,20,26
+Jung hun phee,10,NASA-TLX,2,Physical Demand — How physically demanding was moving the board this way?,44,12,21
+Jung hun phee,10,NASA-TLX,3,Temporal Demand — How hurried or rushed did this method feel?,34,11,10
+Jung hun phee,10,NASA-TLX,4,Performance — How successful do you feel you were at positioning the board correctly?,98,100,100
+Jung hun phee,10,NASA-TLX,5,Effort — How hard did you have to work to position the board this way?,27,9,14
+Jung hun phee,10,NASA-TLX,6,"Frustration — How insecure, discouraged, irritated, stressed, or annoyed did you feel using this method?",6,5,10
+Jung hun phee,10,Controllability,1,Fine Adjustment — How simple were small adjustments (tasks 6–10)?,4,7 (Very easy),7 (Very easy)
+Jung hun phee,10,Controllability,2,Coarse Adjustment — How simple were large adjustments (tasks 1–5)?,7 (Very easy),7 (Very easy),7 (Very easy)
+Jung hun phee,10,Controllability,3,Naturalness — How natural did it feel to control the robot's movement this way?,7 (Very easy),7 (Very easy),7 (Very easy)
+Jung hun phee,10,Predictability,1,Movement — How easy was it to predict how the robot was going to move?,7 (Very easy),7 (Very easy),7 (Very easy)
+Jung hun phee,10,Predictability,2,Position — How easy was it to predict where the robot was going to move?,7 (Very easy),7 (Very easy),7 (Very easy)
+Jung hun phee,10,Predictability,3,Onset Timing — How clearly could you tell when the robot was going to start moving?,7 (Very easy),7 (Very easy),7 (Very easy)
+Jung hun phee,10,Safety,1,Movement — How safe did you feel while the robot was moving?,7 (Very safe),7 (Very safe),7 (Very safe)
+Jung hun phee,10,Safety,2,Stationary — How safe did you feel that the robot was not going to move unexpectedly?,7 (Very safe),7 (Very safe),7 (Very safe)
+Jung hun phee,10,Trust,1,Trust — How much did you trust this method to safely position the board?,7 (Very much),7 (Very much),7 (Very much)
+Jung hun phee,10,Additional Comments,1,Any Additional Comments?,,,
+Jung hun phee,10,Overall Preference Rank,1,"Thinking back across all three control methods you used to move the board (Freedrive, AR Board and Handle, and Hybrid), please rank them from your most preferred (1) to your least preferred (3), based on your overall experience.",3,1,2
+,,,,,,,
+Junhyun Kim,11,NASA-TLX,1,Mental Demand — How mentally demanding was moving the board this way?,20,75,15
+Junhyun Kim,11,NASA-TLX,2,Physical Demand — How physically demanding was moving the board this way?,80,20,25
+Junhyun Kim,11,NASA-TLX,3,Temporal Demand — How hurried or rushed did this method feel?,70,85,25
+Junhyun Kim,11,NASA-TLX,4,Performance — How successful do you feel you were at positioning the board correctly?,75,25,20
+Junhyun Kim,11,NASA-TLX,5,Effort — How hard did you have to work to position the board this way?,75,60,20
+Junhyun Kim,11,NASA-TLX,6,"Frustration — How insecure, discouraged, irritated, stressed, or annoyed did you feel using this method?",30,70,15
+Junhyun Kim,11,Controllability,1,Fine Adjustment — How simple were small adjustments (tasks 6–10)?,6,2,6
+Junhyun Kim,11,Controllability,2,Coarse Adjustment — How simple were large adjustments (tasks 1–5)?,3,6,6
+Junhyun Kim,11,Controllability,3,Naturalness — How natural did it feel to control the robot's movement this way?,3,3,6
+Junhyun Kim,11,Predictability,1,Movement — How easy was it to predict how the robot was going to move?,7 (Very easy),3,5
+Junhyun Kim,11,Predictability,2,Position — How easy was it to predict where the robot was going to move?,7 (Very easy),5,6
+Junhyun Kim,11,Predictability,3,Onset Timing — How clearly could you tell when the robot was going to start moving?,5,5,5
+Junhyun Kim,11,Safety,1,Movement — How safe did you feel while the robot was moving?,2,6,6
+Junhyun Kim,11,Safety,2,Stationary — How safe did you feel that the robot was not going to move unexpectedly?,5,5,4
+Junhyun Kim,11,Trust,1,Trust — How much did you trust this method to safely position the board?,2,4,5
+Junhyun Kim,11,Additional Comments,1,Any Additional Comments?,"Physically stressed, the robot is too stiff",,
+Junhyun Kim,11,Overall Preference Rank,1,"Thinking back across all three control methods you used to move the board (Freedrive, AR Board and Handle, and Hybrid), please rank them from your most preferred (1) to your least preferred (3), based on your overall experience.",2,3,1
+,,,,,,,
+Mann Mehta,12,NASA-TLX,1,Mental Demand — How mentally demanding was moving the board this way?,30,72,46
+Mann Mehta,12,NASA-TLX,2,Physical Demand — How physically demanding was moving the board this way?,70,11,71
+Mann Mehta,12,NASA-TLX,3,Temporal Demand — How hurried or rushed did this method feel?,0,0,0
+Mann Mehta,12,NASA-TLX,4,Performance — How successful do you feel you were at positioning the board correctly?,91,81,91
+Mann Mehta,12,NASA-TLX,5,Effort — How hard did you have to work to position the board this way?,28,68,26
+Mann Mehta,12,NASA-TLX,6,"Frustration — How insecure, discouraged, irritated, stressed, or annoyed did you feel using this method?",15,46,6
+Mann Mehta,12,Controllability,1,Fine Adjustment — How simple were small adjustments (tasks 6–10)?,7 (Very easy),4,7 (Very easy)
+Mann Mehta,12,Controllability,2,Coarse Adjustment — How simple were large adjustments (tasks 1–5)?,7 (Very easy),6,7 (Very easy)
+Mann Mehta,12,Controllability,3,Naturalness — How natural did it feel to control the robot's movement this way?,5,5,7 (Very easy)
+Mann Mehta,12,Predictability,1,Movement — How easy was it to predict how the robot was going to move?,5,5,7 (Very easy)
+Mann Mehta,12,Predictability,2,Position — How easy was it to predict where the robot was going to move?,7 (Very easy),4,7 (Very easy)
+Mann Mehta,12,Predictability,3,Onset Timing — How clearly could you tell when the robot was going to start moving?,7 (Very easy),7 (Very easy),7 (Very easy)
+Mann Mehta,12,Safety,1,Movement — How safe did you feel while the robot was moving?,7 (Very safe),7 (Very safe),7 (Very safe)
+Mann Mehta,12,Safety,2,Stationary — How safe did you feel that the robot was not going to move unexpectedly?,7 (Very safe),7 (Very safe),7 (Very safe)
+Mann Mehta,12,Trust,1,Trust — How much did you trust this method to safely position the board?,7 (Very much),7 (Very much),7 (Very much)
+Mann Mehta,12,Additional Comments,1,Any Additional Comments?,,,
+Mann Mehta,12,Overall Preference Rank,1,"Thinking back across all three control methods you used to move the board (Freedrive, AR Board and Handle, and Hybrid), please rank them from your most preferred (1) to your least preferred (3), based on your overall experience.",2,3,1
+,,,,,,,
+Kuber Sarwal,13,NASA-TLX,1,Mental Demand — How mentally demanding was moving the board this way?,40,71,40
+Kuber Sarwal,13,NASA-TLX,2,Physical Demand — How physically demanding was moving the board this way?,62,81,40
+Kuber Sarwal,13,NASA-TLX,3,Temporal Demand — How hurried or rushed did this method feel?,4,4,4
+Kuber Sarwal,13,NASA-TLX,4,Performance — How successful do you feel you were at positioning the board correctly?,90,70,93
+Kuber Sarwal,13,NASA-TLX,5,Effort — How hard did you have to work to position the board this way?,48,78,41
+Kuber Sarwal,13,NASA-TLX,6,"Frustration — How insecure, discouraged, irritated, stressed, or annoyed did you feel using this method?",21,30,0
+Kuber Sarwal,13,Controllability,1,Fine Adjustment — How simple were small adjustments (tasks 6–10)?,6,7 (Very easy),7 (Very easy)
+Kuber Sarwal,13,Controllability,2,Coarse Adjustment — How simple were large adjustments (tasks 1–5)?,3,5,6
+Kuber Sarwal,13,Controllability,3,Naturalness — How natural did it feel to control the robot's movement this way?,4,6,7 (Very easy)
+Kuber Sarwal,13,Predictability,1,Movement — How easy was it to predict how the robot was going to move?,5,7 (Very easy),7 (Very easy)
+Kuber Sarwal,13,Predictability,2,Position — How easy was it to predict where the robot was going to move?,5,7 (Very easy),7 (Very easy)
+Kuber Sarwal,13,Predictability,3,Onset Timing — How clearly could you tell when the robot was going to start moving?,7 (Very easy),6,7 (Very easy)
+Kuber Sarwal,13,Safety,1,Movement — How safe did you feel while the robot was moving?,7 (Very safe),7 (Very safe),7 (Very safe)
+Kuber Sarwal,13,Safety,2,Stationary — How safe did you feel that the robot was not going to move unexpectedly?,7 (Very safe),7 (Very safe),7 (Very safe)
+Kuber Sarwal,13,Trust,1,Trust — How much did you trust this method to safely position the board?,5,6,7 (Very much)
+Kuber Sarwal,13,Additional Comments,1,Any Additional Comments?,,,
+Kuber Sarwal,13,Overall Preference Rank,1,"Thinking back across all three control methods you used to move the board (Freedrive, AR Board and Handle, and Hybrid), please rank them from your most preferred (1) to your least preferred (3), based on your overall experience.",3,2,1
+,,,,,,,
+Apoorva Narula,14,NASA-TLX,1,Mental Demand — How mentally demanding was moving the board this way?,10,20,10
+Apoorva Narula,14,NASA-TLX,2,Physical Demand — How physically demanding was moving the board this way?,10,20,10
+Apoorva Narula,14,NASA-TLX,3,Temporal Demand — How hurried or rushed did this method feel?,10,10,10
+Apoorva Narula,14,NASA-TLX,4,Performance — How successful do you feel you were at positioning the board correctly?,80,70,80
+Apoorva Narula,14,NASA-TLX,5,Effort — How hard did you have to work to position the board this way?,40,60,30
+Apoorva Narula,14,NASA-TLX,6,"Frustration — How insecure, discouraged, irritated, stressed, or annoyed did you feel using this method?",10,40,15
+Apoorva Narula,14,Controllability,1,Fine Adjustment — How simple were small adjustments (tasks 6–10)?,3,7 (Very easy),7 (Very easy)
+Apoorva Narula,14,Controllability,2,Coarse Adjustment — How simple were large adjustments (tasks 1–5)?,6,7 (Very easy),6
+Apoorva Narula,14,Controllability,3,Naturalness — How natural did it feel to control the robot's movement this way?,5,6,7 (Very easy)
+Apoorva Narula,14,Predictability,1,Movement — How easy was it to predict how the robot was going to move?,6,5,6
+Apoorva Narula,14,Predictability,2,Position — How easy was it to predict where the robot was going to move?,6,6,6
+Apoorva Narula,14,Predictability,3,Onset Timing — How clearly could you tell when the robot was going to start moving?,6,5,6
+Apoorva Narula,14,Safety,1,Movement — How safe did you feel while the robot was moving?,7 (Very safe),6,6
+Apoorva Narula,14,Safety,2,Stationary — How safe did you feel that the robot was not going to move unexpectedly?,7 (Very safe),6,6
+Apoorva Narula,14,Trust,1,Trust — How much did you trust this method to safely position the board?,6,6,6
+Apoorva Narula,14,Additional Comments,1,Any Additional Comments?,,,
+Apoorva Narula,14,Overall Preference Rank,1,"Thinking back across all three control methods you used to move the board (Freedrive, AR Board and Handle, and Hybrid), please rank them from your most preferred (1) to your least preferred (3), based on your overall experience.",2,3,1
+,,,,,,,
+Arunnganabathy Sankar,15,NASA-TLX,1,Mental Demand — How mentally demanding was moving the board this way?,0,10,8
+Arunnganabathy Sankar,15,NASA-TLX,2,Physical Demand — How physically demanding was moving the board this way?,10,0,11
+Arunnganabathy Sankar,15,NASA-TLX,3,Temporal Demand — How hurried or rushed did this method feel?,0,0,0
+Arunnganabathy Sankar,15,NASA-TLX,4,Performance — How successful do you feel you were at positioning the board correctly?,83,90,96
+Arunnganabathy Sankar,15,NASA-TLX,5,Effort — How hard did you have to work to position the board this way?,16,0,9
+Arunnganabathy Sankar,15,NASA-TLX,6,"Frustration — How insecure, discouraged, irritated, stressed, or annoyed did you feel using this method?",0,0,0
+Arunnganabathy Sankar,15,Controllability,1,Fine Adjustment — How simple were small adjustments (tasks 6–10)?,6,6,7 (Very easy)
+Arunnganabathy Sankar,15,Controllability,2,Coarse Adjustment — How simple were large adjustments (tasks 1–5)?,5,7 (Very easy),7 (Very easy)
+Arunnganabathy Sankar,15,Controllability,3,Naturalness — How natural did it feel to control the robot's movement this way?,4,5,6
+Arunnganabathy Sankar,15,Predictability,1,Movement — How easy was it to predict how the robot was going to move?,7 (Very easy),2,4
+Arunnganabathy Sankar,15,Predictability,2,Position — How easy was it to predict where the robot was going to move?,7 (Very easy),7 (Very easy),6
+Arunnganabathy Sankar,15,Predictability,3,Onset Timing — How clearly could you tell when the robot was going to start moving?,7 (Very easy),5,4
+Arunnganabathy Sankar,15,Safety,1,Movement — How safe did you feel while the robot was moving?,7 (Very safe),6,7 (Very safe)
+Arunnganabathy Sankar,15,Safety,2,Stationary — How safe did you feel that the robot was not going to move unexpectedly?,7 (Very safe),7 (Very safe),7 (Very safe)
+Arunnganabathy Sankar,15,Trust,1,Trust — How much did you trust this method to safely position the board?,7 (Very much),6,6
+Arunnganabathy Sankar,15,Additional Comments,1,Any Additional Comments?,,,
+Arunnganabathy Sankar,15,Overall Preference Rank,1,"Thinking back across all three control methods you used to move the board (Freedrive, AR Board and Handle, and Hybrid), please rank them from your most preferred (1) to your least preferred (3), based on your overall experience.",2,3,1

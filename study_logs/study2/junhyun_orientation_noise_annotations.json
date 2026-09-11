@@ -1,0 +1,24 @@
+{
+  "annotation_type": "orientation_confusion_noise",
+  "participant": "junhyun",
+  "source_log": "study_logs/study2/junhyun_replay.jsonl",
+  "trials": {
+    "junhyun-freedrive-1788482480993|freedrive|5": {
+      "annotation_note": "Participant manipulated the board with an incorrect/confused orientation; interval marked manually for sensitivity analysis.",
+      "intervals": [
+        {
+          "annotated_at": "2026-09-05T02:29:07.324481+00:00",
+          "end_frame_index": 231,
+          "end_time_monotonic_s": 522558.686192133,
+          "reason": "orientation_confusion",
+          "start_frame_index": 169,
+          "start_time_monotonic_s": 522555.368083093,
+          "treatment": "exclude_as_noise"
+        }
+      ],
+      "mode": "freedrive",
+      "session_id": "junhyun-freedrive-1788482480993",
+      "trial_idx": 5
+    }
+  }
+}

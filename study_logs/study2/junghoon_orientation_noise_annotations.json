@@ -1,0 +1,58 @@
+{
+  "annotation_type": "orientation_confusion_noise",
+  "participant": "junghoon",
+  "source_log": "study_logs/study2/junghoon_replay.jsonl",
+  "trials": {
+    "junghoon-freedrive-1788474280396|freedrive|5": {
+      "annotation_note": "Participant manipulated the board with an incorrect/confused orientation; interval marked manually for sensitivity analysis.",
+      "intervals": [
+        {
+          "annotated_at": "2026-09-05T01:12:12.058873+00:00",
+          "end_frame_index": 174,
+          "end_time_monotonic_s": 514347.555766114,
+          "reason": "orientation_confusion",
+          "start_frame_index": 147,
+          "start_time_monotonic_s": 514346.238501551,
+          "treatment": "exclude_as_noise"
+        }
+      ],
+      "mode": "freedrive",
+      "session_id": "junghoon-freedrive-1788474280396",
+      "trial_idx": 5
+    },
+    "junghoon-hybrid-1788475185509|hybrid|6": {
+      "annotation_note": "Participant manipulated the board with an incorrect/confused orientation; interval marked manually for sensitivity analysis.",
+      "intervals": [
+        {
+          "annotated_at": "2026-09-05T01:15:15.060035+00:00",
+          "end_frame_index": 461,
+          "end_time_monotonic_s": 515314.517882963,
+          "reason": "orientation_confusion",
+          "start_frame_index": 396,
+          "start_time_monotonic_s": 515311.152472532,
+          "treatment": "exclude_as_noise"
+        }
+      ],
+      "mode": "hybrid",
+      "session_id": "junghoon-hybrid-1788475185509",
+      "trial_idx": 6
+    },
+    "junghoon-hybrid-1788475185509|hybrid|7": {
+      "annotation_note": "Participant manipulated the board with an incorrect/confused orientation; interval marked manually for sensitivity analysis.",
+      "intervals": [
+        {
+          "annotated_at": "2026-09-05T02:36:04.167176+00:00",
+          "end_frame_index": 445,
+          "end_time_monotonic_s": 515356.918146022,
+          "reason": "orientation_confusion",
+          "start_frame_index": 335,
+          "start_time_monotonic_s": 515352.558757785,
+          "treatment": "exclude_as_noise"
+        }
+      ],
+      "mode": "hybrid",
+      "session_id": "junghoon-hybrid-1788475185509",
+      "trial_idx": 7
+    }
+  }
+}

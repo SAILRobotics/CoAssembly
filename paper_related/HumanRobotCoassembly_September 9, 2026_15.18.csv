@@ -1,0 +1,232 @@
+StartDate,EndDate,Status,IPAddress,Progress,Duration (in seconds),Finished,RecordedDate,ResponseId,RecipientLastName,RecipientFirstName,RecipientEmail,ExternalReference,LocationLatitude,LocationLongitude,DistributionChannel,UserLanguage,Last Seen Flow Element ID,Last Seen Question IDs,QID2,Q1,Q2,Q3,Q4,Q5,Q6,Q7,Q8,Q148,Q1,Q2,Q3,Q4_1,Q4_2,Q4_3,Q4_4,Q1,Q2,Q3,S2_TLX_Freedrive_1,S2_TLX_Freedrive_2,S2_TLX_Freedrive_3,S2_TLX_Freedrive_4,S2_TLX_Freedrive_5,S2_TLX_Freedrive_6,S2_Controllability_Freedrive_1,S2_Controllability_Freedrive_2,S2_Controllability_Freedrive_3,S2_Predictability_Freedrive_1,S2_Predictability_Freedrive_2,S2_Predictability_Freedrive_3,S2_Safety_Freedrive_1,S2_Safety_Freedrive_2,S2_Trust_Freedrive_1,Q149,S2_TLX_ARHandle_1,S2_TLX_ARHandle_2,S2_TLX_ARHandle_3,S2_TLX_ARHandle_4,S2_TLX_ARHandle_5,S2_TLX_ARHandle_6,S2_Controllability_ARHandle_1,S2_Controllability_ARHandle_2,S2_Controllability_ARHandle_3,S2_Predictability_ARHandle_1,S2_Predictability_ARHandle_2,S2_Predictability_ARHandle_3,S2_Safety_ARHandle_1,S2_Safety_ARHandle_2,S2_Trust_ARHandle_1,Q150,S2_TLX_Hybrid_1,S2_TLX_Hybrid_2,S2_TLX_Hybrid_3,S2_TLX_Hybrid_4,S2_TLX_Hybrid_5,S2_TLX_Hybrid_6,S2_Controllability_Hybrid_1,S2_Controllability_Hybrid_2,S2_Controllability_Hybrid_3,S2_Predictability_Hybrid_1,S2_Predictability_Hybrid_2,S2_Predictability_Hybrid_3,S2_Safety_Hybrid_1,S2_Safety_Hybrid_2,S2_Trust_Hybrid_1,Q151,S2_Rank_Overall_1,S2_Rank_Overall_2,S2_Rank_Overall_3,S4_TLX_Gesture_1,S4_TLX_Gesture_2,S4_TLX_Gesture_3,S4_TLX_Gesture_4,S4_TLX_Gesture_5,S4_TLX_Gesture_6,S4_Confidence_Gesture_1,S4_Confidence_Gesture_2,S4_Usability_Gesture_1,S4_Usability_Gesture_2,S4_Adaptability_Gesture_1,S4_Adaptability_Gesture_2,Q152,S4_TLX_LangGesture_1,S4_TLX_LangGesture_2,S4_TLX_LangGesture_3,S4_TLX_LangGesture_4,S4_TLX_LangGesture_5,S4_TLX_LangGesture_6,S4_Confidence_LangGesture_1,S4_Confidence_LangGesture_2,S4_Usability_LangGesture_1,S4_Usability_LangGesture_2,S4_Adaptability_LangGesture_1,S4_Adaptability_LangGesture_2,Q153,S4_TLX_TaskAware_1,S4_TLX_TaskAware_2,S4_TLX_TaskAware_3,S4_TLX_TaskAware_4,S4_TLX_TaskAware_5,S4_TLX_TaskAware_6,S4_Confidence_TaskAware_1,S4_Confidence_TaskAware_2,S4_Usability_TaskAware_1,S4_Usability_TaskAware_2,S4_Adaptability_TaskAware_1,S4_Adaptability_TaskAware_2,Q154,S4_Rank_Overall_1,S4_Rank_Overall_2,S4_Rank_Overall_3
+Start Date,End Date,Response Type,IP Address,Progress,Duration (in seconds),Finished,Recorded Date,Response ID,Recipient Last Name,Recipient First Name,Recipient Email,External Data Reference,Location Latitude,Location Longitude,Distribution Channel,User Language,Last Seen Flow Element ID,Last Seen Question IDs,"Human–Robot Interaction Study: Human–Robot Collaborative Assembly
+
+
+
+Principal Investigator: Prof. Mohsen Moghaddam 
+
+Researchers: Seok Joon Kim, Dante Santaniello
+
+Institution: Georgia Institute of Technology 
+
+Laboratory: SAIL Lab (ISyE) - George Tower 1224
+
+IRB Protocol Number:  IRB2025-320
+
+
+
+1. Purpose of the Study 
+
+Welcome, and thank you for your interest in this study.
+
+You are invited to participate in a research study investigating how humans interact and collaborate with robots during assembly tasks.
+
+The purpose of this study is to better understand how people communicate their intentions, request assistance, and work together with a robot during a co-assembly process. The findings from this study may help inform the design of more intuitive, effective, and user-friendly human–robot collaboration systems.
+
+
+
+2. Structure of the Study
+
+If you agree to participate, you will complete 4 studies. It is estimated to take 1.5 hours. 
+
+
+
+3. Data That May Be Collected During the study
+
+The researchers may collect information about your interaction with the robotic system, including:
+
+
+
+-Task completion time and task performance
+
+-Assembly errors or corrections
+
+-Robot movements and system logs
+
+-Requests for parts, tools, or assistance
+
+-Verbal descriptions, commands, or other spoken interactions
+
+-Hand, head, and pointing movements through Meta Quest3
+
+-Interaction timestamps
+
+-Video and/or audio recordings
+
+-Questionnaire responses
+
+
+
+The collected data will be used for research and related academic purposes only and will NOT be shared to public. 
+
+
+
+4. Potential Risks or Discomforts 
+
+The risks associated with this research are expected to be minimal.
+
+Possible risks or discomforts include:
+
+
+-Mild physical or mental fatigue from performing the assembly task.
+-Temporary frustration or confusion while interacting with the robot.
+-Mild discomfort from wearing an augmented or virtual reality headset.
+-Motion sickness, eye strain, dizziness, or headache when using a headset.
+-Accidental contact with the robot or objects in the workspace.
+
+
+
+The robotic system will operate under researcher supervision, and appropriate safety measures will be used. You will receive instructions regarding safe interaction with the robot before beginning the experiment. You should not intentionally enter restricted areas of the robot workspace unless instructed by the researcher. You may stop the experiment immediately if you feel uncomfortable or unsafe.
+
+
+
+5. Compensation
+
+You will receive 15 USD for participating in this study.
+
+
+
+6. Confidentiality 
+
+Reasonable measures will be taken to protect your privacy and the confidentiality of your research data. Your research data will be associated with a participant identification number rather than your name whenever possible. Data may be stored on password-protected computers, secure institutional storage systems, or encrypted research servers accessible only to authorized members of the research team.
+
+
+
+Results from this study may be presented in: Scientific publications such as Conference papers, Academic presentations Theses or dissertations, Research demonstrations.
+
+
+
+7. Voluntary Participation
+
+Your participation in this study is completely voluntary. You may: Decline to participate. Refuse to perform any activity that makes you uncomfortable. Ask questions at any time. Stop participating at any time without penalty. 
+
+
+
+8. Stopping the Experiment 
+
+You should immediately inform the researcher if you experience:
+
+-Physical discomfort
+
+-Dizziness or nausea
+
+-Significant eye strain Anxiety or distress
+
+-Concern about the robot's behavior
+
+
+
+The researcher may also stop the experiment if continuing the study could create a safety concern.
+
+
+
+9. Questions About the Research
+
+If you have questions about this research study, please contact:
+
+
+
+Dr. Mohsen Moghaddam: Principal Investigator mohsem.moghaddam@gatech.edu
+
+Seok Joon Kim: Main Researcher seokjoonkim@gatech.edu
+
+
+
+For questions about your rights as a research participant or concerns about the conduct of the study, please contact:
+
+Georgia Institute of Technology Institutional Review Board (IRB) (https://oria.gatech.edu/irb)",I have read the study description above and understand what I will be asked to do.,I understand that participation is voluntary and that I may stop at any time without penalty.,"If I feel discomfort (e.g., dizziness/nausea), I will notify the researcher and can stop immediately.","I understand that the study will collect system/performance data (e.g., task time, robot/system logs, hand/head trajectories, interaction logs, video/audio).",I understand how my data will be stored and used.,Do you grant permission for VR system video recording?,Do you give permission for real-world camera recording (face/room)?,I agree to participate in this study.,Please input your name,What is your gender?,What is your age?,What is your educational background?,Click to write the question text - How familiar are you with AR technologies?,Click to write the question text - How familiar are you with Robotics?,Click to write the question text - How familiar are you with collaborating / interacting with robots?,Click to write the question text - How familar are you with gearbox assembly (or mechanical assembly in general)?,Are you 18 years of age or older?,Are you able to read and understand English well enough to follow study instructions and answer survey questions?,Are you able to perform this study with your hand comfortably?,"Workload (NASA-TLX)
+Please rate the following on a scale of 0 (Low) to 100 (High). For the Performance item, 0 = Perfect and 100 = Failure. - Mental Demand — How mentally demanding was moving the board this way?","Workload (NASA-TLX)
+Please rate the following on a scale of 0 (Low) to 100 (High). For the Performance item, 0 = Perfect and 100 = Failure. - Physical Demand — How physically demanding was moving the board this way?","Workload (NASA-TLX)
+Please rate the following on a scale of 0 (Low) to 100 (High). For the Performance item, 0 = Perfect and 100 = Failure. - Temporal Demand — How hurried or rushed did this method feel?","Workload (NASA-TLX)
+Please rate the following on a scale of 0 (Low) to 100 (High). For the Performance item, 0 = Perfect and 100 = Failure. - Performance — How successful do you feel you were at positioning the board correctly?","Workload (NASA-TLX)
+Please rate the following on a scale of 0 (Low) to 100 (High). For the Performance item, 0 = Perfect and 100 = Failure. - Effort — How hard did you have to work to position the board this way?","Workload (NASA-TLX)
+Please rate the following on a scale of 0 (Low) to 100 (High). For the Performance item, 0 = Perfect and 100 = Failure. - Frustration — How insecure, discouraged, irritated, stressed, or annoyed did you feel using this method?","Controllability
+Scale: 1 (Very difficult) to 7 (Very easy). - Fine Adjustment — How simple were small adjustments (tasks 6–10)?","Controllability
+Scale: 1 (Very difficult) to 7 (Very easy). - Coarse Adjustment — How simple were large adjustments (tasks 1–5)?","Controllability
+Scale: 1 (Very difficult) to 7 (Very easy). - Naturalness — How natural did it feel to control the robot's movement this way?","Predictability
+Scale: 1 (Very difficult) to 7 (Very easy). - Movement — How easy was it to predict how the robot was going to move?","Predictability
+Scale: 1 (Very difficult) to 7 (Very easy). - Position — How easy was it to predict where the robot was going to move?","Predictability
+Scale: 1 (Very difficult) to 7 (Very easy). - Onset Timing — How clearly could you tell when the robot was going to start moving?","Safety
+Scale: 1 (Very unsafe) to 7 (Very safe). - Movement — How safe did you feel while the robot was moving?","Safety
+Scale: 1 (Very unsafe) to 7 (Very safe). - Stationary — How safe did you feel that the robot was not going to move unexpectedly?","Trust
+Scale: 1 (Not at all) to 7 (Very much). - Trust — How much did you trust this method to safely position the board?",Any Additional Comments?,"Workload (NASA-TLX)
+Please rate the following on a scale of 0 (Low) to 100 (High). For the Performance item, 0 = Perfect and 100 = Failure. - Mental Demand — How mentally demanding was moving the board this way?","Workload (NASA-TLX)
+Please rate the following on a scale of 0 (Low) to 100 (High). For the Performance item, 0 = Perfect and 100 = Failure. - Physical Demand — How physically demanding was moving the board this way?","Workload (NASA-TLX)
+Please rate the following on a scale of 0 (Low) to 100 (High). For the Performance item, 0 = Perfect and 100 = Failure. - Temporal Demand — How hurried or rushed did this method feel?","Workload (NASA-TLX)
+Please rate the following on a scale of 0 (Low) to 100 (High). For the Performance item, 0 = Perfect and 100 = Failure. - Performance — How successful do you feel you were at positioning the board correctly?","Workload (NASA-TLX)
+Please rate the following on a scale of 0 (Low) to 100 (High). For the Performance item, 0 = Perfect and 100 = Failure. - Effort — How hard did you have to work to position the board this way?","Workload (NASA-TLX)
+Please rate the following on a scale of 0 (Low) to 100 (High). For the Performance item, 0 = Perfect and 100 = Failure. - Frustration — How insecure, discouraged, irritated, stressed, or annoyed did you feel using this method?","Controllability
+Scale: 1 (Very difficult) to 7 (Very easy). - Fine Adjustment — How simple were small adjustments (tasks 6–10)?","Controllability
+Scale: 1 (Very difficult) to 7 (Very easy). - Coarse Adjustment — How simple were large adjustments (tasks 1–5)?","Controllability
+Scale: 1 (Very difficult) to 7 (Very easy). - Naturalness — How natural did it feel to control the robot's movement this way?","Predictability
+Scale: 1 (Very difficult) to 7 (Very easy). - Movement — How easy was it to predict how the robot was going to move?","Predictability
+Scale: 1 (Very difficult) to 7 (Very easy). - Position — How easy was it to predict where the robot was going to move?","Predictability
+Scale: 1 (Very difficult) to 7 (Very easy). - Onset Timing — How clearly could you tell when the robot was going to start moving?","Safety
+Scale: 1 (Very unsafe) to 7 (Very safe). - Movement — How safe did you feel while the robot was moving?","Safety
+Scale: 1 (Very unsafe) to 7 (Very safe). - Stationary — How safe did you feel that the robot was not going to move unexpectedly?","Trust
+Scale: 1 (Not at all) to 7 (Very much). - Trust — How much did you trust this method to safely position the board?",Any Additional Comment?,"Workload (NASA-TLX)
+Please rate the following on a scale of 0 (Low) to 100 (High). For the Performance item, 0 = Perfect and 100 = Failure. - Mental Demand — How mentally demanding was moving the board this way?","Workload (NASA-TLX)
+Please rate the following on a scale of 0 (Low) to 100 (High). For the Performance item, 0 = Perfect and 100 = Failure. - Physical Demand — How physically demanding was moving the board this way?","Workload (NASA-TLX)
+Please rate the following on a scale of 0 (Low) to 100 (High). For the Performance item, 0 = Perfect and 100 = Failure. - Temporal Demand — How hurried or rushed did this method feel?","Workload (NASA-TLX)
+Please rate the following on a scale of 0 (Low) to 100 (High). For the Performance item, 0 = Perfect and 100 = Failure. - Performance — How successful do you feel you were at positioning the board correctly?","Workload (NASA-TLX)
+Please rate the following on a scale of 0 (Low) to 100 (High). For the Performance item, 0 = Perfect and 100 = Failure. - Effort — How hard did you have to work to position the board this way?","Workload (NASA-TLX)
+Please rate the following on a scale of 0 (Low) to 100 (High). For the Performance item, 0 = Perfect and 100 = Failure. - Frustration — How insecure, discouraged, irritated, stressed, or annoyed did you feel using this method?","Controllability
+Scale: 1 (Very difficult) to 7 (Very easy). - Fine Adjustment — How simple were small adjustments (tasks 6–10)?","Controllability
+Scale: 1 (Very difficult) to 7 (Very easy). - Coarse Adjustment — How simple were large adjustments (tasks 1–5)?","Controllability
+Scale: 1 (Very difficult) to 7 (Very easy). - Naturalness — How natural did it feel to control the robot's movement this way?","Predictability
+Scale: 1 (Very difficult) to 7 (Very easy). - Movement — How easy was it to predict how the robot was going to move?","Predictability
+Scale: 1 (Very difficult) to 7 (Very easy). - Position — How easy was it to predict where the robot was going to move?","Predictability
+Scale: 1 (Very difficult) to 7 (Very easy). - Onset Timing — How clearly could you tell when the robot was going to start moving?","Safety
+Scale: 1 (Very unsafe) to 7 (Very safe). - Movement — How safe did you feel while the robot was moving?","Safety
+Scale: 1 (Very unsafe) to 7 (Very safe). - Stationary — How safe did you feel that the robot was not going to move unexpectedly?","Trust
+Scale: 1 (Not at all) to 7 (Very much). - Trust — How much did you trust this method to safely position the board?",Any additional comments?,"Thinking back across all three control methods you used to move the board (Freedrive, AR Board and Handle, and Hybrid), please rank them from your most preferred (1) to your least preferred (3), based on your overall experience. - Freedrive","Thinking back across all three control methods you used to move the board (Freedrive, AR Board and Handle, and Hybrid), please rank them from your most preferred (1) to your least preferred (3), based on your overall experience. - AR Board and Handle","Thinking back across all three control methods you used to move the board (Freedrive, AR Board and Handle, and Hybrid), please rank them from your most preferred (1) to your least preferred (3), based on your overall experience. - Hybrid","Workload (NASA-TLX)
+Please rate the following on a scale of 0 (Low) to 100 (High). For the Performance item, 0 = Perfect and 100 = Failure. - Mental Demand — How mentally demanding was it to request the part this way?","Workload (NASA-TLX)
+Please rate the following on a scale of 0 (Low) to 100 (High). For the Performance item, 0 = Perfect and 100 = Failure. - Physical Demand — How physically demanding was it to request the part this way?","Workload (NASA-TLX)
+Please rate the following on a scale of 0 (Low) to 100 (High). For the Performance item, 0 = Perfect and 100 = Failure. - Temporal Demand — How hurried or rushed did requesting the part feel?","Workload (NASA-TLX)
+Please rate the following on a scale of 0 (Low) to 100 (High). For the Performance item, 0 = Perfect and 100 = Failure. - Performance — How successful do you feel you were at getting the correct part?","Workload (NASA-TLX)
+Please rate the following on a scale of 0 (Low) to 100 (High). For the Performance item, 0 = Perfect and 100 = Failure. - Effort — How hard did you have to work to get the correct part?","Workload (NASA-TLX)
+Please rate the following on a scale of 0 (Low) to 100 (High). For the Performance item, 0 = Perfect and 100 = Failure. - Frustration — How insecure, discouraged, irritated, stressed, or annoyed did you feel while requesting the part?","Confidence
+Scale: 1 (Not at all) to 7 (Very much). - System — How confident were you that the system understood what you needed?","Confidence
+Scale: 1 (Not at all) to 7 (Very much). - Retrieval — How confident were you that the system was going to bring you the correct part?","Usability
+Scale: 1 (Very difficult) to 7 (Very easy). - Part Detection — How clear was it which part you needed to request?","Usability
+Scale: 1 (Very difficult) to 7 (Very easy). - Part Selection — How easy was it to request the part that you wanted?","Adaptability
+Scale: 1 (Not at all) to 7 (A great deal). - Phrasing — How much did you need to tailor the phrasing of your request to the system?","Adaptability
+Scale: 1 (Not at all) to 7 (A great deal). - Movement — How much did you need to adjust your position to request the part?",Any Additional Comments?,"Workload (NASA-TLX)
+Please rate the following on a scale of 0 (Low) to 100 (High). For the Performance item, 0 = Perfect and 100 = Failure. - Mental Demand — How mentally demanding was it to request the part this way?","Workload (NASA-TLX)
+Please rate the following on a scale of 0 (Low) to 100 (High). For the Performance item, 0 = Perfect and 100 = Failure. - Physical Demand — How physically demanding was it to request the part this way?","Workload (NASA-TLX)
+Please rate the following on a scale of 0 (Low) to 100 (High). For the Performance item, 0 = Perfect and 100 = Failure. - Temporal Demand — How hurried or rushed did requesting the part feel?","Workload (NASA-TLX)
+Please rate the following on a scale of 0 (Low) to 100 (High). For the Performance item, 0 = Perfect and 100 = Failure. - Performance — How successful do you feel you were at getting the correct part?","Workload (NASA-TLX)
+Please rate the following on a scale of 0 (Low) to 100 (High). For the Performance item, 0 = Perfect and 100 = Failure. - Effort — How hard did you have to work to get the correct part?","Workload (NASA-TLX)
+Please rate the following on a scale of 0 (Low) to 100 (High). For the Performance item, 0 = Perfect and 100 = Failure. - Frustration — How insecure, discouraged, irritated, stressed, or annoyed did you feel while requesting the part?","Confidence
+Scale: 1 (Not at all) to 7 (Very much). - System — How confident were you that the system understood what you needed?","Confidence
+Scale: 1 (Not at all) to 7 (Very much). - Retrieval — How confident were you that the system was going to bring you the correct part?","Usability
+Scale: 1 (Very difficult) to 7 (Very easy). - Part Detection — How clear was it which part you needed to request?","Usability
+Scale: 1 (Very difficult) to 7 (Very easy). - Part Selection — How easy was it to request the part that you wanted?","Adaptability
+Scale: 1 (Not at all) to 7 (A great deal). - Phrasing — How much did you need to tailor the phrasing of your request to the system?","Adaptability
+Scale: 1 (Not at all) to 7 (A great deal). - Movement — How much did you need to adjust your position to request the part?",Any additional comments?,"Workload (NASA-TLX)
+Please rate the following on a scale of 0 (Low) to 100 (High). For the Performance item, 0 = Perfect and 100 = Failure. - Mental Demand — How mentally demanding was it to request the part this way?","Workload (NASA-TLX)
+Please rate the following on a scale of 0 (Low) to 100 (High). For the Performance item, 0 = Perfect and 100 = Failure. - Physical Demand — How physically demanding was it to request the part this way?","Workload (NASA-TLX)
+Please rate the following on a scale of 0 (Low) to 100 (High). For the Performance item, 0 = Perfect and 100 = Failure. - Temporal Demand — How hurried or rushed did requesting the part feel?","Workload (NASA-TLX)
+Please rate the following on a scale of 0 (Low) to 100 (High). For the Performance item, 0 = Perfect and 100 = Failure. - Performance — How successful do you feel you were at getting the correct part?","Workload (NASA-TLX)
+Please rate the following on a scale of 0 (Low) to 100 (High). For the Performance item, 0 = Perfect and 100 = Failure. - Effort — How hard did you have to work to get the correct part?","Workload (NASA-TLX)
+Please rate the following on a scale of 0 (Low) to 100 (High). For the Performance item, 0 = Perfect and 100 = Failure. - Frustration — How insecure, discouraged, irritated, stressed, or annoyed did you feel while requesting the part?","Confidence
+Scale: 1 (Not at all) to 7 (Very much). - System — How confident were you that the system understood what you needed?","Confidence
+Scale: 1 (Not at all) to 7 (Very much). - Retrieval — How confident were you that the system was going to bring you the correct part?","Usability
+Scale: 1 (Very difficult) to 7 (Very easy). - Part Detection — How clear was it which part you needed to request?","Usability
+Scale: 1 (Very difficult) to 7 (Very easy). - Part Selection — How easy was it to request the part that you wanted?","Adaptability
+Scale: 1 (Not at all) to 7 (A great deal). - Phrasing — How much did you need to tailor the phrasing of your request to the system?","Adaptability
+Scale: 1 (Not at all) to 7 (A great deal). - Movement — How much did you need to adjust your position to request the part?",Any additional comments?,"Thinking back across all three ways of finding and requesting parts, please rank them from your most preferred (1) to your least preferred (3), based on your overall experience. - Gesture","Thinking back across all three ways of finding and requesting parts, please rank them from your most preferred (1) to your least preferred (3), based on your overall experience. - Language and Gesture","Thinking back across all three ways of finding and requesting parts, please rank them from your most preferred (1) to your least preferred (3), based on your overall experience. - Task-Aware Language and Gesture"
+"{""ImportId"":""startDate"",""timeZone"":""America/Denver""}","{""ImportId"":""endDate"",""timeZone"":""America/Denver""}","{""ImportId"":""status""}","{""ImportId"":""ipAddress""}","{""ImportId"":""progress""}","{""ImportId"":""duration""}","{""ImportId"":""finished""}","{""ImportId"":""recordedDate"",""timeZone"":""America/Denver""}","{""ImportId"":""_recordId""}","{""ImportId"":""recipientLastName""}","{""ImportId"":""recipientFirstName""}","{""ImportId"":""recipientEmail""}","{""ImportId"":""externalDataReference""}","{""ImportId"":""locationLatitude""}","{""ImportId"":""locationLongitude""}","{""ImportId"":""distributionChannel""}","{""ImportId"":""userLanguage""}","{""ImportId"":""LastSeenFlowID""}","{""ImportId"":""LastSeenQuestions""}","{""ImportId"":""QID2_TEXT""}","{""ImportId"":""QID9""}","{""ImportId"":""QID10""}","{""ImportId"":""QID11""}","{""ImportId"":""QID12""}","{""ImportId"":""QID13""}","{""ImportId"":""QID14""}","{""ImportId"":""QID15""}","{""ImportId"":""QID16""}","{""ImportId"":""QID151_TEXT""}","{""ImportId"":""QID17""}","{""ImportId"":""QID18_TEXT""}","{""ImportId"":""QID19_TEXT""}","{""ImportId"":""QID20_1""}","{""ImportId"":""QID20_2""}","{""ImportId"":""QID20_3""}","{""ImportId"":""QID20_4""}","{""ImportId"":""QID5""}","{""ImportId"":""QID6""}","{""ImportId"":""QID7""}","{""ImportId"":""QID95_1""}","{""ImportId"":""QID95_2""}","{""ImportId"":""QID95_3""}","{""ImportId"":""QID95_4""}","{""ImportId"":""QID95_5""}","{""ImportId"":""QID95_6""}","{""ImportId"":""QID96_1""}","{""ImportId"":""QID96_2""}","{""ImportId"":""QID96_3""}","{""ImportId"":""QID97_1""}","{""ImportId"":""QID97_2""}","{""ImportId"":""QID97_3""}","{""ImportId"":""QID98_1""}","{""ImportId"":""QID98_2""}","{""ImportId"":""QID99_1""}","{""ImportId"":""QID152_TEXT""}","{""ImportId"":""QID101_1""}","{""ImportId"":""QID101_2""}","{""ImportId"":""QID101_3""}","{""ImportId"":""QID101_4""}","{""ImportId"":""QID101_5""}","{""ImportId"":""QID101_6""}","{""ImportId"":""QID102_1""}","{""ImportId"":""QID102_2""}","{""ImportId"":""QID102_3""}","{""ImportId"":""QID103_1""}","{""ImportId"":""QID103_2""}","{""ImportId"":""QID103_3""}","{""ImportId"":""QID104_1""}","{""ImportId"":""QID104_2""}","{""ImportId"":""QID105_1""}","{""ImportId"":""QID153_TEXT""}","{""ImportId"":""QID107_1""}","{""ImportId"":""QID107_2""}","{""ImportId"":""QID107_3""}","{""ImportId"":""QID107_4""}","{""ImportId"":""QID107_5""}","{""ImportId"":""QID107_6""}","{""ImportId"":""QID108_1""}","{""ImportId"":""QID108_2""}","{""ImportId"":""QID108_3""}","{""ImportId"":""QID109_1""}","{""ImportId"":""QID109_2""}","{""ImportId"":""QID109_3""}","{""ImportId"":""QID110_1""}","{""ImportId"":""QID110_2""}","{""ImportId"":""QID111_1""}","{""ImportId"":""QID154_TEXT""}","{""ImportId"":""QID88_1""}","{""ImportId"":""QID88_2""}","{""ImportId"":""QID88_3""}","{""ImportId"":""QID137_1""}","{""ImportId"":""QID137_2""}","{""ImportId"":""QID137_3""}","{""ImportId"":""QID137_4""}","{""ImportId"":""QID137_5""}","{""ImportId"":""QID137_6""}","{""ImportId"":""QID138_1""}","{""ImportId"":""QID138_2""}","{""ImportId"":""QID139_1""}","{""ImportId"":""QID139_2""}","{""ImportId"":""QID140_1""}","{""ImportId"":""QID140_2""}","{""ImportId"":""QID155_TEXT""}","{""ImportId"":""QID142_1""}","{""ImportId"":""QID142_2""}","{""ImportId"":""QID142_3""}","{""ImportId"":""QID142_4""}","{""ImportId"":""QID142_5""}","{""ImportId"":""QID142_6""}","{""ImportId"":""QID143_1""}","{""ImportId"":""QID143_2""}","{""ImportId"":""QID144_1""}","{""ImportId"":""QID144_2""}","{""ImportId"":""QID145_1""}","{""ImportId"":""QID145_2""}","{""ImportId"":""QID156_TEXT""}","{""ImportId"":""QID147_1""}","{""ImportId"":""QID147_2""}","{""ImportId"":""QID147_3""}","{""ImportId"":""QID147_4""}","{""ImportId"":""QID147_5""}","{""ImportId"":""QID147_6""}","{""ImportId"":""QID148_1""}","{""ImportId"":""QID148_2""}","{""ImportId"":""QID149_1""}","{""ImportId"":""QID149_2""}","{""ImportId"":""QID150_1""}","{""ImportId"":""QID150_2""}","{""ImportId"":""QID157_TEXT""}","{""ImportId"":""QID90_1""}","{""ImportId"":""QID90_2""}","{""ImportId"":""QID90_3""}"
+2026-08-31 15:23:52,2026-08-31 15:25:47,IP Address,130.207.94.240,100,115,True,2026-08-31 15:25:48,R_1rGH61W62VLaLkZ,,,,,33.8212,-84.5705,anonymous,EN,FL_EOS_ID,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+2026-09-02 12:40:05,2026-09-02 12:49:02,IP Address,130.207.94.240,100,537,True,2026-09-02 12:49:03,R_6U2e4dhh2iEZaWl,,,,,33.8212,-84.5705,anonymous,EN,FL_EOS_ID,,,Yes,Yes,Yes,Yes,Yes,Yes,Yes,Yes,Parisa Ghasemi,Prefer not to say,29,PhD student in Mechanical Engineering,9,3,3,7,Yes,Yes,Yes,30,80,20,90,40,20,2,3,6,3,6,7 (Very easy),6,6,6,,30,20,10,80,20,20,2,6,6,2,2,4,5,5,6,,60,30,10,80,30,20,2,6,6,3,3,5,5,5,5,,3,1,2,100,100,30,80,100,80,5,4,2,2,1 (Not at all),6,,30,10,10,90,40,20,6,6,6,5,3,1 (Not at all),,10,10,10,90,10,10,6,6,7 (Very easy),7 (Very easy),3,1 (Not at all),,3,2,1
+2026-09-02 12:49:28,2026-09-02 13:00:01,IP Address,130.207.94.240,100,633,True,2026-09-02 13:00:02,R_5fHu0yq3gbQz7X2,,,,,33.8212,-84.5705,anonymous,EN,FL_EOS_ID,,,Yes,Yes,Yes,Yes,Yes,Yes,Yes,Yes,Mahya,Female,27,"Master in CS, a student in PhD in Industrial Engineering",6,5,5,8,Yes,Yes,Yes,50,80,20,90,80,10,5,5,6,6,6,6,7 (Very safe),7 (Very safe),7 (Very much),,80,80,30,70,80,70,6,3,1 (Very difficult),5,5,3,4,4,3,,90,80,20,80,70,20,6,6,6,6,6,5,6,6,5,,2,3,1,50,60,30,90,60,20,6,7 (Very much),6,6,1 (Not at all),6,,30,20,20,90,30,20,5,4,6,6,5,3,,50,60,30,90,60,20,6,7 (Very much),6,6,5,1 (Not at all),,3,2,1
+2026-09-02 15:55:10,2026-09-02 17:53:56,IP Address,130.207.94.240,100,7126,True,2026-09-02 17:53:57,R_1z5raruB87Aptw9,,,,,33.8212,-84.5705,anonymous,EN,FL_EOS_ID,,,Yes,Yes,Yes,Yes,Yes,Yes,Yes,Yes,Pantea Habibi,Female,31,"PhD in computer Science ",8,5,5,1,Yes,Yes,Yes,10,70,10,90,20,0,6,4,6,7 (Very easy),7 (Very easy),7 (Very easy),7 (Very safe),7 (Very safe),6,,20,10,0,90,10,,5,7 (Very easy),6,4,4,4,5,5,6,,10,15,0,90,10,,7 (Very easy),7 (Very easy),5,6,6,6,5,5,5,"Was mostly similar to AR mode but if the adjustment were supposed to be more accurate then maybe this would be better because alignment when you have physical feedback from the device would be easier for fine movements compared to to gross movement since releasing the pinch gesture add a little bit of jitter and it would be very straining to place very accurately ",3,2,1,50,50,,90,60,30,5,6,4,4,1 (Not at all),5,,80,,,80,20,5,4,4,5,6,7 (A great deal),1 (Not at all),,20,0,,80,30,5,3,4,5,5,3,1 (Not at all),"Second and third were similar but third would be easier and faster since you don’t need to describe much. For my case in three cases the system said the step completed even when I haven’t requested some of the parts. ",2,3,1
+2026-09-02 18:33:18,2026-09-02 20:09:56,IP Address,130.207.94.240,100,5798,True,2026-09-02 20:09:57,R_5ANnHF8zmvZ6Sgv,,,,,33.8212,-84.5705,anonymous,EN,FL_EOS_ID,,,Yes,Yes,Yes,Yes,Yes,Yes,Yes,Yes,Austin Graves,Male,23,Robotics PhD Student,8,9,8,9,Yes,Yes,Yes,30,75,20,80,70,80,3,5,2,7 (Very easy),7 (Very easy),6,7 (Very safe),6,6,"Certain translation motions were easy, other motions like rotation were more difficult.",40,15,10,70,35,45,2,7 (Very easy),5,3,2,6,5,4,5,Jerky motion of the robot was a little worrisome at times.,40,50,30,95,35,10,6,6,5,3,6,5,5,6,6,"The app accidentally detected me releasing the handle a few times, which made the robot move unexpectedly.",3,2,1,80,60,70,60,80,90,5,6,3,4,1 (Not at all),6,Bounding boxes obscured the visibility of the parts.,70,75,35,80,45,85,3,5,3,5,6,1 (Not at all),,30,20,15,95,5,10,6,7 (Very much),7 (Very easy),6,1 (Not at all),1 (Not at all),,2,3,1
+2026-09-03 13:38:33,2026-09-03 15:07:48,IP Address,130.207.94.240,100,5355,True,2026-09-03 15:07:48,R_7eODveFYZHyFD9v,,,,,33.8212,-84.5705,anonymous,EN,FL_EOS_ID,,,Yes,Yes,Yes,Yes,Yes,Yes,Yes,Yes,Sandeep,Male,22,ECE BSc and MS ECE,3,5,6,1,Yes,Yes,Yes,40,70,30,80,70,60,4,2,5,5,5,5,5,5,5,,40,25,30,80,30,20,4,6,5,5,5,5,5,4,5,Manouverability is much better with pinching than with grasping.,25,25,30,85,25,25,6,6,5,6,5,5,5,5,5,,3,2,1,70,60,30,35,70,65,2,3,2,2,1 (Not at all),3,,60,10,20,50,40,40,5,5,5,5,3,2,,20,10,20,85,25,15,6,6,6,6,6,6,,3,2,1
+2026-09-03 16:03:08,2026-09-03 17:22:37,IP Address,130.207.94.240,100,4768,True,2026-09-03 17:22:38,R_3poDEYgP4EGvFlg,,,,,33.8212,-84.5705,anonymous,EN,FL_EOS_ID,,,Yes,Yes,Yes,Yes,Yes,Yes,Yes,Yes,Jung hun phee,Male,29,PhD program,6,4,3,3,Yes,Yes,Yes,32,44,34,98,27,6,4,7 (Very easy),7 (Very easy),7 (Very easy),7 (Very easy),7 (Very easy),7 (Very safe),7 (Very safe),7 (Very much),,20,12,11,100,9,5,7 (Very easy),7 (Very easy),7 (Very easy),7 (Very easy),7 (Very easy),7 (Very easy),7 (Very safe),7 (Very safe),7 (Very much),,26,21,10,100,14,10,7 (Very easy),7 (Very easy),7 (Very easy),7 (Very easy),7 (Very easy),7 (Very easy),7 (Very safe),7 (Very safe),7 (Very much),,3,1,2,100,100,100,40,100,100,1 (Not at all),1 (Not at all),1 (Very difficult),1 (Very difficult),1 (Not at all),1 (Not at all),,54,10,36,58,49,56,3,2,3,4,4,4,,5,0,1,100,0,6,7 (Very much),7 (Very much),7 (Very easy),7 (Very easy),7 (A great deal),7 (A great deal),,3,2,1
+2026-09-03 18:09:04,2026-09-03 20:00:01,IP Address,130.207.94.240,100,6656,True,2026-09-03 20:00:02,R_5B335v2YdplreZb,,,,,33.8212,-84.5705,anonymous,EN,FL_EOS_ID,,,Yes,Yes,Yes,Yes,Yes,Yes,Yes,Yes,Junhyun Kim,Male,26,MS in Robotics,5,8,3,7,Yes,Yes,Yes,20,80,70,75,75,30,6,3,3,7 (Very easy),7 (Very easy),5,2,5,2,"Physically stressed, the robot is too stiff",75,20,85,25,60,70,2,6,3,3,5,5,6,5,4,,15,25,25,20,20,15,6,6,6,5,6,5,6,4,5,,2,3,1,35,50,40,15,35,20,6,6,4,5,1 (Not at all),6,,50,10,50,30,30,25,4,4,4,3,7 (A great deal),1 (Not at all),,20,10,15,20,15,20,5,5,4,6,3,1 (Not at all),,2,3,1
+2026-09-04 08:00:31,2026-09-04 09:41:14,IP Address,130.207.94.240,100,6043,True,2026-09-04 09:41:16,R_5SoN3SpywjpBIc1,,,,,33.8212,-84.5705,anonymous,EN,FL_EOS_ID,,,Yes,Yes,Yes,Yes,Yes,Yes,Yes,Yes,Mann Mehta,Male,19,"Computer Engineering ",2,4,3,1,Yes,Yes,Yes,30,70,,91,28,15,7 (Very easy),7 (Very easy),5,5,7 (Very easy),7 (Very easy),7 (Very safe),7 (Very safe),7 (Very much),,72,11,,81,68,46,4,6,5,5,4,7 (Very easy),7 (Very safe),7 (Very safe),7 (Very much),,46,71,0,91,26,6,7 (Very easy),7 (Very easy),7 (Very easy),7 (Very easy),7 (Very easy),7 (Very easy),7 (Very safe),7 (Very safe),7 (Very much),,2,3,1,33,,,75,40,10,5,7 (Very much),7 (Very easy),7 (Very easy),1 (Not at all),3,,17,0,,72,0,,7 (Very much),7 (Very much),7 (Very easy),7 (Very easy),7 (A great deal),1 (Not at all),,,,,92,,,7 (Very much),7 (Very much),7 (Very easy),7 (Very easy),3,1 (Not at all),,2,3,1
+2026-09-04 11:00:08,2026-09-04 12:27:15,IP Address,130.207.94.240,100,5226,True,2026-09-04 12:27:15,R_5aKaVMgYOVdvS6t,,,,,33.8212,-84.5705,anonymous,EN,FL_EOS_ID,,,Yes,Yes,Yes,Yes,Yes,Yes,Yes,Yes,"Kuber Sarwal ",Male,18,"Student at Georgia Institute of Technology ",5,8,7,2,Yes,Yes,Yes,40,62,4,90,48,21,6,3,4,5,5,7 (Very easy),7 (Very safe),7 (Very safe),5,,71,81,4,70,78,30,7 (Very easy),5,6,7 (Very easy),7 (Very easy),6,7 (Very safe),7 (Very safe),6,,40,40,,93,41,,7 (Very easy),6,7 (Very easy),7 (Very easy),7 (Very easy),7 (Very easy),7 (Very safe),7 (Very safe),7 (Very much),,3,2,1,40,40,,82,39,6,1 (Not at all),6,4,6,3,2,,29,20,,100,36,6,6,6,6,7 (Very easy),1 (Not at all),1 (Not at all),,60,20,,65,34,7,7 (Very much),7 (Very much),7 (Very easy),7 (Very easy),1 (Not at all),1 (Not at all),,2,3,1
+2026-09-04 14:10:39,2026-09-04 15:52:52,IP Address,130.207.94.240,100,6133,True,2026-09-04 15:52:53,R_1ZVJ3ADF3OgDwGJ,,,,,33.8212,-84.5705,anonymous,EN,FL_EOS_ID,,,Yes,Yes,Yes,Yes,Yes,No,No,Yes,Apoorva Narula,Male,25,"Industrial engineer, completed masters degree ",5,5,3,3,Yes,Yes,Yes,10,10,10,80,40,10,3,6,5,6,6,6,7 (Very safe),7 (Very safe),6,,20,20,10,70,60,40,7 (Very easy),7 (Very easy),6,5,6,5,6,6,6,,10,10,10,80,30,15,7 (Very easy),6,7 (Very easy),6,6,6,6,6,6,,2,3,1,1,1,10,95,5,1,7 (Very much),7 (Very much),7 (Very easy),7 (Very easy),,,,20,1,5,95,90,10,7 (Very much),6,6,6,4,1 (Not at all),,5,1,1,90,10,5,6,7 (Very much),6,6,3,1 (Not at all),,3,2,1
+2026-09-05 07:36:43,2026-09-05 09:09:28,IP Address,130.207.94.240,100,5565,True,2026-09-05 09:09:28,R_5uFBfBUASByGt69,,,,,33.8212,-84.5705,anonymous,EN,FL_EOS_ID,,,Yes,Yes,Yes,Yes,Yes,Yes,Yes,Yes,"Arunnganabathy Sankar ",Male,22,Master’s degree,4,8,1,10,Yes,Yes,Yes,,10,0,83,16,,6,5,4,7 (Very easy),7 (Very easy),7 (Very easy),7 (Very safe),7 (Very safe),7 (Very much),,10,,,90,,,6,7 (Very easy),5,2,7 (Very easy),5,6,7 (Very safe),6,,8,11,,96,9,,7 (Very easy),7 (Very easy),6,4,6,4,7 (Very safe),7 (Very safe),6,,2,3,1,,4,,42,28,59,3,3,5,2,1 (Not at all),6,,27,,,50,17,48,4,4,4,3,6,1 (Not at all),,16,,,63,12,25,5,5,5,6,4,1 (Not at all),,3,2,1
+2026-08-31 17:25:46,2026-08-31 18:58:33,IP Address,130.207.94.240,38,5566,False,2026-09-07 18:58:35,R_5jST5N2JqWWFpOo,,,,,33.8212,-84.5705,anonymous,EN,FL_34,"QID106,QID107,QID108,QID109,QID110,QID111",Sandeep John Philip,Yes,Yes,Yes,Yes,Yes,Yes,Yes,Yes,Sandeep John Philip,Male,22,MS in ECE,4,6,5,5,Yes,Yes,Yes,40,70,50,65,80,20,4,2,4,6,3,6,5,4,5,,40,30,20,50,65,30,2,6,5,5,5,3,4,3,4,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,

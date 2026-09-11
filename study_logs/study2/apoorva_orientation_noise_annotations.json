@@ -1,0 +1,101 @@
+{
+  "annotation_type": "orientation_confusion_noise",
+  "participant": "apoorva",
+  "source_log": "study_logs/study2/apoorva_replay.jsonl",
+  "trials": {
+    "apoorva-ar-1788555649232|ar|5": {
+      "annotation_note": "Participant manipulated the board with an incorrect/confused orientation; interval marked manually for sensitivity analysis.",
+      "intervals": [
+        {
+          "annotated_at": "2026-09-05T00:59:57.285955+00:00",
+          "end_frame_index": 199,
+          "end_time_monotonic_s": 595582.539141367,
+          "reason": "orientation_confusion",
+          "start_frame_index": 96,
+          "start_time_monotonic_s": 595577.436762252,
+          "treatment": "exclude_as_noise"
+        },
+        {
+          "annotated_at": "2026-09-05T01:00:52.278110+00:00",
+          "end_frame_index": 536,
+          "end_time_monotonic_s": 595599.883411258,
+          "reason": "orientation_confusion",
+          "start_frame_index": 432,
+          "start_time_monotonic_s": 595594.546087318,
+          "treatment": "exclude_as_noise"
+        }
+      ],
+      "mode": "ar",
+      "session_id": "apoorva-ar-1788555649232",
+      "trial_idx": 5
+    },
+    "apoorva-ar-1788555649232|ar|6": {
+      "annotation_note": "Participant manipulated the board with an incorrect/confused orientation; interval marked manually for sensitivity analysis.",
+      "intervals": [
+        {
+          "annotated_at": "2026-09-05T01:05:09.397073+00:00",
+          "end_frame_index": 404,
+          "end_time_monotonic_s": 595662.72546817,
+          "reason": "orientation_confusion",
+          "start_frame_index": 340,
+          "start_time_monotonic_s": 595659.357705636,
+          "treatment": "exclude_as_noise"
+        }
+      ],
+      "mode": "ar",
+      "session_id": "apoorva-ar-1788555649232",
+      "trial_idx": 6
+    },
+    "apoorva-freedrive-1788554733028|freedrive|6": {
+      "annotation_note": "Participant manipulated the board with an incorrect/confused orientation; interval marked manually for sensitivity analysis.",
+      "intervals": [
+        {
+          "annotated_at": "2026-09-05T01:02:46.513966+00:00",
+          "end_frame_index": 346,
+          "end_time_monotonic_s": 594916.015858662,
+          "reason": "orientation_confusion",
+          "start_frame_index": 320,
+          "start_time_monotonic_s": 594914.594463143,
+          "treatment": "exclude_as_noise"
+        }
+      ],
+      "mode": "freedrive",
+      "session_id": "apoorva-freedrive-1788554733028",
+      "trial_idx": 6
+    },
+    "apoorva-hybrid-1788556252774|hybrid|5": {
+      "annotation_note": "Participant manipulated the board with an incorrect/confused orientation; interval marked manually for sensitivity analysis.",
+      "intervals": [
+        {
+          "annotated_at": "2026-09-05T01:06:37.654391+00:00",
+          "end_frame_index": 437,
+          "end_time_monotonic_s": 596165.976368351,
+          "reason": "orientation_confusion",
+          "start_frame_index": 396,
+          "start_time_monotonic_s": 596163.774459915,
+          "treatment": "exclude_as_noise"
+        }
+      ],
+      "mode": "hybrid",
+      "session_id": "apoorva-hybrid-1788556252774",
+      "trial_idx": 5
+    },
+    "apoorva-hybrid-1788556252774|hybrid|6": {
+      "annotation_note": "Participant manipulated the board with an incorrect/confused orientation; interval marked manually for sensitivity analysis.",
+      "intervals": [
+        {
+          "annotated_at": "2026-09-05T01:07:05.750552+00:00",
+          "end_frame_index": 83,
+          "end_time_monotonic_s": 596192.205508805,
+          "reason": "orientation_confusion",
+          "start_frame_index": 45,
+          "start_time_monotonic_s": 596190.337786474,
+          "treatment": "exclude_as_noise"
+        }
+      ],
+      "mode": "hybrid",
+      "session_id": "apoorva-hybrid-1788556252774",
+      "trial_idx": 6
+    }
+  }
+}
