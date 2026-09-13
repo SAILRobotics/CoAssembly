@@ -1,0 +1,153 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Tables II–III Value Provenance Audit</title>
+<style>
+@page { size: letter; margin: 0.55in; }
+body { font-family: Arial, sans-serif; color:#172033; font-size:9.2pt; line-height:1.28; }
+h1 { font-size:20pt; margin:0 0 4px; color:#17365d; }
+h2 { font-size:14pt; color:#17365d; border-bottom:2px solid #6f8fb6; margin:18px 0 7px; }
+h3 { font-size:11pt; color:#234f7d; margin:12px 0 5px; }
+p { margin:5px 0; } code { font-size:8.4pt; color:#7b2639; }
+table { width:100%; border-collapse:collapse; margin:6px 0 10px; page-break-inside:auto; }
+tr { page-break-inside:avoid; } th { background:#274c77; color:white; }
+th,td { border:1px solid #aab5c2; padding:3px 4px; vertical-align:top; }
+tr:nth-child(even) td { background:#f2f6fa; }
+.ok { color:#176b36; font-weight:bold; } .warn { color:#9a4d00; font-weight:bold; }
+.box { padding:7px 9px; background:#eef5ed; border-left:4px solid #3d7d4c; margin:8px 0; }
+.warning { padding:7px 9px; background:#fff3df; border-left:4px solid #d18316; margin:8px 0; }
+.small { font-size:8.3pt; } .page { page-break-before:always; }
+ul { margin:4px 0 7px 18px; padding:0; } li { margin:2px 0; }
+</style></head><body>
+<h1>Tables II–III Value Provenance Audit</h1>
+<p><b>Paper:</b> <code>paper/6a8e554fac122323bf4b0f87/root.tex</code><br>
+<b>Audited sections:</b> Experiment 2 (Table II) and Experiment 3 (Table III)<br>
+<b>Audit date:</b> September 13, 2026</p>
+
+<div class="box"><b>Result.</b> All displayed numerical values in Tables II and III match the current analysis outputs after the rounding used in the paper. Table II objective inferential statistics were independently recomputed from the trial-level CSV and also match. The principal provenance caveat is that no original Study 2 script exported those objective tests; the accompanying <code>audit_experiment_tables.py</code> now reproduces them. One Experiment 3 procedure/count distinction requires clarification, described below.</div>
+
+<h2>How internally calculated values are produced</h2>
+<ul>
+<li><b>Mean and SD:</b> trials/steps are first summarized within participant and condition; the table reports the mean and sample SD across participants.</li>
+<li><b>Friedman test:</b> three paired condition vectors are compared; Table II objective tests use N=10 and questionnaire tests use N=11.</li>
+<li><b>Kendall’s W:</b> <code>Friedman chi-square / [N × (3−1)]</code>.</li>
+<li><b>Pairwise prose values:</b> paired, two-sided Wilcoxon signed-rank tests followed by Holm correction across the three condition pairs for each metric.</li>
+</ul>
+
+<h2>Table II — Experiment 2 objective metrics</h2>
+<p><b>Primary data:</b> <code>study_logs/study2/study2_efficiency_conditions.csv</code><br>
+<b>Extractor:</b> <code>study2_replay_to_csv.py</code><br>
+<b>Independent statistical reproduction:</b> <code>paper_related/audit_experiment_tables.py</code></p>
+<p>The extractor truncates every trial at first target reach, retains trials 0–7, applies edited grasp/orientation-noise annotations, and outputs one row per participant × assigned condition × trial. For each table cell, the relevant CSV column is averaged across trials within each participant; the ten participant means are then averaged and their sample SD calculated.</p>
+
+<table><tr><th>Paper row</th><th>CSV column</th><th>Freedrive</th><th>AR Handle</th><th>Hybrid</th><th>Recomputed p / W</th></tr>
+<tr><td>Right-hand path (m)</td><td><code>hand_movement_m</code></td><td>2.0360 ± 0.6525</td><td>1.5031 ± 0.2007</td><td>1.2360 ± 0.1472</td><td>0.000225 / 0.840</td></tr>
+<tr><td>Interaction time (s)</td><td><code>interaction_time_s</code></td><td>9.2611 ± 3.4657</td><td>9.6741 ± 4.2871</td><td>5.8398 ± 2.1446</td><td>0.000553 / 0.750</td></tr>
+<tr><td>Completion time (s)</td><td><code>completion_time_s</code></td><td>10.4772 ± 4.4081</td><td>20.9606 ± 5.7574</td><td>15.4462 ± 2.9596</td><td>0.000112 / 0.910</td></tr>
+<tr><td>Interactions (#)</td><td><code>num_interactions</code></td><td>2.7625 ± 1.3143</td><td>1.8411 ± 0.2931</td><td>1.7000 ± 0.3689</td><td>0.041411 / 0.318</td></tr>
+<tr><td>Translation gain/hand (m/m)</td><td><code>translation_per_hand_m</code></td><td>0.4954 ± 0.1123</td><td>0.5928 ± 0.0698</td><td>0.6714 ± 0.0735</td><td>0.000676 / 0.730</td></tr>
+<tr><td>Rotation gain/hand (deg/m)</td><td><code>rotation_per_hand_m</code></td><td>47.9635 ± 12.0784</td><td>50.7794 ± 6.4564</td><td>61.2040 ± 6.1186</td><td>0.002243 / 0.610</td></tr></table>
+<p class="ok">All six rows round to the values printed in Table II.</p>
+
+<h3>Definitions originating inside the Study 2 extractor</h3>
+<table><tr><th>Metric</th><th>Internal origin</th></tr>
+<tr><td>Right-hand path</td><td>Cumulative Euclidean displacement of valid right-hand samples from the first interaction to first target reach, after discontinuity filtering. Orientation-noise hand movement is removed for the AR-affected channel.</td></tr>
+<tr><td>Interaction time</td><td>Union duration of active interaction intervals: annotated AR grasp–release intervals and detected Freedrive robot-motion intervals. Overlap in Hybrid is counted once.</td></tr>
+<tr><td>Completion time</td><td>Elapsed time from the first interaction (first robot movement for Freedrive or first annotated AR grasp) to first maintained target reach.</td></tr>
+<tr><td>Number of interactions</td><td>Count of AR grasp episodes and/or Freedrive motion episodes before first reach.</td></tr>
+<tr><td>Translation gain/hand</td><td>Translation-error reduction divided by right-hand path length.</td></tr>
+<tr><td>Rotation gain/hand</td><td>Rotation-error reduction divided by right-hand path length. Annotated user-orientation mistakes do not contribute a negative rotation penalty to the affected method.</td></tr></table>
+
+<h3>Table II objective pairwise values supporting the text</h3>
+<table><tr><th>Claimed comparison</th><th>Holm p from recomputation</th><th>Status</th></tr>
+<tr><td>Completion: Freedrive vs AR; Freedrive vs Hybrid</td><td>.00586; .00586 → reported .006</td><td class="ok">Matches</td></tr>
+<tr><td>Hand path: Hybrid vs Freedrive; Hybrid vs AR</td><td>.00586; .00586 → reported ≤.006</td><td class="ok">Matches</td></tr>
+<tr><td>Interaction time: Hybrid vs Freedrive; Hybrid vs AR</td><td>.00586; .00586 → reported .006</td><td class="ok">Matches</td></tr>
+<tr><td>Translation gain/hand: Hybrid vs Freedrive; Hybrid vs AR</td><td>.00586; .03906 → reported .006 and .039</td><td class="ok">Matches</td></tr>
+<tr><td>Rotation gain/hand: Hybrid vs Freedrive; Hybrid vs AR</td><td>.00781; .00586 → reported .008 and .006</td><td class="ok">Matches</td></tr></table>
+
+<div class="page"></div>
+<h2>Table II — Experiment 2 questionnaire metrics</h2>
+<p><b>Input:</b> <code>paper_related/H2R_UserStudy_Analysis - study2_responses_side_by_side.csv</code><br>
+<b>Analysis:</b> <code>paper_related/format_qualtrics_condition_comparison.py</code><br>
+<b>Descriptive output:</b> <code>paper_related/study2_edited_condition_summary.csv</code><br>
+<b>Inferential output:</b> <code>paper_related/study2_edited_pairwise_tests.csv</code><br>
+<b>Readable report:</b> <code>paper_related/study2_edited_analysis_report.md</code></p>
+
+<table><tr><th>Paper row</th><th>Output scale name</th><th>Freedrive</th><th>AR Handle</th><th>Hybrid</th><th>p / W</th></tr>
+<tr><td>Workload</td><td>Task-Specific Workload</td><td>38.84 ± 18.30</td><td>35.64 ± 24.06</td><td>26.80 ± 16.36</td><td>.231 / .13</td></tr>
+<tr><td>Adj. control</td><td>Adjustment Controllability</td><td>4.70 ± 0.99</td><td>5.27 ± 1.17</td><td>6.21 ± 0.70</td><td>&lt;.001 / .69</td></tr>
+<tr><td>Motion predict.</td><td>Robot Motion Predictability</td><td>6.21 ± 0.69</td><td>4.82 ± 1.26</td><td>5.67 ± 1.09</td><td>.005 / .48</td></tr>
+<tr><td>Op. safety</td><td>Perceived Operational Safety</td><td>6.36 ± 1.14</td><td>5.64 ± 1.12</td><td>5.95 ± 0.91</td><td>.034 / .31</td></tr>
+<tr><td>Position trust</td><td>Trust in Safe Positioning</td><td>5.82 ± 1.47</td><td>5.55 ± 1.21</td><td>5.82 ± 0.87</td><td>.687 / .03</td></tr>
+<tr><td>Preference rank</td><td>Overall Preference Rank</td><td>2.55</td><td>2.27</td><td>1.18</td><td>.003 / .52</td></tr></table>
+<p>The workload composite averages Mental Demand, Physical Demand, Effort, and Frustration. Temporal Demand and Performance are excluded. Other constructs average the questionnaire items specified in the analysis script. Preference ranks are directly taken from the ranking response and then analyzed like the other paired outcomes.</p>
+<p class="ok">The Table II questionnaire values and every pairwise statement in its results text match the current report.</p>
+
+<h2>Table III — Experiment 3 objective metrics</h2>
+<p><b>Raw input:</b> <code>study_logs/study4/&lt;participant&gt;/&lt;condition&gt;.csv</code><br>
+<b>Extractor:</b> <code>paper_related/study4_full_report.py</code><br>
+<b>Exact table source:</b> <code>paper_related/study4_condition_summary.csv</code><br>
+<b>Conversation-level source:</b> <code>paper_related/study4_conversations.csv</code></p>
+
+<table><tr><th>Paper row</th><th>Exact output metric/formula</th><th>Gesture</th><th>Language</th><th>Task-Aware</th></tr>
+<tr><td>Total time (s)</td><td><code>total_time_s</code></td><td>247.367 ± 111.561</td><td>239.389 ± 53.991</td><td>213.390 ± 50.144</td></tr>
+<tr><td>Interactions (#)</td><td><code>interactions_total</code>: hover rows for Gesture; VLM request/answer interaction rows for language conditions</td><td>274.182 ± 144.560</td><td>21.091 ± 3.177</td><td>21.000 ± 1.732</td></tr>
+<tr><td>Wrong selections (%)</td><td><code>100 × error_rate</code>: wrong selection events / all selection events, computed within participant before group mean/SD</td><td>19.916 ± 9.931</td><td>0.000 ± 0.000</td><td>0.000 ± 0.000</td></tr>
+<tr><td>Head translation (m)</td><td><code>head_translation_total_m</code></td><td>10.492 ± 7.644</td><td>5.152 ± 3.422</td><td>4.786 ± 4.101</td></tr>
+<tr><td>Head rotation (deg)</td><td><code>head_rotation_total_deg</code></td><td>2159.566 ± 1772.844</td><td>1689.411 ± 1216.630</td><td>1305.421 ± 926.154</td></tr>
+<tr><td>Hand travel (m)</td><td><code>total_hand_translation_total_m</code> = left + right hand</td><td>18.736 ± 12.055</td><td>9.560 ± 10.180</td><td>7.398 ± 10.214</td></tr></table>
+<p class="ok">These values round exactly to Table III.</p>
+
+<h3>Grounding-issue percentages</h3>
+<p>These are calculated from <code>study4_conversations.csv</code>, not from <code>study4_condition_summary.csv</code>:</p>
+<ul>
+<li><b>Language 3.9%:</b> 9 issue turns / 232 total Language turns = 3.879%.</li>
+<li><b>Task-Aware 5.2%:</b> 12 issue turns / 231 total Task-Aware turns = 5.195%.</li>
+<li><b>Task-Aware D3-specific 24.7%:</b> 57 task-state query/cycle turns / 231 total Task-Aware turns = 24.675%. The 57 comprise <code>selected_step_physical_cycle</code> (33), <code>selected_step_needs_highlight</code> (18), <code>selected_step_object_already_acquired</code> (4), and <code>step_cycle_empty</code> (2).</li>
+</ul>
+<p><code>study4_conversation_review.py</code> exports non-clean turns for inspection, but the 3.9% and 5.2% paper values follow the decision-category grouping above. The 0% wrong-selection values are structurally different: selection is logged only after language grounding resolves.</p>
+
+<div class="warning"><b>Procedure/count clarification needed.</b> The paper says participants completed “the same seven matched partial-assembly steps.” The raw Study 4 configuration in <code>study4_full_report.py</code> contains eight step IDs: six bearing/gear-rod steps and two fastening instances. The script collapses the two fastening instances into one <i>reporting group</i> for per-step summaries, yielding seven groups, but the Table III per-session totals include the raw completed steps (generally eight; some sessions contain seven). Therefore, describe this as “eight task instances grouped into seven step types,” or recalculate the totals using exactly seven instances.</div>
+
+<div class="page"></div>
+<h2>Table III — Experiment 3 questionnaire metrics</h2>
+<p><b>Input:</b> <code>paper_related/H2R_UserStudy_Analysis - study4_responses_side_by_side.csv</code><br>
+<b>Analysis:</b> <code>paper_related/format_qualtrics_condition_comparison.py</code><br>
+<b>Descriptive output:</b> <code>paper_related/study4_edited_condition_summary.csv</code><br>
+<b>Inferential output:</b> <code>paper_related/study4_edited_pairwise_tests.csv</code><br>
+<b>Readable report:</b> <code>paper_related/study4_edited_analysis_report.md</code></p>
+
+<table><tr><th>Paper row</th><th>Output scale name</th><th>Gesture</th><th>Language</th><th>Task-Aware</th><th>p / W</th></tr>
+<tr><td>NASA–TLX</td><td>NASA-TLX</td><td>44.36 ± 26.70</td><td>27.52 ± 13.77</td><td>15.35 ± 11.35</td><td>.010 / .42</td></tr>
+<tr><td>Assist. conf.</td><td>Assistance Confidence</td><td>5.09 ± 2.02</td><td>4.86 ± 1.36</td><td>6.00 ± 1.10</td><td>.214 / .14</td></tr>
+<tr><td>Request ease</td><td>Request Clarity and Ease</td><td>4.14 ± 2.01</td><td>5.09 ± 1.28</td><td>6.18 ± 0.78</td><td>.013 / .39</td></tr>
+<tr><td>Adapt. burden</td><td>Interaction Adaptation Burden</td><td>4.09 ± 2.12</td><td>3.18 ± 1.03</td><td>2.77 ± 1.94</td><td>.092 / .22</td></tr>
+<tr><td>Preference rank</td><td>Overall Preference Rank</td><td>2.55</td><td>2.45</td><td>1.00</td><td>&lt;.001 / .75</td></tr></table>
+<p>NASA–TLX averages all six dimensions after reverse-scoring Performance. Gesture excludes the inapplicable “system understood” item from Assistance Confidence and the inapplicable phrasing item from Adaptation Burden. Consequently, Gesture’s two composites are asymmetric and the paper appropriately cautions against strong cross-condition interpretation.</p>
+
+<h2>Experiment 3 text verification</h2>
+<table><tr><th>Statement</th><th>Underlying number</th><th>Status</th></tr>
+<tr><td>Gesture workload exceeds Language and Task-Aware</td><td>Holm p=.04883 and .03809</td><td class="ok">Reported .049 and .038</td></tr>
+<tr><td>Request-ease comparisons with Task-Aware narrowly miss significance</td><td>Both Holm p=.05273</td><td class="ok">Reported .053</td></tr>
+<tr><td>All participants rank Task-Aware first</td><td>11/11 rank 1; Friedman W=.752</td><td class="ok">Matches</td></tr>
+<tr><td>Gesture has about 13× more interactions</td><td>274.182 / 21.091 = 13.00; / 21.000 = 13.06</td><td class="ok">Matches, but interaction units differ</td></tr>
+<tr><td>Grounding issues are 3.9% and 5.2%</td><td>9/232 and 12/231</td><td class="ok">Matches category-based calculation</td></tr>
+<tr><td>24.7% of TA turns invoke D3-specific behavior</td><td>57/231 = 24.675%</td><td class="ok">Matches</td></tr></table>
+
+<h2>Reproduction commands</h2>
+<p><b>Study 2 extraction:</b></p>
+<pre>python3 study2_replay_to_csv.py study_logs/study2/*_replay.jsonl \
+  --exclude mahya --csv study_logs/study2/study2_efficiency.csv</pre>
+<p><b>Study 2 objective verification:</b></p>
+<pre>/home/skim3674/anaconda3/envs/parakeet/bin/python -u \
+  paper_related/audit_experiment_tables.py</pre>
+<p><b>Questionnaires:</b></p>
+<pre>/home/skim3674/anaconda3/envs/parakeet/bin/python \
+  paper_related/format_qualtrics_condition_comparison.py</pre>
+<p><b>Study 4 totals and conversation extraction:</b></p>
+<pre>python3 paper_related/study4_full_report.py</pre>
+<p><b>Study 4 normalized behavioral tests:</b></p>
+<pre>/home/skim3674/anaconda3/envs/parakeet/bin/python \
+  paper_related/study4_behavioral_analysis.py</pre>
+
+<p class="small"><b>Interpretation note:</b> Table III intentionally leaves objective p/W blank. The separate behavioral-analysis script provides per-step normalized inferential comparisons, whereas the displayed table reports per-session totals. Do not copy those p-values into the total table without explicitly stating the change in analysis unit.</p>
+</body></html>
