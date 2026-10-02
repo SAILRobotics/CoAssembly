@@ -60,6 +60,21 @@ public class ToolSpawner : MonoBehaviour
     [Tooltip("Default visualization color until ToolColorReceiver receives the Python color on port 5010.")]
     [SerializeField] private Color wireframeDefaultColor = Color.white;
 
+    public enum OutlineStyle { FullEdges, CornerBrackets }
+
+    [Tooltip("FullEdges draws all 12 box edges. CornerBrackets draws only short L-marks at the 8 " +
+             "corners so the edges don't cover the item's own outline. Applied at spawn.")]
+    [SerializeField] private OutlineStyle outlineStyle = OutlineStyle.CornerBrackets;
+
+    [Tooltip("Meters added on every side of the box so the outline sits off the item's silhouette.")]
+    [Range(0f, 0.03f)] [SerializeField] private float outlinePadding = 0.008f;
+
+    [Tooltip("Bracket arm length as a fraction of the (padded) edge it runs along.")]
+    [Range(0.05f, 0.5f)] [SerializeField] private float bracketFraction = 0.25f;
+
+    [Tooltip("Upper bound on a bracket arm, in meters, so long tools don't get long arms.")]
+    [Range(0.005f, 0.1f)] [SerializeField] private float bracketMaxLength = 0.025f;
+
     // ── Internal ─────────────────────────────────────────────────────────────
     [Serializable] private class ToolData
     {
@@ -79,6 +94,9 @@ public class ToolSpawner : MonoBehaviour
     private readonly ConcurrentQueue<List<ToolData>> dataQueue = new();
 
     private readonly Dictionary<int, GameObject> spawnedTools = new();
+    // Outline lines per tool, re-laid out whenever the tool's size changes (padding and bracket
+    // length are in meters, so they depend on the size the unit cube is scaled to).
+    private readonly Dictionary<int, SpawnedToolVisual> spawnedVisuals = new();
 
     private const float EdgeWidth = 0.003f;
 
@@ -86,6 +104,7 @@ public class ToolSpawner : MonoBehaviour
     {
         public Renderer[] edgeRenderers;
         public Renderer faceRenderer;
+        public OutlineStyle style;
     }
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -152,6 +171,7 @@ public class ToolSpawner : MonoBehaviour
         {
             Destroy(spawnedTools[id]);
             spawnedTools.Remove(id);
+            spawnedVisuals.Remove(id);
         }
 
         // Spawn or update each tool
@@ -169,6 +189,7 @@ public class ToolSpawner : MonoBehaviour
                 SpawnedToolVisual visual = useBlendedBoxVisualization ? SetupBlendedBoxVisual(go) : default;
                 InjectReferences(go, t.id, visual);
                 spawnedTools[t.id] = go;
+                if (visual.edgeRenderers != null) spawnedVisuals[t.id] = visual;
             }
 
             // Apply transform — localPosition/Rotation so positions are relative to WorldRoot
@@ -181,6 +202,9 @@ public class ToolSpawner : MonoBehaviour
 
             if (t.size != null && t.size.Length == 3)
                 go.transform.localScale = new Vector3(t.size[0], t.size[1], t.size[2]);
+
+            if (spawnedVisuals.TryGetValue(t.id, out var spawnedVisual))
+                LayoutOutline(spawnedVisual, go.transform.localScale);
         }
     }
 
@@ -251,46 +275,103 @@ public class ToolSpawner : MonoBehaviour
             edgeColor.a = edgeAlpha;
             var edges = new GameObject("Edges");
             edges.transform.SetParent(root.transform, false);
-            edgeRenderers = AddCubeEdgeLines(edges.transform, edgeColor);
+            edgeRenderers = AddOutlineLines(edges.transform, edgeColor, outlineStyle);
         }
 
-        return new SpawnedToolVisual
+        var visual = new SpawnedToolVisual
         {
             edgeRenderers = edgeRenderers,
             faceRenderer = faceRenderer,
+            style = outlineStyle,
         };
+        if (edgeRenderers != null) LayoutOutline(visual, go.transform.localScale);
+        return visual;
     }
 
-    private Renderer[] AddCubeEdgeLines(Transform parent, Color color)
+    // Unit-cube edges as vertex-index pairs (FullEdges style).
+    private static readonly int[] CubeEdgePairs =
     {
-        var vertices = UnitCubeVertices();
-        var pairs = new int[]
-        {
-            0,1, 1,2, 2,3, 3,0,
-            4,5, 5,6, 6,7, 7,4,
-            0,4, 1,5, 2,6, 3,7,
-        };
+        0,1, 1,2, 2,3, 3,0,
+        4,5, 5,6, 6,7, 7,4,
+        0,4, 1,5, 2,6, 3,7,
+    };
+
+    // FullEdges: one 2-point line per edge. CornerBrackets: per corner, a 3-point line (x-arm →
+    // corner → y-arm) plus a 2-point z-arm. Positions are filled in by LayoutOutline.
+    private Renderer[] AddOutlineLines(Transform parent, Color color, OutlineStyle style)
+    {
         var mat = CreateEdgeMaterial("ToolEdgeMaterial", color);
-        var renderers = new Renderer[pairs.Length / 2];
-        for (int i = 0; i < pairs.Length; i += 2)
+        int count = style == OutlineStyle.CornerBrackets ? 16 : CubeEdgePairs.Length / 2;
+        var renderers = new Renderer[count];
+        for (int i = 0; i < count; i++)
         {
-            var go = new GameObject("Edge");
+            bool polyline = style == OutlineStyle.CornerBrackets && i % 2 == 0;
+            var go = new GameObject(style == OutlineStyle.CornerBrackets ? "Bracket" : "Edge");
             go.transform.SetParent(parent, false);
             var line = go.AddComponent<LineRenderer>();
             line.useWorldSpace = false;
-            line.positionCount = 2;
-            line.SetPosition(0, vertices[pairs[i]]);
-            line.SetPosition(1, vertices[pairs[i + 1]]);
+            line.positionCount = polyline ? 3 : 2;
             line.widthMultiplier = EdgeWidth;
             line.numCapVertices = 0;
             line.numCornerVertices = 0;
             line.shadowCastingMode = ShadowCastingMode.Off;
             line.receiveShadows = false;
             line.material = mat;
-            renderers[i / 2] = line;
+            renderers[i] = line;
         }
         return renderers;
     }
+
+    // Place the outline lines for a tool scaled to `size` (meters). Lines live in the unit cube's
+    // local frame, so meter quantities (padding, arm length) are divided by the axis scale.
+    private void LayoutOutline(SpawnedToolVisual visual, Vector3 size)
+    {
+        if (visual.edgeRenderers == null) return;
+        Vector3 s = new Vector3(SafeAxis(size.x), SafeAxis(size.y), SafeAxis(size.z));
+        Vector3 half = new Vector3(0.5f + outlinePadding / s.x,
+                                   0.5f + outlinePadding / s.y,
+                                   0.5f + outlinePadding / s.z);
+        var unit = UnitCubeVertices();
+
+        if (visual.style == OutlineStyle.FullEdges)
+        {
+            for (int i = 0; i < visual.edgeRenderers.Length; i++)
+            {
+                var line = (LineRenderer)visual.edgeRenderers[i];
+                line.SetPosition(0, Vector3.Scale(unit[CubeEdgePairs[2 * i]] * 2f, half));
+                line.SetPosition(1, Vector3.Scale(unit[CubeEdgePairs[2 * i + 1]] * 2f, half));
+            }
+            return;
+        }
+
+        // Arm length in local units per axis: a fraction of the padded edge, capped in meters.
+        Vector3 arm = new Vector3(ArmLength(s.x), ArmLength(s.y), ArmLength(s.z));
+        for (int c = 0; c < 8; c++)
+        {
+            Vector3 sign   = unit[c] * 2f;                 // each component is ±1
+            Vector3 corner = Vector3.Scale(sign, half);
+            Vector3 xEnd   = corner - new Vector3(sign.x * arm.x, 0f, 0f);
+            Vector3 yEnd   = corner - new Vector3(0f, sign.y * arm.y, 0f);
+            Vector3 zEnd   = corner - new Vector3(0f, 0f, sign.z * arm.z);
+
+            var xy = (LineRenderer)visual.edgeRenderers[2 * c];
+            xy.SetPosition(0, xEnd);
+            xy.SetPosition(1, corner);
+            xy.SetPosition(2, yEnd);
+
+            var z = (LineRenderer)visual.edgeRenderers[2 * c + 1];
+            z.SetPosition(0, corner);
+            z.SetPosition(1, zEnd);
+        }
+    }
+
+    private float ArmLength(float axisSize)
+    {
+        float padded = axisSize + 2f * outlinePadding;
+        return Mathf.Min(bracketFraction * padded, bracketMaxLength) / axisSize;
+    }
+
+    private static float SafeAxis(float v) => Mathf.Abs(v) > 1e-5f ? Mathf.Abs(v) : 1f;
 
     private static Vector3[] UnitCubeVertices()
     {
