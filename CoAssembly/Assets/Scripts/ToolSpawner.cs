@@ -60,11 +60,24 @@ public class ToolSpawner : MonoBehaviour
     [Tooltip("Default visualization color until ToolColorReceiver receives the Python color on port 5010.")]
     [SerializeField] private Color wireframeDefaultColor = Color.white;
 
-    public enum OutlineStyle { FullEdges, CornerBrackets }
+    public enum OutlineStyle { FullEdges, CornerBrackets, BracketsWithFaintEdges }
 
     [Tooltip("FullEdges draws all 12 box edges. CornerBrackets draws only short L-marks at the 8 " +
-             "corners so the edges don't cover the item's own outline. Applied at spawn.")]
-    [SerializeField] private OutlineStyle outlineStyle = OutlineStyle.CornerBrackets;
+             "corners so the edges don't cover the item's own outline. BracketsWithFaintEdges adds " +
+             "thin, dim full edges behind the brackets so each box still reads as one shape. " +
+             "Applied at spawn.")]
+    [SerializeField] private OutlineStyle outlineStyle = OutlineStyle.BracketsWithFaintEdges;
+
+    [Tooltip("Line width (meters) of the faint full edges in BracketsWithFaintEdges.")]
+    [Range(0.0005f, 0.003f)] [SerializeField] private float faintEdgeWidth = 0.001f;
+
+    [Tooltip("Opacity of the faint full edges relative to the brackets. Applied to every color " +
+             "Python sends, so hover/selected/highlight dim the same way.")]
+    [Range(0f, 1f)] [SerializeField] private float faintEdgeAlphaScale = 0.35f;
+
+    [Tooltip("Draw corner brackets fully opaque regardless of the alpha Python sends. The faint " +
+             "edges still follow Python's alpha × Faint Edge Alpha Scale.")]
+    [SerializeField] private bool opaqueBrackets = true;
 
     [Tooltip("Meters added on every side of the box so the outline sits off the item's silhouette.")]
     [Range(0f, 0.03f)] [SerializeField] private float outlinePadding = 0.008f;
@@ -102,7 +115,8 @@ public class ToolSpawner : MonoBehaviour
 
     private struct SpawnedToolVisual
     {
-        public Renderer[] edgeRenderers;
+        public Renderer[] edgeRenderers;       // full edges (FullEdges) or brackets (other styles)
+        public Renderer[] faintEdgeRenderers;  // dim full edges (BracketsWithFaintEdges only)
         public Renderer faceRenderer;
         public OutlineStyle style;
     }
@@ -233,7 +247,13 @@ public class ToolSpawner : MonoBehaviour
         if (tcr != null)
         {
             if (visual.edgeRenderers != null && visual.edgeRenderers.Length > 0)
+            {
                 tcr.ConfigureVisual(toolId, visual.edgeRenderers, visual.faceRenderer, faceAlpha);
+                if (visual.faintEdgeRenderers != null)
+                    tcr.ConfigureFaintRenderers(visual.faintEdgeRenderers, faintEdgeAlphaScale);
+                if (opaqueBrackets && visual.style != OutlineStyle.FullEdges)
+                    tcr.SetPrimaryAlphaOverride(1f);
+            }
             else if (visual.faceRenderer != null)
                 tcr.ConfigureVisual(toolId, visual.faceRenderer, null, faceAlpha);
             else
@@ -269,18 +289,29 @@ public class ToolSpawner : MonoBehaviour
         faceFilter.mesh = BuildUnitCubeFaceMesh();
 
         Renderer[] edgeRenderers = null;
+        Renderer[] faintEdgeRenderers = null;
         if (edgeAlpha > 0f)
         {
             Color edgeColor = wireframeDefaultColor;
             edgeColor.a = edgeAlpha;
             var edges = new GameObject("Edges");
             edges.transform.SetParent(root.transform, false);
-            edgeRenderers = AddOutlineLines(edges.transform, edgeColor, outlineStyle);
+            bool brackets = outlineStyle != OutlineStyle.FullEdges;
+            Color primaryColor = edgeColor;
+            if (brackets && opaqueBrackets) primaryColor.a = 1f;
+            edgeRenderers = AddOutlineLines(edges.transform, primaryColor, brackets, EdgeWidth);
+            if (outlineStyle == OutlineStyle.BracketsWithFaintEdges)
+            {
+                Color faintColor = edgeColor;
+                faintColor.a *= faintEdgeAlphaScale;
+                faintEdgeRenderers = AddOutlineLines(edges.transform, faintColor, false, faintEdgeWidth);
+            }
         }
 
         var visual = new SpawnedToolVisual
         {
             edgeRenderers = edgeRenderers,
+            faintEdgeRenderers = faintEdgeRenderers,
             faceRenderer = faceRenderer,
             style = outlineStyle,
         };
@@ -288,7 +319,7 @@ public class ToolSpawner : MonoBehaviour
         return visual;
     }
 
-    // Unit-cube edges as vertex-index pairs (FullEdges style).
+    // Unit-cube edges as vertex-index pairs (full-edge outlines).
     private static readonly int[] CubeEdgePairs =
     {
         0,1, 1,2, 2,3, 3,0,
@@ -296,22 +327,22 @@ public class ToolSpawner : MonoBehaviour
         0,4, 1,5, 2,6, 3,7,
     };
 
-    // FullEdges: one 2-point line per edge. CornerBrackets: per corner, a 3-point line (x-arm →
+    // Full edges: one 2-point line per edge. Brackets: per corner, a 3-point line (x-arm →
     // corner → y-arm) plus a 2-point z-arm. Positions are filled in by LayoutOutline.
-    private Renderer[] AddOutlineLines(Transform parent, Color color, OutlineStyle style)
+    private Renderer[] AddOutlineLines(Transform parent, Color color, bool brackets, float width)
     {
-        var mat = CreateEdgeMaterial("ToolEdgeMaterial", color);
-        int count = style == OutlineStyle.CornerBrackets ? 16 : CubeEdgePairs.Length / 2;
+        var mat = CreateEdgeMaterial(brackets ? "ToolBracketMaterial" : "ToolEdgeMaterial", color);
+        int count = brackets ? 16 : CubeEdgePairs.Length / 2;
         var renderers = new Renderer[count];
         for (int i = 0; i < count; i++)
         {
-            bool polyline = style == OutlineStyle.CornerBrackets && i % 2 == 0;
-            var go = new GameObject(style == OutlineStyle.CornerBrackets ? "Bracket" : "Edge");
+            bool polyline = brackets && i % 2 == 0;
+            var go = new GameObject(brackets ? "Bracket" : "Edge");
             go.transform.SetParent(parent, false);
             var line = go.AddComponent<LineRenderer>();
             line.useWorldSpace = false;
             line.positionCount = polyline ? 3 : 2;
-            line.widthMultiplier = EdgeWidth;
+            line.widthMultiplier = width;
             line.numCapVertices = 0;
             line.numCornerVertices = 0;
             line.shadowCastingMode = ShadowCastingMode.Off;
@@ -331,19 +362,30 @@ public class ToolSpawner : MonoBehaviour
         Vector3 half = new Vector3(0.5f + outlinePadding / s.x,
                                    0.5f + outlinePadding / s.y,
                                    0.5f + outlinePadding / s.z);
-        var unit = UnitCubeVertices();
-
         if (visual.style == OutlineStyle.FullEdges)
         {
-            for (int i = 0; i < visual.edgeRenderers.Length; i++)
-            {
-                var line = (LineRenderer)visual.edgeRenderers[i];
-                line.SetPosition(0, Vector3.Scale(unit[CubeEdgePairs[2 * i]] * 2f, half));
-                line.SetPosition(1, Vector3.Scale(unit[CubeEdgePairs[2 * i + 1]] * 2f, half));
-            }
+            LayoutFullEdges(visual.edgeRenderers, half);
             return;
         }
+        LayoutBrackets(visual.edgeRenderers, half, s);
+        if (visual.faintEdgeRenderers != null)
+            LayoutFullEdges(visual.faintEdgeRenderers, half);
+    }
 
+    private static void LayoutFullEdges(Renderer[] lines, Vector3 half)
+    {
+        var unit = UnitCubeVertices();
+        for (int i = 0; i < lines.Length; i++)
+        {
+            var line = (LineRenderer)lines[i];
+            line.SetPosition(0, Vector3.Scale(unit[CubeEdgePairs[2 * i]] * 2f, half));
+            line.SetPosition(1, Vector3.Scale(unit[CubeEdgePairs[2 * i + 1]] * 2f, half));
+        }
+    }
+
+    private void LayoutBrackets(Renderer[] lines, Vector3 half, Vector3 s)
+    {
+        var unit = UnitCubeVertices();
         // Arm length in local units per axis: a fraction of the padded edge, capped in meters.
         Vector3 arm = new Vector3(ArmLength(s.x), ArmLength(s.y), ArmLength(s.z));
         for (int c = 0; c < 8; c++)
@@ -354,12 +396,12 @@ public class ToolSpawner : MonoBehaviour
             Vector3 yEnd   = corner - new Vector3(0f, sign.y * arm.y, 0f);
             Vector3 zEnd   = corner - new Vector3(0f, 0f, sign.z * arm.z);
 
-            var xy = (LineRenderer)visual.edgeRenderers[2 * c];
+            var xy = (LineRenderer)lines[2 * c];
             xy.SetPosition(0, xEnd);
             xy.SetPosition(1, corner);
             xy.SetPosition(2, yEnd);
 
-            var z = (LineRenderer)visual.edgeRenderers[2 * c + 1];
+            var z = (LineRenderer)lines[2 * c + 1];
             z.SetPosition(0, corner);
             z.SetPosition(1, zEnd);
         }
@@ -415,8 +457,23 @@ public class ToolSpawner : MonoBehaviour
         return mat;
     }
 
+    // A material asset in Resources/ is always shipped, which keeps URP Unlit's transparent variant
+    // in Quest builds. A material built only from Shader.Find has its _SURFACE_TYPE_TRANSPARENT
+    // variant stripped (or the shader is missing), so lines render opaque and ignore alpha.
+    private const string OutlineMaterialResource = "ToolOutlineMaterial";
+
     private static Material CreateEdgeMaterial(string name, Color color)
     {
+        var template = Resources.Load<Material>(OutlineMaterialResource);
+        if (template != null)
+        {
+            var fromAsset = new Material(template) { name = name };
+            SetMaterialColor(fromAsset, color);
+            return fromAsset;
+        }
+        Debug.LogWarning($"[ToolSpawner] Resources/{OutlineMaterialResource} not found; outline " +
+                         "transparency may be lost in device builds.");
+
         var shader = Shader.Find("Universal Render Pipeline/Unlit")
                   ?? Shader.Find("Unlit/Color")
                   ?? Shader.Find("Standard");

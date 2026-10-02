@@ -11294,8 +11294,8 @@ Material:
     - _XRMotionVectorsPass: 1
     - _ZWrite: 0
     m_Colors:
-    - _BaseColor: {r: 0.11102333, g: 0.11102333, b: 0.11102333, a: 0.5}
-    - _Color: {r: 0.11102333, g: 0.11102333, b: 0.11102333, a: 0.5}
+    - _BaseColor: {r: 0.111023016, g: 0.111023016, b: 0.111023016, a: 0.5}
+    - _Color: {r: 0.111023016, g: 0.111023016, b: 0.111023016, a: 0.5}
     - _EmissionColor: {r: 0, g: 0, b: 0, a: 1}
     - _SpecColor: {r: 0.19999996, g: 0.19999996, b: 0.19999996, a: 1}
   m_BuildTextureStacks: []
@@ -15436,7 +15436,10 @@ MonoBehaviour:
   faceAlpha: 0
   edgeAlpha: 0.035
   wireframeDefaultColor: {r: 1, g: 1, b: 1, a: 1}
-  outlineStyle: 1
+  outlineStyle: 2
+  faintEdgeWidth: 0.003
+  faintEdgeAlphaScale: 0.125
+  opaqueBrackets: 1
   outlinePadding: 0
   bracketFraction: 0.25
   bracketMaxLength: 0.025
@@ -19234,8 +19237,8 @@ Material:
     - _XRMotionVectorsPass: 1
     - _ZWrite: 0
     m_Colors:
-    - _BaseColor: {r: 0.11102333, g: 0.11102333, b: 0.11102333, a: 0.5}
-    - _Color: {r: 0.11102333, g: 0.11102333, b: 0.11102333, a: 0.5}
+    - _BaseColor: {r: 0.111023016, g: 0.111023016, b: 0.111023016, a: 0.5}
+    - _Color: {r: 0.111023016, g: 0.111023016, b: 0.111023016, a: 0.5}
     - _EmissionColor: {r: 0, g: 0, b: 0, a: 1}
     - _SpecColor: {r: 0.19999996, g: 0.19999996, b: 0.19999996, a: 1}
   m_BuildTextureStacks: []
@@ -20674,8 +20677,8 @@ Material:
     - _XRMotionVectorsPass: 1
     - _ZWrite: 0
     m_Colors:
-    - _BaseColor: {r: 0.19997364, g: 0.19997364, b: 0.19997364, a: 0.15}
-    - _Color: {r: 0.19997364, g: 0.19997364, b: 0.19997364, a: 0.15}
+    - _BaseColor: {r: 0.19997334, g: 0.19997334, b: 0.19997334, a: 0.15}
+    - _Color: {r: 0.19997334, g: 0.19997334, b: 0.19997334, a: 0.15}
     - _EmissionColor: {r: 0, g: 0, b: 0, a: 1}
     - _SpecColor: {r: 0.19999996, g: 0.19999996, b: 0.19999996, a: 1}
   m_BuildTextureStacks: []

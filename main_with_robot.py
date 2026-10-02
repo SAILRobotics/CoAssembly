@@ -922,14 +922,14 @@ class _ToolSelectionManager:
     TCP_READY_COLOR = [0.0, 1.0, 0.0, 0.25]       # board may be inserted/removed
     TCP_LOCKED_COLOR = [1.0, 0.0, 0.0, 0.25]      # board latched; pull cannot release
     TCP_FREEDRIVE_COLOR = [0.5, 0.0, 0.5, 0.25]   # board latched, freedrive mode (AR handle off)
-    SELECTED_COLOR = [0.0, 1.0, 0.0, 0.15]     #when cursor clicks
-    HOVER_COLOR    = [1.0, 0.5, 0.0, 0.15]     #when cursor hovers
+    SELECTED_COLOR = [0.0, 1.0, 0.0, 0.75]     #when cursor clicks
+    HOVER_COLOR    = [1.0, 0.5, 0.0, 0.75]     #when cursor hovers
     RESET_COLOR    = [-1.0, -1.0, -1.0, -1.0]   # sentinel → restores to resting color
-    TOOL_COLOR     = [0.80, 0.88, 1.0,  0.15]    # light blue for "tool" category
-    PART_COLOR     = [1.0,  0.78, 0.78, 0.15]    # light red  for "part" category
-    HIGHLIGHT_COLOR = [0.0, 1.0, 1.0, 0.15]       # cyan — pegboard tool needed for the current step
-    VLM_REFERENCE_COLOR = [1.0, 0.92, 0.02, 0.15] # yellow — one VLM-resolved referent
-    BLOCKED_COLOR  = [1.0, 0.0, 0.0, 0.3]      # red — target is locked in the current state
+    TOOL_COLOR     = [0.80, 0.88, 1.0,  0.75]    # light blue for "tool" category
+    PART_COLOR     = [1.0,  0.78, 0.78, 0.75]    # light red  for "part" category
+    HIGHLIGHT_COLOR = [0.0, 1.0, 1.0, 0.75]       # cyan — pegboard tool needed for the current step
+    VLM_REFERENCE_COLOR = [1.0, 0.92, 0.02, 0.75] # yellow — one VLM-resolved referent
+    BLOCKED_COLOR  = [1.0, 0.0, 0.0, 0.75]      # red — target is locked in the current state
     BLOCKED_FLASH_S = 0.6                      # red flash after clicking a locked target
 
     def __init__(self, quest_ip: str, click_port: int = cfg.TOOL_CLICK_PORT,

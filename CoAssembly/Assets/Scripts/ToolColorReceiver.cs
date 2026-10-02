@@ -44,6 +44,13 @@ public class ToolColorReceiver : MonoBehaviour
     private Renderer[] targetRenderers;
     private Renderer secondaryRenderer;
     private float secondaryAlpha = 0.06f;
+    // Dim companion lines (e.g. faint full edges behind corner brackets) that take the same
+    // color as the main renderers with alpha scaled down.
+    private Renderer[] faintRenderers;
+    private float faintAlphaScale = 1f;
+    // When set, the main renderers ignore the incoming alpha and use this instead (e.g. opaque
+    // corner brackets); the faint renderers still scale the incoming alpha.
+    private float? primaryAlphaOverride;
 
     // Last color received from Python, and an optional local overlay blended on
     // top of it (e.g. long-press progress). Python colors arriving while the
@@ -92,6 +99,19 @@ public class ToolColorReceiver : MonoBehaviour
         secondaryRenderer = secondary;
         this.secondaryAlpha = secondaryAlpha;
         hasExplicitTarget = targetRenderer != null;
+    }
+
+    public void ConfigureFaintRenderers(Renderer[] renderers, float alphaScale)
+    {
+        faintRenderers  = renderers;
+        faintAlphaScale = Mathf.Clamp01(alphaScale);
+        ApplyEffective();
+    }
+
+    public void SetPrimaryAlphaOverride(float? alpha)
+    {
+        primaryAlphaOverride = alpha.HasValue ? Mathf.Clamp01(alpha.Value) : (float?)null;
+        ApplyEffective();
     }
 
     private void Start()
@@ -221,8 +241,17 @@ public class ToolColorReceiver : MonoBehaviour
         Color c = overlayAmount > 0f ? Color.Lerp(b, overlayColor, overlayAmount) : b;
         if (targetRenderers != null)
         {
+            Color primaryColor = c;
+            if (primaryAlphaOverride.HasValue) primaryColor.a = primaryAlphaOverride.Value;
             foreach (var renderer in targetRenderers)
-                ApplyColor(renderer, c);
+                ApplyColor(renderer, primaryColor);
+        }
+        if (faintRenderers != null)
+        {
+            Color faintColor = c;
+            faintColor.a *= faintAlphaScale;
+            foreach (var renderer in faintRenderers)
+                ApplyColor(renderer, faintColor);
         }
         if (secondaryRenderer != null)
         {

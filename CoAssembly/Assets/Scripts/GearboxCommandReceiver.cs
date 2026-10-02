@@ -45,6 +45,14 @@ public class GearboxCommandReceiver : MonoBehaviour
     [Tooltip("Color a part turns to when toggled on. Default = yellow.")]
     [SerializeField] private Color highlightColor = new Color(1f, 0.92f, 0.016f, 1f);
 
+    [Tooltip("Opacity of the parts outside a clicked stage. They stay visible as faint, non-clickable " +
+             "ghosts at their assembled pose. 0 = hide them entirely (the original behavior).")]
+    [Range(0f, 1f)] [SerializeField] private float ghostAlpha = 0.2f;
+
+    [Tooltip("Transparent URP Lit material for ghosted parts (tinted per part). Empty = " +
+             "Resources/GearboxGhostMaterial, which ships with the build.")]
+    [SerializeField] private Material ghostMaterial;
+
     [Tooltip("Root of the gearbox hierarchy. Leave empty to use this GameObject's transform.")]
     [SerializeField] private Transform gearboxRoot;
 
@@ -174,9 +182,17 @@ public class GearboxCommandReceiver : MonoBehaviour
         public int                  seatStage;     // stage the part is FASTENED (turns green); >= place
         public PartEntry            leader;        // sub-assembly "leader" this part rides with while
                                                    // dropping in (gear/pin → rod; bearing → stand)
+        // Ghost state (see SetGhost). Materials/colliders are captured on first ghosting.
+        public bool                 ghosted;
+        public Material[]           solidMaterials;
+        public Material[]           ghostMaterials;
+        public Collider[]           colliders;
+        public bool[]               colliderEnabled;
+        public UnityEngine.Rendering.ShadowCastingMode shadowMode;
     }
 
     private readonly List<PartEntry>                 parts          = new();
+    private readonly HashSet<GameObject>             partObjects    = new();
     private readonly Dictionary<string, PartEntry>   partsByName    = new();
     private readonly Dictionary<string, PartEntry>   partsByLower   = new();
     private readonly Dictionary<string, PartEntry>   partsByStripped = new();  // underscores removed, lowercased
@@ -205,7 +221,7 @@ public class GearboxCommandReceiver : MonoBehaviour
     // it replaced, so closing the menu / opening another stage restores exactly the prior color.
     private bool stageBlocked;
     private readonly List<(PartEntry part, Color prev)> blockedReds = new();
-    private readonly List<(PartEntry part, Color prev, bool wasActive)> referenceColors = new();
+    private readonly List<(PartEntry part, Color prev, bool wasActive, bool wasGhost)> referenceColors = new();
     // The most recent reference-color request from Python. View rebuilds (stage clicks, recolors,
     // row/subset toggles) must clear the highlight before repainting parts, so they call
     // ReapplyReferenceColors() afterward to restore it — the highlight then only goes away when
@@ -318,6 +334,7 @@ public class GearboxCommandReceiver : MonoBehaviour
             };
 
             parts.Add(entry);
+            partObjects.Add(t.gameObject);
             partsByName[t.name]                = entry;
             partsByLower[t.name.ToLower()]     = entry;
             partsByStripped[clean.ToLower()]   = entry;
@@ -488,6 +505,7 @@ public class GearboxCommandReceiver : MonoBehaviour
         ClearReferenceColors();
         CancelAssembly();
         ClearBlockedReds();
+        ClearGhosts();
         foreach (var p in parts)
             p.go.SetActive(p.rowNum == row);
         SetStateSpheresVisible(false);
@@ -500,6 +518,7 @@ public class GearboxCommandReceiver : MonoBehaviour
         ClearReferenceColors();
         CancelAssembly();
         ClearBlockedReds();          // a blocked stage's red reverts to its prior color on close
+        ClearGhosts();
         foreach (var p in parts)
             p.go.SetActive(true);
         SetStateSpheresVisible(true);   // back to the main state
@@ -513,6 +532,7 @@ public class GearboxCommandReceiver : MonoBehaviour
         ClearReferenceColors();
         CancelAssembly();
         ClearBlockedReds();
+        ClearGhosts();
         var set = new HashSet<string>(types ?? Array.Empty<string>());
         int shown = 0;
         foreach (var p in parts)
@@ -639,6 +659,7 @@ public class GearboxCommandReceiver : MonoBehaviour
     {
         ClearReferenceColors();
         CancelAssembly();                       // invalidate any running slide + snap to rest
+        ClearGhosts();
         int gen = assembleGen;
 
         float step  = stepDelay    > 0f ? stepDelay    : defaultStepDelay;
@@ -758,6 +779,7 @@ public class GearboxCommandReceiver : MonoBehaviour
         ClearReferenceColors();
         int gen = ++assembleGen;   // supersede any running animation (positions set explicitly below)
         ClearBlockedReds();        // restore any parts reddened by a previous blocked stage
+        ClearGhosts();             // every part starts solid; out-of-stage ones are re-ghosted below
         SetStateSpheresVisible(false);   // a part was clicked — no longer the main state
         float step  = stepDelay    > 0f ? stepDelay    : defaultStepDelay;
         float slide = slideSeconds > 0f ? slideSeconds : defaultSlideSeconds;
@@ -766,7 +788,7 @@ public class GearboxCommandReceiver : MonoBehaviour
 
         foreach (var p in parts)
         {
-            if (!InView(p, row) || !visible.Contains(p.appearStage)) { p.go.SetActive(false); continue; }
+            if (!InView(p, row) || !visible.Contains(p.appearStage)) { HideOrGhost(p); continue; }
             if (AnimatesAt(p, n, done))
             {
                 // Animated by StageRoutine. Pre-place at its START pose NOW so it is never seen at
@@ -969,6 +991,104 @@ public class GearboxCommandReceiver : MonoBehaviour
         blockedReds.Clear();
     }
 
+    // ── Ghosted parts ────────────────────────────────────────────────────────
+    // In a stage view, parts outside the stage are either hidden (ghostAlpha == 0, the original
+    // behavior) or shown as faint ghosts at their assembled pose. A ghost swaps in transparent copies
+    // of ghostMaterial tinted with the part's own base color, and its colliders are disabled so —
+    // like a hidden part — it can't be clicked or block rays to the visible parts. The part's color
+    // MaterialPropertyBlock is untouched, so un-ghosting restores its current state color.
+    private const string GhostMaterialResource = "GearboxGhostMaterial";
+
+    private void HideOrGhost(PartEntry p)
+    {
+        if (ghostAlpha <= 0f || GhostTemplate() == null)
+        {
+            SetGhost(p, false);
+            p.go.SetActive(false);
+            return;
+        }
+        p.go.transform.localPosition = p.restLocalPos;
+        SetGhost(p, true);
+        p.go.SetActive(true);
+    }
+
+    private void ClearGhosts()
+    {
+        foreach (var p in parts)
+            SetGhost(p, false);
+    }
+
+    private Material GhostTemplate()
+    {
+        if (ghostMaterial == null)
+            ghostMaterial = Resources.Load<Material>(GhostMaterialResource);
+        return ghostMaterial;
+    }
+
+    private void SetGhost(PartEntry p, bool ghost)
+    {
+        if (p.ghosted == ghost) return;
+        Renderer r = p.renderer;
+
+        if (ghost)
+        {
+            Material template = GhostTemplate();
+            if (template == null) return;
+
+            p.solidMaterials = r.sharedMaterials;
+            if (p.ghostMaterials == null || p.ghostMaterials.Length != p.solidMaterials.Length)
+            {
+                p.ghostMaterials = new Material[p.solidMaterials.Length];
+                for (int i = 0; i < p.ghostMaterials.Length; i++)
+                    p.ghostMaterials[i] = new Material(template) { name = $"Ghost_{p.go.name}_{i}" };
+            }
+            for (int i = 0; i < p.ghostMaterials.Length; i++)
+            {
+                Material solid = p.solidMaterials[i];
+                int id = solid != null ? ResolveColorID(solid) : 0;
+                Color c = id != 0 ? solid.GetColor(id) : p.originalColor;
+                c.a = ghostAlpha;
+                if (p.ghostMaterials[i].HasProperty("_BaseColor")) p.ghostMaterials[i].SetColor("_BaseColor", c);
+                if (p.ghostMaterials[i].HasProperty("_Color"))     p.ghostMaterials[i].SetColor("_Color", c);
+            }
+            r.sharedMaterials = p.ghostMaterials;
+            p.shadowMode = r.shadowCastingMode;
+            r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+
+            p.colliders ??= OwnColliders(p);
+            p.colliderEnabled = new bool[p.colliders.Length];
+            for (int i = 0; i < p.colliders.Length; i++)
+            {
+                if (p.colliders[i] == null) continue;
+                p.colliderEnabled[i] = p.colliders[i].enabled;
+                p.colliders[i].enabled = false;
+            }
+        }
+        else
+        {
+            if (p.solidMaterials != null) r.sharedMaterials = p.solidMaterials;
+            r.shadowCastingMode = p.shadowMode;
+            if (p.colliders != null && p.colliderEnabled != null)
+                for (int i = 0; i < p.colliders.Length; i++)
+                    if (p.colliders[i] != null) p.colliders[i].enabled = p.colliderEnabled[i];
+        }
+        p.ghosted = ghost;
+    }
+
+    // Colliders belonging to this part: on it or its children, but not under another indexed part.
+    private Collider[] OwnColliders(PartEntry p)
+    {
+        var own = new List<Collider>();
+        foreach (Collider c in p.go.GetComponentsInChildren<Collider>(true))
+        {
+            bool underOtherPart = false;
+            for (Transform t = c.transform; t != null && t != p.go.transform; t = t.parent)
+                if (partObjects.Contains(t.gameObject)) { underOtherPart = true; break; }
+            if (!underOtherPart) own.Add(c);
+        }
+        return own.ToArray();
+    }
+
     // Re-color a whole row from its completed-stage set (green/orange/original), no motion. Fired
     // when a checkbox is checked/unchecked so the just-changed portion recolors in place — and so an
     // un-checked seat correctly falls back to orange if its build step is still complete.
@@ -1022,7 +1142,8 @@ public class GearboxCommandReceiver : MonoBehaviour
                     Debug.LogWarning($"[GearboxCommandReceiver] No assembled part named '{name}'");
                 continue;
             }
-            referenceColors.Add((entry, entry.currentColor, entry.go.activeSelf));
+            referenceColors.Add((entry, entry.currentColor, entry.go.activeSelf, entry.ghosted));
+            SetGhost(entry, false);   // a referenced part shows solid so its highlight color is visible
             entry.go.SetActive(true);
             ApplyColor(entry, color);
         }
@@ -1031,9 +1152,10 @@ public class GearboxCommandReceiver : MonoBehaviour
 
     private void ClearReferenceColors()
     {
-        foreach (var (part, prev, wasActive) in referenceColors)
+        foreach (var (part, prev, wasActive, wasGhost) in referenceColors)
         {
             if (part.colorID != 0) ApplyColor(part, prev);
+            SetGhost(part, wasGhost);
             part.go.SetActive(wasActive);
         }
         referenceColors.Clear();
@@ -1123,6 +1245,13 @@ public class GearboxCommandReceiver : MonoBehaviour
     private void OnDestroy()
     {
         running = false;
+
+        foreach (var p in parts)
+        {
+            if (p.ghostMaterials == null) continue;
+            foreach (var m in p.ghostMaterials)
+                if (m != null) Destroy(m);
+        }
 
         if (socket != null)
         {
