@@ -230,7 +230,7 @@ def load_tool_index(json_path) -> dict:
     """Build {TYPE_UPPER: id} from a tool_layout JSON. Returns {} (feature disables silently) if
     the file can't be read — the same soft-fail style as the optional main_setting import."""
     try:
-        data = json.loads(Path(json_path).read_text())
+        data = json.loads(Path(json_path).read_text(encoding="utf-8"))
     except Exception as e:
         print(f"  (tool highlight disabled: can't read {json_path}: {e})")
         return {}

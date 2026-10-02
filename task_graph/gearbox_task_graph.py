@@ -875,11 +875,14 @@ class DearPyGuiTaskGraphApp:
         self._vlm    = None   # VLMAssistant, set in run() if enabled
         # Asynchronous speech output; initialized by run() unless --no-tts.
         self._tts: TTSService | None = None
+        # AR captions (heard / reply / status) for the Quest; set in run().
+        self._caption = None
         self._assistant_logger: AssistantInteractionLogger | None = None
         self._tool_index = gearbox_control.load_tool_index(
             gearbox_control._DEFAULT_TOOL_JSON)
         try:
-            layout = json.loads(Path(gearbox_control._DEFAULT_TOOL_JSON).read_text())
+            layout = json.loads(
+                Path(gearbox_control._DEFAULT_TOOL_JSON).read_text(encoding="utf-8"))
             self._fetchable_tool_ids = {
                 int(item["id"])
                 for item in layout.get("tools", [])
@@ -1009,6 +1012,16 @@ class DearPyGuiTaskGraphApp:
                 startup("Transformers import complete")
             except Exception as error:
                 startup(f"Transformers pre-import failed: {error}")
+            # transformers imports lazily, so torchvision is still first loaded
+            # by the worker threads; NeMo and the VLM processor racing on it
+            # yields "cannot import name 'InterpolationMode' ... circular import".
+            try:
+                import torch  # noqa: F401
+                import torchvision  # noqa: F401
+                import torchvision.transforms  # noqa: F401
+                startup("Torch/torchvision import complete")
+            except Exception as error:
+                startup(f"Torchvision pre-import failed: {error}")
         else:
             startup("Skipping transformers (voice and VLM disabled)")
 
@@ -1036,6 +1049,11 @@ class DearPyGuiTaskGraphApp:
                       f"(rate={tts_rate:.2f}x)")
             except Exception as error:
                 print(f"[TTS] Disabled: {error}")
+        try:
+            from voice_caption import VoiceCaptionPublisher
+            self._caption = VoiceCaptionPublisher()
+        except Exception as error:
+            print(f"[Caption] AR captions disabled: {error}")
         if assistant_log_path is not None:
             self._assistant_logger = AssistantInteractionLogger(assistant_log_path)
             print(f"[StudyLog] Part-reference decisions -> {assistant_log_path}")
@@ -1097,10 +1115,14 @@ class DearPyGuiTaskGraphApp:
                 self._poll_vlm_recommendation_requests()
                 self._poll_vlm_answers()
             self._poll_tts()
+            if self._caption is not None:
+                self._caption.update_status(self._speech, self._tts, self._vlm)
             # Draw one frame and process Dear PyGui interaction.
             dpg.render_dearpygui_frame()
         # Tell the live listener thread to stop polling.
         self._live_running = False
+        if self._caption is not None:
+            self._caption.close()
         # Release audio resources if speech recognition was active.
         if self._speech is not None:
             self._speech.close()
@@ -1810,10 +1832,18 @@ class DearPyGuiTaskGraphApp:
                 self.log(f"[Voice] {payload}")
                 if self._tts is not None and self._tts.is_speaking:
                     self.log("[Voice] Ignored transcript produced during TTS playback.")
+                    if self._caption is not None:
+                        self._caption.notice(
+                            "Didn't catch that — I was speaking. Please repeat.")
                     continue
+                if self._caption is not None:
+                    self._caption.heard(payload)
                 if route_to_vlm:
                     if not self._vlm.submit_question(payload):
                         self.log("[Voice] VLM busy — transcript skipped.")
+                        if self._caption is not None:
+                            self._caption.notice(
+                                "Still thinking — try again in a moment.")
             elif kind == "timeout":
                 self.log("[Voice] Timed out — back to idle.")
             elif kind == "error":
@@ -1822,6 +1852,8 @@ class DearPyGuiTaskGraphApp:
     def _speak(self, text: str, warning: bool = False) -> None:
         """Queue concise guidance without blocking the Dear PyGui frame loop."""
         self.log(f"[TTS] {text}")
+        if self._caption is not None:
+            self._caption.reply(text)
         if self._tts is not None:
             self._tts.speak(text, replace=warning)
 

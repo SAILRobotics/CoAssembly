@@ -38,6 +38,7 @@ CENTER_EYE_OVERRIDE_PORT = 5016 # override CenterEyeAnchor pose from Python
 RELOCK_CUBE_PORT   = 5017   # secondary relock-cube world poses (matches RelockCubePoseReceiver)
 HANDOVER_SPHERE_PORT = 5018 # handover target sphere world position (matches HandoverSphereReceiver)
 WORKHOLDING_BOX_PORT = 5026 # workholding_testing.py AR box → WorkholdingBoxReceiver (own port, not 5012)
+VOICE_CAPTION_PORT = 5028   # task-graph voice assistant → VoiceCaptionReceiver (heard/reply/status captions)
 
 # ── Ports (Python ↔ Python: dedicated robot-control process) ─────────────────
 ROBOT_CMD_PORT   = 5020   # main_with_robot.py → robot_control_server.py: commands

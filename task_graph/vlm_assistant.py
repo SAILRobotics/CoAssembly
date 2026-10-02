@@ -475,7 +475,8 @@ class VLMAssistant:
         self._model_name = model_name
 
         desc_path = Path(task_description_path)
-        task_description = desc_path.read_text() if desc_path.exists() else "(not found)"
+        task_description = (desc_path.read_text(encoding="utf-8")
+                            if desc_path.exists() else "(not found)")
         self._system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
             task_description=task_description, part_labels=_load_part_labels())
         self._desc_info = f"{desc_path.name}  ({len(task_description)} chars)"
