@@ -574,6 +574,13 @@ class WorkholdingStudy:
         self.hands            = _HandDataReceiver(quest_ip, hand_port)
         self.anchor           = _WorldAnchor(quest_ip)
         self.tools            = _ToolSelectionManager(quest_ip)
+        # Only the gripper (mode toggle) and the anchor relock cube act in this
+        # study; any other clickable target hovers/flashes red instead of
+        # looking selectable.
+        self.tools.set_block_check(
+            lambda tool_id: None
+            if tool_id in (self._TCP_TOOL_ID, anchor_marker_id)
+            else "not used in the workholding study")
         self.tuner            = _OffsetTuner()
         self.relock_cubes     = _RelockCubePublisher(quest_ip)
         self.relock_cubes.set_markers(self.anchor._T_world_marker)

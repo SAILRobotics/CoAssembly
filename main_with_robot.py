@@ -929,6 +929,8 @@ class _ToolSelectionManager:
     PART_COLOR     = [1.0,  0.78, 0.78, 0.15]    # light red  for "part" category
     HIGHLIGHT_COLOR = [0.0, 1.0, 1.0, 0.15]       # cyan — pegboard tool needed for the current step
     VLM_REFERENCE_COLOR = [1.0, 0.92, 0.02, 0.15] # yellow — one VLM-resolved referent
+    BLOCKED_COLOR  = [1.0, 0.0, 0.0, 0.3]      # red — target is locked in the current state
+    BLOCKED_FLASH_S = 0.6                      # red flash after clicking a locked target
 
     def __init__(self, quest_ip: str, click_port: int = cfg.TOOL_CLICK_PORT,
                  color_port: int = cfg.TOOL_COLOR_PORT,
@@ -961,8 +963,33 @@ class _ToolSelectionManager:
         self._interaction_events: list[dict]            = []
         self._on_cancel = None
         self._last_color_refresh = 0.0
+        # Optional owner-supplied gate: block_check(tool_id) returns a reason
+        # string when the target must not respond in the current state, else
+        # None. Locked targets hover/flash red and are never selected.
+        self._block_check = None
+        self._blocked_flash_until: dict[int, float] = {}
+        self._hover_blocked = False
+
+    def set_block_check(self, block_check) -> None:
+        self._block_check = block_check
+
+    def blocked_reason(self, tool_id: int) -> "str | None":
+        if self._block_check is None:
+            return None
+        return self._block_check(int(tool_id))
+
+    def _expire_blocked_flashes(self) -> None:
+        now = time.monotonic()
+        for tool_id, until in list(self._blocked_flash_until.items()):
+            if now < until:
+                continue
+            del self._blocked_flash_until[tool_id]
+            if tool_id == self._hovered_tool_id and self._hover_blocked:
+                continue   # still pointed at: stays red until hover_exit
+            self._restore(tool_id)
 
     def poll(self, timeout_ms: int = 0) -> bool:
+        self._expire_blocked_flashes()
         poller = zmq.Poller()
         poller.register(self._sub, zmq.POLLIN)
         if not dict(poller.poll(timeout=timeout_ms)):
@@ -1029,6 +1056,18 @@ class _ToolSelectionManager:
             self.reset_to_category(tool_id)
 
     def _handle_click(self, tool_id: int, hand: str = "unknown"):
+        # Locked target: flash red, never select. The active target is exempt so
+        # re-clicking it can still deselect/cancel.
+        reason = self.blocked_reason(tool_id)
+        if reason is not None and tool_id != self._active_tool_id:
+            print(f"[Blocked] id={tool_id} ({hand} hand) — {reason}")
+            if (self._interaction_events
+                    and self._interaction_events[-1]["tool_id"] == tool_id):
+                self._interaction_events[-1]["blocked"] = reason
+            self._blocked_flash_until[tool_id] = (
+                time.monotonic() + self.BLOCKED_FLASH_S)
+            self.send_color(tool_id, self.BLOCKED_COLOR)
+            return
         # hand was near tool A (hover) and clicked a different tool B before hover_exit(A) arrived
         if self._hovered_tool_id is not None and self._hovered_tool_id != tool_id:
             self._restore(self._hovered_tool_id)
@@ -1069,6 +1108,15 @@ class _ToolSelectionManager:
         if self._hovered_tool_id is not None and self._hovered_tool_id != tool_id:
             self._restore(self._hovered_tool_id)
         self._hovered_tool_id = None
+        self._hover_blocked = False
+        # Locked target: red instead of orange, overriding stage highlights
+        # (hover_exit restores them via _restore).
+        if (tool_id != self._active_tool_id
+                and self.blocked_reason(tool_id) is not None):
+            self._hovered_tool_id = tool_id
+            self._hover_blocked = True
+            self.send_color(tool_id, self.BLOCKED_COLOR)
+            return
         # hovering over the already-selected tool — don't downgrade its color to HOVER_COLOR
         if tool_id == self._active_tool_id:
             return
@@ -1084,6 +1132,10 @@ class _ToolSelectionManager:
         if tool_id != self._hovered_tool_id:
             return
         self._hovered_tool_id = None
+        self._hover_blocked = False
+        # A pending red click flash restores the tool itself when it expires.
+        if tool_id in self._blocked_flash_until:
+            return
         # tool was clicked while being hovered — it is now selected, don't strip its SELECTED_COLOR
         if tool_id == self._active_tool_id:
             return
@@ -1121,6 +1173,9 @@ class _ToolSelectionManager:
         for tool_id, resting_color in self._category_colors.items():
             if tool_id in self._forced_colors:
                 color = self._forced_colors[tool_id]
+            elif (tool_id in self._blocked_flash_until
+                  or (tool_id == self._hovered_tool_id and self._hover_blocked)):
+                color = self.BLOCKED_COLOR
             elif tool_id in self._semantic_highlighted:
                 color = self._highlight_color_for(tool_id)
             elif tool_id == self._active_tool_id:
@@ -1951,6 +2006,9 @@ class MainScene:
 
         self.anchor      = _WorldAnchor(quest_ip)
         self.tools       = _ToolSelectionManager(quest_ip)
+        # Locked tools/parts hover and flash red instead of selecting. Only
+        # consulted from the main loop, after all state below is initialised.
+        self.tools.set_block_check(self._tool_block_reason)
         # Register TCPMarker's resting state immediately, independently of the
         # pegboard/anchor lifecycle. refresh_colors() will keep advertising it
         # until Unity's port-5010 subscriber is connected.
@@ -2719,6 +2777,41 @@ class MainScene:
                 or (self.simulation
                     and self.robot.board_state == "holding_board"))
 
+    def _tool_block_reason(self, tool_id: int) -> "str | None":
+        """Why a pegboard tool/part click must be refused right now, else None.
+
+        Only layout objects are gated; the gripper (200) and relock cubes keep
+        their own state-dependent rules. The robot server still enforces its
+        own checks as a second layer.
+        """
+        if not any(int(t["id"]) == tool_id for t in self.tool_layout._tools):
+            return None
+        if tool_id == self._pending_grasp_tool_id:
+            return None   # re-clicking the active grasp cancels it (intentional)
+        handed_over_ids = ({done_id for done_id, _ in self._handed_over_objects}
+                           | self._progress_handed_over_ids)
+        if tool_id in handed_over_ids:
+            return "already handed over"
+        if self.robot is None or not self.robot.connected:
+            return "robot not connected"
+        if self._pending_grasp_tool_id is not None or self.robot.tool_grasp_running:
+            return "robot is grasping another object"
+        if (self._pending_handover or self._handover_tool_id is not None
+                or self._robot_state == "waiting_for_handover_pull"):
+            return "robot is handing over an object"
+        board_state = self.robot.board_state
+        if board_state == "waiting_for_board":
+            return "waiting for board — long-press the gripper to cancel"
+        if not self._board_allows_unrelated_motion():
+            return f"workholding active (board {board_state})"
+        if self.robot.move_running:
+            return "robot is moving"
+        if not self.simulation and not self.anchor.locked:
+            return f"world marker #{self.anchor_marker_id} not locked"
+        if self.anchor.T_pegboard_in_world is None:
+            return "pegboard not locked"
+        return None
+
     def _voice_fetch_blockers(self, tool_id: int) -> list[str]:
         """Explain every gate that currently prevents a confirmed voice fetch."""
         blockers: list[str] = []
@@ -3153,6 +3246,12 @@ class MainScene:
                     elif _board_state == "release_armed":
                         print("[TCP] Release-armed board long-pressed → lock board again")
                         self.robot.arm_board_release()
+                    elif _board_state == "waiting_for_board":
+                        # Stand down in place: tools are locked while waiting,
+                        # so this is the deliberate way back to idle.
+                        print("[TCP] Waiting-for-board long-pressed → cancel board "
+                              "wait; robot idle at current pose")
+                        self.robot.cancel_board_interaction()
                     else:
                         self.tools._handle_click(self._TCP_TOOL_ID, _event["hand"])
 
