@@ -45,6 +45,40 @@ public class ToolColorReceiver : MonoBehaviour
     private Renderer secondaryRenderer;
     private float secondaryAlpha = 0.06f;
 
+    // Last color received from Python, and an optional local overlay blended on
+    // top of it (e.g. long-press progress). Python colors arriving while the
+    // overlay is active update the base, so clearing restores the latest state.
+    private Color baseColor;
+    private bool  hasBaseColor;
+    private Color overlayColor;
+    private float overlayAmount;
+
+    /// <summary>The receiver that Python colors for `id` are routed to, if any.</summary>
+    public static ToolColorReceiver ForTool(int id)
+    {
+        lock (sharedLock)
+        {
+            instances.TryGetValue(id, out ToolColorReceiver receiver);
+            return receiver;
+        }
+    }
+
+    /// <summary>Blend `color` over the Python-driven color by `amount` (0..1).</summary>
+    public void SetOverlay(Color color, float amount)
+    {
+        overlayColor  = color;
+        overlayAmount = Mathf.Clamp01(amount);
+        ApplyEffective();
+    }
+
+    /// <summary>Remove the overlay and restore the latest Python-driven color.</summary>
+    public void ClearOverlay()
+    {
+        if (overlayAmount <= 0f) return;
+        overlayAmount = 0f;
+        ApplyEffective();
+    }
+
     public void ConfigureVisual(int id, Renderer renderer, Renderer secondary = null, float secondaryAlpha = 0.06f)
     {
         ConfigureVisual(id, renderer != null ? new[] { renderer } : null, secondary, secondaryAlpha);
@@ -174,17 +208,27 @@ public class ToolColorReceiver : MonoBehaviour
             string rendererName = targetRenderer != null ? targetRenderer.name : "<none>";
             Debug.Log($"[ToolColorReceiver:{toolId}] Applying ({c.r:F2},{c.g:F2},{c.b:F2},{c.a:F2}) " +
             $"to renderer '{rendererName}' on '{gameObject.name}'");
-            if (targetRenderers != null)
-            {
-                foreach (var renderer in targetRenderers)
-                    ApplyColor(renderer, c);
-            }
-            if (secondaryRenderer != null)
-            {
-                Color secondaryColor = c;
-                secondaryColor.a = Mathf.Min(c.a, secondaryAlpha);
-                ApplyColor(secondaryRenderer, secondaryColor);
-            }
+            baseColor    = c;
+            hasBaseColor = true;
+            ApplyEffective();
+        }
+    }
+
+    private void ApplyEffective()
+    {
+        if (propertyBlock == null) return;   // Start() has not run yet
+        Color b = hasBaseColor ? baseColor : originalColor;
+        Color c = overlayAmount > 0f ? Color.Lerp(b, overlayColor, overlayAmount) : b;
+        if (targetRenderers != null)
+        {
+            foreach (var renderer in targetRenderers)
+                ApplyColor(renderer, c);
+        }
+        if (secondaryRenderer != null)
+        {
+            Color secondaryColor = c;
+            secondaryColor.a = Mathf.Min(c.a, secondaryAlpha);
+            ApplyColor(secondaryRenderer, secondaryColor);
         }
     }
 

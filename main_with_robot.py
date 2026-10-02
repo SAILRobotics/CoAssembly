@@ -921,6 +921,7 @@ class _ToolSelectionManager:
     TCP_COLOR       = [0.0, 0.0, 0.0, 0.25]       # black resting/inactive color; port 5010
     TCP_READY_COLOR = [0.0, 1.0, 0.0, 0.25]       # board may be inserted/removed
     TCP_LOCKED_COLOR = [1.0, 0.0, 0.0, 0.25]      # board latched; pull cannot release
+    TCP_FREEDRIVE_COLOR = [0.5, 0.0, 0.5, 0.25]   # board latched, freedrive mode (AR handle off)
     SELECTED_COLOR = [0.0, 1.0, 0.0, 0.15]     #when cursor clicks
     HOVER_COLOR    = [1.0, 0.5, 0.0, 0.15]     #when cursor hovers
     RESET_COLOR    = [-1.0, -1.0, -1.0, -1.0]   # sentinel → restores to resting color
@@ -2031,6 +2032,11 @@ class MainScene:
         self._last_tcp_color_state: "str | None"      = None
         self._last_handover_ghost_color: "tuple[float, ...] | None" = None
         self._board_regrasp_available: bool            = False
+        # Control mode while a board is held, matching workholding_study.py's
+        # hybrid condition. "ar": AR handle only, freedrive off (default on
+        # every grasp). "freedrive": freedrive only, AR handle hidden/ignored.
+        # A short gripper tap flips between them; a long press releases.
+        self._board_control_mode: str                  = "ar"
         # Set after a tool/part is physically pulled from the gripper.  The
         # next TCP click arms board reception at the current handover pose
         # instead of summoning the now-empty gripper again.
@@ -2459,7 +2465,8 @@ class MainScene:
                 print("[Robot] Hand target reached → workholding active (sim)")
             else:
                 print("[Robot] Hand target reached → waiting for board contact")
-            self.robot.start_board_interaction()
+            # Every grasp starts in AR mode (freedrive off); a tap enables freedrive.
+            self.robot.start_board_interaction(freedrive=False)
         else:
             print("[Robot] Hand-target move cancelled")
 
@@ -2475,12 +2482,16 @@ class MainScene:
                   "board grasp at its current pose")
         elif state == "holding_board":
             self._board_regrasp_available = False
+        if state in ("inactive", "waiting_for_board"):
+            self._board_control_mode = "ar"
         self._last_tcp_color_state = state
         if state in ("waiting_for_board", "release_armed"):
             color = _ToolSelectionManager.TCP_READY_COLOR
             forced = True
         elif state in ("holding_board", "moving_board"):
-            color = _ToolSelectionManager.TCP_LOCKED_COLOR
+            color = (_ToolSelectionManager.TCP_FREEDRIVE_COLOR
+                     if self._board_control_mode == "freedrive"
+                     else _ToolSelectionManager.TCP_LOCKED_COLOR)
             forced = True
         else:
             color = _ToolSelectionManager.TCP_COLOR
@@ -2490,7 +2501,7 @@ class MainScene:
         self.tools._category_colors[self._TCP_TOOL_ID] = color
         self.tools.set_forced_color(
             self._TCP_TOOL_ID, color if forced else None)
-        print(f"[TCP Color] board={state} → {color}")
+        print(f"[TCP Color] board={state} mode={self._board_control_mode} → {color}")
 
     def _update_handover_ghost_color(self) -> None:
         """Color the Unity target gripper by real-TCP handover proximity."""
@@ -3124,6 +3135,27 @@ class MainScene:
                                   f"{_angle_deg:.1f}° off-normal (click)")
                     self.tools.deselect(mid)
 
+                # ── TCP long press (tool_id 200) → board release / relock ─────
+                # Unity sends "long_press" instead of "selected" when the gripper
+                # is held past HandAwareInteractable._longPressSeconds. Release
+                # and relock need it so an ordinary tap cannot drop the board.
+                # In any other state a long press behaves like a normal tap.
+                for _event in self.tools.pop_interaction_events():
+                    if (_event["event_type"] != "long_press"
+                            or _event["tool_id"] != self._TCP_TOOL_ID):
+                        continue
+                    _board_state = (self.robot.board_state
+                                    if self.robot is not None else None)
+                    if _board_state == "holding_board":
+                        print("[TCP] Locked board long-pressed → disable freedrive "
+                              "and arm pull-to-release")
+                        self.robot.arm_board_release()
+                    elif _board_state == "release_armed":
+                        print("[TCP] Release-armed board long-pressed → lock board again")
+                        self.robot.arm_board_release()
+                    else:
+                        self.tools._handle_click(self._TCP_TOOL_ID, _event["hand"])
+
                 # ── TCP click (tool_id 200) → move_to_pose ────────────────────
                 if self.tools.active_tool_id == self._TCP_TOOL_ID:
                     clicking_hand = self.tools.active_hand
@@ -3144,12 +3176,21 @@ class MainScene:
                         self._tracking_hand_side = None
                     elif (self.robot is not None
                           and self.robot.board_state == "holding_board"):
-                        print("[TCP] Locked board clicked → disable freedrive and arm pull-to-release")
-                        self.robot.arm_board_release()
+                        self._board_control_mode = (
+                            "freedrive" if self._board_control_mode == "ar"
+                            else "ar")
+                        # Sets the server's freedrive policy, which it also
+                        # restores after relocks and AR board moves.
+                        self.robot.set_board_freedrive(
+                            self._board_control_mode == "freedrive")
+                        self._last_ar_board_T = None
+                        self._last_tcp_color_state = None   # force recolor
+                        print(f"[TCP] Board tap → {self._board_control_mode.upper()} "
+                              "(long-press to release)")
                     elif (self.robot is not None
                           and self.robot.board_state == "release_armed"):
-                        print("[TCP] Release-armed board clicked → lock board again")
-                        self.robot.arm_board_release()
+                        print("[TCP] Release-armed tap ignored — long-press the "
+                              "gripper to lock the board again")
                     elif (self.robot is not None
                           and self.robot.board_state == "waiting_for_board"):
                         # The gripper is open and no board is clamped yet. Let
@@ -3167,14 +3208,14 @@ class MainScene:
                         print("[TCP] Released board clicked → reopen gripper and "
                               "wait for board reinsertion at current pose")
                         self._board_regrasp_available = False
-                        self.robot.start_board_interaction()
+                        self.robot.start_board_interaction(freedrive=False)
                     elif (self.robot is not None
                           and self.robot.board_state == "inactive"
                           and self._board_receive_after_handover):
                         print("[TCP] Post-handover gripper clicked → open and "
                               "arm board reception at current pose")
                         self._board_receive_after_handover = False
-                        self.robot.start_board_interaction()
+                        self.robot.start_board_interaction(freedrive=False)
                     elif (self.robot is not None
                           and not self.robot.tool_grasp_running
                           and self._board_allows_unrelated_motion()
@@ -3310,6 +3351,7 @@ class MainScene:
                         _board_state == "moving_board"
                         or _local_board_move)
                     if (_T_box_target is not None
+                            and self._board_control_mode == "ar"
                             and (_board_state == "holding_board"
                                  or _board_move_active)):
                         self._last_ar_board_T = _T_box_target
@@ -3349,7 +3391,8 @@ class MainScene:
                                 on_complete=self._on_board_move_complete)
 
                     if self._T_world_tcp is not None:
-                        if not self._board_ar_visual_enabled:
+                        if (not self._board_ar_visual_enabled
+                                or self._board_control_mode == "freedrive"):
                             _grip_visual_state = "idle"
                         elif (_board_state == "moving_board"
                                 or (self._robot_state == "moving_to_pose"
