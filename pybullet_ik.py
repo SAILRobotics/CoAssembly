@@ -6,7 +6,7 @@ Always runs in DIRECT mode. All visualisation is handled by Open3D.
 
 Public API
 ----------
-    scene = IKScene.from_calibration("calibration_data/results")
+    scene = IKScene.from_calibration("hand_eye_data/results")
     scene.build()
 
     scene.update_robot(q_rad)                        # set joint angles
@@ -60,7 +60,7 @@ class IKScene:
     @classmethod
     def from_calibration(
         cls,
-        results_dir: Path | str = "calibration_data/results",
+        results_dir: Path | str = "hand_eye_data/results",
     ) -> "IKScene":
         d = Path(results_dir)
         ph1 = np.load(str(d / "phase1_results.npz"), allow_pickle=True)

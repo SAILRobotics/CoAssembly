@@ -10,7 +10,7 @@ The gearbox uses two naming layers:
    unaffected by naming-convention changes.
 
 **CSV `target_name` values now reuse the task-graph convention directly**
-(see `TASKGRAPH_NAMES` in `study1_referring_expression.py` and the
+(see `TASKGRAPH_NAMES` in `user_study/execution/study1_referring_expression.py` and the
 evaluator's `parse_prediction()`), so no canonical-name-to-dataset-label
 conversion step is needed at evaluation time.
 

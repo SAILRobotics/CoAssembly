@@ -12,11 +12,11 @@ ID across every condition completed by that participant.
 ## Study 1 — Referring expressions
 
 ```bash
-python3 study1_referring_expression.py
+python3 -m user_study.execution.study1_referring_expression
 ```
 
 Open <http://127.0.0.1:5000>. Responses are saved to
-`study_logs/study1/referring_expression_user.csv`.
+`user_study/study_logs/study1/referring_expression_user.csv`.
 
 ## Robot controller — Studies 2 and 3
 
@@ -43,10 +43,10 @@ the ten board poses shared by all three conditions.
 ### Teach target poses
 
 ```bash
-python3 workholding_study.py \
+python3 -m user_study.execution.workholding_study \
   --session-name setup \
   --mode freedrive \
-  --teach-targets study_logs/study2/workholding_targets.json
+  --teach-targets user_study/study_logs/study2/workholding_targets.json
 ```
 
 Teaching overwrites the shared target-pose file. Skip this step during normal
@@ -55,37 +55,37 @@ participant sessions unless the targets need to be recalibrated.
 ### Condition 1 — Freedrive
 
 ```bash
-python3 workholding_study.py \
+python3 -m user_study.execution.workholding_study \
   --session-name P01 \
   --mode freedrive \
-  --target-poses-file study_logs/study2/workholding_targets_original.json
+  --target-poses-file user_study/study_logs/study2/workholding_targets_original.json
 ```
 
-python3 workholding_study.py \
+python3 -m user_study.execution.workholding_study \
   --session-name P01 \
   --mode freedrive \
-  --target-poses-file study_logs/study2/workholding_targets_original.json \
+  --target-poses-file user_study/study_logs/study2/workholding_targets_original.json \
   --no-resume
 
 ### Condition 2 — AR handle
 
 ```bash
-python3 workholding_study.py \
+python3 -m user_study.execution.workholding_study \
   --session-name P01 \
   --mode ar \
-  --target-poses-file study_logs/study2/workholding_targets_original.json
+  --target-poses-file user_study/study_logs/study2/workholding_targets_original.json
 ```
 
 ### Condition 3 — Hybrid
 
 ```bash
-python3 workholding_study.py \
+python3 -m user_study.execution.workholding_study \
   --session-name P01 \
   --mode hybrid \
-  --target-poses-file study_logs/study2/workholding_targets.json
+  --target-poses-file user_study/study_logs/study2/workholding_targets.json
 
 Study 2 writes one shared replay log per participant to
-`study_logs/study2/P01_replay.jsonl`; each record includes its condition in the
+`user_study/study_logs/study2/P01_replay.jsonl`; each record includes its condition in the
 `mode` field. Restarting a command automatically resumes after the last fully
 completed trial. Records from an unfinished trial are removed, and that trial
 is repeated. Add `--no-resume` to intentionally restart only the selected
@@ -98,7 +98,7 @@ Run each condition with the same participant ID.
 ### Condition 1 — Gesture
 
 ```bash
-python3 task_graph/study4_part_acquisition_study.py \
+python3 -m user_study.execution.study4_part_acquisition_study \
   --participant-id mahya \
   --condition gesture \
   --no-voice
@@ -107,7 +107,7 @@ python3 task_graph/study4_part_acquisition_study.py \
 ### Condition 2 — Language and gesture
 
 ```bash
-python3 task_graph/study4_part_acquisition_study.py \
+python3 -m user_study.execution.study4_part_acquisition_study \
   --participant-id P0 \
   --condition language \
   --vlm-model Qwen/Qwen3-VL-8B-Instruct
@@ -121,7 +121,7 @@ when intentionally starting that participant and condition from scratch.
 #### Resume participant session
 
 ```bash
-python3 task_graph/study4_part_acquisition_study.py \
+python3 -m user_study.execution.study4_part_acquisition_study \
   --participant-id mahya \
   --condition task_aware \
   --vlm-model Qwen/Qwen3-VL-8B-Instruct
@@ -130,7 +130,7 @@ python3 task_graph/study4_part_acquisition_study.py \
 #### Start fresh participant session
 
 ```bash
-python3 task_graph/study4_part_acquisition_study.py \
+python3 -m user_study.execution.study4_part_acquisition_study \
   --participant-id P01 \
   --condition task_aware \
   --vlm-model Qwen/Qwen3-VL-8B-Instruct \

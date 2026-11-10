@@ -3777,7 +3777,8 @@ def main() -> None:
         help="Piper speaking-rate multiplier; values below 1.0 speak more slowly.")
     parser.add_argument(
         "--assistant-log",
-        default=str(Path(__file__).resolve().parent / "task_assistant_interactions.csv"),
+        default=str(Path(__file__).resolve().parent.parent / "user_study"
+                    / "analysis" / "task_assistant_interactions.csv"),
         help="Append part-reference decisions to this CSV file.")
     parser.add_argument("--no-assistant-log", action="store_true",
                         help="Disable part-reference study logging.")

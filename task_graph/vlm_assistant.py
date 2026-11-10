@@ -101,7 +101,8 @@ labels such as `BEARING_ROW1_RIGHT`, filenames, or interface numbering such as
 def _load_part_label_names() -> list[str]:
     """Load dataset parts plus the task's fastening-tool ontology."""
     try:
-        path = Path(__file__).resolve().parent / "referring_expression_responses.csv"
+        path = (Path(__file__).resolve().parent.parent / "user_study"
+                / "study_logs" / "study1" / "referring_expression_responses.csv")
         with path.open(newline="", encoding="utf-8-sig") as handle:
             rows = csv.DictReader(handle)
             labels = {row.get("target_name", "").strip() for row in rows

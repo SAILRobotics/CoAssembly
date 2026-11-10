@@ -3886,7 +3886,7 @@ def main():
                     help="Use fixed default joint angles (--simulation) or live RTDE (--no-simulation)")
     ap.add_argument("--calibrated-robot-base", action=argparse.BooleanOptionalAction,
                     default=cfg.USE_CALIBRATED_ROBOT_BASE_POSE,
-                    help="Load robot base pose from calibration_data/ even in simulation mode")
+                    help="Load robot base pose from hand_eye_data/results even in simulation mode")
     ap.add_argument("--load-pegboard-from-file", action=argparse.BooleanOptionalAction,
                     default=cfg.LOAD_PEGBOARD_FROM_FILE,
                     help="Auto-load pegboard pose from scene_layout NPZ on anchor lock "
