@@ -68,11 +68,16 @@ def _unity_pose_to_T(pos_xyz, rot_xyzw) -> np.ndarray:
 
 
 def _adapt_cx_cy(fx, fy, cx, cy, sensor_w, sensor_h, img_w, img_h):
-    if sensor_w is None or sensor_h is None:
+    # Center-crop sensor to image aspect, then scale to image size
+    # (see utils/pose_helpers._adapt_cx_cy).
+    if sensor_w is None or sensor_h is None or img_w is None or img_h is None:
         return fx, fy, cx, cy
-    crop_x = (float(sensor_w) - float(img_w)) / 2.0
-    crop_y = (float(sensor_h) - float(img_h)) / 2.0
-    return fx, fy, cx - crop_x, cy - crop_y
+    sw, sh, iw, ih = float(sensor_w), float(sensor_h), float(img_w), float(img_h)
+    scale  = max(iw / sw, ih / sh)
+    crop_x = (sw - iw / scale) / 2.0
+    crop_y = (sh - ih / scale) / 2.0
+    return (fx * scale, fy * scale,
+            (cx - crop_x) * scale, (cy - crop_y) * scale)
 
 
 # =============================================================================

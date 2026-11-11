@@ -49,11 +49,22 @@ def _T_to_unity_pose(T: np.ndarray):
 
 
 def _adapt_cx_cy(fx, fy, cx, cy, sensor_w, sensor_h, img_w, img_h):
-    if sensor_w is None or sensor_h is None:
+    """Map full-sensor intrinsics onto the streamed image.
+
+    Meta's PassthroughCameraAccess center-crops the sensor to the requested
+    aspect ratio, then scales that crop to the requested size (e.g. 1728x1728
+    sensor → 1728x1296 crop → ×0.741 → 1280x960). So the principal point is
+    shifted by the crop AND every intrinsic is scaled. With a sensor as wide
+    as the image (old 1280x1280 case) scale == 1 and this is a pure crop.
+    """
+    if sensor_w is None or sensor_h is None or img_w is None or img_h is None:
         return fx, fy, cx, cy
-    crop_x = (float(sensor_w) - float(img_w)) / 2.0
-    crop_y = (float(sensor_h) - float(img_h)) / 2.0
-    return fx, fy, cx - crop_x, cy - crop_y
+    sw, sh, iw, ih = float(sensor_w), float(sensor_h), float(img_w), float(img_h)
+    scale  = max(iw / sw, ih / sh)       # sensor px → image px
+    crop_x = (sw - iw / scale) / 2.0     # sensor px trimmed on each side
+    crop_y = (sh - ih / scale) / 2.0
+    return (fx * scale, fy * scale,
+            (cx - crop_x) * scale, (cy - crop_y) * scale)
 
 
 def _transform_point(T: np.ndarray, p_local) -> np.ndarray:

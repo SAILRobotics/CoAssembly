@@ -888,8 +888,10 @@ class DearPyGuiTaskGraphApp:
                 for item in layout.get("tools", [])
                 if item.get("grasp_joints")
             }
+            self._layout_tools = list(layout.get("tools", []))
         except (OSError, ValueError, TypeError, KeyError):
             self._fetchable_tool_ids = set()
+            self._layout_tools = []
         # At most one object can wait for spoken fetch confirmation.
         self._pending_fetch: dict[str, object] | None = None
         # Robot supply state is separate from assembly state: grasping or
@@ -1734,6 +1736,38 @@ class DearPyGuiTaskGraphApp:
                                   self.input_attributes[step.id],
                                   parent="task_node_editor")
 
+    # Manual fetch buttons: button label → tool_layout "type".
+    _QUICK_FETCH = {
+        "Row 1 gear rod":           "GEAR_ROD_ROW1",
+        "Row 1 gear stand (right)": "GEAR_STAND_ROW1_RIGHT",
+        "Row 1 gear stand (left)":  "GEAR_STAND_ROW1_LEFT",
+        "Row 1 gear":               "GEAR_ROW1_LEFT",
+    }
+
+    def _quick_fetch_callback(self, sender, app_data, user_data) -> None:
+        """Ask main_with_robot.py to grab one pegboard part (manual button)."""
+        layout_type = str(user_data)
+        tool_id = next(
+            (int(t["id"]) for t in self._layout_tools
+             if str(t.get("type", "")).upper() == layout_type), None)
+        if tool_id is None:
+            self.log(f"[QuickFetch] {layout_type} not found in tool layout.")
+            return
+        if tool_id not in self._fetchable_tool_ids:
+            self.log(f"[QuickFetch] {layout_type} (id={tool_id}) has no grasp pose.")
+            return
+        if self._select_pub is None:
+            self.log("[QuickFetch] Not connected to main_with_robot.py "
+                     "(step-select link disabled).")
+            return
+        self._send_select({
+            "event": "fetch_confirmed",
+            "tool_id": tool_id,
+            "label": layout_type,
+            "matched_parts": TaskGraph.parts_for_layout_object(layout_type),
+        })
+        self.log(f"[QuickFetch] Requested robot fetch: {layout_type} (id={tool_id})")
+
     def _create_side_panel(self) -> None:
         """Create selection, action, inventory, and voice controls."""
         dpg = self.dpg
@@ -1752,6 +1786,16 @@ class DearPyGuiTaskGraphApp:
         dpg.add_button(label="Reset progress + handovers",
                        callback=self._reset_progress_and_handovers_callback,
                        width=-1)
+        dpg.add_spacer(height=8)
+        dpg.add_separator()
+        # Manual robot fetch: same "fetch_confirmed" event a confirmed voice
+        # request sends, so main_with_robot.py runs its normal grasp path.
+        dpg.add_text("Robot fetch (manual)")
+        for label, layout_type in self._QUICK_FETCH.items():
+            dpg.add_button(label=label, width=-1, user_data=layout_type,
+                           callback=self._quick_fetch_callback)
+            with dpg.tooltip(dpg.last_item()):
+                dpg.add_text(f"Robot grabs {layout_type}")
         dpg.add_spacer(height=8)
         dpg.add_separator()
         dpg.add_text("Active parts and assemblies")
