@@ -146,6 +146,7 @@ class _ArUcoWorker:
         self._T_cam_pegboard = None
         self._T_cam_board    = {}
         self._det_vis        = None
+        self._last_intr_key  = None   # last printed (image, sensor, intrinsics) tuple
         self._running = True
         threading.Thread(target=self._run, daemon=True).start()
 
@@ -160,6 +161,20 @@ class _ArUcoWorker:
                 self._cam.fx, self._cam.fy, self._cam.cx, self._cam.cy,
                 self._cam.sensor_width, self._cam.sensor_height,
                 self._cam.width, self._cam.height)
+            # Print camera resolution + intrinsics on the first frame and
+            # whenever they change (checks that the image is a pure crop of
+            # the sensor: if sensor width != image width, fx/fy need scaling).
+            _intr_key = (self._cam.width, self._cam.height,
+                         self._cam.sensor_width, self._cam.sensor_height,
+                         round(self._cam.fx, 2), round(self._cam.fy, 2),
+                         round(self._cam.cx, 2), round(self._cam.cy, 2))
+            if _intr_key != self._last_intr_key:
+                self._last_intr_key = _intr_key
+                print(f"[CamIntrinsics] image={self._cam.width}x{self._cam.height}  "
+                      f"sensor={self._cam.sensor_width}x{self._cam.sensor_height}  "
+                      f"raw fx={self._cam.fx:.2f} fy={self._cam.fy:.2f} "
+                      f"cx={self._cam.cx:.2f} cy={self._cam.cy:.2f}  "
+                      f"→ used fx={fx:.2f} fy={fy:.2f} cx={cx:.2f} cy={cy:.2f}")
             det = self._aruco.detect(frame, fx, fy, cx, cy, draw=True)
             with self._lock:
                 self._T_cam_anchor   = det.get("T_cam_anchor")

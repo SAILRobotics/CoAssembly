@@ -60,5 +60,3 @@ __pycache__/
 Assets/Plugins/**/bin/
 Assets/Plugins/**/obj/
 
-
-ip_setting.py
